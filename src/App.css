@@ -1,4 +1,12 @@
 main {
+  --page-bg: #ffffff;
+  --tagline-color: #999999;
+  --steam-color: #c4c4c4;
+  --control-border: #eeeeee;
+  --control-border-hover: #cccccc;
+  --control-color: #888888;
+  --counter-color: #aaaaaa;
+
   position: relative;
   display: block;
   min-height: 100svh;
@@ -7,6 +15,86 @@ main {
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  background:
+    linear-gradient(var(--page-bg), var(--page-bg));
+  color: var(--control-color);
+  transition: background-color 240ms ease, color 240ms ease;
+}
+
+main.night {
+  --page-bg: #0d1222;
+  --tagline-color: #aeb9d4;
+  --steam-color: #d6ddff;
+  --control-border: #2d395c;
+  --control-border-hover: #7484b8;
+  --control-color: #d8e1ff;
+  --counter-color: #8c9abf;
+
+  background:
+    radial-gradient(circle at 18% 16%, rgba(89, 111, 171, 0.24), transparent 28vw),
+    linear-gradient(180deg, #0b1020 0%, #111a32 64%, #19253f 100%);
+}
+
+.night-details {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+  z-index: 0;
+}
+
+main.night .night-details {
+  opacity: 1;
+}
+
+.moon,
+.star {
+  position: absolute;
+  color: #f7e8a6;
+  text-shadow: 0 0 14px rgba(247, 232, 166, 0.45);
+}
+
+.moon {
+  top: 8vh;
+  right: 11vw;
+  font-size: clamp(44px, 7vw, 76px);
+  transform: rotate(-12deg);
+}
+
+.star {
+  font-size: 18px;
+  animation: twinkle 2600ms ease-in-out infinite;
+}
+
+.star-a {
+  top: 15vh;
+  left: 14vw;
+}
+
+.star-b {
+  top: 27vh;
+  left: 76vw;
+  animation-delay: 500ms;
+}
+
+.star-c {
+  top: 54vh;
+  left: 22vw;
+  font-size: 14px;
+  animation-delay: 900ms;
+}
+
+.star-d {
+  top: 42vh;
+  left: 64vw;
+  font-size: 26px;
+  animation-delay: 1200ms;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.08); }
 }
 
 .hero {
@@ -46,7 +134,7 @@ main {
 .tagline {
   font-size: 13px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: #999;
+  color: var(--tagline-color);
   letter-spacing: 0.04em;
 }
 
@@ -85,11 +173,15 @@ main {
 .steam {
   position: fixed;
   font-size: 22px;
-  color: #c4c4c4;
+  color: var(--steam-color);
   pointer-events: none;
   will-change: transform, opacity;
   animation: puff 1400ms ease-out forwards;
   z-index: 0;
+}
+
+main.night .steam {
+  text-shadow: 0 0 12px rgba(214, 221, 255, 0.42);
 }
 
 @keyframes puff {
@@ -97,12 +189,13 @@ main {
   100% { opacity: 0;   transform: translate(0, -40px) scale(1.4); }
 }
 
-.mute-toggle {
+.mute-toggle,
+.theme-toggle {
   position: fixed;
   top: 16px;
   right: 16px;
-  background: transparent;
-  border: 1px solid #eee;
+  background: color-mix(in srgb, var(--page-bg) 82%, transparent);
+  border: 1px solid var(--control-border);
   border-radius: 999px;
   width: 36px;
   height: 36px;
@@ -111,18 +204,24 @@ main {
   justify-content: center;
   font-size: 16px;
   cursor: pointer;
-  color: #888;
+  color: var(--control-color);
   z-index: 10;
-  transition: border-color 150ms ease, transform 150ms ease;
+  transition: border-color 150ms ease, transform 150ms ease, background-color 150ms ease;
 }
 
-.mute-toggle:hover {
-  border-color: #ccc;
+.theme-toggle {
+  top: 60px;
+}
+
+.mute-toggle:hover,
+.theme-toggle:hover {
+  border-color: var(--control-border-hover);
   transform: scale(1.05);
 }
 
-.mute-toggle:focus-visible {
-  outline: 2px solid #888;
+.mute-toggle:focus-visible,
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--control-color);
   outline-offset: 2px;
 }
 
@@ -132,7 +231,7 @@ main {
   left: 16px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  color: #aaa;
+  color: var(--counter-color);
   letter-spacing: 0.02em;
   pointer-events: none;
   z-index: 10;
@@ -141,6 +240,7 @@ main {
 @media (prefers-reduced-motion: reduce) {
   .train-emoji:hover { animation: none; }
   .steam { display: none; }
+  .star { animation: none; }
 
   .train.ltr,
   .train.rtl {
