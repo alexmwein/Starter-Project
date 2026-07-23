@@ -6,6 +6,8 @@
 
 **Scope boundary:** This is an underwriting and operating model—not a checkout, human-use protocol, procurement guide for unapproved injectable drugs, or a method for evading regulators, processors, banks, customs, or platforms.
 
+**Current state — evening of July 22, 2026:** Braden confirmed a follow-up meeting for 1:00 CST the next day, sent Alex a private photo showing a substantial batch of outbound Biologix packages, and wrote “Let’s get it brotha.” This confirms active relationship momentum and strengthens the founder-fulfillment thesis. It does not yet establish a paid engagement, data access, authority, equity, or verified economics.
+
 ## The answer in one page
 
 Braden appears to have found an exceptional cash engine. The public evidence does **not** show that he has built an exceptional company.
@@ -730,18 +732,18 @@ If source records validate the business and Braden wants Alex truly accountable,
 
 That ask is justified only for a multi-year company-building role. Traffic alone never earns it.
 
-## If Braden replies
+## Current Braden path: meeting confirmed
 
 | Braden response | Alex's move | Commercial boundary |
 |---|---|---|
-| Accepts a meeting | Reconfirm the goal, walk through the three leaks, request the source-proof sequence, and close the prepaid sprint | Do not diagnose the whole company for free on the call |
+| **Meeting confirmed — current state** | Reconfirm the goal, walk through the three leaks, request the source-proof sequence, and close the prepaid sprint | Positive tone is not payment, access, authority, equity, or a completed partnership |
 | Accepts the sprint | Sign access protocol, receive $50,000, obtain read-only records, and start the first-10-business-day source-to-bank reconciliation | No equity valuation or operating liability before truth |
 | Wants “just traffic” | Offer a capped 30-day pilot: up to five creators, explicit baseline and attribution, $25,000 setup plus 15% of incremental collected contribution | No permanent exclusivity, no customer-data transfer beyond purpose, no promises outside approved claims |
 | Wants Alex to run the company | Complete the sprint first, then present the President/COO package above | Authority, access, economics, indemnity, and exit must match accountability |
 | Likes the ideas but refuses access or payment | Leave a one-page outcome map and stop free architecture | No more detailed systems, creator intros, or operating work |
 | Replies with a no | Preserve the relationship and proceed with NewCo using only public information and Alex-owned relationships | Do not use confidential call facts or Biologix IP |
-| Silent for 48 hours | Send one concise follow-up with the outcome, sprint, price, and two meeting windows | No anxious sequence or more free strategy |
-| Silent for seven days | Make the independent NewCo track primary | Braden can re-enter later through the same diligence gate |
+| Meeting slips with a concrete reset | Accept one specific replacement time and keep preparing the sprint | No indefinite rescheduling or additional free architecture |
+| Meeting passes without a reset | Ask Connor once for timing context, then make the independent NewCo track primary | Braden can re-enter later through the same diligence gate |
 
 ## 30/60/90-day execution
 

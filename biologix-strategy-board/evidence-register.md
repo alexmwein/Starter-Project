@@ -43,9 +43,18 @@ Prices, rank, stock, and product availability are dynamic. A later request may d
 
 Required verification is the order export, processor activity, adjusted bank settlements, refunds/disputes, affiliate ledger, inventory roll-forward, supplier/import records, accounting close, tax records, cap table, contracts, complaints/adverse events, and insurance.
 
+## Private founder follow-up signal
+
+- Source: user-authorized review of the direct Alex–Braden iMessage thread on **2026-07-22**.
+- Braden confirmed a follow-up for **1:00 CST the next day**, sent a photo of a substantial batch of outbound Biologix packages, and later wrote **“Let’s get it brotha.”**
+- Operational interpretation: the relationship is active and the visible fulfillment batch reinforces the founder-relief wedge already described in the calls.
+- Boundary: the messages do **not** prove a signed engagement, payment, source access, revenue, margin, order count, ownership, or the contents and disposition of the packages.
+- Privacy handling: the source attachment is not copied into the board because shipping labels may contain customer information.
+
 ## Evidence labels
 
 - **Publicly observed:** directly visible in a timestamped public source.
+- **Private founder signal:** directly observed in a user-authorized private communication, but not proof of financial or contractual claims.
 - **Founder-reported — unverified:** said or shown by Braden without source-record reconciliation.
 - **Strategic inference:** analyst interpretation from observed/reported facts.
 - **Modeled assumption:** an input selected for sensitivity analysis, not a statement about Biologix.

@@ -5,11 +5,13 @@
   "html_files": [
     "index.html",
     "operating-reference.html",
-    "execution.html"
+    "execution.html",
+    "venture-model.html",
+    "risk-on-venture-plan.html"
   ],
   "pretext_tier": "card-grid",
   "framework": "vanilla",
-  "iterations": 2,
+  "iterations": 3,
   "date": "2026-07-22",
   "screen": "biologix-strategy-board",
   "branch": "scaling-strategy",
