@@ -1,6 +1,6 @@
 # Biologix operating partnership deck
 
-Private 13-slide founder-to-founder proposal for Alex and Braden.
+Private 16-slide founder-to-founder proposal for Alex and Braden.
 
 ## Open
 
@@ -27,10 +27,10 @@ At 700px and below, the deck becomes a readable stacked memo with per-slide pres
 - `deck.css`: Fable-approved visual system and print/mobile layouts
 - `deck.js`: navigation, panels, deep links, mobile progress, and progressive enhancement
 - `talking-points.md`: live pitch and negotiation guide
-- `biologix-operating-partnership.pdf`: 13-page 16:9 leave-behind
+- `biologix-operating-partnership.pdf`: generated 16-page 16:9 leave-behind
 
 ## Evidence discipline
 
-All revenue, margin, profit, order, ownership, and affiliate figures attributed to Braden are founder-reported and unverified unless source records establish otherwise. The purpose of Phase 1 is to reconcile those claims before Alex accepts a public title, material operating authority, or long-term economics.
+All revenue, margin, profit, order, ownership, and affiliate figures attributed to Braden are founder-reported and unverified unless source records establish otherwise. The purpose of activation is to reconcile those claims before Alex accepts a public title, material operating authority, or long-term economics.
 
 This presentation is a commercial discussion document, not legal, tax, accounting, securities, medical, or regulatory advice. Definitive terms remain subject to independent counsel, diligence, proper entity approvals, insurance, and written agreements.
