@@ -1436,13 +1436,16 @@
 
   function closeDrawers() {
     const backdrop = document.querySelector("[data-drawer-backdrop]");
-    document.querySelectorAll("[data-cart-drawer], [data-mobile-drawer]").forEach((drawer) => {
+    const drawers = [...document.querySelectorAll("[data-cart-drawer], [data-mobile-drawer]")];
+    const wasOpen = drawers.some((drawer) => drawer.dataset.open === "true");
+    drawers.forEach((drawer) => {
       drawer.dataset.open = "false";
       drawer.setAttribute("aria-hidden", "true");
     });
     if (backdrop) backdrop.dataset.open = "false";
     body.classList.remove("drawer-open");
-    if (lastFocusedElement instanceof HTMLElement) lastFocusedElement.focus();
+    if (wasOpen && lastFocusedElement instanceof HTMLElement) lastFocusedElement.focus();
+    if (wasOpen) lastFocusedElement = null;
   }
 
   function initDrawersAndCart() {
@@ -1496,7 +1499,12 @@
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeDrawers();
+      if (
+        event.key === "Escape" &&
+        document.querySelector('[data-cart-drawer][data-open="true"], [data-mobile-drawer][data-open="true"]')
+      ) {
+        closeDrawers();
+      }
       if (event.key !== "Tab") return;
       const openDrawerElement = document.querySelector(
         '[data-cart-drawer][data-open="true"], [data-mobile-drawer][data-open="true"]',
@@ -1574,6 +1582,8 @@
     input.addEventListener("keydown", (event) => {
       const options = [...results.querySelectorAll('[role="option"]')];
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         close();
         return;
       }
