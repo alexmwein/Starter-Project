@@ -6,7 +6,9 @@ Private 16-slide founder-to-founder proposal for Alex and Braden.
 
 Local route:
 
-`/operating-partnership-deck/index.html`
+`/archive/operating-partnership-deck/index.html`
+
+Status: archived July 23, 2026. Preserved for reference and removed from the active Biologix workspace.
 
 ## Controls
 
