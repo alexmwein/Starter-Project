@@ -4,11 +4,15 @@
 
 ## Product overview
 
-**Working name:** Datum Peptides
+**Working name:** OVO Labs
 
-**One-liner:** A fictional peptide ecommerce storefront that makes products fast to find and decision-critical facts easy to compare.
+**Wordmark:** `ovolabs.`
 
-**Current reality:** Datum Peptides is a concept website. It has no company operations, inventory, material, customers, testing, laboratory relationship, fulfillment, payment, checkout, or commerce. A thin notice at the top of every page states that nothing shown is real, stocked, or for sale.
+**Descriptor:** Peptide science, refined.
+
+**One-liner:** A fictional peptide retail-house concept that combines warm editorial product presentation with fast finding and explicit evidence boundaries.
+
+**Current reality:** OVO Labs is a concept website. It has no company operations, inventory, material, customers, testing, laboratory relationship, fulfillment, payment, checkout, or commerce. A thin notice at the top of every page states that nothing shown is real, stocked, or for sale.
 
 **What the website demonstrates:** A complete ecommerce information architecture: persistent predictive search, four catalog categories, ten product pages, three catalog sets, testing-status lookup, product comparison fields, educational guides, responsive navigation, a browser-local cart, explicit empty/error/success states, and event instrumentation.
 
@@ -20,22 +24,22 @@
 
 | Code | Product | Category | Strength | Concept price |
 |---|---|---|---:|---:|
-| DP-001 | Retatrutide | GLP-1 & Metabolic | 10 mg | $105 |
-| DP-002 | Tirzepatide | GLP-1 & Metabolic | 10 mg | $100 |
-| DP-003 | Semaglutide | GLP-1 & Metabolic | 10 mg | $90 |
-| DP-004 | Cagrilintide | GLP-1 & Metabolic | 10 mg | $89 |
-| DP-005 | BPC-157 | Research Peptides | 10 mg | $60 |
-| DP-006 | TB-500 | Research Peptides | 10 mg | $68 |
-| DP-007 | CJC-1295 | Growth Hormone Research | 5 mg | $52 |
-| DP-008 | Ipamorelin | Growth Hormone Research | 5 mg | $45 |
-| DP-009 | CJC-1295 + Ipamorelin | Peptide Blends | 10 mg | $92 |
-| DP-010 | BPC-157 + TB-500 | Peptide Blends | 20 mg | $118 |
+| OVO-001 | Retatrutide | GLP-1 & Metabolic | 10 mg | $105 |
+| OVO-002 | Tirzepatide | GLP-1 & Metabolic | 10 mg | $100 |
+| OVO-003 | Semaglutide | GLP-1 & Metabolic | 10 mg | $90 |
+| OVO-004 | Cagrilintide | GLP-1 & Metabolic | 10 mg | $89 |
+| OVO-005 | BPC-157 | Research Peptides | 10 mg | $60 |
+| OVO-006 | TB-500 | Research Peptides | 10 mg | $68 |
+| OVO-007 | CJC-1295 | Growth Hormone Research | 5 mg | $52 |
+| OVO-008 | Ipamorelin | Growth Hormone Research | 5 mg | $45 |
+| OVO-009 | CJC-1295 + Ipamorelin | Peptide Blends | 10 mg | $92 |
+| OVO-010 | BPC-157 + TB-500 | Peptide Blends | 20 mg | $118 |
 
 The three concept sets are:
 
-- Metabolic Reference Set
-- Peptide Pair Set
-- Secretagogue Reference Set
+- OVO-S01 — Metabolic Reference Set
+- OVO-S02 — Peptide Pair Set
+- OVO-S03 — Secretagogue Reference Set
 
 Every product and set must preserve the same evidence boundary:
 
@@ -95,7 +99,7 @@ The 2025–2026 research package supports these implementation choices:
 ## Site architecture
 
 ```text
-/datum-peptides/
+/ovo-labs/
 ├── catalog.html
 ├── bundles.html
 ├── testing.html
@@ -113,16 +117,17 @@ The 2025–2026 research package supports these implementation choices:
 
 Legacy routes redirect:
 
-- `/third-standard/` → `/datum-peptides/`
+- `/third-standard/` → `/ovo-labs/`
+- `/datum-peptides/` and every former deep route → the matching `/ovo-labs/` route
 - `lot-record.html` → `testing.html`
 - `access.html` → `catalog.html`
 - `eligibility.html` remains a compatibility alias for the policy page.
 
 ## Brand voice
 
-**Tone:** Clear, direct, technically literate, modern retail.
+**Tone:** Warm, editorial, clear, direct, and technically literate.
 
-**Personality:** Focused, confident, useful, and honest.
+**Personality:** Considered, tactile, confident, useful, and honest.
 
 **Use:** product, category, code, strength, format, testing status, result, method, scope, sample, cart.
 
@@ -132,17 +137,23 @@ Legacy routes redirect:
 
 Claude Fable 5 is the sole outward-facing design authority.
 
-The locked “Bench Light” system uses:
+The binding warm-apothecary-modernism system uses:
 
-- Inter for the retail interface and IBM Plex Mono for codes and small technical labels;
-- `#F6F7F9` page background, white surfaces, `#101317` ink, `#5B6472` secondary copy;
-- cobalt `#1F3FCF` for actions and active states;
-- compact retail density, 48–68 px section rhythm, thin borders, restrained radii;
-- a thin dark fiction banner;
-- a sticky white header with exposed search and category subnav;
-- a compact product-first hero and a first product row within the opening desktop viewport;
+- `ovolabs.` as the lowercase typographic wordmark and “Peptide science, refined” as the descriptor;
+- warm cream `#F3EADA`, porcelain `#FAF6EE`, parchment `#EDE2CD`, espresso `#3A2A1F`, espresso-deep `#2A1D14`, ink `#5C4A3B`, terracotta `#B9553E`, terracotta-deep `#8F3B2A`, ornament-only gold `#B08A52`, and gold-bright `#C69B63` on espresso;
+- Fraunces for editorial display and the italic wordmark, Instrument Sans for body/UI, and IBM Plex Mono only for codes, concept prices, and status;
+- Aesop-like editorial density, The Row restraint, and Byredo typographic discipline translated into product-led ecommerce;
+- an espresso fiction banner and warm-paper sticky header with exposed search and category navigation;
+- a 12-column 1280px shell, 5/7 desktop hero, product-first fashion grid, and full-width espresso ruled testing band;
+- zero-radius sections/cards, at most 2px on inputs/buttons, and no card shadows or borders;
+- only `ovo-hero-still.webp`, `ovo-vial-front.webp`, and `ovo-set-pair.webp` as production imagery;
+- safe amber research-vial still lifes on cream, stone, linen, plaster, or dark timber;
+- no syringes, preparation tools, body context, fake labels, reports, laboratory props, or invented proof;
+- an opening hero that establishes the house while keeping Shop and Testing actions immediately available;
 - four-up desktop and two-up narrow-width product grids;
 - a cart drawer and mobile sticky product action.
+
+The superseded cool-white/cobalt “Bench Light” direction is prohibited.
 
 ## Proof rules
 
@@ -161,7 +172,9 @@ No claim is published without direct support.
 
 ## Measurement
 
-The prototype writes non-PII events to `window.dataLayer` and exposes them through `window.DatumAnalytics.events()` for QA.
+The prototype writes non-PII events to `window.dataLayer` and exposes them through `window.OVOAnalytics.events()` for QA.
+
+Search and testing events never contain the visitor’s raw string; they retain only an allowlisted catalog classification, a coarse length bucket, and a result count.
 
 Core events:
 
@@ -171,7 +184,11 @@ Core events:
 - `filter_apply`
 - `sort_changed`
 - `select_item`
+- `select_category`
+- `select_article`
 - `view_item`
+- `view_article`
+- `view_testing`
 - `product_media_selected`
 - `quality_lookup`
 - `add_to_cart`
