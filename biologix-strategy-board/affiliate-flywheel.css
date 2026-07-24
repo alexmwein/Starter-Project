@@ -995,6 +995,25 @@
   background: var(--accent);
 }
 
+.media-origin-expanded {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.media-origin-expanded article + article {
+  border-left: 1px solid var(--line);
+}
+
+.media-origin-expanded .podcast-house-card {
+  background: var(--paper);
+  box-shadow: inset 0 4px 0 var(--retreat-accent);
+}
+
+.media-origin-expanded .atomization-card {
+  grid-column: 1 / -1;
+  border-top: 1px solid rgba(247, 245, 241, 0.2);
+  border-left: 0;
+}
+
 .atomization-card .media-owner,
 .atomization-card p,
 .atomization-card > strong {
@@ -1062,6 +1081,119 @@
 .router-node span,
 .router-node small {
   color: rgba(247, 245, 241, 0.68);
+}
+
+.meta-dm-system {
+  margin-top: 20px;
+  color: var(--accent-ink);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+.meta-system-head {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 48px;
+  align-items: end;
+  padding: 30px;
+  border-bottom: 1px solid rgba(247, 245, 241, 0.18);
+}
+
+.meta-system-head .section-index {
+  color: rgba(247, 245, 241, 0.56);
+}
+
+.meta-system-head h3 {
+  max-width: 760px;
+  margin: 10px 0 0;
+  font-size: 25px;
+  line-height: 1.08;
+}
+
+.meta-system-head p {
+  margin: 0;
+  color: rgba(247, 245, 241, 0.68);
+  font-size: 12px;
+}
+
+.meta-system-flow {
+  display: grid;
+  grid-template-columns: 1fr 32px 1fr 32px 1fr 32px 1fr;
+  align-items: stretch;
+}
+
+.meta-system-flow > div {
+  min-width: 0;
+  padding: 22px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.meta-system-flow > b {
+  display: grid;
+  place-items: center;
+  color: rgba(247, 245, 241, 0.38);
+  border-right: 1px solid rgba(247, 245, 241, 0.12);
+  border-left: 1px solid rgba(247, 245, 241, 0.12);
+  font: 500 15px/1 'DM Mono', ui-monospace, monospace;
+}
+
+.meta-system-flow span,
+.meta-system-flow strong,
+.meta-system-flow small {
+  display: block;
+}
+
+.meta-system-flow span {
+  color: rgba(247, 245, 241, 0.5);
+  font: 500 8px/1.4 'DM Mono', ui-monospace, monospace;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.meta-system-flow strong {
+  margin: 8px 0 5px;
+  font-size: 12.5px;
+}
+
+.meta-system-flow small {
+  color: rgba(247, 245, 241, 0.58);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.meta-system-flow .meta-qualify-node {
+  color: var(--ink);
+  background: var(--accent-ink);
+}
+
+.meta-system-flow .meta-qualify-node span,
+.meta-system-flow .meta-qualify-node small {
+  color: var(--ink-3);
+}
+
+.meta-system-note {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) minmax(260px, 0.55fr);
+  gap: 22px;
+  align-items: center;
+  padding: 18px 22px;
+  color: var(--ink);
+  background: #dbe6dd;
+}
+
+.meta-system-note strong {
+  font-size: 11px;
+}
+
+.meta-system-note span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.meta-system-note small {
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.45;
 }
 
 .revenue-branches {
@@ -1970,6 +2102,24 @@
     grid-template-columns: 1fr 34px 1fr;
   }
 
+  .media-origin-expanded {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .media-origin-expanded article {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .media-origin-expanded article:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .media-origin-expanded .podcast-house-card,
+  .media-origin-expanded .atomization-card {
+    grid-column: 1 / -1;
+    border-left: 0;
+  }
+
   .media-origin .atomization-card {
     grid-column: 1 / -1;
     border-top: 1px solid rgba(247, 245, 241, 0.2);
@@ -2041,6 +2191,24 @@
   .patricia-desk,
   .value-grid {
     grid-template-columns: 1fr;
+  }
+
+  .meta-system-head,
+  .meta-system-note {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .meta-system-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .meta-system-flow > b {
+    min-height: 32px;
+    border: 0;
+    border-top: 1px solid rgba(247, 245, 241, 0.12);
+    border-bottom: 1px solid rgba(247, 245, 241, 0.12);
+    transform: rotate(90deg);
   }
 
   .dual-loop article + article,
@@ -2159,6 +2327,14 @@
 
   .media-origin {
     grid-template-columns: 1fr;
+  }
+
+  .media-origin-expanded {
+    grid-template-columns: 1fr;
+  }
+
+  .media-origin-expanded article + article {
+    border-left: 0;
   }
 
   .media-origin .merge-arrow {

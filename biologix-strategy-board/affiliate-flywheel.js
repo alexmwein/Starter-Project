@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const storageKey = 'biologix-affiliate-flywheel-decisions-v1';
+  const storageKey = 'biologix-affiliate-flywheel-decisions-v2';
 
   function readState() {
     try {
