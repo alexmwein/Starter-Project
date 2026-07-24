@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Biologix creator, customer, community, and market-intelligence growth architecture.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./flywheel-map.css">
+  <title>Biologix Growth Architecture</title>
+</head>
+<body>
+  <header class="app-header">
+    <div class="title-lockup">
+      <span class="eyebrow">Biologix / Growth architecture</span>
+      <h1>Content → creators → customers → intelligence → better content.</h1>
+    </div>
+    <p class="operating-thesis">Content recruits affiliates. Affiliates drive sales. Customer signals improve the next content and offer.</p>
+    <button class="present-button" id="present-button" type="button" aria-pressed="false">
+      <span class="present-icon" aria-hidden="true"></span>
+      Present
+    </button>
+  </header>
+
+  <main class="workspace" aria-label="Biologix growth architecture workspace">
+    <section class="stage" id="stage" aria-label="Interactive growth architecture diagram">
+      <div class="focus-bar" role="group" aria-label="Focus the diagram">
+        <span>Focus</span>
+        <button class="focus-button active" type="button" data-focus="all" aria-pressed="true">Full system</button>
+        <button class="focus-button" type="button" data-focus="affiliate" aria-pressed="false">Affiliate</button>
+        <button class="focus-button" type="button" data-focus="customer" aria-pressed="false">Customer</button>
+        <button class="focus-button" type="button" data-focus="community" aria-pressed="false">Community</button>
+        <button class="focus-button" type="button" data-focus="intelligence" aria-pressed="false">Intelligence</button>
+      </div>
+
+      <div class="zoom-bar" role="group" aria-label="Diagram zoom controls">
+        <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+        <button id="fit-board" type="button">Fit</button>
+        <output id="zoom-level" aria-live="polite">100%</output>
+        <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+        <button id="fullscreen-button" type="button" aria-label="Enter fullscreen">
+          <span class="fullscreen-icon" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="board" id="board">
+        <div class="canvas" id="canvas">
+          <div class="control-plane node" id="node-operating" data-node="operating" data-groups="affiliate customer community intelligence">
+            <div>
+              <span class="node-kicker">Alex + OVO operating layer</span>
+              <strong>Strategy · media · sales · creator ops · lifecycle · community · RevOps · team</strong>
+            </div>
+            <div class="north-stars" aria-label="North-star scorecard">
+              <span><b>01</b> Contribution</span>
+              <span><b>02</b> Active affiliates</span>
+              <span><b>03</b> Daily output</span>
+              <span><b>04</b> Repeat rate</span>
+            </div>
+          </div>
+
+          <div class="lane-label demand-label"><span>01</span> Demand creation</div>
+          <div class="lane-label customer-label"><span>02A</span> Customer revenue</div>
+          <div class="lane-label affiliate-label"><span>02B</span> Affiliate revenue</div>
+          <div class="lane-label community-label"><span>03</span> Community loop</div>
+          <div class="lane-label intelligence-label"><span>04</span> Intelligence control plane</div>
+
+          <article class="node node-input" id="node-owned-media" data-node="owned-media" data-groups="affiliate customer intelligence" tabindex="0">
+            <span class="owner">Jaci + Kennedy / Media</span>
+            <h2 contenteditable="true" spellcheck="false">Owned media</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Weekly long-form ideas become daily shorts across YouTube, TikTok, and Instagram.</p>
+            <div class="node-output">Output · attention + DMs</div>
+          </article>
+
+          <article class="node node-input" id="node-creator-media" data-node="creator-media" data-groups="affiliate customer community intelligence" tabindex="0">
+            <span class="owner">Managed affiliates / Patricia</span>
+            <h2 contenteditable="true" spellcheck="false">Creator media</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Daily creator posts use approved briefs, authentic accounts, and tracked links.</p>
+            <div class="node-output">Output · traffic + applications</div>
+          </article>
+
+          <article class="node node-community" id="node-community-proof" data-node="community-proof" data-groups="affiliate community intelligence" tabindex="0">
+            <span class="owner">Community / OVO</span>
+            <h2 contenteditable="true" spellcheck="false">Visible community proof</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Real belonging, creator wins, and referrals make the opportunity credible.</p>
+            <div class="node-output">Output · status + inbound</div>
+          </article>
+
+          <article class="node node-core" id="node-distribution" data-node="distribution" data-groups="affiliate customer community intelligence" tabindex="0">
+            <span class="owner">Content OS / OVO</span>
+            <h2 contenteditable="true" spellcheck="false">Daily distribution</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Every asset carries one tracked customer or affiliate call to action.</p>
+            <div class="channel-row"><span>YouTube</span><span>TikTok</span><span>Instagram</span></div>
+          </article>
+
+          <article class="node node-input compact-node" id="node-outbound" data-node="outbound" data-groups="affiliate intelligence" tabindex="0">
+            <span class="owner">Growth Ops</span>
+            <h2 contenteditable="true" spellcheck="false">Outbound recruiting</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Targeted DM + email sequences create qualified affiliate conversations.</p>
+          </article>
+
+          <article class="node node-router" id="node-router" data-node="router" data-groups="affiliate customer intelligence" tabindex="0">
+            <span class="owner">CRM routing rule</span>
+            <h2 contenteditable="true" spellcheck="false">Intent router</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Identify the person and route the next action without losing source data.</p>
+            <div class="router-options"><span>Customer</span><span>Affiliate</span><span>Unclear</span></div>
+          </article>
+
+          <article class="node node-customer" id="node-capture" data-node="capture" data-groups="customer intelligence" tabindex="0">
+            <span class="owner">Lifecycle</span>
+            <h2 contenteditable="true" spellcheck="false">Lead capture</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Capture permission, source, interest, and the right next step.</p>
+          </article>
+
+          <article class="node node-customer" id="node-nurture" data-node="nurture" data-groups="customer intelligence" tabindex="0">
+            <span class="owner">Lifecycle</span>
+            <h2 contenteditable="true" spellcheck="false">Nurture + convert</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Education and cleared offers move demand into a transaction.</p>
+          </article>
+
+          <article class="node node-customer dark-node" id="node-commerce" data-node="commerce" data-groups="customer intelligence" tabindex="0">
+            <span class="owner">Braden / Commerce core</span>
+            <h2 contenteditable="true" spellcheck="false">Order</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Product · inventory · transaction · chosen 3PL.</p>
+          </article>
+
+          <article class="node node-customer" id="node-retention" data-node="retention" data-groups="customer intelligence" tabindex="0">
+            <span class="owner">Lifecycle + CX</span>
+            <h2 contenteditable="true" spellcheck="false">Repeat + refer</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Post-purchase education, replenishment, win-back, and referral.</p>
+            <div class="node-output">Output · LTV + proof</div>
+          </article>
+
+          <article class="node node-affiliate" id="node-patricia" data-node="patricia" data-groups="affiliate intelligence" tabindex="0">
+            <span class="owner">Patricia / Pipeline owner</span>
+            <h2 contenteditable="true" spellcheck="false">Qualify + book</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Own the relationship from first reply through a qualified call.</p>
+          </article>
+
+          <article class="node node-affiliate" id="node-close" data-node="close" data-groups="affiliate intelligence" tabindex="0">
+            <span class="owner">Patricia / Live call</span>
+            <h2 contenteditable="true" spellcheck="false">Deck + agreement</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Present the role, resolve objections, walk terms, and sign live.</p>
+          </article>
+
+          <article class="node node-affiliate" id="node-activate" data-node="activate" data-groups="affiliate intelligence" tabindex="0">
+            <span class="owner">Creator Success</span>
+            <h2 contenteditable="true" spellcheck="false">Verify + activate</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">ID, training, accounts, tracking, first brief, and first post.</p>
+          </article>
+
+          <article class="node node-affiliate dark-node" id="node-managed" data-node="managed" data-groups="affiliate community intelligence" tabindex="0">
+            <span class="owner">Patricia / Managed roster</span>
+            <h2 contenteditable="true" spellcheck="false">Managed creator</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Cadence, coaching, quality, payout, retention, and attributable sales.</p>
+            <div class="node-output">Output · content + revenue</div>
+          </article>
+
+          <article class="node node-community compact-node" id="node-selected" data-node="selected" data-groups="community affiliate" tabindex="0">
+            <span class="owner">Community selection</span>
+            <h2 contenteditable="true" spellcheck="false">Creators + prospects</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Invite top contributors and qualified culture carriers.</p>
+          </article>
+
+          <article class="node node-community" id="node-experience" data-node="experience" data-groups="community affiliate" tabindex="0">
+            <span class="owner">OVO / Production</span>
+            <h2 contenteditable="true" spellcheck="false">Inner Circle experiences</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Dinners, Miami house, boat day, and earned destination retreats.</p>
+          </article>
+
+          <article class="node node-community" id="node-content-bank" data-node="content-bank" data-groups="community affiliate intelligence" tabindex="0">
+            <span class="owner">Media + Community</span>
+            <h2 contenteditable="true" spellcheck="false">Content bank + belonging</h2>
+            <p data-pretext contenteditable="true" spellcheck="false">Leave with proof, identity, retention, referrals, and thirty days of assets.</p>
+          </article>
+
+          <section class="intelligence-plane node" id="node-intelligence-plane" data-node="intelligence-plane" data-groups="intelligence affiliate customer community" aria-label="Market intelligence control plane">
+            <div class="signal-inputs">
+              <span>DMs + comments</span>
+              <span>Patricia outcomes</span>
+              <span>Content performance</span>
+              <span>Orders + cohorts</span>
+            </div>
+            <div class="intelligence-step" id="node-crm" data-node="crm">
+              <span class="owner">One operating truth</span>
+              <h2>Unified CRM + attribution</h2>
+            </div>
+            <span class="intelligence-arrow" aria-hidden="true">→</span>
+            <div class="intelligence-step" id="node-weekly" data-node="weekly">
+              <span class="owner">Weekly evidence review</span>
+              <h2>Capture → tag → quantify</h2>
+            </div>
+            <span class="intelligence-arrow" aria-hidden="true">→</span>
+            <div class="intelligence-step allocation-step" id="node-allocation" data-node="allocation">
+              <span class="owner">Alex allocates the next week</span>
+              <h2>Decide → test → measure</h2>
+              <div><span>Content briefs</span><span>Creator playbook</span><span>Lifecycle tests</span><span>Demand priorities</span></div>
+            </div>
+          </section>
+
+          <svg class="connectors" viewBox="0 0 1680 960" aria-hidden="true">
+            <defs>
+              <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L9,5 L0,10 z"></path></marker>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L9,5 L0,10 z"></path></marker>
+              <marker id="arrow-brown" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L9,5 L0,10 z"></path></marker>
+              <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L9,5 L0,10 z"></path></marker>
+            </defs>
+
+            <g class="edge edge-neutral" data-edge="owned-media distribution" data-groups="affiliate customer intelligence">
+              <path d="M320 182 H350 V260 H390"></path><text x="334" y="170">long-form</text>
+            </g>
+            <g class="edge edge-green" data-edge="creator-media distribution" data-groups="affiliate customer community intelligence">
+              <path d="M320 316 H355 V282 H390"></path><text x="330" y="334">daily posts</text>
+            </g>
+            <g class="edge edge-brown" data-edge="community-proof distribution" data-groups="affiliate community intelligence">
+              <path d="M320 450 H370 V305 H390"></path><text x="326" y="438">proof</text>
+            </g>
+            <g class="edge edge-neutral" data-edge="distribution router" data-groups="affiliate customer intelligence">
+              <path d="M640 290 H680 V345 H720"></path><text x="654" y="277">tracked CTA + DMs</text>
+            </g>
+            <g class="edge edge-green" data-edge="outbound router" data-groups="affiliate intelligence">
+              <path d="M640 450 H682 V365 H720"></path><text x="648" y="437">qualified reply</text>
+            </g>
+
+            <g class="edge edge-blue primary-edge" data-edge="router capture" data-groups="customer intelligence">
+              <path d="M835 270 V242 H1135 V232"></path><text x="910" y="230">customer intent</text>
+            </g>
+            <g class="edge edge-blue" data-edge="capture nurture" data-groups="customer intelligence">
+              <path d="M1230 168 H1280"></path><text x="1238" y="155">permission</text>
+            </g>
+            <g class="edge edge-blue" data-edge="nurture commerce" data-groups="customer intelligence">
+              <path d="M1450 168 H1480"></path><text x="1450" y="155">buyer</text>
+            </g>
+            <g class="edge edge-blue" data-edge="commerce retention" data-groups="customer intelligence">
+              <path d="M1565 232 V244 H1530 V260"></path><text x="1574" y="245">order</text>
+            </g>
+            <g class="edge edge-blue loop-edge" data-edge="retention distribution" data-groups="customer intelligence">
+              <path d="M1410 310 H1330 V388 H675 V315 H640"></path><text x="962" y="378">questions · proof · referrals</text>
+            </g>
+
+            <g class="edge edge-green primary-edge" data-edge="router patricia" data-groups="affiliate intelligence">
+              <path d="M835 420 V454 H790 V490"></path><text x="845" y="450">affiliate intent</text>
+            </g>
+            <g class="edge edge-green primary-edge" data-edge="patricia close" data-groups="affiliate intelligence">
+              <path d="M890 552 H920"></path><text x="894" y="539">booked call</text>
+            </g>
+            <g class="edge edge-green primary-edge" data-edge="close activate" data-groups="affiliate intelligence">
+              <path d="M1110 552 H1140"></path><text x="1114" y="539">signed</text>
+            </g>
+            <g class="edge edge-green primary-edge" data-edge="activate managed" data-groups="affiliate community intelligence">
+              <path d="M1340 552 H1370"></path><text x="1343" y="539">first post</text>
+            </g>
+            <g class="edge edge-green primary-loop" data-edge="managed creator-media" data-groups="affiliate customer community intelligence">
+              <path d="M1490 614 C1490 670 930 590 650 584 C420 580 360 465 320 360"></path>
+              <text x="800" y="616">daily content + attributable sales + new applicants</text>
+            </g>
+
+            <g class="edge edge-brown" data-edge="selected experience" data-groups="community affiliate">
+              <path d="M290 687 H350"></path><text x="297" y="674">invite</text>
+            </g>
+            <g class="edge edge-brown primary-edge" data-edge="experience content-bank" data-groups="community affiliate">
+              <path d="M580 682 H640"></path><text x="586" y="669">experience</text>
+            </g>
+            <g class="edge edge-brown loop-edge" data-edge="managed experience" data-groups="community affiliate">
+              <path d="M1490 614 V742 H465 V734"></path><text x="905" y="732">top creators + qualified prospects</text>
+            </g>
+            <g class="edge edge-brown loop-edge" data-edge="content-bank distribution" data-groups="community affiliate intelligence">
+              <path d="M755 630 V540 H675 V320 H640"></path><text x="680" y="528">30-day content bank</text>
+            </g>
+            <g class="edge edge-brown loop-edge" data-edge="content-bank managed" data-groups="community affiliate">
+              <path d="M870 682 H1220 V625 H1490 V614"></path><text x="1040" y="672">status + retention</text>
+            </g>
+
+            <g class="edge edge-signal" data-edge="distribution intelligence-plane" data-groups="intelligence affiliate customer">
+              <path d="M515 350 V520 H680 V754 H740"></path><text x="526" y="508">content + DMs</text>
+            </g>
+            <g class="edge edge-signal" data-edge="close intelligence-plane" data-groups="intelligence affiliate">
+              <path d="M1015 614 V754"></path><text x="1023" y="700">call outcomes</text>
+            </g>
+            <g class="edge edge-signal" data-edge="retention intelligence-plane" data-groups="intelligence customer">
+              <path d="M1530 364 V700 H1310 V754"></path><text x="1380" y="688">orders + cohorts</text>
+            </g>
+            <g class="edge edge-signal" data-edge="content-bank intelligence-plane" data-groups="intelligence community">
+              <path d="M755 734 V754"></path><text x="764" y="747">creator outcomes</text>
+            </g>
+            <g class="edge edge-signal return-edge" data-edge="intelligence-plane operating" data-groups="intelligence affiliate customer community">
+              <path d="M1370 754 V710 H1630 V56 H1620"></path><text x="1420" y="699">weekly priorities return to every engine</text>
+            </g>
+          </svg>
+
+          <div class="legend" aria-label="Diagram legend">
+            <span><i class="legend-line affiliate-line"></i>Affiliate flow</span>
+            <span><i class="legend-line customer-line"></i>Customer flow</span>
+            <span><i class="legend-line community-line"></i>Community loop</span>
+            <span><i class="legend-line signal-line"></i>Market signal</span>
+          </div>
+
+          <p class="canvas-note">Internal working architecture · adults only · activation and campaigns remain approval-gated.</p>
+        </div>
+      </div>
+      <div class="pan-hint" id="pan-hint">Drag the canvas to pan · pinch or ⌘ + scroll to zoom</div>
+    </section>
+
+    <section class="mobile-outline" aria-labelledby="outline-title">
+      <span class="eyebrow">Biologix / Growth architecture</span>
+      <h2 id="outline-title">The whole system, in four loops.</h2>
+      <p class="mobile-thesis">Content recruits affiliates. Affiliates drive sales. Customer signals improve the next content and offer.</p>
+
+      <article class="outline-loop affiliate-outline">
+        <span>01 / Affiliate revenue</span>
+        <h3>Attention → Patricia → signed creator → daily content</h3>
+        <div class="outline-flow">
+          <b>Media + outbound</b><i>→</i><b>Qualify + book</b><i>→</i><b>Deck + agreement</b><i>→</i><b>Verify + activate</b><i>→</i><b>Managed creator</b><i>↺</i>
+        </div>
+        <p>Owner path: Jaci + Kennedy create demand. Patricia owns the affiliate relationship. Creator Success gets the first post live.</p>
+      </article>
+
+      <article class="outline-loop customer-outline">
+        <span>02 / Customer revenue</span>
+        <h3>Content → captured intent → order → repeat + referral</h3>
+        <div class="outline-flow">
+          <b>Tracked CTA</b><i>→</i><b>Lead capture</b><i>→</i><b>Nurture</b><i>→</i><b>Commerce</b><i>→</i><b>Lifecycle</b><i>↺</i>
+        </div>
+        <p>Braden owns the commerce core. Lifecycle turns one transaction into repeat behavior, referrals, and better proof.</p>
+      </article>
+
+      <article class="outline-loop community-outline">
+        <span>03 / Community</span>
+        <h3>Top creators → experiences → belonging + content → inbound</h3>
+        <div class="outline-flow">
+          <b>Creators + prospects</b><i>→</i><b>Inner Circle</b><i>→</i><b>Content bank</b><i>→</i><b>Status + retention</b><i>↺</i>
+        </div>
+        <p>Community creates thirty days of media, stronger retention, referrals, and visible proof for the next creator cohort.</p>
+      </article>
+
+      <article class="outline-loop intelligence-outline">
+        <span>04 / Market intelligence</span>
+        <h3>Every outcome changes the next operating week</h3>
+        <div class="outline-flow">
+          <b>DMs + calls + content + orders</b><i>→</i><b>Unified CRM</b><i>→</i><b>Weekly evidence</b><i>→</i><b>Alex allocates</b><i>↺</i>
+        </div>
+        <p>Outputs: content briefs, creator playbook, lifecycle tests, and demand priorities for Braden’s commerce core.</p>
+      </article>
+
+      <div class="mobile-operating-layer">
+        <span>Alex + OVO operating layer</span>
+        <strong>Strategy · media · sales · creator ops · lifecycle · community · RevOps · team</strong>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./flywheel-map.js"></script>
+</body>
+</html>
