@@ -1660,6 +1660,7 @@
     const summary = document.querySelector("[data-result-summary]");
     const buttons = [...document.querySelectorAll("[data-filter]")];
     const params = new URLSearchParams(window.location.search);
+    const validSorts = new Set(["featured", "name-asc", "price-asc", "price-desc"]);
     let category = CATEGORIES.some((item) => item.key === params.get("category")) ? params.get("category") : "all";
 
     const updateUrl = () => {
@@ -1668,6 +1669,8 @@
       else next.searchParams.set("category", category);
       if (search.value.trim()) next.searchParams.set("q", search.value.trim());
       else next.searchParams.delete("q");
+      if (sort.value === "featured") next.searchParams.delete("sort");
+      else next.searchParams.set("sort", sort.value);
       window.history.replaceState({}, "", next);
     };
 
@@ -1703,6 +1706,7 @@
     };
 
     search.value = params.get("q") || "";
+    sort.value = validSorts.has(params.get("sort")) ? params.get("sort") : "featured";
     buttons.forEach((button) => {
       button.addEventListener("click", () => {
         category = button.dataset.filter;
