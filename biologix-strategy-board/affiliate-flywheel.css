@@ -1676,6 +1676,267 @@
   border-color: rgba(247, 245, 241, 0.2);
 }
 
+.intelligence-section {
+  --intelligence-accent: var(--inference);
+}
+
+.intelligence-inputs {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  border: 1px solid var(--line-strong);
+  scrollbar-color: var(--ink-3) transparent;
+  scrollbar-width: thin;
+}
+
+.intelligence-inputs article {
+  flex: 1 0 220px;
+  min-width: 0;
+  padding: 26px;
+  background: var(--paper-raised);
+}
+
+.intelligence-inputs article > span,
+.intelligence-decisions article > span,
+.intelligence-owners span,
+.intelligence-loop span {
+  display: block;
+  color: var(--ink-3);
+  font: 500 9px/1.4 'DM Mono', ui-monospace, monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.intelligence-inputs strong {
+  display: block;
+  margin-top: 11px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.intelligence-inputs p {
+  margin: 9px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.intelligence-inputs > b {
+  display: grid;
+  flex: 0 0 34px;
+  place-items: center;
+  color: var(--accent-ink);
+  background: var(--intelligence-accent);
+  font: 500 18px/1 'DM Mono', ui-monospace, monospace;
+}
+
+.intelligence-loop {
+  display: flex;
+  align-items: stretch;
+  margin-top: 16px;
+  overflow-x: auto;
+  color: var(--accent-ink);
+  background: var(--accent);
+  scrollbar-color: rgba(247, 245, 241, 0.45) transparent;
+  scrollbar-width: thin;
+}
+
+.intelligence-loop > div {
+  flex: 1 0 130px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.intelligence-loop > b {
+  display: grid;
+  flex: 0 0 20px;
+  place-items: center;
+  color: rgba(247, 245, 241, 0.32);
+  font: 500 15px/1 'DM Mono', ui-monospace, monospace;
+}
+
+.intelligence-loop span {
+  color: rgba(247, 245, 241, 0.48);
+}
+
+.intelligence-loop strong,
+.intelligence-loop small {
+  display: block;
+}
+
+.intelligence-loop strong {
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+.intelligence-loop small {
+  margin-top: 6px;
+  color: rgba(247, 245, 241, 0.68);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.intelligence-loop .intelligence-decision {
+  background: var(--intelligence-accent);
+  box-shadow: inset 0 0 0 1px rgba(247, 245, 241, 0.28);
+}
+
+.intelligence-loop > .intelligence-return {
+  flex-basis: 36px;
+  color: var(--accent-ink);
+  background: var(--intelligence-accent);
+  font-size: 21px;
+}
+
+.intelligence-system {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 44px;
+  border: 1px solid var(--line-strong);
+}
+
+.intelligence-system > article {
+  padding: 30px;
+}
+
+.intelligence-system > article + article {
+  border-left: 1px solid var(--line);
+}
+
+.intelligence-system h3 {
+  margin: 12px 0 18px;
+  font-size: 23px;
+  line-height: 1.15;
+}
+
+.signal-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.signal-fields span {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  background: var(--paper-raised);
+  font: 500 9px/1.25 'DM Mono', ui-monospace, monospace;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.weekly-brief {
+  background: var(--paper-raised);
+}
+
+.weekly-brief ol {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  counter-reset: intelligence-brief;
+}
+
+.weekly-brief li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+  counter-increment: intelligence-brief;
+  font-size: 11.5px;
+}
+
+.weekly-brief li::before {
+  color: var(--intelligence-accent);
+  content: counter(intelligence-brief, decimal-leading-zero);
+  font: 500 9px/1.6 'DM Mono', ui-monospace, monospace;
+}
+
+.intelligence-decisions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 16px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.intelligence-decisions article {
+  padding: 26px;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.intelligence-decisions h3 {
+  margin: 10px 0 8px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.intelligence-decisions p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.intelligence-owners {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 32px;
+  color: var(--accent-ink);
+  background: var(--intelligence-accent);
+}
+
+.intelligence-owners > div {
+  padding: 22px;
+  border-right: 1px solid rgba(247, 245, 241, 0.18);
+}
+
+.intelligence-owners > div:last-child {
+  border-right: 0;
+}
+
+.intelligence-owners span {
+  color: rgba(247, 245, 241, 0.52);
+}
+
+.intelligence-owners strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.intelligence-scorecard {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--line-strong);
+}
+
+.intelligence-scorecard span {
+  flex: 1 1 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  background: var(--paper-raised);
+  font: 500 9px/1.35 'DM Mono', ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.intelligence-boundary {
+  padding-left: 12px;
+  margin: 13px 0 0;
+  color: var(--ink-3);
+  border-left: 3px solid var(--intelligence-accent);
+  font: 500 9px/1.65 'DM Mono', ui-monospace, monospace;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 1100px) {
   .hero-command,
   .call-assets,
@@ -1720,6 +1981,18 @@
 
   .team-seats {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .intelligence-owners {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .intelligence-owners > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .intelligence-owners > div:nth-child(-n+2) {
+    border-bottom: 1px solid rgba(247, 245, 241, 0.18);
   }
 
   .route-tabs a {
@@ -1805,8 +2078,15 @@
   }
 
   .value-thesis,
-  .life-upgrade {
+  .life-upgrade,
+  .intelligence-system,
+  .intelligence-decisions {
     grid-template-columns: 1fr;
+  }
+
+  .intelligence-system > article + article {
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 
   .value-thesis > b,
@@ -1899,8 +2179,20 @@
   }
 
   .media-sla,
-  .hiring-triggers {
+  .hiring-triggers,
+  .intelligence-owners {
     grid-template-columns: 1fr;
+  }
+
+  .intelligence-owners > div,
+  .intelligence-owners > div:nth-child(2),
+  .intelligence-owners > div:nth-child(-n+2) {
+    border-right: 0;
+    border-bottom: 1px solid rgba(247, 245, 241, 0.18);
+  }
+
+  .intelligence-owners > div:last-child {
+    border-bottom: 0;
   }
 
   .hiring-triggers div,
