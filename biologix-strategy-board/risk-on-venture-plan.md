@@ -8,35 +8,6 @@
 
 **Current state — evening of July 22, 2026:** Braden confirmed a follow-up meeting for 1:00 CST the next day, sent Alex a private photo showing a substantial batch of outbound Biologix packages, and wrote “Let’s get it brotha.” This confirms active relationship momentum and strengthens the founder-fulfillment thesis. It does not yet establish a paid engagement, data access, authority, equity, or verified economics.
 
-## Proposed owner cash distribution — read first
-
-**Current working ask — not yet agreed:** Excess Cash pays out monthly, 70% to Braden and 30% to Alex. This 30% economic-ownership structure supersedes earlier illustrative 10–20% ranges in this internal plan and becomes binding only in a signed definitive agreement.
-
-At each monthly close:
-
-1. Start with cleared company cash.
-2. Subtract refunds and chargebacks not yet debited.
-3. Subtract accrued taxes, payroll, and accounts payable.
-4. Subtract signed inventory commitments due before the next close and processor obligations not already excluded from cleared cash.
-5. Subtract the approved operating and legal-defense reserve.
-6. Distribute 100% of the remaining Excess Cash: 70% to Braden and 30% to Alex.
-
-Worked hypothetical:
-
-| Monthly cash waterfall | Amount |
-|---|---:|
-| Cleared company cash | $1,000,000 |
-| Liabilities and required reserve | ($300,000) |
-| **Excess Cash** | **$700,000** |
-| Braden — 70% | $490,000 |
-| Alex — 30% | $210,000 |
-
-There is no agreed Required Reserve yet. The proposed holdback consists of accrued taxes, documented refund/chargeback exposure, payroll and incurred accounts payable; approved, executed inventory commitments payable before the next close; processor reserves not already excluded from cleared cash; up to sixty days of the mutually approved operating budget; a fixed-dollar legal/compliance reserve in the signed schedule; and capital expenditures approved in writing by both owners. An optional growth order or a general desire to reinvest does not qualify. A dispute holds only the disputed amount; undisputed Excess Cash still pays on time.
-
-Reinvestment is an individual owner election, not a companywide retention decision. First pay the full $490,000 / $210,000 distribution. Alex keeps his $210,000 and is never required to reinvest it. For example, Braden may wire $300,000 of his own $490,000 back under a separate, mutually approved shareholder note that is booked as a company loan payable to Braden. The note must be unsecured and non-convertible, carry no warrants, votes, collateral, or ownership change, and cannot use principal, interest, or repayment priority to pad the Required Reserve or jump ahead of the monthly waterfall without Alex's written approval.
-
-Braden's mother can remain a trusted finance participant. Alex installs the cash forecast, processor reconciliation, management pack, and independent controller cadence, with read-only bank, processor, and accounting visibility plus narrow approval rights over reserve changes, related-party transfers, and owner benefits. Personal draws and company-funded owner benefits sit in the same 70/30 equalization ledger.
-
 ## The answer in one page
 
 Braden appears to have found an exceptional cash engine. The public evidence does **not** show that he has built an exceptional company.
@@ -66,7 +37,7 @@ If I deliberately accepted Braden-level risk, I would build the **counterfactual
 
 What I would **actually execute first** is a barbell:
 
-- **Track A — fastest learning and cash:** a prepaid source-of-truth sprint inside Biologix, followed by Operating Partner authority only after the records reconcile.
+- **Track A — fastest learning and cash:** a prepaid source-of-truth sprint inside Biologix, followed by President/COO economics only after the records reconcile.
 - **Track B — independent leverage:** an OVO-owned creator-commerce control plane, longevity audience, and low-cost tests that translate the relative appearance signal into possible lawful successor offers.
 
 That gives Alex the upside of the current wave without making his only asset a replaceable vial catalog.
@@ -88,7 +59,7 @@ This remains a shiny-object risk until the evidence earns more attention.
 
 - Before a paid sprint or 100 paid NewCo preorders, cap Alex's independent validation at **40 founder hours and $25,000 of nonrecoverable cash over 30 days**.
 - OVO Academy remains the protected priority until the sprint passes. Existing OVO Talent obligations must be completed or explicitly delegated; Inner DM receives maintenance only if the pilot creates a real resource conflict.
-- No full-time Operating Partner commitment until Alex writes down exactly what is paused, delegated, or exited and who owns each obligation.
+- No full-time President/COO commitment until Alex writes down exactly what is paused, delegated, or exited and who owns each obligation.
 - Require the conservative 12-month value of Alex's cash compensation plus probability-discounted vested equity to exceed the measured opportunity cost of his existing portfolio by at least **3×**. Do not use headline GMV or founder-described “net” in that comparison.
 - If the evidence does not earn the next tranche of time or cash by day 30, stop or keep it as a small merchant/client experiment.
 
@@ -156,7 +127,7 @@ That translation is the core hedge. Own the desire, audience, data, and creator 
 
 ### Inside a verified Braden partnership
 
-The first sale is not another vial. It is a **$50,000 prepaid 30-day Source-of-Truth and Activation Sprint**, with the source-truth decision delivered during the first 10 business days. The second stage, only after verification, activates the Operating Partner mandate, ongoing cash compensation, and the remaining equity schedule.
+The first sale is not another vial. It is a **$50,000 prepaid Source-of-Truth and Scale Sprint**. The second sale, only after verification, is a President/COO operating engagement with contribution economics and earned equity.
 
 Within the descriptive same-risk model, I would merchandise the public top 10 as three clear collections rather than a molecule wall:
 
@@ -461,9 +432,9 @@ If 85% were truly a fully loaded net margin, the entire monthly budget for produ
 
 | Scenario | Monthly sales | AOV | Orders | Operating contribution | Disruption reserve (% of sales) | Contribution after reserve (% of sales) |
 |---|---:|---:|---:|---:|---:|---:|
-| Conservative | $500,000 | $200.00 | 2,500 | $190,000 / 38.0% | $75,000 / 15.0% | $115,000 / 23.0% |
-| Single-day founder extrapolation | $1,606,226 | $247.87 | 6,480 | $796,144 / 49.6% | $321,245 / 20.0% | $474,899 / 29.6% |
-| Optimized engine | $3,000,000 | $275.00 | 10,909 | $1,620,000 / 54.0% | $600,000 / 20.0% | $1,020,000 / 34.0% |
+| Conservative | $500,000 | $200.00 | 2,500 | $205,000 / 41.0% | $75,000 / 15.0% | $130,000 / 26.0% |
+| Single-day founder extrapolation | $1,606,226 | $247.87 | 6,480 | $811,144 / 50.5% | $321,245 / 20.0% | $489,899 / 30.5% |
+| Optimized engine | $3,000,000 | $275.00 | 10,909 | $1,635,000 / 54.5% | $600,000 / 20.0% | $1,035,000 / 34.5% |
 
 These are hypothetical pre-tax planning scenarios, not forecasts. “Operating contribution” is before taxes, financing, owner distributions, inventory write-offs, legal judgments, recalls, seizures, or business interruption. Contribution after a modeled disruption reserve is **not available cash**; settlement delays, processor holds, inventory lead time, affiliate payables, tax reserves, and working capital still matter.
 
@@ -477,11 +448,11 @@ These are hypothetical pre-tax planning scenarios, not forecasts. “Operating c
 | Processing | ($11.15) | 4.5% |
 | Fulfillment, packaging, shipping | ($14.87) | 6.0% |
 | Refund/chargeback cost | ($7.44) | 3.0% |
-| Payroll/software/professional | ($14.71) | 5.9% |
+| Payroll/software/professional | ($12.39) | 5.0% |
 | Fixed creator/content | ($7.44) | 3.0% |
-| **Operating contribution** | **$122.87** | **49.6%** |
+| **Operating contribution** | **$125.18** | **50.5%** |
 | Disruption reserve | ($49.57) | 20.0% |
-| **Contribution after reserve** | **$73.29** | **29.6%** |
+| **Contribution after reserve** | **$75.60** | **30.5%** |
 
 ### Liquidity stress test
 
@@ -491,7 +462,7 @@ At the single-day founder extrapolation, a rough simultaneous-stress buffer is a
 - A 10% processor hold/freeze sensitivity: approximately $160,623.
 - One month of modeled affiliate payable: approximately $208,809.
 - One month of refund/dispute reserve: approximately $48,187.
-- Two months of modeled payroll/software/professional and fixed creator/content: approximately $286,996.
+- Two months of modeled payroll/software/professional and fixed creator/content: approximately $256,996.
 - Additional fulfillment payables and exception cash depending on contract terms.
 
 This is a sensitivity, not a claim that those events occur together. The diligence sprint must obtain actual settlement delay, rolling reserve, payout cycle, supplier deposit, production lead time, inventory days, tax treatment, and accounts-payable terms. The reported $10,000–$12,000 weekly affiliate earnings must also be resolved as **per affiliate versus aggregate**; that single ambiguity materially changes the weighted creator-cost assumption.
@@ -655,7 +626,7 @@ Do not build the full control plane before truth exists:
 
 ## Organization
 
-This is not a CRO role. The permanent scope is Operating Partner: company architecture, finance, people, systems, creator distribution, management cadence, and founder leverage—not merely a revenue channel.
+This is not a CRO role. The operating scope is President/COO, operating partner, or cofounder depending on economics and control.
 
 | Function | Braden | Alex | Other owner |
 |---|---|---|---|
@@ -670,7 +641,7 @@ This is not a CRO role. The permanent scope is Operating Partner: company archit
 
 ### Minimum functions at the single-day founder extrapolation
 
-- Operating Partner.
+- President/COO.
 - Controller or senior finance lead.
 - Operations/3PL manager.
 - Quality/regulatory lead with independent stop authority.
@@ -679,12 +650,11 @@ This is not a CRO role. The permanent scope is Operating Partner: company archit
 - Customer support lead plus coverage scaled to ticket volume.
 - Data/product operator for attribution, ledger, and reporting.
 
-The extrapolation does **not** fund eight senior full-time hires. Its revised monthly assumptions contain approximately $95,311 for payroll/software/professional costs and $48,187 for fixed creator/content work. The extra $15,000 versus the earlier model reflects the current $30,000 Alex + $20,000 OVO structure instead of a single $35,000 operator line. A provisional bridge is:
+The extrapolation does **not** fund eight senior full-time hires. Its monthly assumptions contain approximately $80,311 for payroll/software/professional costs and $48,187 for fixed creator/content work. A provisional bridge is:
 
 | Pool | Illustrative monthly allocation | Amount |
 |---|---|---:|
-| Payroll/software/professional | Alex — Operating Partner compensation | $30,000 |
-|  | OVO managed-services pod | $20,000 |
+| Payroll/software/professional | President/COO | $35,000 |
 |  | Fractional controller | $7,500 |
 |  | Operations/3PL management | $10,000 |
 |  | Fractional quality/regulatory | $10,000 |
@@ -695,7 +665,7 @@ The extrapolation does **not** fund eight senior full-time hires. Its revised mo
 |  | Data/product operations | $8,000 |
 |  | Content production and creative | $22,187 |
 
-Affiliate commissions are separate from those pools. This structure assumes several fractional, shared, or outsourced functions. If actual staffing and professional costs exceed $143,498 monthly, modeled operating contribution falls dollar for dollar; the revised 49.6% scenario remains provisional until the sprint prices the real team.
+Affiliate commissions are separate from those pools. This structure assumes several fractional, shared, or outsourced functions. If actual staffing and professional costs exceed $128,498 monthly, modeled operating contribution falls dollar for dollar; the 50.5% scenario remains provisional until the sprint prices the real team.
 
 Braden's mother can remain a trusted finance participant, but “CFO” must correspond to an actual close, controls, reconciliations, cash forecast, inventory accounting, and management pack.
 
@@ -704,14 +674,13 @@ Braden's mother can remain a trusted finance participant, but “CFO” must cor
 ### Phase 1: prepaid truth sprint
 
 - $50,000 prepaid.
-- 30 calendar days, with the source-truth decision delivered during the first 10 business days.
-- Read-only source access during the truth gate; no statutory title, voting control, inventory, creator activation, guarantees, or authority to bind Biologix.
-- The definitive documents may lock the full 30% award on signing through aggressive reverse vesting, while operational authority and the activation tranche remain subject to the objective go/no-go gate.
+- 10 business days.
+- Read-only source access; no title, inventory, creator activation, guarantees, or equity transfer.
 - Deliver: reconciled 30/90-day sales and contribution bridge, product/creator cohort map, inventory roll-forward, supplier/quality gap register, processor/reserve map, org design, and 90-day operating plan.
 
 ### Positive go/no-go gate
 
-Alex activates long-term operating responsibility only if every gate passes. The economic right can be documented earlier; authority, public role, and live growth do not activate early.
+Alex accepts long-term operating responsibility or equity only if every gate passes:
 
 1. At least 95% of 30/90-day order value reconciles through processor activity and adjusted bank settlements, with every residual difference explained.
 2. Fully loaded collected operating contribution is source-verified at **35% or better** after product, affiliate, payment, fulfillment, refunds/disputes, payroll, software, testing, legal, and ordinary professional costs.
@@ -722,7 +691,7 @@ Alex activates long-term operating responsibility only if every gate passes. The
 7. Creator/customer concentration, refund/dispute rates, and repeat economics support the forecast without one relationship carrying the company.
 8. Braden accepts the role split, information rights, budget, decision rights, and management cadence in writing.
 
-Failing a gate does not automatically mean “walk forever.” It means no permanent title, voting control, personal guarantee, or broad Operating Partner liability. Any initial vested equity and Alex's right to decline activation follow the definitive agreement; Alex may offer a narrow paid remediation or migration project with explicit limits.
+Failing a gate does not automatically mean “walk forever.” It means no equity valuation, title, personal guarantee, or broad President/COO liability. Alex may offer a narrow paid remediation or migration project with explicit limits.
 
 ### Phase 2: choose one economic model
 
@@ -730,11 +699,11 @@ Do not stack a giant base, full revenue share, and cofounder equity. Match econo
 
 | Role | Cash | Performance | Equity logic |
 |---|---:|---:|---|
-| Operating Partner — current working ask | $30K Alex + $20K OVO/month after activation | No companywide revenue share; 70/30 owner distributions | 30% fully diluted: 10% signing, 10% activation, 10% over six months |
-| Limited affiliate/backend fallback | Scoped setup fee | 15% of settled contribution from introduced partners | No companywide operating mandate or 30% owner economics |
+| 90-day transformation operator | $35K–$50K/month | 8–12% of incremental collected contribution | 3–7% earned on explicit delivery milestones |
+| President/COO operating partner | $25K–$40K/month | 5–10% of collected operating contribution above baseline | 10–20% vesting/earned; information and governance rights |
 | True cofounder of a new durable entity | Market-calibrated draw | NewCo distributions | 30–50% of NewCo depending on contributed assets, capital, and time |
 
-A demand-only meme-page deal does not justify 25% of the existing company. The current 30% ask is justified only by a multi-year Operating Partner transformation in which Alex installs the institution, deploys OVO's leverage, and assumes company-building accountability—not merely posting traffic. The quality of the 30% depends on the correct entity, fully diluted definition, distribution covenant, information rights, protection, vesting, and downside—not Braden's screenshot.
+A demand-only meme-page deal does not justify 25% of the existing company. A multi-year President/COO transformation can justify materially more equity because Alex is building the institution, not merely posting traffic. The exact percentage follows verified baseline value, scope, time commitment, control, vesting, and downside—not Braden's screenshot.
 
 ### Durable NewCo boundary
 
@@ -753,26 +722,24 @@ Biologix retains its preexisting brand, catalog, customers, and seller obligatio
 
 ### Recommended ask after the sprint
 
-The current working structure is:
+If source records validate the business and Braden wants Alex truly accountable, open with:
 
-- **Operating Partner through OVO Labs**, not CRO, affiliate manager, or statutory officer.
-- **$50,000 prepaid Source-of-Truth and Activation Sprint** covering the first 30 days; separate third-party growth budgets remain Biologix expenses.
-- Beginning day 31: **$30,000 monthly Alex compensation plus a $20,000 monthly OVO managed-services fee**.
-- **30% fully diluted equity locked in the definitive documents**: working schedule of 10% vested on signing, 10% on objective activation, and 10% over the next six months, with defined acceleration and protection.
-- **Mandatory monthly Excess Cash distribution**: 70% Braden and 30% Alex after the signed Required Reserve formula.
-- No ongoing companywide revenue share in the full Operating Partner package. The 15% introduced-partner share belongs only to the limited fallback lane.
-- Information rights, narrow protective approvals, approved budget, advancement/indemnity and insurance review, IP/data boundaries, and a clean exit are part of the economics.
+- **President/COO mandate**, not CRO or affiliate manager.
+- **$40,000 monthly base plus 20% fully diluted equity**, with ordinary vesting and defined acceleration/protection.
+- Expected landing zone: **$30,000–$35,000 monthly plus 15% equity**, with a further 5% earned only on agreed source-verified milestones.
+- No ongoing revenue share in that package. If Braden wants less equity, trade it for incremental collected-contribution economics; do not simply give equity away and keep every other term flat.
+- Information rights, operating decision rights, approved budget, D&O/indemnity and insurance review, IP/data boundaries, and a clean exit are part of the economics.
 
-That ask is justified only for a multi-year company-building role. Traffic alone never earns it, and none of these terms are agreed until signed.
+That ask is justified only for a multi-year company-building role. Traffic alone never earns it.
 
 ## Current Braden path: meeting confirmed
 
 | Braden response | Alex's move | Commercial boundary |
 |---|---|---|
 | **Meeting confirmed — current state** | Reconfirm the goal, walk through the three leaks, request the source-proof sequence, and close the prepaid sprint | Positive tone is not payment, access, authority, equity, or a completed partnership |
-| Accepts the sprint | Sign access protocol, receive $50,000, obtain read-only records, and start the 30-day activation with a first-10-business-day source-to-bank decision | The 10% signing tranche follows the definitive documents; no live operating authority, public role, creator activation, or broad liability begins before the source-truth gate |
-| Wants “just traffic” | Offer the limited lane: scoped setup plus 15% of settled contribution from accepted Alex-introduced partners | No permanent exclusivity, no customer-data transfer beyond purpose, no promises outside approved claims |
-| Wants Alex to run the company | Complete the sprint first, then activate the Operating Partner package above | Authority, access, economics, indemnity, and exit must match accountability |
+| Accepts the sprint | Sign access protocol, receive $50,000, obtain read-only records, and start the first-10-business-day source-to-bank reconciliation | No equity valuation or operating liability before truth |
+| Wants “just traffic” | Offer a capped 30-day pilot: up to five creators, explicit baseline and attribution, $25,000 setup plus 15% of incremental collected contribution | No permanent exclusivity, no customer-data transfer beyond purpose, no promises outside approved claims |
+| Wants Alex to run the company | Complete the sprint first, then present the President/COO package above | Authority, access, economics, indemnity, and exit must match accountability |
 | Likes the ideas but refuses access or payment | Leave a one-page outcome map and stop free architecture | No more detailed systems, creator intros, or operating work |
 | Replies with a no | Preserve the relationship and proceed with NewCo using only public information and Alex-owned relationships | Do not use confidential call facts or Biologix IP |
 | Meeting slips with a concrete reset | Accept one specific replacement time and keep preparing the sprint | No indefinite rescheduling or additional free architecture |

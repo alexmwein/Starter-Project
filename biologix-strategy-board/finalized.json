@@ -4,6 +4,7 @@
   "mode": "freeform-with-existing-board-reference",
   "html_files": [
     "index.html",
+    "deal-structure.html",
     "operating-reference.html",
     "execution.html",
     "venture-model.html",
@@ -11,10 +12,10 @@
   ],
   "pretext_tier": "card-grid",
   "framework": "vanilla",
-  "iterations": 3,
-  "date": "2026-07-22",
+  "iterations": 4,
+  "date": "2026-07-23",
   "screen": "biologix-strategy-board",
   "branch": "scaling-strategy",
   "visual_authority": "claude-fable-5",
-  "visual_review": "approved-for-internal-use"
+  "visual_review": "approved-by-claude-fable-5"
 }
