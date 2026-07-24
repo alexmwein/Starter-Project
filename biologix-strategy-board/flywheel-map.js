@@ -1,7 +1,7 @@
 import { layout, prepare } from './flywheel-map-pretext.js';
 
-const CANVAS_WIDTH = 1820;
-const CANVAS_HEIGHT = 1050;
+const CANVAS_WIDTH = 2060;
+const CANVAS_HEIGHT = 1260;
 const MIN_SCALE = 0.42;
 const MAX_SCALE = 1.8;
 

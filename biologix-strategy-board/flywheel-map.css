@@ -220,8 +220,8 @@ button:focus-visible,
   position: absolute;
   top: 0;
   left: 0;
-  width: 1820px;
-  height: 1050px;
+  width: 2060px;
+  height: 1260px;
   overflow: hidden;
   border: 1px solid #c4beb4;
   background-color: var(--paper);
@@ -330,15 +330,15 @@ button:focus-visible,
 .control-plane {
   position: absolute;
   top: 24px;
-  left: 30px;
+  left: 40px;
   z-index: 3;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 30px;
   align-items: center;
-  width: 1760px;
-  height: 66px;
-  padding: 12px 18px;
+  width: 1980px;
+  height: 72px;
+  padding: 13px 20px;
   border: 1px solid var(--forest);
   border-radius: 7px;
   color: #fff;
@@ -404,31 +404,31 @@ button:focus-visible,
 }
 
 .demand-label {
-  top: 110px;
-  left: 70px;
+  top: 120px;
+  left: 80px;
 }
 
 .customer-label {
-  top: 110px;
-  left: 1080px;
+  top: 120px;
+  left: 1260px;
   color: var(--slate);
 }
 
 .affiliate-label {
-  top: 505px;
-  left: 720px;
+  top: 590px;
+  left: 1090px;
   color: var(--forest);
 }
 
 .community-label {
-  top: 690px;
-  left: 70px;
+  top: 845px;
+  left: 80px;
   color: var(--brown);
 }
 
 .intelligence-label {
-  top: 805px;
-  left: 720px;
+  top: 1030px;
+  left: 600px;
   color: var(--slate);
 }
 
@@ -445,7 +445,7 @@ article.node {
   z-index: 3;
   width: 220px;
   min-height: 100px;
-  padding: 17px 18px 15px;
+  padding: 19px 20px 17px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: rgba(255, 254, 250, 0.98);
@@ -463,11 +463,12 @@ article.node:focus-visible {
   display: block;
   margin-bottom: 8px;
   color: var(--ink-3);
+  font-size: 9.5px;
 }
 
 .node h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
@@ -477,7 +478,7 @@ article.node:focus-visible {
   overflow: hidden;
   margin: 7px 0 0;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.42;
 }
 
@@ -544,46 +545,46 @@ article.node:focus-visible {
 }
 
 #node-owned-media {
-  top: 140px;
-  left: 70px;
-  width: 280px;
-  height: 130px;
+  top: 150px;
+  left: 80px;
+  width: 300px;
+  height: 155px;
 }
 
 #node-podcast {
-  top: 140px;
-  left: 400px;
-  width: 270px;
-  height: 130px;
+  top: 150px;
+  left: 430px;
+  width: 300px;
+  height: 155px;
   border-top-color: var(--brown);
 }
 
 #node-creator-media {
-  top: 300px;
-  left: 70px;
-  width: 280px;
-  height: 130px;
-}
-
-#node-community-proof {
-  top: 460px;
-  left: 70px;
-  width: 280px;
-  height: 130px;
-}
-
-#node-distribution {
-  top: 300px;
-  left: 400px;
-  width: 270px;
+  top: 330px;
+  left: 80px;
+  width: 300px;
   height: 145px;
 }
 
+#node-community-proof {
+  top: 510px;
+  left: 80px;
+  width: 300px;
+  height: 145px;
+}
+
+#node-distribution {
+  top: 330px;
+  left: 430px;
+  width: 300px;
+  height: 160px;
+}
+
 #node-outbound {
-  top: 480px;
-  left: 400px;
-  width: 270px;
-  height: 115px;
+  top: 525px;
+  left: 430px;
+  width: 300px;
+  height: 130px;
 }
 
 .channel-row,
@@ -607,11 +608,11 @@ article.node:focus-visible {
 }
 
 #node-inbound-engine {
-  top: 290px;
-  left: 740px;
-  width: 310px;
-  height: 200px;
-  padding: 21px 22px;
+  top: 320px;
+  left: 820px;
+  width: 360px;
+  height: 220px;
+  padding: 23px 24px;
   border: 2px solid var(--forest);
   background: #fff;
   box-shadow: 0 13px 30px rgba(31, 61, 43, 0.13);
@@ -641,92 +642,92 @@ article.node:focus-visible {
 }
 
 #node-answer {
-  top: 140px;
-  left: 1100px;
-  width: 200px;
-  height: 135px;
+  top: 150px;
+  left: 1260px;
+  width: 230px;
+  height: 150px;
 }
 
 #node-tracked-page {
-  top: 140px;
-  left: 1340px;
-  width: 190px;
-  height: 135px;
+  top: 150px;
+  left: 1540px;
+  width: 220px;
+  height: 150px;
 }
 
 #node-commerce {
-  top: 140px;
-  left: 1580px;
+  top: 150px;
+  left: 1810px;
   width: 210px;
-  height: 135px;
+  height: 150px;
 }
 
 #node-retention {
-  top: 330px;
-  left: 1510px;
+  top: 360px;
+  left: 1740px;
   width: 280px;
-  height: 120px;
+  height: 140px;
 }
 
 #node-patricia {
-  top: 535px;
-  left: 720px;
-  width: 210px;
-  height: 130px;
+  top: 630px;
+  left: 800px;
+  width: 235px;
+  height: 145px;
 }
 
 #node-close {
-  top: 535px;
-  left: 970px;
-  width: 210px;
-  height: 130px;
+  top: 630px;
+  left: 1090px;
+  width: 235px;
+  height: 145px;
 }
 
 #node-activate {
-  top: 535px;
-  left: 1220px;
-  width: 220px;
-  height: 130px;
+  top: 630px;
+  left: 1380px;
+  width: 250px;
+  height: 145px;
 }
 
 #node-managed {
-  top: 535px;
-  left: 1480px;
-  width: 280px;
-  height: 130px;
+  top: 630px;
+  left: 1685px;
+  width: 335px;
+  height: 145px;
 }
 
 #node-selected {
-  top: 720px;
-  left: 70px;
-  width: 250px;
-  height: 105px;
+  top: 875px;
+  left: 80px;
+  width: 270px;
+  height: 125px;
 }
 
 #node-experience {
-  top: 710px;
-  left: 360px;
-  width: 260px;
-  height: 115px;
+  top: 875px;
+  left: 410px;
+  width: 300px;
+  height: 135px;
 }
 
 #node-content-bank {
-  top: 710px;
-  left: 680px;
-  width: 260px;
-  height: 115px;
+  top: 875px;
+  left: 770px;
+  width: 300px;
+  height: 135px;
 }
 
 .intelligence-plane {
   position: absolute;
-  top: 835px;
-  left: 720px;
+  top: 1060px;
+  left: 600px;
   z-index: 3;
   display: grid;
   grid-template-columns: 1.05fr 28px 1fr 28px 1.42fr;
   gap: 0;
   align-items: stretch;
-  width: 1070px;
+  width: 1420px;
   height: 150px;
   padding: 40px 12px 12px;
   border: 1px solid var(--slate);
@@ -811,8 +812,8 @@ article.node:focus-visible {
   position: absolute;
   inset: 0;
   z-index: 1;
-  width: 1820px;
-  height: 1050px;
+  width: 2060px;
+  height: 1260px;
   overflow: visible;
   pointer-events: none;
 }
@@ -825,7 +826,7 @@ article.node:focus-visible {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.2px;
+  stroke-width: 2.1px;
 }
 
 .edge text {
@@ -833,9 +834,9 @@ article.node:focus-visible {
   paint-order: stroke;
   stroke: var(--paper);
   stroke-linejoin: round;
-  stroke-width: 6px;
+  stroke-width: 7px;
   font-family: 'DM Mono', ui-monospace, monospace;
-  font-size: 8px;
+  font-size: 8.5px;
   letter-spacing: 0.02em;
 }
 
@@ -868,11 +869,11 @@ article.node:focus-visible {
 }
 
 .primary-edge path {
-  stroke-width: 2.8px;
+  stroke-width: 2.7px;
 }
 
 .primary-loop path {
-  stroke-width: 3.6px;
+  stroke-width: 3.2px;
 }
 
 .return-edge path {
@@ -898,7 +899,7 @@ article.node:focus-visible {
 .legend {
   position: absolute;
   bottom: 21px;
-  left: 34px;
+  left: 40px;
   z-index: 5;
   display: flex;
   gap: 18px;
