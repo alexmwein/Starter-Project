@@ -8,7 +8,7 @@
   --line-strong: #c9d0d9;
   --ink: #101317;
   --text-2: #5b6472;
-  --text-3: #7b8491;
+  --text-3: #687180;
   --cobalt: #1f3fcf;
   --cobalt-deep: #1832a8;
   --cobalt-tint: #eef1fd;
@@ -1653,6 +1653,10 @@ button:disabled {
   margin: 14px 0 0;
   color: #9ca5b2;
   font-size: 12px;
+}
+
+.site-footer .wordmark-category {
+  color: #9ca5b2;
 }
 
 .footer-column h2 {
