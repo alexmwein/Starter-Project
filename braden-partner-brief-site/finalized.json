@@ -2,7 +2,7 @@
   "screen": "biologix-operating-partnership-brief",
   "mode": "freeform",
   "framework": "react-vinext",
-  "source_file": "pages/index.jsx",
+  "source_file": "app/page.jsx",
   "style_file": "styles/site.css",
   "pretext_tier": "simple-layout",
   "design_authority": "claude-fable-5",

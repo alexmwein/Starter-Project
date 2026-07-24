@@ -1,4 +1,5 @@
-import Head from "next/head";
+"use client";
+
 import { useEffect } from "react";
 
 const navItems = [
@@ -177,34 +178,6 @@ export default function Home() {
 
   return (
     <>
-      <Head>
-        <title>Biologix × OVO — Operating Partnership Brief</title>
-        <meta
-          name="description"
-          content="A founder-to-founder operating partnership brief prepared for Braden Lowder."
-        />
-        <meta name="robots" content="noindex,nofollow,noarchive" />
-        <meta
-          property="og:title"
-          content="Biologix × OVO — Operating Partnership"
-        />
-        <meta
-          property="og:description"
-          content="A founder-to-founder brief prepared for Braden Lowder."
-        />
-        <meta name="theme-color" content="#f7f4ee" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,540&family=Manrope:wght@400;600;800&display=swap"
-          rel="stylesheet"
-        />
-      </Head>
-
       <header className="site-header">
         <div className="header-shell">
           <a className="wordmark" href="#top" aria-label="Back to the top">
