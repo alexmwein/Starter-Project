@@ -1,6 +1,29 @@
-# Third Standard — Fable 5 Design Authority
+# Third Standard: Fable 5 Design Authority
 
-*Authored by Claude Fable 5 on July 23, 2026. This is the locked visual contract for the outward-facing site.*
+*Authored by Claude Fable 5 on July 23, 2026. Peptide catalog extension authored on July 24, 2026. This is the locked visual contract for the outward-facing site.*
+
+## Peptide catalog extension
+
+The fiction notice is a static strip above the header. It is not sticky and does not behave like a promotion. Use `--field`, one bottom hairline, ink text, and 11px uppercase mono. The exact notice is:
+
+> Fictional concept. Nothing described here exists, is stocked, or is offered for sale.
+
+The primary catalog label is **Peptides**. The homepage may preview three records; the peptide index contains eight. Entries use ruled editorial rows, never commerce cards, product renders, prices, stock signals, badges, or promotional imagery.
+
+The homepage registration line is `Peptide research materials · Lot documentation`. Eligibility remains a secondary route: it appears in the mobile overlay and footer, while the desktop primary navigation preserves the five-item hierarchy.
+
+Each named dossier follows one stable hierarchy:
+
+1. name, program code, material class, and current state;
+2. a five-row status ledger for identity, specification, characterization, lot, and availability;
+3. the planned record structure;
+4. the evidence boundary;
+5. one research-profile action;
+6. related named dossiers.
+
+The evidence state is part of the product interface. No visual treatment may imply a released lot, completed test, certificate, inventory state, reservation, or commercial offer. Missing proof is written as a direct state, not hidden behind an empty card or disabled control.
+
+At narrow widths the notice may wrap, peptide rows collapse to one column, identity cells stack, and the status ledger becomes a readable vertical record. No essential evidence state disappears.
 
 ## Brand verdict
 
@@ -22,7 +45,7 @@ The wordmark is `Third Standard` in the display serif, title case, 0.18em tracki
 - Display: Cormorant Garamond 400/500.
 - Editorial text: Source Serif 4 400/400 italic/600.
 - Interface and metadata: IBM Plex Mono 400/500.
-- Type scale: 72/1.05 hero, 40/1.15 H2, 24/1.35 H3, 17/1.65 body, 13/1.5 caption, 11/1.4 mono.
+- Type scale: hero clamps to 82px desktop and 46px mobile; H2 clamps to 54px desktop and 40px mobile; H3 is 26px; body is 17/1.65; mono metadata is 11/1.45.
 - Spacing scale: 8, 16, 24, 40, 64, 104, 168.
 - Desktop sections: 168px top, 104px bottom.
 - Mobile sections: 64px top, 40px bottom.
@@ -64,7 +87,7 @@ The wordmark is `Third Standard` in the display serif, title case, 0.18em tracki
 
 ## Responsive contract
 
-At 375px the page is single-column. The nav becomes the wordmark plus the word `Menu`; the overlay uses 24px serif links. Hero type is 44/1.1. The image moves beneath the copy and bleeds to the viewport edges. Tables become definition lists when possible. Tap targets are at least 44px.
+At 375px the page is single-column. The nav becomes the wordmark plus the word `Menu`; the overlay uses 26px serif links. Hero type is 46/1.05. The image moves beneath the copy and bleeds to the viewport edges. Tables become definition lists when possible. Tap targets are at least 44px.
 
 ## Signature moments
 
@@ -84,3 +107,11 @@ At 375px the page is single-column. The nav becomes the wordmark plus the word `
 - No urgency, consumer, medical, or transformation language.
 - No unverified proof.
 - No sentence that would sound evasive when read aloud in an audit.
+
+## Final rendered review
+
+On July 24, 2026, Fable reviewed the implemented homepage, peptide index, mobile menu, and Retatrutide dossier at 1440px and 375px.
+
+The first review held the narrow-width release because the desktop second-column width leaked into stacked schema rows. The mobile stylesheet now explicitly gives the second cell `width: 100%`. Re-rendered dossier and homepage Lot Record evidence measured 327px cells inside 327px rows, with a 375px document width and no horizontal overflow.
+
+**Final verdict: SHIP.** Fable approves the outward-facing release at both 1440px and 375px.

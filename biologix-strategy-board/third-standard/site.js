@@ -161,7 +161,7 @@
 
     const data = new FormData(form);
     const lines = [
-      "THIRD STANDARD — RESEARCH ACCESS FILE",
+      "THIRD STANDARD: RESEARCH ACCESS FILE",
       "",
       `Prepared: ${new Date().toISOString()}`,
       `Organization: ${safeLine(data.get("organization"))}`,

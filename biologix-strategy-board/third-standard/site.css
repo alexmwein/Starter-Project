@@ -12,6 +12,7 @@
   --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --max: 1200px;
+  --notice-height: 40px;
   color-scheme: light;
 }
 
@@ -89,6 +90,25 @@ a {
 
 .skip-link:focus {
   transform: translateY(0);
+}
+
+.concept-notice {
+  min-height: var(--notice-height);
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--rule);
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  line-height: 1.45;
+  text-transform: uppercase;
+}
+
+.concept-notice p {
+  width: min(calc(100% - 80px), var(--max));
+  margin: 0 auto;
 }
 
 .site-header {
@@ -188,7 +208,7 @@ a {
 .mobile-menu {
   position: fixed;
   z-index: 90;
-  inset: 73px 0 0;
+  inset: calc(73px + var(--notice-height)) 0 0;
   display: none;
   padding: 48px 24px;
   background: var(--paper);
@@ -641,6 +661,113 @@ a {
   align-self: baseline;
 }
 
+.peptide-index {
+  margin-top: 56px;
+}
+
+.peptide-row {
+  display: grid;
+  grid-template-columns: 94px 2.2fr 3fr 1.4fr auto;
+  gap: 24px;
+  align-items: baseline;
+  min-height: 92px;
+  padding-block: 26px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.peptide-row:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+
+.peptide-row p,
+.peptide-row span {
+  margin: 0;
+}
+
+.peptide-row .record-id,
+.peptide-row .record-state,
+.peptide-row .row-action {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  line-height: 1.45;
+  text-transform: uppercase;
+}
+
+.peptide-row .peptide-name {
+  font-family: var(--serif-display);
+  font-size: 27px;
+  line-height: 1.1;
+  transition: color 160ms var(--ease);
+}
+
+.peptide-row .peptide-class {
+  color: var(--muted);
+}
+
+.peptide-row .record-state {
+  color: var(--accent);
+}
+
+.peptide-row:hover .peptide-name,
+.peptide-row:focus-visible .peptide-name {
+  color: var(--accent);
+}
+
+.peptide-row .row-action {
+  white-space: nowrap;
+}
+
+.index-disclaimer {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.dossier-status {
+  margin-top: 44px;
+}
+
+.dossier-identity {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.identity-cell {
+  min-height: 112px;
+  padding: 22px 24px 22px 0;
+}
+
+.identity-cell + .identity-cell {
+  padding-left: 24px;
+  border-left: 1px solid var(--rule);
+}
+
+.identity-cell p {
+  margin: 8px 0 0;
+}
+
+.identity-cell .label {
+  margin: 0;
+  color: var(--muted);
+}
+
+.dossier-boundary {
+  max-width: 760px;
+}
+
+.dossier-boundary strong {
+  font-weight: 600;
+}
+
 .status {
   color: var(--accent);
 }
@@ -904,6 +1031,20 @@ a {
 }
 
 @media (max-width: 700px) {
+  :root {
+    --notice-height: 64px;
+  }
+
+  .concept-notice {
+    min-height: var(--notice-height);
+    padding-block: 8px;
+    letter-spacing: 0.08em;
+  }
+
+  .concept-notice p {
+    width: min(calc(100% - 32px), var(--max));
+  }
+
   .header-inner,
   .shell {
     width: min(calc(100% - 48px), var(--max));
@@ -914,7 +1055,7 @@ a {
   }
 
   .mobile-menu {
-    inset: 65px 0 0;
+    inset: calc(65px + var(--notice-height)) 0 0;
   }
 
   .wordmark {
@@ -1012,6 +1153,10 @@ a {
     margin-top: 8px;
   }
 
+  .schema-table td:nth-child(2) {
+    width: 100%;
+  }
+
   .schema-table .annotation {
     margin-top: 14px;
     opacity: 1;
@@ -1060,6 +1205,44 @@ a {
   .material-row {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+
+  .peptide-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    min-height: 0;
+    padding-block: 28px;
+  }
+
+  .peptide-row .record-state {
+    grid-row: 3;
+  }
+
+  .peptide-row .peptide-class {
+    grid-row: 4;
+  }
+
+  .peptide-row .row-action {
+    grid-row: 5;
+    min-height: 44px;
+    display: flex;
+    align-items: flex-end;
+    margin-top: 4px;
+  }
+
+  .dossier-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-cell {
+    min-height: 0;
+    padding: 20px 0;
+  }
+
+  .identity-cell + .identity-cell {
+    padding-left: 0;
+    border-top: 1px solid var(--rule);
+    border-left: 0;
   }
 
   .criteria-list li {
