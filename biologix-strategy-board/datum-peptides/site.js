@@ -10,6 +10,7 @@
   const PRODUCT_SLUG = body.dataset.product || "";
   const CART_KEY = "datum-demo-cart-v2";
   const RECENT_KEY = "datum-recent-products-v1";
+  const NEWSLETTER_KEY = "datum-newsletter-preference-v1";
   const MAX_QUANTITY = 10;
 
   const money = new Intl.NumberFormat("en-US", {
@@ -911,7 +912,7 @@
               ["Are the product descriptions medical advice?", "No. They identify proposed catalog references and formats only."],
               ["How does search work?", "Search by peptide name, category, blend name, or catalog code such as DP-001. Keyboard users can move through predictive results with the arrow keys."],
               ["Why are there no customer reviews?", "There are no customers or order history. Datum does not fabricate ratings, testimonials, or purchase activity."],
-              ["What information does this site store?", "Cart contents and recently viewed product codes can be stored locally in your browser. Nothing is transmitted to a company or server."],
+              ["What information does this site store?", "Cart contents, recently viewed product codes, and the newsletter preference can be stored locally in your browser. Nothing is transmitted to a company or server."],
               ["How do I remove locally saved information?", "Use Clear cart in the cart drawer. You can also clear this site’s browser storage to remove all local state."],
             ])}
           </div>
@@ -1841,6 +1842,21 @@
 
   function initNewsletter() {
     document.querySelectorAll("[data-newsletter]").forEach((form) => {
+      const success = form.parentElement.querySelector("[data-newsletter-success]");
+      const showSuccess = (persisted) => {
+        form.hidden = true;
+        success.hidden = false;
+        success.textContent = persisted
+          ? "Preference saved on this device. Nothing was transmitted, and no email will be sent."
+          : "Preference confirmed for this page only. Nothing was transmitted, and no email will be sent.";
+      };
+
+      try {
+        if (localStorage.getItem(NEWSLETTER_KEY) === "saved") showSuccess(true);
+      } catch {
+        // Storage can be unavailable in locked-down browsers; submission still remains local to the page.
+      }
+
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const input = form.querySelector('input[type="email"]');
@@ -1848,11 +1864,15 @@
           input.reportValidity();
           return;
         }
-        form.hidden = true;
-        const success = form.parentElement.querySelector("[data-newsletter-success]");
-        success.hidden = false;
-        success.textContent = "Preference saved on this device. Nothing was transmitted, and no email will be sent.";
-        track("newsletter_demo_completed", { storage: "none", transmitted: false });
+        let persisted = false;
+        try {
+          localStorage.setItem(NEWSLETTER_KEY, "saved");
+          persisted = localStorage.getItem(NEWSLETTER_KEY) === "saved";
+        } catch {
+          persisted = false;
+        }
+        showSuccess(persisted);
+        track("newsletter_demo_completed", { storage: persisted ? "local" : "none", transmitted: false });
       });
     });
   }
