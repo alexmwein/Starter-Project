@@ -1378,6 +1378,85 @@ main {
   margin: 96px 0 0;
 }
 
+/* Owner cash-distribution brief */
+
+.cash-brief {
+  padding-top: 64px;
+}
+
+.cash-brief .evidence-grid {
+  margin-top: 32px;
+}
+
+.cash-waterfall {
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--ink);
+  list-style: none;
+}
+
+.cash-waterfall li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.cash-waterfall li:first-child {
+  border-top: 0;
+  font-weight: 600;
+}
+
+.cash-waterfall .op {
+  color: var(--ink-3);
+  font: 500 12px/1.7 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cash-waterfall li.result {
+  border-top: 1px solid var(--ink);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.cash-example .sprint-term.is-result {
+  margin-top: -1px;
+  border-top: 1px solid var(--ink);
+}
+
+.cash-example .sprint-term.is-result strong {
+  font-size: 16px;
+}
+
+.split-track {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin: 16px 0 8px;
+}
+
+.split-track .split-braden {
+  width: 70%;
+  background: var(--ink);
+}
+
+.split-track .split-alex {
+  width: 30%;
+  background: var(--ink-3);
+}
+
+.operating-table,
+.gate-table {
+  min-width: 560px;
+}
+
+.economics-guardrails {
+  margin-top: 32px;
+}
+
 @media (max-width: 1024px) {
   .page-shell {
     width: min(var(--max-width), calc(100% - 64px));
@@ -1746,7 +1825,9 @@ main {
   table,
   tr,
   .verdict-block,
-  .emphasis-block {
+  .emphasis-block,
+  .cash-brief .two-column-test,
+  .cash-brief .evidence-column {
     break-inside: avoid;
   }
 
