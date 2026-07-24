@@ -1,6 +1,6 @@
 # Biologix strategy board
 
-An internal six-view decision system for evaluating and executing the Biologix opportunity without letting it become an ungated distraction.
+An internal seven-view decision system for evaluating and executing the Biologix opportunity without letting it become an ungated distraction.
 
 Open `index.html` directly or serve this directory over HTTP. All navigation, filters, expansion controls, and text layout work without a backend.
 
@@ -11,7 +11,8 @@ Open `index.html` directly or serve this directory over HTTP. All navigation, fi
 3. **Operating reference** — the paid sprint, 90-day roadmap, role, economics, NewCo boundary, reveal policy, proof gates, and walk-away conditions.
 4. **Execution** — the confirmed founder meeting, immediate preparation, live paid-sprint path, and independent contingency.
 5. **Venture model** — the full risk-on counterfactual: public demand signals, Version 2 operating architecture, creator system, economics, counterparty gates, and 90-day sequence.
-6. **Market research** — the reading room for source evidence, competitive context, and funnel research.
+6. **Affiliate flywheel** — the recruit-to-close-to-activation operating flow, creator-management system, retreat loop, decision controls, scorecard, and build order.
+7. **Market research** — the reading room for source evidence, competitive context, and funnel research.
 
 ## Evidence standard
 
