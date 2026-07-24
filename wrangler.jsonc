@@ -5,10 +5,18 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "main": "vinext/server/fetch-handler",
+  "main": "src/worker.js",
   "assets": {
     "directory": "dist/client",
     "not_found_handling": "404-page",
+    "run_worker_first": [
+      "/ovo-labs",
+      "/ovo-labs/*",
+      "/datum-peptides",
+      "/datum-peptides/*",
+      "/third-standard",
+      "/third-standard/*"
+    ],
     "binding": "ASSETS"
   }
 }
