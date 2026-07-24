@@ -1282,9 +1282,9 @@
   let lastFocusedElement = null;
   let toastTimer = null;
 
-  function saveCart() {
+  function saveCart(preferredFocusSelector) {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    renderCart();
+    renderCart(preferredFocusSelector);
   }
 
   function cartItemData(slug) {
@@ -1298,7 +1298,19 @@
     }, 0);
   }
 
-  function renderCart() {
+  function restoreCartFocus(preferredFocusSelector) {
+    if (preferredFocusSelector === undefined) return;
+    const drawer = document.querySelector("[data-cart-drawer]");
+    if (!drawer || drawer.dataset.open !== "true") return;
+    const preferred = preferredFocusSelector ? drawer.querySelector(preferredFocusSelector) : null;
+    const fallback =
+      drawer.querySelector("[data-cart-quantity]") ||
+      drawer.querySelector("[data-remove-product]") ||
+      drawer.querySelector("[data-cart-close]");
+    (preferred || fallback)?.focus();
+  }
+
+  function renderCart(preferredFocusSelector) {
     const count = cart.reduce((total, item) => total + item.quantity, 0);
     document.querySelectorAll("[data-cart-count]").forEach((element) => {
       element.textContent = String(count);
@@ -1322,6 +1334,7 @@
       footerRoot.innerHTML = `
         <p class="cart-terminus">This is where the demo ends. Nothing is stocked, sold, or shippable. No order, account, payment, or message is created.</p>
       `;
+      restoreCartFocus(preferredFocusSelector);
       return;
     }
 
@@ -1357,6 +1370,7 @@
       <p class="cart-terminus"><strong>This is where the demo ends.</strong> Nothing is stocked, sold, or shippable. This cart is stored only in your browser; no order, account, payment, or message is created.</p>
       <button class="button button-secondary" type="button" data-clear-cart>Clear cart</button>
     `;
+    restoreCartFocus(preferredFocusSelector);
   }
 
   function addToCart(slug, quantity = 1) {
@@ -1397,7 +1411,11 @@
         demo_only: true,
       });
     }
-    saveCart();
+    saveCart(
+      line.quantity === 0
+        ? null
+        : `[data-cart-quantity="${CSS.escape(slug)}"][data-delta="${delta}"]`,
+    );
   }
 
   function showToast(message) {
@@ -1483,7 +1501,7 @@
       if (target.dataset.removeProduct) {
         const item = cartItemData(target.dataset.removeProduct);
         cart = cart.filter((line) => line.slug !== target.dataset.removeProduct);
-        saveCart();
+        saveCart(null);
         if (item) {
           showToast(`${item.name} removed from the cart.`);
           track("remove_from_cart", { item_id: item.code, item_name: item.name, demo_only: true });
@@ -1492,7 +1510,7 @@
 
       if (target.matches("[data-clear-cart]")) {
         cart = [];
-        saveCart();
+        saveCart(null);
         showToast("Cart cleared.");
         track("cart_cleared", { demo_only: true });
       }
