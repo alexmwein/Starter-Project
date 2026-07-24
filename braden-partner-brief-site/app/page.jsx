@@ -5,10 +5,10 @@ import { useEffect } from "react";
 const navItems = [
   ["Thesis", "#thesis"],
   ["Role", "#role"],
-  ["System", "#system"],
+  ["Build", "#system"],
   ["Engine", "#engine"],
-  ["Economics", "#economics"],
-  ["Next step", "#next"]
+  ["Leverage", "#leverage"],
+  ["Start", "#next"]
 ];
 
 const creatorStages = [
@@ -46,28 +46,6 @@ function SectionHead({ index, title, intro, id, titleId }) {
       </div>
       <p>{intro}</p>
     </div>
-  );
-}
-
-function TermRow({ label, value, strong = false }) {
-  return (
-    <div className={`term-row${strong ? " term-row-strong" : ""}`}>
-      <span className="term-label">{label}</span>
-      <strong className="term-value">{value}</strong>
-    </div>
-  );
-}
-
-function NumberedList({ items }) {
-  return (
-    <ol className="numbered-list">
-      {items.map((item, index) => (
-        <li key={item}>
-          <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
-          <p>{item}</p>
-        </li>
-      ))}
-    </ol>
   );
 }
 
@@ -115,10 +93,7 @@ export default function Home() {
     let relayoutOnResize;
     let disposed = false;
 
-    Promise.all([
-      document.fonts.ready,
-      import("@chenglou/pretext")
-    ])
+    Promise.all([document.fonts.ready, import("@chenglou/pretext")])
       .then(([, pretext]) => {
         if (disposed) return;
 
@@ -196,24 +171,21 @@ export default function Home() {
       <main id="top">
         <header className="hero page-shell">
           <p className="eyebrow">
-            Founder-to-founder brief · Prepared for Braden Lowder · July 2026
+            Founder-to-founder partnership brief · Prepared for Braden Lowder
           </p>
           <h1>
-            Biologix already has extraordinary demand. This partnership builds
-            the company that holds it —{" "}
-            <span>and multiplies it.</span>
+            You proved the demand. Together, we build the company capable of{" "}
+            <span>owning the category.</span>
           </h1>
           <p className="standfirst">
-            What you built is rare: real demand, category authority, sourcing
-            depth, and a brand people chase — all before the company underneath
-            it existed. That is not a flaw. It is proof of how much leverage is
-            still on the table. This brief lays out the partnership that installs
-            the company layer: one operating partner, one accountable delivery
-            team, and one clean set of economics.
+            Braden, you built what most founders never find: trust, demand,
+            category knowledge, sourcing depth, and a brand people actively
+            chase. Alex brings the operating system, team, creator network, and
+            management leverage that turn that momentum into a company that can
+            scale without consuming you.
           </p>
           <p className="meta-line">
-            Discussion framework — not a contract · Unlisted link · Prepared by
-            Alex Gunnarsson
+            Partnership vision · Unlisted link · Prepared by Alex Gunnarsson
           </p>
         </header>
 
@@ -222,42 +194,41 @@ export default function Home() {
             <SectionHead
               id="thesis"
               titleId="thesis-title"
-              index="01 / The thesis"
-              title="What you built. What the next stage requires."
-              intro="Nothing here is a critique. Demand outran infrastructure because the demand was real."
+              index="THE THESIS"
+              title="The hard part already exists. Now we build around it."
+              intro="This partnership combines two things that are rarely found in the same room: category authority and operating leverage."
             />
             <div className="split-panel">
               <article>
-                <h3>You built the part that can&apos;t be bought</h3>
+                <h3>What Braden already built</h3>
                 <RuleList
                   items={[
-                    "Demand real enough to outrun the infrastructure under it",
-                    "Category knowledge deep enough to teach in your sleep",
-                    "Sourcing and supplier relationships built on trust",
-                    "A founder voice people actually follow",
-                    "Checkout rails most peptide brands can’t get — direct PayPal, redundant processors",
-                    "PeptidePal — a second strategic asset already in hand",
-                    "A Mount Rushmore ambition — build the defining brand, don’t sell it"
+                    "Demand strong enough to outrun the infrastructure beneath it",
+                    "A founder voice customers trust and creators want to be around",
+                    "Deep product knowledge and supplier relationships",
+                    "A brand with the potential to define its category",
+                    "PeptidePal, a second strategic asset with room to become much bigger",
+                    "The conviction to build the category leader instead of a temporary store"
                   ]}
                 />
               </article>
               <article>
-                <h3>The next stage needs the part that must be built</h3>
+                <h3>What Alex and OVO unlock</h3>
                 <RuleList
                   items={[
-                    "Finance you can see weekly, run by professionals",
-                    "A creator engine bigger than a handful of active relationships",
-                    "Your day back from labels, boxes, and ops calls",
-                    "Managers and systems that don’t all route through you",
-                    "Analytics that survive a big weekend",
-                    "A company that compounds whether or not you touched it today"
+                    "An operating layer that removes the founder from every decision",
+                    "A trained team that can be deployed immediately",
+                    "A creator engine built to recruit, onboard, manage, and expand",
+                    "Managers who manage people instead of routing everything back to Braden",
+                    "Lifecycle, membership, analytics, and retention working as one system",
+                    "The structure to scale aggressively without letting the company break underneath the growth"
                   ]}
                 />
               </article>
             </div>
             <blockquote className="pull-quote" data-pretext>
-              The missing infrastructure isn&apos;t a weakness. It&apos;s the
-              measure of how much is still on the table.
+              Braden created the demand. Alex builds the leverage that lets it
+              compound.
             </blockquote>
           </section>
 
@@ -265,45 +236,36 @@ export default function Home() {
             <SectionHead
               id="role"
               titleId="role-title"
-              index="02 / The role"
-              title="This is bigger than a CRO."
-              intro="A revenue title solves a revenue problem. Biologix has a company-building opportunity."
+              index="THE ROLE"
+              title="Not a CRO. Not an agency. An Operating Partner."
+              intro="A CRO owns revenue. An Operating Partner helps build the entire company that produces it."
             />
             <div className="prose-block">
               <p>
-                A CRO owns a number inside a company someone else runs. What
-                Biologix needs owned is the company layer itself — the operating
-                cadence, the finance function, the people architecture, the
-                distribution engine, and the discipline about where cash goes
-                next. That is an Operating Partner: someone who builds enterprise
-                value alongside the founder, with skin in the outcome, not a
-                salary against a quota.
+                This is not a promise to make introductions and disappear. It is
+                a founder-level partnership across operations, people,
+                distribution, finance visibility, creator management,
+                retention, partnerships, and expansion. Alex sits beside Braden,
+                sees the whole board, and turns decisions into systems the team
+                can execute.
               </p>
               <RuleList
                 className="labeled-list"
                 items={[
-                  "Operating architecture — the weekly rhythm the whole company runs on.",
-                  "Finance visibility — plans, budgets, and capital-allocation rules both owners can see.",
-                  "People architecture — recruiting, managers, vendors, and real accountability.",
-                  "Distribution — the creator engine, lifecycle, analytics, and partnerships.",
-                  "Controlled scaling — growth sequenced so the company gets stronger as it gets bigger."
+                  "Braden remains the founder, product authority, category voice, and keeper of the brand.",
+                  "Alex owns the operating architecture that turns Braden’s vision into coordinated execution.",
+                  "OVO supplies the trained management and growth infrastructure behind Alex.",
+                  "Every major function gets an owner, a cadence, a standard, and a visible result.",
+                  "The company becomes more capable as it grows instead of more dependent on Braden."
                 ]}
               />
-              <p>
-                On the third call, Braden floated a lighter start — run the
-                affiliate back end alone and watch the numbers. This brief takes
-                the other lane, the one the call kept returning to: one operating
-                partner across the whole company layer. His verdict on the title
-                was shorter than this sentence.
-              </p>
               <p className="closing-line">
-                Braden stays the founder. Alex builds the company around the
-                founder.
+                Braden stays focused on the work only Braden can do. Alex makes
+                sure the rest of the company gets done.
               </p>
             </div>
             <blockquote className="pull-quote" data-pretext>
-              &ldquo;I think Operating Partner&apos;s fire.&rdquo; — Braden,
-              third call, July 23
+              &ldquo;I think Operating Partner&apos;s fire.&rdquo; — Braden
             </blockquote>
           </section>
 
@@ -313,46 +275,44 @@ export default function Home() {
           >
             <SectionHead
               titleId="map-title"
-              index="03 / The map"
-              title="Who owns what."
-              intro="Clean lanes. No overlap, no ambiguity, no shadow authority."
+              index="THE PARTNERSHIP"
+              title="Two founders. Complementary strengths. Clean lanes."
+              intro="The partnership works because Alex does not replace what makes Biologix special. He protects it by building everything around it."
             />
             <div className="ownership-map">
               <article>
-                <p className="term-label">Braden keeps</p>
+                <p className="term-label">Braden leads</p>
                 <RuleList
                   items={[
-                    "Founder vision and the public voice",
-                    "Product and category knowledge",
+                    "Founder vision and public voice",
+                    "Product and category authority",
                     "Sourcing and supplier relationships",
-                    "Inventory, fulfillment, shipping, and 3PL decisions",
-                    "Final product and brand calls within the agreed operating plan"
+                    "Inventory, fulfillment, shipping, and logistics decisions",
+                    "The final brand and product calls"
                   ]}
                 />
               </article>
               <article>
-                <p className="term-label">Alex owns</p>
+                <p className="term-label">Alex leads</p>
                 <RuleList
                   items={[
-                    "Operating architecture and the weekly leadership cadence",
-                    "Finance visibility, budgets, and capital-allocation process",
-                    "People: recruiting, managers, vendors, accountability",
-                    "The full creator engine — recruiting through payouts and reporting",
-                    "Lifecycle, analytics, and growth coordination across vendors",
-                    "Partnerships, expansion, retreats, and controlled scaling"
+                    "The operating system and leadership cadence",
+                    "People, managers, accountability, and execution",
+                    "The complete creator and affiliate engine",
+                    "Lifecycle, analytics, partnerships, and expansion",
+                    "Turning every priority into an owned plan"
                   ]}
                 />
               </article>
               <article>
-                <p className="term-label">OVO installs</p>
+                <p className="term-label">OVO delivers</p>
                 <RuleList
                   items={[
-                    "Creator-manager pods",
-                    "Recruiting and outbound capacity",
-                    "Central QA, claims workflow, payout and data operations",
-                    "Content coordination, tooling, and training",
-                    "Replacement coverage — no single point of failure",
-                    "Management of every OVO person deployed to Biologix"
+                    "Creator managers and recruiting capacity",
+                    "Onboarding, training, attribution, and reporting",
+                    "Central quality control and data operations",
+                    "Content and campaign coordination",
+                    "Management depth and replacement coverage"
                   ]}
                 />
               </article>
@@ -360,357 +320,253 @@ export default function Home() {
             <div className="sub-block">
               <p className="term-label">Where Connor fits</p>
               <p>
-                Connor keeps his lane: he stays a manager, with the
-                relationships he already runs — Creators Corner first among
-                them. Braden&apos;s ask was explicit: work together, neither
-                stepping on the other&apos;s toes. Alex builds the architecture,
-                standards, and analytics every manager plugs into. Connor plugs
-                in first, not last.
+                Connor keeps the relationships and manager lane he already owns.
+                Alex builds the shared architecture, standards, and visibility
+                that help Connor and every future manager perform at a higher
+                level. Nobody competes for control. Everybody becomes more
+                effective.
               </p>
             </div>
-            <p className="footnote">
-              OVO and Alex do not own product, sourcing, inventory, fulfillment,
-              or 3PL. Those stay with the founder.
-            </p>
           </section>
 
           <section className="brief-section" aria-labelledby="system-title">
             <SectionHead
               id="system"
               titleId="system-title"
-              index="04 / The system"
-              title="What actually gets installed."
-              intro="Not advice. Installed systems with owners, cadence, and documentation."
+              index="THE BUILD"
+              title="Alex does not arrive alone."
+              intro="Biologix gains a working operating platform, not another person Braden has to train and supervise."
             />
-            <NumberedList
+            <RuleList
+              className="labeled-list"
               items={[
-                "Weekly executive operating review — one meeting where the whole company is visible and decided.",
-                "A professional finance function — weekly cash dashboard, monthly close, jointly approved budgets.",
-                "People architecture — the managers, roles, and accountability the next stage requires.",
-                "The creator engine — recruiting, onboarding, contracts workflow, training, attribution, payouts, reporting.",
-                "Lifecycle and retention — the membership tiers Braden and Connor drafted, fused with the subscribe-and-save engine mapped on the July 23 call, wired into email, SMS, and the affiliate system.",
-                "Partnership and expansion planning — sequenced, budgeted, and reviewed before money moves.",
-                "Documentation and SOPs — so the company runs on systems, not memory."
+                "Executive rhythm — priorities, owners, decisions, and follow-through become visible across the company.",
+                "People architecture — managers recruit, train, and manage the people beneath them.",
+                "Creator operations — every relationship moves through the same recruiting, onboarding, launch, management, and expansion system.",
+                "Finance visibility — professional operators capture the current knowledge and give Braden a clear view without turning him into the CFO.",
+                "Lifecycle and retention — membership, subscribe-and-save, email, SMS, and creator attribution work together.",
+                "Documentation — the company runs from shared systems instead of conversations and memory.",
+                "Expansion — partnerships, retreats, content, and new opportunities are sequenced instead of improvised."
               ]}
             />
+            <p className="highlight-line">
+              The advantage is speed: the people, playbooks, recruiting motion,
+              and management layer already exist inside OVO.
+            </p>
           </section>
 
           <section className="brief-section" aria-labelledby="engine-title">
             <SectionHead
               id="engine"
               titleId="engine-title"
-              index="05 / The engine"
-              title="A system, not a list of introductions."
-              intro="Introductions are a favor. This is a machine with eleven stages and named owners."
+              index="THE ENGINE"
+              title="A creator system, not a list of introductions."
+              intro="Every relationship enters one operating pipeline and becomes part of a network that can keep expanding."
             />
-            <ol className="pipeline" aria-label="Creator operating pipeline">
-              {creatorStages.map((stage, index) => (
+            <ul className="pipeline" aria-label="Creator operating pipeline">
+              {creatorStages.map((stage) => (
                 <li key={stage}>
-                  <span className="pipeline-number">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
                   <span>{stage}</span>
                 </li>
               ))}
-            </ol>
+            </ul>
             <div className="sub-block">
-              <h3>How the leverage works</h3>
+              <h3>Leverage on top of leverage</h3>
               <RuleList
                 items={[
-                  "Alex directs the operating system and its standards.",
-                  "OVO managers will own creator portfolios — ten to fifteen relationships each, managed daily.",
-                  "Braden’s affiliate tree — managers, affiliates, sub-affiliates — becomes visible in one system: every branch attributed, every payout traceable.",
-                  "Central QA, data, and payout operations keep the program independent of any one manager.",
-                  "Capacity grows by adding pods — not by piling direct reports onto the founder."
+                  "OVO managers own creator portfolios and manage them every day.",
+                  "Creators can introduce and support other creators without losing attribution.",
+                  "Managers, affiliates, and sub-affiliates become one visible tree instead of disconnected conversations.",
+                  "Central standards, data, and reporting protect the program from depending on any individual manager.",
+                  "Alex can connect the outbound system already being built elsewhere to a brand with genuine demand and creator appeal.",
+                  "Growth comes from adding management capacity, not adding more direct reports to Braden."
                 ]}
               />
-              <p className="closing-line">
-                Braden said it on the third call: this is his first brand, and he
-                doesn&apos;t want to run this layer. He shouldn&apos;t have to.
-                This is the machine OVO will install — and the tree he described
-                is exactly what it&apos;s built to run.
-              </p>
             </div>
+            <blockquote className="pull-quote" data-pretext>
+              The goal is not more people messaging Braden. The goal is a network
+              that grows while Braden stays focused on the brand.
+            </blockquote>
           </section>
 
           <section className="brief-section" aria-labelledby="finance-title">
             <SectionHead
               titleId="finance-title"
-              index="06 / The numbers you can see"
-              title="From heroic bookkeeping to a finance function."
-              intro="The current setup got the company here. It was never meant to carry the next stage."
+              index="THE RELIEF"
+              title="Your mom gets the handoff she asked for. You get control without becoming the CFO."
+              intro="The family-built system helped Biologix reach this point. The partnership gives it a professional home."
             />
             <div className="prose-block">
               <p>
-                Biologix&apos;s books are carried today by family loyalty —
-                capably, and at real personal cost. Step one honors that: capture
-                the working knowledge, and fully relieve a role its current
-                holder is — in Braden&apos;s own word — &ldquo;begging&rdquo; to
-                hand off. Then the company gets the finance function its scale
-                deserves.
+                Alex can capture the knowledge currently living with Braden and
+                his mom, move the work to independent finance professionals, and
+                build a simple decision rhythm around it. Braden gets a company
+                he can see. His mom gets to step away cleanly. Neither has to
+                become a finance operator.
               </p>
-              <NumberedList
+              <RuleList
                 items={[
-                  "Independent bookkeeping and controller coverage — professionals whose only job is the books.",
-                  "Full reconciliation — settled cash, refunds, processor balances, inventory obligations, payouts, liabilities, reserves.",
-                  "A weekly cash dashboard and a real monthly close.",
-                  "Jointly approved budgets and capital-allocation rules.",
-                  "Read-only visibility for both owners — nobody operates blind.",
-                  "A disinterested company approver reviews OVO invoices as related-party expenses."
+                  "Independent bookkeeping and controller support",
+                  "Reliable reconciliation and reporting",
+                  "Clear budgets and priorities before resources move",
+                  "Shared visibility into what the business needs next",
+                  "Documented approvals and accountability",
+                  "A finance function that supports growth instead of chasing it"
                 ]}
               />
               <p className="highlight-line">
-                Alex builds the decision system. An independent finance operator
-                executes and reconciles it. Material capital decisions are agreed,
-                visible, and documented.
-              </p>
-            </div>
-          </section>
-
-          <section className="brief-section print-break" aria-labelledby="month-one-title">
-            <SectionHead
-              titleId="month-one-title"
-              index="07 / Month one"
-              title="Operating Transition & Launch."
-              intro="One package. One price. Two workstreams running simultaneously from day one."
-            />
-            <div className="term-table">
-              <TermRow
-                label="Month 1 · Prepaid"
-                value="$30,000 — Operating Transition & Launch"
-                strong
-              />
-            </div>
-            <p className="term-status">
-              New in this brief — proposed price, not discussed on the calls
-            </p>
-            <div className="split-panel compact-panel">
-              <article>
-                <h3>Workstream A — Operating foundation</h3>
-                <RuleList
-                  items={[
-                    "Finance transition and capture of current working knowledge",
-                    "Weekly operating cadence installed",
-                    "Owner-visible cash dashboard stood up",
-                    "The 90-day roadmap and capital plan drafted and agreed"
-                  ]}
-                />
-              </article>
-              <article>
-                <h3>Workstream B — First pod deployed</h3>
-                <RuleList
-                  items={[
-                    "The first OVO operating pod goes live in week one",
-                    "Existing creator relationships onboarded to the system",
-                    "Contracts workflow, attribution, and reporting switched on",
-                    "Recruiting pipeline opened against the target list"
-                  ]}
-                />
-              </article>
-            </div>
-            <p className="closing-line below-panel">
-              Nothing waits for an audit to finish. Once the agreement is signed,
-              the foundation and the engine start the same week.
-            </p>
-          </section>
-
-          <section className="brief-section" aria-labelledby="ongoing-title">
-            <SectionHead
-              titleId="ongoing-title"
-              index="08 / Ongoing"
-              title="One accountable managed function."
-              intro="Biologix buys outcomes and capacity — not a pile of individual hires to recruit and supervise."
-            />
-            <div className="term-table">
-              <TermRow
-                label="Month 2 onward · Prepaid"
-                value="$20,000 per month — OVO managed operating pod"
-                strong
-              />
-              <TermRow
-                label="Included capacity"
-                value="First 25 active managed creator relationships"
-              />
-              <TermRow
-                label="Expansion"
-                value="≈ $10,000 capacity pod per additional 15 active creators"
-              />
-            </div>
-            <p className="term-status">
-              New in this brief — proposed structure, pricing, and capacity
-              thresholds, not discussed on the calls
-            </p>
-            <RuleList
-              className="below-panel"
-              items={[
-                "Recruiting, management, training, SOPs, tooling, career paths, and replacement coverage are OVO’s to build and run — delivered inside the fee, not billed as extras.",
-                "One accountable function replaces separately recruiting and supervising multiple individual hires.",
-                "Capacity expands or contracts as the active creator roster changes.",
-                "Biologix sets business priorities and outcomes. OVO manages its personnel and delivery.",
-                "If a role truly belongs inside Biologix over time, it converts under a transparent agreed process."
-              ]}
-            />
-          </section>
-
-          <section className="brief-section" aria-labelledby="ecosystem-title">
-            <SectionHead
-              titleId="ecosystem-title"
-              index="09 / The ecosystem"
-              title="Retreats are strategy, not parties."
-              intro="The creator ecosystem is a moat competitors can’t copy with a coupon code."
-            />
-            <div className="prose-block">
-              <p>
-                Retreats and creator experiences do five jobs at once: recruiting
-                gravity, retention, relationship density, founder and creator
-                content, and a premium community that attracts partnerships. Miami
-                is the natural stage for it — and it&apos;s already part of the
-                plan we&apos;ve talked about.
-              </p>
-              <p className="closing-line">Scoped separately, on purpose:</p>
-              <RuleList
-                items={[
-                  "Retreats and creator events",
-                  "Production-heavy content weekends",
-                  "Major custom software builds",
-                  "Permanent direct-hire recruiting",
-                  "Other projects outside pod capacity"
-                ]}
-              />
-              <p>
-                Each gets a preapproved written scope with a transparent budget
-                and production fee — approved before work starts, never absorbed
-                invisibly into the monthly base.
+                Alex builds the decision system. Independent professionals keep
+                the records. Braden sees the whole picture.
               </p>
             </div>
           </section>
 
           <section
             className="brief-section print-break"
-            aria-labelledby="economics-title"
+            aria-labelledby="leverage-title"
           >
             <SectionHead
-              id="economics"
-              titleId="economics-title"
-              index="10 / The economics"
-              title="One partnership. Three clean layers."
-              intro="Ownership for building enterprise value. Fees only for delivery capacity actually used."
+              id="leverage"
+              titleId="leverage-title"
+              index="THE LEVERAGE"
+              title="One partnership unlocks an entire operating layer."
+              intro="The value is not Alex’s calendar. It is the system, team, judgment, and network Alex can put behind Biologix."
             />
             <div className="layer-stack">
               <article className="layer-panel">
-                <p className="term-label">Layer 01 — Owner</p>
-                <h3>Operating Partner ownership</h3>
-                <div className="term-table">
-                  <TermRow
-                    label="Ownership"
-                    value="30% — discussed July 23, not yet agreed"
-                  />
-                  <TermRow
-                    label="Monthly owner cash"
-                    value="70 / 30 split of defined Excess Cash"
-                  />
-                </div>
-                <p className="term-status">
-                  Ownership: discussed on the July 23 call — Braden is taking
-                  time. Owner-cash split: new in this brief
-                </p>
+                <p className="term-label">Founder leverage</p>
+                <h3>Alex turns intent into execution</h3>
                 <p>
-                  Thirty percent is the number from the July 23 call — Braden
-                  called it &ldquo;not crazy&rdquo; and asked for a day or two,
-                  so it stands as discussed, not agreed. Everything that gives
-                  the number its meaning — the fully-diluted definition, vesting,
-                  repurchase, and activation conditions — is proposed here for
-                  the definitive documents. While Alex is actively operating,
-                  monthly Excess Cash — what remains after company obligations
-                  and the agreed reserve — would be split 70% Braden, 30% Alex.
-                  That split is also new in this brief.
+                  Braden gets a partner who can challenge priorities, make the
+                  plan real, install ownership, and follow every important thread
+                  until it becomes an operating result.
                 </p>
               </article>
               <article className="layer-panel">
-                <p className="term-label">Layer 02 — Delivery</p>
-                <h3>The OVO managed service</h3>
-                <div className="term-table">
-                  <TermRow
-                    label="Month 1"
-                    value="$30,000 — Operating Transition & Launch"
-                  />
-                  <TermRow
-                    label="Month 2 onward"
-                    value="$20,000 / month — managed pod, first 25 active creators"
-                  />
-                  <TermRow
-                    label="Expansion"
-                    value="≈ $10,000 per additional 15 active creators"
-                  />
-                </div>
-                <p className="term-status">
-                  New in this brief — proposed pricing, not discussed on the
-                  calls
-                </p>
+                <p className="term-label">Team leverage</p>
+                <h3>OVO turns Alex into a force multiplier</h3>
                 <p>
-                  Biologix pays OVO for the managed team and operating capacity it
-                  actually uses — one accountable function, prepaid monthly,
-                  scaled by pods.
+                  Recruiting, management, creator operations, content
+                  coordination, data, and quality control do not sit on one
+                  person. Alex can deploy people who are already trained to work
+                  together and remain accountable through one operating system.
                 </p>
               </article>
               <article className="layer-panel">
-                <p className="term-label">Layer 03 — Exceptional</p>
-                <h3>Separately scoped projects</h3>
-                <div className="term-table">
-                  <TermRow
-                    label="Retreats · Content productions · Major software · Direct-hire recruiting"
-                    value="Preapproved written scope, each time"
-                  />
-                </div>
-                <p className="term-status">
-                  New in this brief — proposed process
-                </p>
+                <p className="term-label">Network leverage</p>
+                <h3>Every strong relationship can create more relationships</h3>
                 <p>
-                  Only truly separate projects carry a separate scope — reviewed
-                  and approved in writing before any work begins.
+                  Creators become community nodes, managers become portfolio
+                  builders, and the affiliate tree becomes a compounding
+                  distribution advantage instead of a collection of coupon
+                  codes.
                 </p>
               </article>
             </div>
-            <p className="framework-note">
-              Discussion framework only. One number on this page was discussed
-              on a call — the 30% ownership, still awaiting Braden&apos;s answer.
-              Every fee, capacity threshold, the owner-cash split, vesting,
-              repurchase, and activation conditions appear here for the first
-              time. Final economics, authority, vesting, scope, and activation
-              require definitive agreements and professional review.
+          </section>
+
+          <section className="brief-section" aria-labelledby="ecosystem-title">
+            <SectionHead
+              titleId="ecosystem-title"
+              index="THE ECOSYSTEM"
+              title="Retreats turn creators into a community competitors cannot copy."
+              intro="The strongest creator program is not transactional. It creates belonging, access, content, and a reason to keep building together."
+            />
+            <div className="split-panel compact-panel">
+              <article>
+                <h3>What retreats create</h3>
+                <RuleList
+                  items={[
+                    "Recruiting gravity for creators who want to be part of the room",
+                    "Deeper relationships and stronger retention",
+                    "Founder and creator content produced naturally",
+                    "Cross-pollination between creators and managers",
+                    "A premium community around the Biologix brand"
+                  ]}
+                />
+              </article>
+              <article>
+                <h3>What the wider ecosystem creates</h3>
+                <RuleList
+                  items={[
+                    "Partnership opportunities beyond affiliate posts",
+                    "Membership and subscription relationships that last",
+                    "PeptidePal as a complementary education and category asset",
+                    "A place for top creators to grow into managers",
+                    "A brand people identify with, not merely buy from"
+                  ]}
+                />
+              </article>
+            </div>
+            <p className="closing-line below-panel">
+              Miami becomes more than a location. It becomes the physical center
+              of the Biologix creator ecosystem.
             </p>
+          </section>
+
+          <section className="brief-section" aria-labelledby="risk-title">
+            <SectionHead
+              titleId="risk-title"
+              index="THE ALTERNATIVE"
+              title="Without an operating layer, extraordinary demand becomes fragile."
+              intro="The risk is not that Biologix lacks opportunity. The risk is that every opportunity keeps creating more work for the founder."
+            />
+            <div className="split-panel">
+              <article>
+                <h3>If everything keeps routing through Braden</h3>
+                <RuleList
+                  items={[
+                    "Creators wait for answers and momentum leaks",
+                    "Managers develop different standards and reporting",
+                    "Finance stays reactive and family-dependent",
+                    "Retention and lifecycle remain separate from acquisition",
+                    "New opportunities compete with existing operations",
+                    "Growth makes the founder busier instead of making the company stronger"
+                  ]}
+                />
+              </article>
+              <article>
+                <h3>With Alex and OVO beside him</h3>
+                <RuleList
+                  items={[
+                    "Every important lane has a capable owner",
+                    "The team solves problems before they reach the founder",
+                    "Creators receive a consistent, professional experience",
+                    "Braden can see the company without carrying every function",
+                    "New growth plugs into existing infrastructure",
+                    "The business compounds independently of Braden’s daily involvement"
+                  ]}
+                />
+              </article>
+            </div>
+            <blockquote className="pull-quote" data-pretext>
+              This is the moment to build the company underneath the demand — not
+              after the demand exposes every missing layer.
+            </blockquote>
           </section>
 
           <section className="brief-section" aria-labelledby="commitment-title">
             <SectionHead
               titleId="commitment-title"
-              index="11 / The commitment"
-              title="Primary build, honest terms."
-              intro="Measured in owned outcomes and response windows — not vague hours."
+              index="THE COMMITMENT"
+              title="Alex makes Biologix the primary operating-partner build."
+              intro="OVO does not distract from the partnership. OVO is the infrastructure that makes the partnership unusually powerful."
             />
-            <blockquote className="pull-quote" data-pretext>
-              Biologix becomes Alex&apos;s primary operating-partner build — not
-              his exclusive employer.
-            </blockquote>
             <div className="prose-block">
               <p>
-                Alex restructures his consulting engagements around this build —
-                &ldquo;I will restructure all of that around this,&rdquo; in his
-                words from the call — and personally owns the decisions that
-                matter: the operating cadence, capital planning, and leadership.
-                He continues to own and lead OVO — because OVO is the platform,
-                team, systems, and network being deployed here — and may take on
-                noncompetitive work. What Biologix gets is priority: first claim
-                on Alex&apos;s attention and on the capacity this brief proposes.
+                Alex personally owns the decisions that matter, the leadership
+                rhythm, the people architecture, and the coordination across
+                every operating lane. He continues to lead OVO because that is
+                the team, recruiting engine, systems platform, and management
+                depth being deployed into Biologix.
               </p>
-              <p className="term-label">The operating commitment</p>
               <RuleList
                 items={[
-                  "One weekly executive operating review, led personally",
-                  "Direct ownership of the 90-day roadmap and capital plan",
-                  "Daily async access for escalations and decisions",
-                  "Defined on-site, launch, and retreat blocks",
-                  "Measurable outcomes and agreed response windows — instead of a vague “full time”"
+                  "Braden has direct access to Alex for decisions and escalations.",
+                  "Alex leads the executive operating rhythm personally.",
+                  "OVO personnel stay managed through OVO, so Braden gains output without inheriting another team to supervise.",
+                  "The partnership is measured by owned outcomes, visible progress, and company capability.",
+                  "As Biologix grows, Alex adds the people and systems required to keep the operating layer ahead of the demand."
                 ]}
               />
             </div>
@@ -720,39 +576,39 @@ export default function Home() {
             <SectionHead
               id="next"
               titleId="next-title"
-              index="12 / Next step"
-              title="The first 90 days."
-              intro="A fast transition from founder-dependent momentum to a managed operating rhythm."
+              index="THE START"
+              title="Start with the operating system. Let every advantage compound from there."
+              intro="The work begins by aligning the founders, installing ownership, and putting the first OVO team around the highest-leverage opportunities."
             />
             <div className="timeline-panel">
               <div>
-                <span className="term-label">Days 1–30</span>
+                <span className="term-label">Align</span>
                 <p>
-                  Foundation and launch — finance transition begins, cadence
-                  installed, first pod live, roadmap agreed.
+                  Lock the shared vision, decision lanes, priorities, and working
+                  rhythm.
                 </p>
               </div>
               <div>
-                <span className="term-label">Days 31–60</span>
+                <span className="term-label">Install</span>
                 <p>
-                  Control and momentum — monthly close running, creator roster
-                  onboarded, recruiting pipeline producing.
+                  Transition finance knowledge, activate the creator system, and
+                  give every important outcome an owner.
                 </p>
               </div>
               <div>
-                <span className="term-label">Days 61–90</span>
+                <span className="term-label">Compound</span>
                 <p>
-                  Scale decisions — capacity review, first expansion pod if the
-                  roster supports it, retreat and partnership calendar set.
+                  Expand the team, creator tree, lifecycle engine, retreats,
+                  partnerships, and PeptidePal around what is working.
                 </p>
               </div>
             </div>
             <div className="close-block">
               <p>
-                You said we&apos;ve got to get started ASAP. This is what starting
-                looks like. Read it twice, mark up anything, and let&apos;s sit
-                down — Miami works — and turn this framework into definitive
-                documents.
+                Braden, you already built the reason this company can win. Alex
+                and OVO bring the people, systems, and leverage that make winning
+                repeatable. Let&apos;s build the company that deserves the demand
+                you created.
               </p>
               <a href="mailto:alex@ovotalent.com">alex@ovotalent.com</a>
             </div>
@@ -763,10 +619,9 @@ export default function Home() {
       <footer className="site-footer">
         <div className="page-shell">
           <p>
-            Private brief · Prepared for Braden Lowder · Not indexed · Not an
-            offer or a contract
+            Unlisted founder brief · Prepared for Braden Lowder · Not indexed
           </p>
-          <p>Alex Gunnarsson · OVO · July 2026</p>
+          <p>Alex Gunnarsson · OVO</p>
         </div>
       </footer>
     </>
