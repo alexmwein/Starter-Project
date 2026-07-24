@@ -218,23 +218,25 @@
               <marker id="arrow-gray" viewBox="0 0 9 9" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.5 L0,9 z"></path></marker>
             </defs>
 
-            <g class="edge edge-neutral" data-edge="owned-media distribution" data-groups="affiliate customer intelligence">
-              <path d="M380 232 H405 V410 H430"></path><text x="390" y="220">weekly shows</text>
+            <g class="edge edge-neutral fan-in fan-demand" data-edge="owned-media podcast creator-media community-proof distribution" data-groups="affiliate customer community intelligence">
+              <path class="fan-branch" data-bus="demand" d="M380 232 H405"></path>
+              <path class="fan-branch" data-bus="demand" d="M580 315 V320 H405"></path>
+              <path class="fan-branch" data-bus="demand" d="M380 410 H405"></path>
+              <path class="fan-branch" data-bus="demand" d="M380 582 H405"></path>
+              <path class="fan-bus" data-bus="demand" d="M405 232 V582"></path>
+              <path class="fan-output" data-bus="demand" data-bus-output d="M405 410 H430"></path>
+              <circle class="bus-port" cx="405" cy="232" r="2.8"></circle>
+              <circle class="bus-port" cx="405" cy="320" r="2.8"></circle>
+              <circle class="bus-junction" cx="405" cy="410" r="4.2"></circle>
+              <circle class="bus-port" cx="405" cy="582" r="2.8"></circle>
             </g>
-            <g class="edge edge-neutral primary-edge" data-edge="podcast distribution" data-groups="affiliate customer community intelligence">
-              <path d="M580 315 V330"></path>
-            </g>
-            <g class="edge edge-green" data-edge="creator-media distribution" data-groups="affiliate customer community intelligence">
-              <path d="M380 402 H430"></path><text x="386" y="390">daily posts</text>
-            </g>
-            <g class="edge edge-brown" data-edge="community-proof distribution" data-groups="affiliate community intelligence">
-              <path d="M380 582 H405 V452 H430"></path><text x="389" y="570">proof</text>
-            </g>
-            <g class="edge edge-neutral primary-edge" data-edge="distribution inbound-engine" data-groups="affiliate customer intelligence">
-              <path d="M730 410 H820"></path><text x="742" y="397">posts → DMs + replies</text>
-            </g>
-            <g class="edge edge-green" data-edge="outbound inbound-engine" data-groups="affiliate intelligence">
-              <path d="M730 590 H775 V500 H820"></path>
+            <g class="edge edge-neutral fan-in fan-intake" data-edge="distribution outbound inbound-engine" data-groups="affiliate customer intelligence">
+              <path class="fan-branch" data-bus="intake" d="M730 430 H775"></path>
+              <path class="fan-branch branch-outbound" data-bus="intake" d="M730 590 H775"></path>
+              <path class="fan-bus" data-bus="intake" d="M775 430 V590"></path>
+              <path class="fan-output primary-trunk" data-bus="intake" data-bus-output d="M775 430 H820"></path>
+              <circle class="bus-junction" cx="775" cy="430" r="4.2"></circle>
+              <circle class="bus-port bus-port-green" cx="775" cy="590" r="2.8"></circle>
             </g>
 
             <g class="edge edge-blue primary-edge" data-edge="inbound-engine answer" data-groups="customer intelligence">
@@ -248,9 +250,6 @@
             </g>
             <g class="edge edge-blue" data-edge="commerce retention" data-groups="customer intelligence">
               <path d="M1915 300 V330 H1880 V360"></path>
-            </g>
-            <g class="edge edge-blue loop-edge" data-edge="retention distribution" data-groups="customer intelligence">
-              <path d="M1740 430 H1640 V565 H760 V450 H730"></path><text x="1120" y="554">questions · proof · referrals</text>
             </g>
 
             <g class="edge edge-green primary-edge" data-edge="inbound-engine patricia" data-groups="affiliate intelligence">
@@ -266,37 +265,50 @@
               <path d="M1630 702 H1685"></path>
             </g>
             <g class="edge edge-green loop-edge" data-edge="activate inbound-engine" data-groups="affiliate intelligence">
-              <path d="M1505 630 V585 H1140 V540"></path><text x="1255" y="576">authorize creator account</text>
+              <path d="M1505 630 V605 H1140 V540"></path>
             </g>
             <g class="edge edge-green primary-loop" data-edge="managed creator-media" data-groups="affiliate customer community intelligence">
-              <path d="M1852 775 V805 H50 V402 H80"></path>
+              <path class="fan-bus" data-bus="managed-output" d="M1852 775 V805"></path>
+              <path class="fan-output" data-bus="managed-output" data-bus-output d="M1852 805 H50 V402 H80"></path>
+              <circle class="bus-junction" cx="1852" cy="805" r="4.2"></circle>
               <text x="900" y="797">daily content + attributable sales + new applicants</text>
             </g>
 
-            <g class="edge edge-brown" data-edge="selected experience" data-groups="community affiliate">
-              <path d="M350 937 H410"></path>
-            </g>
             <g class="edge edge-brown primary-edge" data-edge="experience content-bank" data-groups="community affiliate">
               <path d="M710 942 H770"></path>
             </g>
-            <g class="edge edge-brown loop-edge" data-edge="managed experience" data-groups="community affiliate">
-              <path d="M1685 750 V835 H560 V875"></path><text x="1180" y="827">top creators + qualified prospects</text>
-            </g>
-            <g class="edge edge-brown loop-edge" data-edge="content-bank distribution" data-groups="community affiliate intelligence">
-              <path d="M920 875 V815 H750 V470 H730"></path>
+            <g class="edge edge-brown loop-edge fan-in fan-community" data-edge="selected managed experience" data-groups="community affiliate">
+              <path class="fan-branch" data-bus="community-invite" d="M350 937 H385"></path>
+              <path class="fan-branch" data-bus="community-invite" d="M1852 805 V835 H385 V937"></path>
+              <path class="fan-output primary-trunk" data-bus="community-invite" data-bus-output d="M385 937 H410"></path>
+              <circle class="bus-junction" cx="385" cy="937" r="4.2"></circle>
             </g>
             <g class="edge edge-brown loop-edge" data-edge="content-bank managed" data-groups="community affiliate">
-              <path d="M1070 942 H1600 V820 H1655 V730 H1685"></path><text x="1320" y="934">status + retention</text>
+              <path d="M1070 942 H1950 V775"></path>
+            </g>
+
+            <g class="edge edge-blue loop-edge fan-in fan-feedback" data-edge="retention content-bank distribution" data-groups="customer community intelligence">
+              <path class="bus-bridge" d="M908 615 H928"></path>
+              <path class="bus-bridge" d="M1495 615 H1515"></path>
+              <path class="bus-bridge" d="M750 815 V795"></path>
+              <path class="bus-bridge" d="M920 845 V825"></path>
+              <path class="fan-branch" data-bus="feedback" d="M1740 430 H1640 V615 H750"></path>
+              <path class="fan-branch branch-community" data-bus="feedback" d="M920 875 V815 H750"></path>
+              <path class="fan-output" data-bus="feedback" data-bus-output d="M750 815 V470 H730"></path>
+              <circle class="bus-port" cx="750" cy="615" r="2.8"></circle>
+              <circle class="bus-junction" cx="750" cy="815" r="4.2"></circle>
             </g>
 
             <g class="edge edge-signal" data-edge="distribution intelligence-plane" data-groups="intelligence affiliate customer">
-              <path d="M580 490 V505 H735 V1060"></path>
+              <path class="signal-bridge" d="M40 505 H60"></path>
+              <path class="signal-bridge" d="M395 505 H415"></path>
+              <path d="M580 490 V505 H25 V1040 H735 V1060"></path>
             </g>
             <g class="edge edge-signal" data-edge="close intelligence-plane" data-groups="intelligence affiliate">
               <path d="M1207 775 V1060"></path><text x="1219" y="1010">call outcomes</text>
             </g>
             <g class="edge edge-signal" data-edge="retention intelligence-plane" data-groups="intelligence customer">
-              <path d="M2020 430 H2030 V1030 H1750 V1060"></path><text x="1840" y="1019">orders + cohorts</text>
+              <path d="M2020 430 H2035 V1030 H1750 V1060"></path><text x="1840" y="1019">orders + cohorts</text>
             </g>
             <g class="edge edge-signal" data-edge="content-bank intelligence-plane" data-groups="intelligence community">
               <path d="M920 1010 V1060"></path><text x="934" y="1046">creator outcomes</text>

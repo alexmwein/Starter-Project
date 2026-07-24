@@ -868,6 +868,71 @@ article.node:focus-visible {
   marker-end: url(#arrow-blue);
 }
 
+.edge path.fan-branch,
+.edge path.fan-bus,
+.edge path.bus-bridge {
+  marker-end: none;
+}
+
+.edge path.fan-output {
+  stroke-width: 2.7px;
+}
+
+.edge path.primary-trunk {
+  stroke-width: 3px;
+}
+
+.fan-intake .branch-outbound {
+  stroke: var(--forest);
+}
+
+.fan-feedback .branch-community {
+  stroke: var(--brown);
+  stroke-dasharray: 7 5;
+}
+
+.edge path.bus-bridge {
+  stroke: var(--paper);
+  stroke-dasharray: none;
+  stroke-linecap: butt;
+  stroke-width: 8px;
+}
+
+.edge path.signal-bridge {
+  stroke: var(--paper);
+  stroke-dasharray: none;
+  stroke-linecap: butt;
+  stroke-width: 7px;
+  marker-end: none;
+}
+
+.bus-port,
+.bus-junction {
+  fill: var(--paper-raised);
+  stroke-width: 2px;
+}
+
+.edge-neutral .bus-port,
+.edge-neutral .bus-junction {
+  stroke: #777168;
+}
+
+.edge-green .bus-port,
+.edge-green .bus-junction,
+.bus-port-green {
+  stroke: var(--forest);
+}
+
+.edge-blue .bus-port,
+.edge-blue .bus-junction {
+  stroke: var(--slate);
+}
+
+.edge-brown .bus-port,
+.edge-brown .bus-junction {
+  stroke: var(--brown);
+}
+
 .primary-edge path {
   stroke-width: 2.7px;
 }
