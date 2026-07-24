@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Prepare a Third Standard research access file locally. Nothing is transmitted.">
+  <meta name="theme-color" content="#f4f1eb">
+  <title>Research access — Third Standard</title>
+  <link rel="stylesheet" href="./site.css">
+  <script>document.documentElement.classList.add("js")</script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header"><div class="header-inner"><a class="wordmark" href="./index.html">Third Standard</a><nav class="desktop-nav" aria-label="Primary"><a href="./catalog.html">Catalog</a><a href="./lot-record.html">Lot Record</a><a href="./notes.html">Evidence Notes</a><a href="./company.html">Company</a><a class="nav-access" href="./access.html" aria-current="page">Request Access</a><span class="nav-ledger" data-nav-ledger aria-hidden="true"></span></nav><button class="menu-trigger" type="button" data-menu-trigger aria-controls="mobile-menu" aria-expanded="false">Menu</button></div></header>
+  <aside class="mobile-menu" id="mobile-menu" data-mobile-menu data-open="false"><nav><a href="./catalog.html">Catalog</a><a href="./lot-record.html">Lot Record</a><a href="./notes.html">Evidence Notes</a><a href="./company.html">Company</a><a href="./eligibility.html">Eligibility</a><a href="./access.html">Request Access</a></nav></aside>
+  <main id="main">
+    <header class="shell page-hero reveal">
+      <p class="eyebrow">Local preparation · Nothing transmitted</p>
+      <h1>Access is reviewed, not sold.</h1>
+      <p class="lede">Tell us who you are and what you defend your data to. This prototype prepares a plain-text access file on your device. It does not submit an application.</p>
+      <a class="text-cta" href="./eligibility.html">Review eligibility first&nbsp;→</a>
+    </header>
+    <section class="page-section">
+      <div class="shell access-layout">
+        <aside class="access-aside reveal">
+          <p class="eyebrow">Before you begin</p>
+          <h2>One file. Kept by you.</h2>
+          <p>Use this file to organize the information a controlled-access supplier would review. No field is transmitted, stored, or approved by this website.</p>
+          <p class="legal-note">Preparing a file does not grant access, reserve material, or create a customer relationship.</p>
+        </aside>
+        <form class="access-form reveal" data-access-form novalidate>
+          <div class="field">
+            <label class="field-label" for="organization">Organization</label>
+            <input id="organization" name="organization" autocomplete="organization" required>
+            <p class="field-error" data-error-for="organization" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="entity-type">Entity type</label>
+            <select id="entity-type" name="entity_type" required>
+              <option value="">Select one</option>
+              <option>Biotechnology company</option>
+              <option>Contract research organization</option>
+              <option>University or institutional laboratory</option>
+              <option>Independent analytical laboratory</option>
+              <option>Other qualified research entity</option>
+            </select>
+            <p class="field-error" data-error-for="entity-type" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="applicant-name">Applicant name</label>
+            <input id="applicant-name" name="name" autocomplete="name" required>
+            <p class="field-error" data-error-for="applicant-name" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="role">Role</label>
+            <input id="role" name="role" autocomplete="organization-title" required>
+            <p class="field-error" data-error-for="role" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="email">Institutional email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required>
+            <p class="field-error" data-error-for="email" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="facility">Facility and location</label>
+            <input id="facility" name="facility" autocomplete="street-address" required>
+            <p class="field-error" data-error-for="facility" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="authority">Purchasing authority</label>
+            <select id="authority" name="authority" required>
+              <option value="">Select one</option>
+              <option>I can authorize purchases</option>
+              <option>I can recommend purchases</option>
+              <option>I am gathering information for an authorized buyer</option>
+            </select>
+            <p class="field-error" data-error-for="authority" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="research-context">Analytical or research context</label>
+            <textarea id="research-context" name="research_context" minlength="40" required aria-describedby="research-context-help"></textarea>
+            <p class="form-note" id="research-context-help">Describe the material class, analytical purpose, facility, and internal review context. Do not include patient, personal, or confidential study data.</p>
+            <p class="field-error" data-error-for="research-context" aria-live="polite"></p>
+          </div>
+          <div class="form-check">
+            <input id="qualified-use" name="qualified_use" type="checkbox" value="confirmed" required>
+            <div>
+              <label for="qualified-use">I confirm that the described activity is institutional research or analytical work, not personal, household, clinical, therapeutic, veterinary, cosmetic, or resale use.</label>
+              <p class="field-error" data-error-for="qualified-use" aria-live="polite"></p>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="download-button" type="submit" data-download-button>Prepare access file</button>
+            <p class="form-confirmation" data-form-confirmation aria-live="polite"></p>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer" data-footer><div class="shell footer-inner"><p class="footer-wordmark">Third Standard</p><div class="footer-grid"><p>Your access file is created entirely in your browser. This site has no application backend.</p><nav class="footer-nav"><a href="./eligibility.html">Eligibility</a><a href="./company.html">Claims policy</a><a href="./catalog.html">Catalog preview</a></nav><p class="legal-note">Local-only prototype<br>No transmission</p></div></div></footer>
+  <script src="./site.js" defer></script>
+</body>
+</html>
