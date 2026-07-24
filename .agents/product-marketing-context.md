@@ -14,7 +14,7 @@
 
 **Current reality:** OVO Labs is a concept website. It has no company operations, inventory, material, customers, testing, laboratory relationship, fulfillment, payment, checkout, or commerce. A thin notice at the top of every page states that nothing shown is real, stocked, or for sale.
 
-**What the website demonstrates:** A complete ecommerce information architecture: persistent predictive search, four catalog categories, ten product pages, three catalog sets, testing-status lookup, product comparison fields, educational guides, responsive navigation, a browser-local cart, explicit empty/error/success states, and event instrumentation.
+**What the website demonstrates:** Two Fable-authorized presentations of the same complete ecommerce information architecture: persistent predictive search, four catalog categories, ten product pages, three catalog sets, testing-status lookup, product comparison fields, educational guides, responsive navigation, a browser-local cart, explicit empty/error/success states, and event instrumentation.
 
 **Concept category:** Peptide research-product ecommerce
 
@@ -113,6 +113,9 @@ The 2025–2026 research package supports these implementation choices:
 ├── peptides/
 │   ├── [10 canonical product pages]
 └── 404.html
+
+/ovo-labs-porcelain/
+└── [the same route and content model in an isolated side-by-side variant]
 ```
 
 Legacy routes redirect:
@@ -137,7 +140,7 @@ Legacy routes redirect:
 
 Claude Fable 5 is the sole outward-facing design authority.
 
-The binding warm-apothecary-modernism system uses:
+The warm-apothecary-modernism route at `/ovo-labs/` is the brand-led comparison control. Its binding system uses:
 
 - `ovolabs.` as the lowercase typographic wordmark and “Peptide science, refined” as the descriptor;
 - warm cream `#F3EADA`, porcelain `#FAF6EE`, parchment `#EDE2CD`, espresso `#3A2A1F`, espresso-deep `#2A1D14`, ink `#5C4A3B`, terracotta `#B9553E`, terracotta-deep `#8F3B2A`, ornament-only gold `#B08A52`, and gold-bright `#C69B63` on espresso;
@@ -153,7 +156,19 @@ The binding warm-apothecary-modernism system uses:
 - four-up desktop and two-up narrow-width product grids;
 - a cart drawer and mobile sticky product action.
 
-The superseded cool-white/cobalt “Bench Light” direction is prohibited.
+The superseded cool-white/cobalt “Bench Light” direction remains prohibited.
+
+The Fable-authorized Porcelain candidate at `/ovo-labs-porcelain/` is a separate product-first system, not a return to Bench Light. It uses:
+
+- a pure-white `#FFFFFF` canvas with warm near-white `#FBF9F6` cards and `#F3EEE6` image wells;
+- the same amber imagery, espresso controls, terracotta emphasis, and three self-hosted type families;
+- a left-aligned wordmark, direct desktop navigation, persistent boxed search, and a dedicated category row;
+- a compact 55/45 hero, factual four-cell strip, and an early four-up desktop/two-up narrow catalog;
+- 4px controls, 10px cards, and a 16px hero field, with borders doing most of the separation;
+- gold only in packaging photography and the wordmark period;
+- no cobalt, cool-gray clinical template styling, generic laboratory theater, or unsupported proof.
+
+The two routes deliberately share data and truth rules while keeping their CSS, JavaScript, canonical URLs, browser storage, and analytics event namespaces isolated. Porcelain is the primary direct-response hypothesis; the warm route is the premium brand control. Neither is a proven conversion winner without controlled comparative evidence.
 
 ## Proof rules
 
@@ -172,7 +187,7 @@ No claim is published without direct support.
 
 ## Measurement
 
-The prototype writes non-PII events to `window.dataLayer` and exposes them through `window.OVOAnalytics.events()` for QA.
+Each prototype writes non-PII events to `window.dataLayer` and exposes them through `window.OVOAnalytics.events()` for QA. Porcelain additionally exposes `window.OVOPorcelainAnalytics.events()` and dispatches `ovo-porcelain:analytics`.
 
 Search and testing events never contain the visitor’s raw string; they retain only an allowlisted catalog classification, a coarse length bucket, and a result count.
 
@@ -212,4 +227,4 @@ These events measure usability only. No prototype event is a purchase or commerc
 - keyboard completion for search, navigation, accordions, product quantity, and cart;
 - rendered Fable approval at desktop and narrow width;
 - no fabricated product, quality, customer, shipping, or operational claim;
-- exact pushed commit deployed through the connected Sites project.
+- exact pushed commit saved through the connected Sites project, with public deployment only when explicitly authorized.

@@ -12,6 +12,8 @@
     "run_worker_first": [
       "/ovo-labs",
       "/ovo-labs/*",
+      "/ovo-labs-porcelain",
+      "/ovo-labs-porcelain/*",
       "/datum-peptides",
       "/datum-peptides/*",
       "/third-standard",

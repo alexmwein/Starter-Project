@@ -14,8 +14,11 @@ OVO Labs is a fictional peptide retail-house concept with the wordmark `ovolabs.
 8. [`07-fable-design-authority.md`](07-fable-design-authority.md) — locked outward-facing visual contract and required render review.
 9. [`08-competitor-site-audit.md`](08-competitor-site-audit.md) — detailed direct and adjacent website audit.
 10. [`09-qa-report.md`](09-qa-report.md) — complete route, interaction, accessibility, privacy, safety, and performance release evidence.
-11. [`content-calendar.csv`](content-calendar.csv) — 40 publishable touchpoints across 90 days.
-12. [`vendor-diligence-scorecard.csv`](vendor-diligence-scorecard.csv) — 100-point evidence-based diligence model with fatal gates.
+11. [`10-datum-vs-ovo-analysis.md`](10-datum-vs-ovo-analysis.md) — evidence-backed comparison of the white Datum architecture, warm OVO route, and recommended hybrid.
+12. [`11-porcelain-design-contract.md`](11-porcelain-design-contract.md) — binding Fable 5 contract for the white, product-first OVO Labs Porcelain variant.
+13. [`12-porcelain-qa-report.md`](12-porcelain-qa-report.md) — desktop, narrow, interaction, worker, accessibility, and Fable release evidence.
+14. [`content-calendar.csv`](content-calendar.csv) — 40 publishable touchpoints across 90 days.
+15. [`vendor-diligence-scorecard.csv`](vendor-diligence-scorecard.csv) — 100-point evidence-based diligence model with fatal gates.
 
 ## Evidence grades
 
