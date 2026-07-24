@@ -396,8 +396,8 @@
 
   function drawers() {
     return `
-      <div class="drawer-backdrop" data-drawer-backdrop data-open="false"></div>
-      <aside class="cart-drawer" data-cart-drawer data-open="false" aria-hidden="true" aria-labelledby="cart-title">
+      <div class="drawer-backdrop" data-drawer-backdrop data-open="false" aria-hidden="true"></div>
+      <aside class="cart-drawer" data-cart-drawer data-open="false" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="cart-title">
         <div class="drawer-head">
           <h2 id="cart-title">Your cart</h2>
           <button class="drawer-close" type="button" data-cart-close aria-label="Close cart">×</button>
@@ -405,7 +405,7 @@
         <div class="cart-items" data-cart-items></div>
         <div class="cart-footer" data-cart-footer></div>
       </aside>
-      <aside class="mobile-drawer" data-mobile-drawer data-open="false" aria-hidden="true" aria-labelledby="menu-title">
+      <aside class="mobile-drawer" data-mobile-drawer data-open="false" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="menu-title">
         <div class="drawer-head">
           <h2 id="menu-title">Menu</h2>
           <button class="drawer-close" type="button" data-menu-close aria-label="Close menu">×</button>
@@ -1435,6 +1435,12 @@
     return { drawer, other };
   }
 
+  function setPageInert(isInert) {
+    document.querySelectorAll(".site-header, #main-content, .site-footer").forEach((element) => {
+      element.inert = isInert;
+    });
+  }
+
   function openDrawer(type) {
     const { drawer, other } = drawerElements(type);
     const backdrop = document.querySelector("[data-drawer-backdrop]");
@@ -1446,6 +1452,7 @@
     drawer.setAttribute("aria-hidden", "false");
     backdrop.dataset.open = "true";
     body.classList.add("drawer-open");
+    setPageInert(true);
     drawer.querySelector("button, a")?.focus();
     if (type === "cart") {
       track("view_cart", { item_count: cart.reduce((sum, item) => sum + item.quantity, 0), demo_only: true });
@@ -1462,6 +1469,7 @@
     });
     if (backdrop) backdrop.dataset.open = "false";
     body.classList.remove("drawer-open");
+    setPageInert(false);
     if (wasOpen && lastFocusedElement instanceof HTMLElement) lastFocusedElement.focus();
     if (wasOpen) lastFocusedElement = null;
   }
