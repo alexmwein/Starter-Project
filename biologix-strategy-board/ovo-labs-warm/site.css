@@ -2820,6 +2820,9 @@ button:disabled {
 .pdp-assurances li::before {
   position: absolute; top: 6px; left: 0;
   width: 6px; height: 6px; content: "";
-  background: var(--success); border-radius: 50%;
+  /* Neutral, not success green. Green is the "verified/reported" token that the
+     COA pills and lot records trade on. Spending it on shipping policy would
+     dilute the one signal the catalog's credibility rests on. */
+  background: var(--text-2); border-radius: 50%;
 }
 .pdp-testing-link.is-reported { color: var(--cobalt); }

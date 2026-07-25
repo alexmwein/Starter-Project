@@ -1133,7 +1133,7 @@
             </div>
             <ul class="pdp-assurances">
               <li>Ships in an insulated mailer · cold chain available at checkout</li>
-              <li>Lot COA reported before dispatch${testingFor(product.slug) ? ` · reported ${escapeHtml(testingFor(product.slug).date)}` : ""}</li>
+              <li>Lot COA reported before dispatch${testingFor(product.slug) ? ` · ${escapeHtml(testingFor(product.slug).date)}` : ""}</li>
               <li>Free standard shipping over ${money.format(FREE_SHIPPING_THRESHOLD)}</li>
             </ul>
             <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>
