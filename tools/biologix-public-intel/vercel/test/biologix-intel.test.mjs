@@ -13,6 +13,7 @@ import {
   parseStockQuantity,
   summarizeUrlset,
 } from "../lib/biologix-intel-core.js";
+import { freshPublicUrl } from "../lib/collector.js";
 
 function product(overrides = {}) {
   return {
@@ -36,6 +37,18 @@ test("stock parsing distinguishes exact, unknown, and out of stock", () => {
   assert.equal(parseStockQuantity("17 in stock (can be backordered)", true), 17);
   assert.equal(parseStockQuantity("In stock", true), null);
   assert.equal(parseStockQuantity("Out of stock", false), 0);
+});
+
+test("public catalog URLs rotate once per poll window to bypass stale caches", () => {
+  const url = "https://example.com/wp-json/wc/store/v1/products?per_page=100";
+  const first = freshPublicUrl(url, Date.UTC(2026, 6, 25, 12, 1));
+  const sameWindow = freshPublicUrl(url, Date.UTC(2026, 6, 25, 12, 14));
+  const nextWindow = freshPublicUrl(url, Date.UTC(2026, 6, 25, 12, 15));
+
+  assert.equal(first, sameWindow);
+  assert.notEqual(first, nextWindow);
+  assert.equal(new URL(first).searchParams.get("per_page"), "100");
+  assert.ok(new URL(first).searchParams.has("ovo_intel_poll"));
 });
 
 test("variable parent stock is not double-counted when children are exact", () => {
