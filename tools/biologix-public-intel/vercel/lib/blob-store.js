@@ -28,7 +28,10 @@ function dayPath(dateKey) {
 }
 
 async function readJson(pathname) {
-  const result = await get(pathname, { access: "private" });
+  const result = await get(pathname, {
+    access: "private",
+    useCache: false,
+  });
   if (!result) return { value: null, etag: null };
   if (result.statusCode !== 200 || !result.stream) {
     throw new Error(`Blob read failed for ${pathname}: ${result.statusCode}`);
