@@ -58,6 +58,55 @@
     return `SMP-${String(lot).replace(/-/g, "")}`;
   }
 
+  /* The lot number is the only thing that ties the vial in the box to the
+     analytical record on the site, so it has to be addressable and it has to
+     travel with the purchase. These four helpers are the whole mechanism:
+     resolve a lot to its catalog entry, build the record URL, and expand any
+     cart line into its lots. A set carries one lot per component, not a single
+     blended one, because that is what would be printed on the two vials. */
+  function productForLot(lot) {
+    const key = String(lot || "").trim().toUpperCase();
+    if (!key) return null;
+    const slug = Object.keys(TESTING).find((entry) => TESTING[entry].lot.toUpperCase() === key);
+    return slug ? PRODUCTS.find((product) => product.slug === slug) || null : null;
+  }
+
+  function lotPath(lot) {
+    return path(`lot-record.html?lot=${encodeURIComponent(lot)}`);
+  }
+
+  function lotTrace(slug) {
+    const item = ALL_CART_ITEMS.find((entry) => entry.slug === slug);
+    if (!item) return [];
+    return (item.productSlugs || [slug])
+      .map((componentSlug) => {
+        const record = testingFor(componentSlug);
+        if (!record) return null;
+        const product = PRODUCTS.find((entry) => entry.slug === componentSlug);
+        return {
+          slug: componentSlug,
+          name: product ? product.name : componentSlug,
+          code: product ? product.code : "",
+          lot: record.lot,
+          date: record.date,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  /* One "Lot X, reported Y" row per component, named per component only when a
+     line carries more than one, so a single vial is never labelled twice. */
+  function lotTraceRows(slug, options = {}) {
+    const { link = true } = options;
+    const entries = lotTrace(slug);
+    return entries.map((entry) => {
+      const label = `${entries.length > 1 ? `${escapeHtml(entry.name)} · ` : ""}Lot ${escapeHtml(entry.lot)} · reported ${escapeHtml(entry.date)}`;
+      return link
+        ? `<a class="lot-line" href="${lotPath(entry.lot)}">${label}</a>`
+        : `<span class="lot-line">${label}</span>`;
+    });
+  }
+
   function testingFor(slug) {
     return TESTING[slug] || null;
   }
@@ -178,9 +227,10 @@
      the checkout rather than trusted from when the item was added. */
   /* Curated rails are recommendations, so leading them with something that
      cannot be bought wastes the strongest slot on the page. Sort is stable, so
-     entries keep their editorial order inside each group. The catalog grid is
-     deliberately NOT sorted this way: the unsellable entries must stay visible
-     there so the position on them is on the record. */
+     entries keep their editorial order inside each group. The full catalog grid
+     still lists every entry, including the two that are not offered, so the
+     position on them stays visible. There it only applies to the Featured order,
+     and never overrides an explicit name or price sort. */
   const sellableFirst = (list) =>
     [...list].sort(
       (a, b) => (availabilityFor(b.slug).sellable === true) - (availabilityFor(a.slug).sellable === true),
@@ -488,7 +538,7 @@
 
   function activePage(name) {
     if (name === "shop" && ["collection", "product"].includes(PAGE)) return true;
-    if (name === "testing" && PAGE === "testing") return true;
+    if (name === "testing" && ["testing", "lot-record"].includes(PAGE)) return true;
     if (name === "bundles" && PAGE === "bundles") return true;
     if (name === "learn" && ["learn", "article"].includes(PAGE)) return true;
     if (name === "about" && ["about", "policy"].includes(PAGE)) return true;
@@ -595,17 +645,26 @@
             <div class="footer-column">
               <h2>Information</h2>
               <a href="${path("testing.html")}">Testing & COAs</a>
+              <a href="${path("lot-record.html")}">Lot records</a>
               <a href="${path("notes.html")}">Learn</a>
               <a href="${path("faq.html")}">FAQ</a>
               <a href="${path("company.html")}">About OVO Labs</a>
               <a href="${path("policies.html")}">Site policies</a>
+              <a href="${path("eligibility.html")}">Research use eligibility</a>
             </div>
             <div class="footer-column">
               <h2>Catalog entries</h2>
-              <a href="${productPath(PRODUCTS[0])}">Retatrutide 10 mg</a>
-              <a href="${productPath(PRODUCTS[1])}">Tirzepatide 10 mg</a>
-              <a href="${productPath(PRODUCTS[4])}">BPC-157 10 mg</a>
-              <a href="${productPath(PRODUCTS[8])}">CJC-1295 + Ipamorelin</a>
+              <!-- Four hardcoded indices, led by OVO-001, the one entry the store
+                   will not sell. Built from data now and ordered sellable first,
+                   so the footer cannot drift from the catalog and cannot spend
+                   its first link on a dead end. -->
+              ${sellableFirst(PRODUCTS)
+                .slice(0, 4)
+                .map(
+                  (product) =>
+                    `<a href="${productPath(product)}">${escapeHtml(product.name)} ${escapeHtml(product.strength)}</a>`,
+                )
+                .join("")}
             </div>
           </div>
           <div class="footer-bottom">
@@ -641,6 +700,7 @@
           <a href="${path("faq.html")}">FAQ</a>
           <a href="${path("company.html")}">About OVO Labs</a>
           <a href="${path("policies.html")}">Site policies</a>
+          <a href="${path("eligibility.html")}">Research use eligibility</a>
         </nav>
       </aside>
       <div class="toast" data-toast aria-live="polite" data-open="false"></div>
@@ -799,6 +859,11 @@
   }
 
   function homePage() {
+    /* One featured entry for the whole page. The hero chip, the hero testing card
+       and the testing-status document each used to pick their own subject, and
+       two of the three picked the entry that cannot be bought. */
+    const featured = sellableFirst(PRODUCTS)[0];
+    const featuredTesting = testingFor(featured.slug);
     return `
       <section class="home-hero">
         <div class="shell hero-grid">
@@ -814,12 +879,13 @@
           <div class="hero-visual">
             <img src="${path("assets/ovo-hero-still.webp")}" alt="An OVO Labs amber peptide vial with a gold cap resting on a travertine ledge in warm window light" width="1536" height="1024" fetchpriority="high">
             ${(() => {
-              /* The hero chip and the hero testing card both read from data now.
-                 The chip used to hardcode the one entry that cannot be bought,
-                 and the card used to say "Reported result: None" directly above a
-                 catalog where every entry reports three fields. */
-              const featured = sellableFirst(PRODUCTS)[0];
-              const record = testingFor("retatrutide");
+              /* Both hero cards read from data, and now from the SAME featured
+                 entry, so the card cannot print the lot of one product beside a
+                 chip for another. "Reported result: identity, content, purity"
+                 was an assertion; the measured purity and mass off the actual
+                 lot are the claim itself, and the unreported row sits in the
+                 same card so the gap is not something you have to dig for. */
+              const record = featuredTesting;
               return `
             <a class="hero-product-chip" href="${productPath(featured)}">
               <span>Featured catalog entry</span>
@@ -827,14 +893,18 @@
               <p>${money.format(featured.price)} · View product →</p>
             </a>
             <a class="hero-coa-card" href="${path("testing.html")}">
-              <span>Testing status</span>
+              <span>${escapeHtml(featured.name)} · Lot ${escapeHtml(record ? record.lot : "not assigned")}</span>
               <div class="hero-coa-row">
-                <span>Reported result</span>
-                <strong>Identity, content, purity</strong>
+                <span>Purity</span>
+                <strong>${escapeHtml(record ? record.purity[1] : "Not reported")}</strong>
               </div>
               <div class="hero-coa-row">
-                <span>Lot</span>
-                <strong>${escapeHtml(record.lot)} · ${escapeHtml(record.date)}</strong>
+                <span>Content</span>
+                <strong>${escapeHtml(record ? record.content[1] : "Not reported")}</strong>
+              </div>
+              <div class="hero-coa-row">
+                <span>Sterility</span>
+                <strong>Not reported</strong>
               </div>
             </a>`;
             })()}
@@ -883,12 +953,12 @@
           <div class="testing-document" aria-label="Example testing-status document">
             <div class="document-head">
               <div>
-                <strong>OVO-001 · Retatrutide</strong>
+                <strong>${escapeHtml(featured.code)} · ${escapeHtml(featured.name)}</strong>
                 <span>TESTING STATUS</span>
               </div>
-              <span class="document-tag is-reported">LOT ${escapeHtml(testingFor("retatrutide").lot)} · ${escapeHtml(testingFor("retatrutide").date)}</span>
+              <span class="document-tag is-reported">LOT ${escapeHtml(featuredTesting ? `${featuredTesting.lot} · ${featuredTesting.date}` : "not assigned")}</span>
             </div>
-            ${testingFields("retatrutide").map((f) => `
+            ${testingFields(featured.slug).map((f) => `
               <div class="document-row${f.reported ? " is-reported" : ""}">
                 <strong>${escapeHtml(f.label)}</strong>
                 <span>${escapeHtml(f.method)} · ${escapeHtml(f.result)}</span>
@@ -958,6 +1028,16 @@
                 </button>
               `,
             ).join("")}
+            <!-- Research area alone cannot get a visitor to a decision: the
+                 largest category is half unbuyable. This is the second real axis,
+                 and it is a genuine narrowing rather than a decorative control.
+                 Both not-offered entries stay in the catalog by default; this
+                 only lets a visitor who wants to order set them aside. -->
+            <h2 style="margin-top: var(--s-5);">Availability</h2>
+            <button class="filter-button" type="button" data-availability-toggle aria-pressed="false">
+              Available to order only
+              <span>${PRODUCTS.filter((product) => availabilityFor(product.slug).sellable).length}</span>
+            </button>
           </aside>
           <div class="collection-main">
             <div class="collection-toolbar">
@@ -984,9 +1064,9 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Not sure where to start?</p>
-              <h2>Use the testing state as a filter.</h2>
+              <h2>Narrow the grid, then read the lot.</h2>
             </div>
-            <p>Every entry currently shows the same clear state: no analytical result has been reported. The testing page explains what each method would and would not establish.</p>
+            <p>The research-area buttons, the search field and the sort control above are the filters on this page. Every entry then carries the same three reported fields, identity, content and purity, against a named lot and report date. Sterility and endotoxin stay unreported on all ten. The testing page lists every lot in one table and explains what each method does and does not establish.</p>
           </div>
           <a class="button button-primary" href="${path("testing.html")}">Review testing & COAs ${icons.arrow}</a>
         </div>
@@ -1000,7 +1080,7 @@
         <div class="shell">
           <p class="eyebrow">Testing & COAs</p>
           <h1>Testing status belongs beside the product.</h1>
-          <p>Search an OVO Labs product name or code to see the exact testing status. No certificate, laboratory relationship, result, or release claim is implied.</p>
+          <p>Search an OVO Labs product name or code to see the testing status for its current lot. Identity, content and purity are reported per lot, each with its method, sample reference and report date. Sterility and endotoxin are not represented, and no result extends past the sample and scope it names.</p>
           <form class="testing-lookup" data-testing-lookup>
             <label class="sr-only" for="testing-search">Search product name or code</label>
             <input id="testing-search" name="query" type="search" placeholder="Try OVO-001 or Retatrutide" autocomplete="off">
@@ -1167,7 +1247,7 @@
         <div class="shell">
           <p class="eyebrow">Help & details</p>
           <h1>Questions, answered plainly.</h1>
-          <p>What the catalog shows, what “No result reported” means, how browser storage works, and exactly where this fictional store stops.</p>
+          <p>What each lot reports, what “not represented” means, how browser storage works, and exactly where this fictional store stops.</p>
         </div>
       </section>
       <section class="section">
@@ -1179,9 +1259,9 @@
           <div>
             ${accordion([
               ["Can I place an order?", "You can complete the checkout and receive an order reference, which is recorded in this browser. Because OVO Labs is a fictional concept storefront, nothing is charged, stocked, shipped, or fulfilled."],
-              ["What does “No result reported” mean?", "It means no testing result is published for that catalog item. It does not mean the item passed, failed, or is waiting on a promised result."],
+              ["What does “not represented” mean?", "It means no method for that attribute was run, so there is no result to publish. On this catalog it applies to sterility and endotoxin on every entry. It does not mean the item passed, failed, or is waiting on a promised result, and no other reported field covers it."],
               ["Does a COA prove a product is safe, effective, or sterile?", "No. A document supports only the measurements, sample, method, date, and scope it identifies. Unreported attributes should not be inferred."],
-              ["Why are there no purity percentages?", "No verified testing report exists for these catalog items. OVO Labs does not invent percentages or testing claims to make a product page feel complete."],
+              ["Where do the purity percentages come from?", `Each entry reports a purity figure by RP-HPLC, area %, for one identified lot, published with that lot number and the report date. Retatrutide reports ${testingFor("retatrutide").purity[1]} for lot ${testingFor("retatrutide").lot}, reported ${testingFor("retatrutide").date}. The figure describes the relative composition of the tested sample under those method conditions. It does not establish sterility, endotoxin state, or suitability for any use.`],
               ["Does this catalog provide human-use information?", "No dosing, preparation, administration, safety, efficacy, medical, or human-use guidance is provided."],
               ["Are the product descriptions medical advice?", "No. They identify proposed catalog references and formats only."],
               ["How does search work?", "Search by peptide name, category, blend name, or catalog code such as OVO-001. Keyboard users can move through predictive results with the arrow keys."],
@@ -1239,9 +1319,51 @@
             </div>
           </div>
           <div class="value-grid">
-            <article class="value-card"><div><h3>No decorative proof</h3><p>No badges, reviews, lab names, purity figures, certificates, or quality claims exist without evidence.</p></div></article>
+            <article class="value-card"><div><h3>No decorative proof</h3><p>An analytical figure appears only with its method, lot and report date attached. Ratings, testimonials, seals, laboratory photography and quality slogans do not appear at all, and a field with no method behind it is labeled unreported rather than dressed up.</p></div></article>
             <article class="value-card"><div><h3>No urgency machinery</h3><p>No stock countdown, sale timer, crossed-out anchor price, or invented best-seller ranking pushes the click.</p></div></article>
             <article class="value-card"><div><h3>No fake transaction</h3><p>The full purchase path is here to evaluate, from cart to order confirmation. Payment is the deliberate exception: no card is captured and no charge is possible.</p></div></article>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="shell detail-grid">
+          <div>
+            <p class="eyebrow">Who we are</p>
+            <h2>The entity behind the catalog, in full.</h2>
+          </div>
+          <div>
+            <p class="article-lede">A store that will not name itself is asking for trust it has not offered. Every line below is fictional. Every line below is stated anyway, because a concept that leaves them blank cannot be judged on the thing it claims to be.</p>
+            <div class="spec-table">
+              <div class="spec-row"><strong>Operating entity</strong><span>OVO Labs LLC, an Oregon limited liability company</span></div>
+              <div class="spec-row"><strong>Registered office</strong><span>1420 NW Marshall Street, Suite 300, Portland, Oregon 97209</span></div>
+              <div class="spec-row"><strong>Fulfillment</strong><span>One facility in Portland. Packing, cold-chain assembly and logger sealing all happen there</span></div>
+              <div class="spec-row"><strong>Analytical work</strong><span>An independent contract laboratory. OVO Labs runs no release testing of its own and names the method, sample and date on every lot it reports</span></div>
+              <div class="spec-row"><strong>Support</strong><span><a class="text-link" href="mailto:support@ovolabs.example">support@ovolabs.example</a>, Monday to Friday, 9:00 to 17:00 Pacific</span></div>
+              <div class="spec-row"><strong>Response</strong><span>First reply within one business day. Fulfillment cases get a written decision within three business days</span></div>
+              <div class="spec-row"><strong>Ships to</strong><span>United States only, street addresses only, from the Portland facility</span></div>
+            </div>
+            <p><a class="text-link" href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy ${icons.arrow}</a></p>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="shell detail-grid">
+          <div>
+            <p class="eyebrow">Who we are</p>
+            <h2>The entity behind the catalog, in full.</h2>
+          </div>
+          <div>
+            <p class="article-lede">A store that will not name itself is asking for trust it has not offered. Every line below is fictional. Every line below is stated anyway, because a concept that leaves them blank cannot be judged on the thing it claims to be.</p>
+            <div class="spec-table">
+              <div class="spec-row"><strong>Operating entity</strong><span>OVO Labs LLC, an Oregon limited liability company</span></div>
+              <div class="spec-row"><strong>Registered office</strong><span>1420 NW Marshall Street, Suite 300, Portland, Oregon 97209</span></div>
+              <div class="spec-row"><strong>Fulfillment</strong><span>One facility in Portland. Packing, cold-chain assembly and logger sealing all happen there</span></div>
+              <div class="spec-row"><strong>Analytical work</strong><span>An independent contract laboratory. OVO Labs runs no release testing of its own and names the method, sample and date on every lot it reports</span></div>
+              <div class="spec-row"><strong>Support</strong><span><a class="text-link" href="mailto:support@ovolabs.example">support@ovolabs.example</a>, Monday to Friday, 9:00 to 17:00 Pacific</span></div>
+              <div class="spec-row"><strong>Response</strong><span>First reply within one business day. Fulfillment cases get a written decision within three business days</span></div>
+              <div class="spec-row"><strong>Ships to</strong><span>United States only, street addresses only, from the Portland facility</span></div>
+            </div>
+            <p><a class="text-link" href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy ${icons.arrow}</a></p>
           </div>
         </div>
       </section>
@@ -1272,7 +1394,8 @@
         <ul>
           <li>It does not offer, sell, reserve, quote, or ship material.</li>
           <li>It does not collect payment, customer accounts, addresses, or submitted email data.</li>
-          <li>It does not claim a laboratory, certificate, result, purity level, stock state, delivery time, or customer experience.</li>
+          <li>It does not claim a named laboratory, an accreditation, a regulatory approval, a customer, a review, a rating, or a sales record.</li>
+          <li>The lots, analytical results, unit counts, prices and delivery windows shown are demonstration data for a fictional catalog, not records of material that exists.</li>
           <li>It does not provide dosing, preparation, administration, clinical, therapeutic, safety, efficacy, or human-use information.</li>
         </ul>
         <div class="article-callout"><strong>The cart is local.</strong> Its contents and any order reference are stored only in this browser. Checkout runs end to end without taking payment, and clearing browser storage removes both.</div>
@@ -1286,6 +1409,24 @@
           <li>Unopened vials: returnable within 14 days, refunded to the original method less outbound shipping.</li>
           <li>Opened vials: not returnable, because a returned vial cannot be re-verified.</li>
         </ul>
+        <h2>How a case is opened</h2>
+        <p>One route and one thread: email the support mailbox with the order reference in the subject line. There is no phone queue and no ticket portal, because a single written thread keeps the photographs, the lot number and the decision in one place.</p>
+        <p><a class="text-link" href="mailto:support@ovolabs.example">Email support@ovolabs.example</a></p>
+        <p>Send with the first message:</p>
+        <ul>
+          <li>The order reference and the catalog code.</li>
+          <li>The lot number printed on the vial label, which is what the claim is checked against.</li>
+          <li>Photographs of the outer box, the inside of the mailer, the vial, and the temperature logger if one shipped.</li>
+        </ul>
+        <p>What happens next:</p>
+        <ul>
+          <li>Acknowledgement within one business day, naming anything still missing from the case.</li>
+          <li>A written decision within three business days of a complete case, with the reason stated.</li>
+          <li>Approved replacements ship on the next fulfillment day by the delivery method originally paid for, at no cost, with the new lot number quoted before dispatch.</li>
+          <li>Approved returns get a prepaid label and a return reference. The refund is released within five business days of the vial arriving back.</li>
+        </ul>
+        <p>After 72 hours, or without the lot number, a case can still be read but cannot be settled as a transit claim, because the carrier record has closed and the condition on arrival can no longer be established.</p>
+        <div class="article-callout"><strong>None of this can be exercised.</strong> Nothing is picked, packed or shipped here, so no case can arise and the mailbox above is fictional. The terms are written out because the position a storefront takes before anything goes wrong is part of what is being evaluated.</div>
         <h2>Why the banner stays visible</h2>
         <p>The thin top notice keeps the concept status clear on every route while allowing the rest of the prototype to be evaluated as a real ecommerce design.</p>
         <p><a class="text-link" href="${path("catalog.html")}">Return to the concept catalog ${icons.arrow}</a></p>
@@ -1458,6 +1599,7 @@
               return record
                 ? `<div class="analytical-meta">
                 <p><strong>Lot ${escapeHtml(record.lot)}</strong> · sample ${escapeHtml(sampleReference(record.lot))} · reported ${escapeHtml(record.date)}</p>
+                <p><a href="${lotPath(record.lot)}">Open the full record for this lot ${icons.arrow}</a></p>
               </div>`
                 : "";
             })()}
@@ -1481,7 +1623,8 @@
             <h2>What to do when the box arrives.</h2>
           </div>
           <div>
-            <p>Lyophilized vials are stable at ambient temperature for the transit window and ship in an insulated mailer as standard. Cold chain is optional and adds a gel pack plus a temperature logger with a printed range. On arrival, check the logger before opening; if it reads outside the stated range, photograph it and open a case before use. Store unopened lyophilized vials refrigerated at 2 to 8 C, protected from light.</p>
+            <p>Lyophilized peptide is a dry solid. It is stable at ambient temperature for the transit window, so the standard insulated mailer is not a downgrade. Cold chain exists for the record rather than for the vial: it adds a gel pack and a sealed single-use logger with a printed 2 to 8 °C range, so the condition on arrival is documented instead of assumed.</p>
+            <p>Read the logger before opening the mailer. A logger above range is replaced regardless of how the vial looks, because a dry vial shows no visible sign of a heat excursion, so photograph it and open a case before use. Store unopened vials at 2 to 8 °C, upright, in the carton and away from light. The ambient tolerance covers days in transit, not months on a shelf.</p>
             <p><a class="text-link" href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy ${icons.arrow}</a></p>
           </div>
         </div>
@@ -1552,7 +1695,7 @@
         sections: [
           ["A specification is not a result", "A specification describes an intended target or acceptance rule. A result describes what was observed for an identified sample under a stated method. One should never be styled as the other."],
           ["Identity, amount, and composition are separate", "An identity method asks whether the observed profile matches the intended compound. A content or mass method asks how much is reported. A purity method describes relative composition under its method conditions. None automatically answers the others."],
-          ["“No result reported” is useful information", "An explicit empty state prevents a shopper from assuming that a badge, document icon, or quality headline stands in for evidence. It keeps the unknown visible at the moment of comparison."],
+          ["“Not represented” is useful information", "An explicit empty field stops a shopper assuming that a badge, document icon, or quality headline stands in for evidence. Where identity, content and purity are reported per lot and sterility and endotoxin are not, the gap stays visible at the moment of comparison."],
         ],
       },
       "choosing-by-molecule": {
@@ -1604,6 +1747,155 @@
               )
               .join("")}
           </div>
+        </div>
+      </section>
+    `;
+  }
+
+  /* Every product page promises a lot COA before dispatch, and until now the
+     document was asserted and never produced, which is the one place the site's
+     evidence claim was pure assertion. This is the document. It is deliberately
+     plain: mono for anything that is data, a label on every field, and the
+     unreported fields carried at the same weight as the reported ones instead
+     of quietly dropped. No badges, no status colour, no persuasion. */
+  function lotRecordIndex(excludeLot = "", compact = false) {
+    const rows = PRODUCTS.filter((product) => testingFor(product.slug))
+      .filter((product) => testingFor(product.slug).lot !== excludeLot)
+      .map((product) => {
+        const record = testingFor(product.slug);
+        return `
+          <a class="lot-index-row" href="${lotPath(record.lot)}">
+            <span class="lot-index-lot">${escapeHtml(record.lot)}</span>
+            <span class="lot-index-name">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</span>
+            <span class="lot-index-code">${escapeHtml(product.code)}</span>
+            <span class="lot-index-date">Reported ${escapeHtml(record.date)}</span>
+          </a>
+        `;
+      })
+      .join("");
+    return `<div class="lot-index${compact ? " is-compact" : ""}">${rows}</div>`;
+  }
+
+  function lotRecordPage() {
+    const requested = (new URLSearchParams(window.location.search).get("lot") || "").trim();
+    const product = productForLot(requested);
+
+    /* No lot, or a lot this catalog has never reported, lands on the index
+       rather than a dead end. A record set is browsable by definition. */
+    if (!product) {
+      track("lot_record_index", { requested_lot: requested });
+      return `
+        <div class="shell breadcrumb" aria-label="Breadcrumb">
+          <a href="${path("index.html")}">Home</a><span aria-hidden="true">/</span>
+          <a href="${path("testing.html")}">Testing &amp; COAs</a><span aria-hidden="true">/</span>
+          <span aria-current="page">Lot records</span>
+        </div>
+        <section class="page-hero is-compact">
+          <div class="shell">
+            <p class="eyebrow">Lot records</p>
+            <h1>${requested ? `No record for lot ${escapeHtml(requested)}.` : "Lot records"}</h1>
+            <p>${requested
+              ? "That lot number is not in this catalog's record set. Every lot currently reported is listed below."
+              : "One record per reported lot. Each names the sample, the method used for each field, the result, and the fields the record does not cover."}</p>
+          </div>
+        </section>
+        <section class="section">
+          <div class="shell">
+            ${lotRecordIndex()}
+            <p class="testing-attribution">Analysis performed by an independent contract laboratory. OVO Labs does not perform its own release testing. No record on this site represents sterility or endotoxin.</p>
+          </div>
+        </section>
+      `;
+    }
+
+    const record = testingFor(product.slug);
+    const fields = testingFields(product.slug);
+    const reported = fields.filter((field) => field.reported);
+    const omitted = fields.filter((field) => !field.reported);
+    const sample = sampleReference(record.lot);
+
+    track("lot_record_view", { lot: record.lot, product_code: product.code });
+
+    const headerFields = [
+      ["Catalog entry", `${product.name} · ${product.strength}`],
+      ["Catalog code", product.code],
+      ["Lot number", record.lot],
+      ["Sample reference", sample],
+      ["Report date", record.date],
+      ["Material as received", product.format],
+      ["Analysis by", "Independent contract laboratory"],
+      ["Record covers", "The identified sample only"],
+    ]
+      .map(([label, value]) => `<div class="lot-field"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+      .join("");
+
+    const methodRows = (rows, isOmitted = false) =>
+      rows
+        .map(
+          (field) => `
+            <div class="lot-method${isOmitted ? " is-omitted" : ""}">
+              <span class="lot-method-label">${escapeHtml(field.label)}</span>
+              <span class="lot-method-method">${escapeHtml(isOmitted ? "No method performed" : field.method)}</span>
+              <span class="lot-method-result">${escapeHtml(isOmitted ? "No result exists to report" : field.result)}</span>
+            </div>
+          `,
+        )
+        .join("");
+
+    return `
+      <div class="shell breadcrumb" aria-label="Breadcrumb">
+        <a href="${path("index.html")}">Home</a><span aria-hidden="true">/</span>
+        <a href="${path("testing.html")}">Testing &amp; COAs</a><span aria-hidden="true">/</span>
+        <a href="${path("lot-record.html")}">Lot records</a><span aria-hidden="true">/</span>
+        <span aria-current="page">${escapeHtml(record.lot)}</span>
+      </div>
+      <section class="page-hero is-compact">
+        <div class="shell">
+          <p class="eyebrow">Lot record</p>
+          <h1>Lot <span class="lot-hero-number">${escapeHtml(record.lot)}</span></h1>
+          <p>The analytical record behind ${escapeHtml(product.name)} ${escapeHtml(product.strength)}. It states what was measured on one identified sample, and states just as plainly what it does not cover.</p>
+        </div>
+      </section>
+      <section class="section">
+        <div class="shell lot-layout">
+          <article class="lot-doc">
+            <header class="lot-doc-head">
+              <div>
+                <p class="lot-doc-kicker">Analytical record</p>
+                <h2>${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</h2>
+              </div>
+              <p class="lot-doc-ref">${escapeHtml(product.code)} / ${escapeHtml(record.lot)}</p>
+            </header>
+            <dl class="lot-fields">${headerFields}</dl>
+            <section class="lot-block">
+              <h3>Methods and results</h3>
+              <div class="lot-methods">${methodRows(reported)}</div>
+              <p class="lot-note">Each result applies to sample ${escapeHtml(sample)} under the method named beside it. Identity, content and purity answer three different questions, so a result in one row does not stand in for another, and no row here describes any vial other than the sample identified above.</p>
+            </section>
+            <section class="lot-block lot-omissions">
+              <h3>Not represented by this record</h3>
+              <div class="lot-methods">${methodRows(omitted, true)}</div>
+              <p class="lot-note">Lyophilized research material is not released as sterile, and no microbiological or endotoxin method was performed on this sample, so there is no result to report and none is implied. Do not read the purity figure above as a sterility statement. This record also does not establish suitability for human use, and OVO Labs presents no dosing, preparation, or administration information.</p>
+            </section>
+            <footer class="lot-doc-foot">
+              <p>Analysis performed by an independent contract laboratory. OVO Labs does not perform its own release testing.</p>
+              <p>Record issued ${escapeHtml(record.date)}. If the vial label in your shipment names a lot other than ${escapeHtml(record.lot)}, photograph it and open a case before use.</p>
+            </footer>
+          </article>
+          <aside class="lot-aside">
+            <h2>This lot</h2>
+            ${restrictionFor(product.slug)
+              ? `<p class="lot-aside-note"><strong>Not offered.</strong> ${escapeHtml(restrictionFor(product.slug))}</p>`
+              : ""}
+            <div class="lot-aside-links">
+              <a href="${productPath(product)}">${escapeHtml(product.name)} product page</a>
+              <a href="${path(`testing.html?product=${product.code}`)}">Testing status for ${escapeHtml(product.code)}</a>
+              <a href="${path("notes/coa-boundaries.html")}">What a COA can and cannot show</a>
+              <a href="${path("policies.html")}#fulfillment">Fulfillment and resolution policy</a>
+            </div>
+            <h2>Other reported lots</h2>
+            ${lotRecordIndex(record.lot, true)}
+          </aside>
         </div>
       </section>
     `;
@@ -1676,6 +1968,13 @@
                 <div>
                   <h3>${escapeHtml(item.name)}</h3>
                   <p class="cart-row-meta">${escapeHtml(item.code)} · ${escapeHtml(item.strength)}</p>
+                  ${(() => {
+                    /* The lot is what a buyer can check the delivered vial label
+                       against, so it rides the line from here to the receipt
+                       instead of living only on the product page. */
+                    const lots = lotTraceRows(item.slug);
+                    return lots.length ? `<p class="cart-row-lots">${lots.join("")}</p>` : "";
+                  })()}
                 </div>
                 <span class="cart-row-price">${money.format(item.price * line.quantity)}</span>
               </div>
@@ -1935,9 +2234,9 @@
 
             <fieldset class="checkout-step" data-step="delivery" hidden>
               <legend><span>3</span> Delivery method</legend>
-              <p class="step-hint">Standard is sufficient for lyophilized vials. Choose cold chain if you want a temperature record.</p>
+              <p class="step-hint">Lyophilized vials are stable at ambient temperature for the transit window, so standard is not a downgrade. Cold chain adds a gel pack and a sealed 2 to 8 °C logger, so the condition on arrival is recorded rather than assumed.</p>
               <div class="choice-group" data-delivery-group>${deliveryOptions}</div>
-              <p class="step-hint">On arrival, check the logger before opening. If it reads outside the stated range, photograph it and open a case before use. <a href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy</a>.</p>
+              <p class="step-hint">On arrival, check the logger before opening. If it reads outside the stated range, photograph it and open a case before use. <a style="text-decoration:underline;text-underline-offset:2px" href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy</a>.</p>
               <div class="step-actions">
                 <button class="button button-secondary" type="button" data-back="shipping">Back</button>
                 <a class="button button-secondary" href="${path("cart.html")}">Back to cart</a>
@@ -2041,9 +2340,24 @@
           <div class="summary-line">
             <img src="${path(line.isBundle ? "assets/ovo-set-pair.webp" : "assets/ovo-vial-front.webp")}" alt="${escapeHtml(line.name)}" width="48" height="54">
             <div>
-              <strong><a href="${path(`testing.html?product=${line.code}`)}">${escapeHtml(line.name)}</a></strong>
+              <strong><a href="${line.isBundle ? path("bundles.html") : path(`testing.html?product=${line.code}`)}">${escapeHtml(line.name)}</a></strong>
               <span>${escapeHtml(line.code)} · ${escapeHtml(line.strength)} · Qty ${line.quantity}</span>
-              ${line.lot ? `<span>Lot ${escapeHtml(line.lot)} · reported ${escapeHtml(line.lotDate || "")}</span>` : ""}
+              ${(() => {
+                /* Orders placed before lots were recorded still render: the line
+                   falls back to its single stored lot, and shows nothing at all
+                   if it never carried one. */
+                const lots = Array.isArray(line.lots) && line.lots.length
+                  ? line.lots
+                  : line.lot
+                    ? [{ name: line.name, lot: line.lot, date: line.lotDate || "" }]
+                    : [];
+                return lots
+                  .map(
+                    (entry) =>
+                      `<span class="lot-line">${lots.length > 1 ? `${escapeHtml(entry.name)} · ` : ""}Lot ${escapeHtml(entry.lot)} · reported ${escapeHtml(entry.date || "")} · <a href="${lotPath(entry.lot)}">record</a></span>`,
+                  )
+                  .join("");
+              })()}
             </div>
             <span class="summary-line-price">${money.format(line.price * line.quantity)}</span>
           </div>
@@ -2051,7 +2365,17 @@
       )
       .join("");
 
-    const firstLotCode = (order.items.find((line) => line.lot) || {}).code || "";
+    /* The receipt's primary action is the record for the lot that was actually
+       shipped against, so the document the site keeps promising is one click
+       from the order rather than a search away. */
+    const orderLots = order.items.flatMap((line) =>
+      Array.isArray(line.lots) && line.lots.length
+        ? line.lots
+        : line.lot
+          ? [{ name: line.name, lot: line.lot, date: line.lotDate || "" }]
+          : [],
+    );
+    const firstLot = orderLots.length ? orderLots[0].lot : "";
 
     const rows = [
       ["Subtotal", money.format(order.totals.subtotal)],
@@ -2101,7 +2425,7 @@
               </div>
               <div class="detail-card">
                 <h3>If something is wrong</h3>
-                <p>Photograph the box, mailer and vial label within 72 hours and open a case with reference ${escapeHtml(order.reference)}.<br><a href="${path("policies.html")}#fulfillment">Fulfillment and resolution policy</a></p>
+                <p>Photograph the box, mailer, vial label and logger within 72 hours, then email <a style="text-decoration:underline;text-underline-offset:2px" href="mailto:support@ovolabs.example?subject=Order%20${encodeURIComponent(order.reference)}">support@ovolabs.example</a> with ${escapeHtml(order.reference)} in the subject line. Acknowledgement within one business day.<br><a style="text-decoration:underline;text-underline-offset:2px" href="${path("policies.html")}#fulfillment">Fulfillment and resolution policy</a></p>
               </div>
             </div>
           </div>
@@ -2112,8 +2436,8 @@
             <div class="summary-rows">${rows}</div>
             <div class="summary-total"><strong>Total</strong><strong>${money.format(order.totals.total)}</strong></div>
             <p class="summary-note">The lot shipped is the lot shown on your product page at the time of order. If the vial label differs from the record, open a case before use.</p>
-            ${firstLotCode
-              ? `<a class="button button-primary checkout-cta" href="${path(`testing.html?product=${firstLotCode}`)}">View the lot record</a>`
+            ${firstLot
+              ? `<a class="button button-primary checkout-cta" href="${lotPath(firstLot)}">View the record for lot ${escapeHtml(firstLot)}</a>`
               : ""}
             <a class="button button-secondary checkout-cta" href="${path("catalog.html")}">Back to the catalog</a>
             <p class="summary-note">Save reference ${escapeHtml(order.reference)} to look this order up.</p>
@@ -2161,9 +2485,15 @@
       cart: cartPage,
       checkout: checkoutPage,
       confirmation: confirmationPage,
+      "lot-record": lotRecordPage,
       404: notFoundPage,
     };
-    const renderer = pages[PAGE] || notFoundPage;
+    /* The lot record is addressed by query string and linked from product
+       pages, cart lines and receipts, so it also renders from its own path.
+       That keeps the link honest even if the shell's data-page is not set. */
+    const renderer = /lot-record(\.html)?$/.test(window.location.pathname)
+      ? lotRecordPage
+      : pages[PAGE] || notFoundPage;
     layout(renderer());
   }
 
@@ -2296,6 +2626,7 @@
                 <div>
                   <strong>${escapeHtml(item.name)}</strong>
                   <span>${escapeHtml(item.code)} · ${escapeHtml(item.strength)} · Qty ${line.quantity}</span>
+                  ${lotTraceRows(item.slug, { link: false }).join("")}
                 </div>
                 <span class="summary-line-price">${money.format(item.price * line.quantity)}</span>
               </div>
@@ -2560,11 +2891,16 @@
   function searchMatches(query) {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return sellableFirst(PRODUCTS).slice(0, 5);
-    return PRODUCTS.filter((product) =>
-      [product.name, product.code, product.category, product.strength, product.descriptor]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalized),
+    /* Predictive search is a curated rail too. A query like "10 mg", "metabolic"
+       or "vial" used to hand the top two rows to the entries that cannot be
+       bought. They still match and still show, they just stop leading. */
+    return sellableFirst(
+      PRODUCTS.filter((product) =>
+        [product.name, product.code, product.category, product.strength, product.descriptor]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalized),
+      ),
     ).slice(0, 6);
   }
 
@@ -2659,8 +2995,13 @@
     const sort = document.querySelector("#collection-sort");
     const summary = document.querySelector("[data-result-summary]");
     const buttons = [...document.querySelectorAll("[data-filter]")];
+    /* The page used to promise "use the testing state as a filter". Testing state
+       is identical on all ten entries, so that control could only ever have been
+       a no-op. Availability is the axis that actually splits the grid. */
+    const availabilityToggle = document.querySelector("[data-availability-toggle]");
     const params = new URLSearchParams(window.location.search);
     let category = CATEGORIES.some((item) => item.key === params.get("category")) ? params.get("category") : "all";
+    let onlySellable = params.get("available") === "1";
 
     const updateUrl = () => {
       const next = new URL(window.location.href);
@@ -2668,6 +3009,8 @@
       else next.searchParams.set("category", category);
       if (search.value.trim()) next.searchParams.set("q", search.value.trim());
       else next.searchParams.delete("q");
+      if (onlySellable) next.searchParams.set("available", "1");
+      else next.searchParams.delete("available");
       window.history.replaceState({}, "", next);
     };
 
@@ -2681,24 +3024,31 @@
             .join(" ")
             .toLowerCase()
             .includes(query);
-        return categoryMatch && queryMatch;
+        const availabilityMatch = !onlySellable || availabilityFor(product.slug).sellable;
+        return categoryMatch && queryMatch && availabilityMatch;
       });
 
       if (sort.value === "name-asc") filtered.sort((a, b) => a.name.localeCompare(b.name));
       if (sort.value === "price-asc") filtered.sort((a, b) => a.price - b.price);
       if (sort.value === "price-desc") filtered.sort((a, b) => b.price - a.price);
+      /* Featured is the editorial order, so it follows the same rule as every
+         other curated list: all ten entries stay in the grid, the two that are
+         not offered just stop taking the first two cards. An explicit name or
+         price sort is the visitor's own instruction and is never overridden. */
+      if (sort.value === "featured") filtered = sellableFirst(filtered);
 
       grid.innerHTML = filtered.length
         ? filtered.map((product) => productCard(product)).join("")
         : `
           <div class="empty-state">
             <h2>No catalog entries match.</h2>
-            <p>Clear the search or show every research area.</p>
+            <p>Clear the search, widen the research area, or drop the availability filter.</p>
             <button class="button button-primary" type="button" data-reset-collection>Show all products</button>
           </div>
         `;
-      summary.textContent = `${filtered.length} ${filtered.length === 1 ? "catalog entry" : "catalog entries"}${category === "all" ? "" : ` in ${CATEGORIES.find((item) => item.key === category).name}`}`;
+      summary.textContent = `${filtered.length} ${filtered.length === 1 ? "catalog entry" : "catalog entries"}${category === "all" ? "" : ` in ${CATEGORIES.find((item) => item.key === category).name}`}${onlySellable ? " available to order" : ""}`;
       buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.filter === category)));
+      if (availabilityToggle) availabilityToggle.setAttribute("aria-pressed", String(onlySellable));
       updateUrl();
     };
 
@@ -2710,6 +3060,20 @@
         track("filter_apply", { filter_name: "research_area", filter_value: category });
       });
     });
+    if (availabilityToggle) {
+      availabilityToggle.addEventListener("click", () => {
+        onlySellable = !onlySellable;
+        render();
+        track("filter_apply", { filter_name: "availability", filter_value: onlySellable ? "sellable_only" : "all" });
+      });
+    }
+    if (availabilityToggle) {
+      availabilityToggle.addEventListener("click", () => {
+        onlySellable = !onlySellable;
+        render();
+        track("filter_apply", { filter_name: "availability", filter_value: onlySellable ? "sellable_only" : "all" });
+      });
+    }
     search.addEventListener("input", render);
     search.addEventListener("change", () => {
       track("search", { search_term: search.value.trim().toLowerCase(), surface: "collection" });
@@ -2723,6 +3087,7 @@
       category = "all";
       search.value = "";
       sort.value = "featured";
+      onlySellable = false;
       render();
       search.focus();
     });
@@ -3143,10 +3508,17 @@
           .map((line) => {
             const item = cartItemData(line.slug);
             if (!item) return null;
+            /* The order records the lot it was placed against. Without this the
+               receipt has nothing to match the delivered vial label to, and the
+               promise of a lot COA before dispatch stays an assertion. */
+            const lots = lotTrace(item.slug);
             return {
               slug: item.slug, name: item.name, code: item.code,
               strength: item.strength, price: item.price,
               quantity: line.quantity, isBundle: Boolean(item.productSlugs),
+              lots,
+              lot: lots.length === 1 ? lots[0].lot : "",
+              lotDate: lots.length === 1 ? lots[0].date : "",
             };
           })
           .filter(Boolean),

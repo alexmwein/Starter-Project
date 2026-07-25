@@ -2905,8 +2905,8 @@ button:disabled {
 .field-error { margin: 6px 0 0; color: var(--danger); font-size: 12px; min-height: 1em; }
 .field-note { margin: 6px 0 0; color: var(--text-3); font: 400 11px/1.4 var(--mono); }
 
-.choice-group { display: grid; gap: 10px; margin-top: 20px; }
-.choice { display: flex; gap: 12px; align-items: flex-start; padding: 15px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; transition: border-color 140ms var(--ease), background 140ms var(--ease); }
+.choice-group { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
+.choice { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-4); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; transition: border-color 140ms var(--ease), background 140ms var(--ease); }
 .choice:hover { border-color: var(--line-strong); }
 .choice:has(input:checked) { border-color: var(--cobalt); background: var(--cobalt-tint); }
 .choice input { margin-top: 3px; accent-color: var(--cobalt); }
@@ -2915,28 +2915,28 @@ button:disabled {
 .choice-price { font-weight: 650; }
 .choice-detail { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; }
 
-.demo-payment-notice { margin-top: 20px; padding: 15px 17px; background: var(--surface-soft); border-left: 3px solid var(--cobalt); border-radius: 0 8px 8px 0; }
+.demo-payment-notice { margin-top: var(--s-5); padding: var(--s-4); background: var(--surface-soft); border-left: 3px solid var(--cobalt); border-radius: 0 8px 8px 0; }
 .demo-payment-notice strong { display: block; margin-bottom: 5px; font-size: 13px; }
 .demo-payment-notice p { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.6; }
 
-.checkbox-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; font-size: 13px; line-height: 1.5; cursor: pointer; }
+.checkbox-row { display: flex; gap: var(--s-3); align-items: flex-start; margin-top: var(--s-5); font-size: 13px; line-height: 1.5; cursor: pointer; }
 .checkbox-row input { margin-top: 2px; accent-color: var(--cobalt); }
 .checkbox-row a { color: var(--cobalt); text-decoration: underline; text-underline-offset: 2px; }
 
-.step-actions { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-top: 26px; }
+.step-actions { display: flex; justify-content: space-between; gap: var(--s-3); align-items: center; margin-top: var(--s-5); }
 .step-actions .button { min-width: 0; }
 
-.review-blocks { display: grid; gap: 12px; margin-top: 20px; }
-.review-block { padding: 15px 17px; background: var(--bg); border-radius: 8px; }
+.review-blocks { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
+.review-block { padding: var(--s-4); background: var(--bg); border-radius: 8px; }
 .review-block-head { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
 .review-block h3 { margin: 0 0 6px; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2); }
 .review-block p { margin: 0; font-size: 13px; line-height: 1.6; }
 .link-button { padding: 0; color: var(--cobalt); background: none; border: 0; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
 /* ---- confirmation ---- */
-.confirmation-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 40px; align-items: start; }
-.tracker { display: grid; gap: 0; margin: 0 0 32px; padding: 0; list-style: none; }
-.tracker li { position: relative; padding: 0 0 26px 30px; color: var(--text-2); font-size: 13px; font-weight: 600; }
+.confirmation-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
+.tracker { display: grid; gap: 0; margin: 0 0 var(--s-6); padding: 0; list-style: none; }
+.tracker li { position: relative; padding: 0 0 var(--s-5) 30px; color: var(--text-2); font-size: 13px; font-weight: 600; }
 .tracker li:last-child { padding-bottom: 0; }
 .tracker li::before { position: absolute; top: 16px; bottom: 0; left: 6px; width: 2px; content: ""; background: var(--line); }
 .tracker li:last-child::before { display: none; }
@@ -2949,23 +2949,23 @@ button:disabled {
    collided with the global editorial .detail-grid (0.72fr 1.28fr) defined
    earlier and silently flattened it site-wide. */
 .confirmation-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
-.detail-card { padding: 17px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.detail-card { padding: var(--s-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .detail-card h3 { margin: 0 0 8px; color: var(--text-2); font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
 .detail-card p { margin: 0; font-size: 13px; line-height: 1.65; }
 
 /* ---- narrow ---- */
 @media (max-width: 960px) {
-  .cart-layout, .checkout-layout, .confirmation-layout { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+  .cart-layout, .checkout-layout, .confirmation-layout { grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
   .cart-aside { position: static; }
   .checkout-aside { order: -1; }
 }
 @media (max-width: 640px) {
-  .field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+  .field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
   .field.is-full, .field.is-half { grid-column: span 2; }
   .field.is-quarter { grid-column: span 1; }
-  .cart-row { grid-template-columns: 84px minmax(0, 1fr); gap: 14px; }
+  .cart-row { grid-template-columns: 84px minmax(0, 1fr); gap: var(--s-3); }
   .cart-row-image img { width: 84px; height: 95px; }
-  .checkout-step { padding: 20px 17px; }
+  .checkout-step { padding: var(--s-5) var(--s-4); }
   .confirmation-details { grid-template-columns: minmax(0, 1fr); }
   .step-actions { flex-direction: column-reverse; align-items: stretch; }
   .step-actions .button { width: 100%; text-align: center; }
@@ -3004,12 +3004,12 @@ button:disabled {
   .checkout-aside .order-summary { padding: 0; }
   .checkout-aside .order-summary h2 {
     display: flex; justify-content: space-between; align-items: center;
-    margin: 0; padding: 16px 18px; cursor: default;
+    margin: 0; padding: var(--s-4); cursor: default;
   }
   .checkout-aside .summary-lines,
   .checkout-aside .summary-rows { padding-inline: 18px; }
-  .checkout-aside .summary-total { padding: 16px 18px; }
-  .checkout-aside .summary-note { padding: 0 18px 16px; margin-top: 0; }
+  .checkout-aside .summary-total { padding: var(--s-4); }
+  .checkout-aside .summary-note { padding: 0 var(--s-4) var(--s-4); margin-top: 0; }
 }
 
 /* Reported analytical results. The stylesheet previously only had an empty
@@ -3021,11 +3021,16 @@ button:disabled {
   border-color: transparent;
 }
 .testing-row.is-reported strong { color: var(--ink); }
+/* The testing document is a WHITE card sitting inside the dark band, not the
+   dark band itself. These were written as if they sat on --slate, so the
+   reported values rendered white-on-white and the site's central claim was
+   literally invisible on the homepage. */
 .document-tag.is-reported {
-  color: var(--on-dark);
-  background: rgba(255, 255, 255, 0.14);
+  color: var(--success);
+  background: var(--success-tint);
 }
-.document-row.is-reported span { color: var(--on-dark); opacity: 0.92; }
+.document-row.is-reported span { color: var(--ink); }
+.document-row.is-reported strong { color: var(--ink); }
 
 .lookup-lot { margin: 4px 0 12px; color: var(--text-2); font: 400 12px/1 var(--mono); }
 .lookup-fields { display: grid; gap: 8px; margin-bottom: 14px; }
@@ -3041,7 +3046,7 @@ button:disabled {
 /* Fulfillment expectations at the decision point. Three facts a buyer of a
    temperature-sensitive vial wants before committing: how it travels, whether
    the lot was tested, and what shipping costs. */
-.pdp-assurances { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.pdp-assurances { margin: var(--s-4) 0 0; padding: 0; list-style: none; display: grid; gap: var(--s-2); }
 .pdp-assurances li {
   position: relative; padding-left: 22px;
   color: var(--text-2); font-size: 13px; line-height: 1.5;
@@ -3081,7 +3086,7 @@ button:disabled {
 .status-dot.is-blocked { background: var(--text-3); }
 
 .cart-blocked-notice {
-  margin: 0 0 18px; padding: 12px 15px;
+  margin: 0 0 var(--s-4); padding: var(--s-3) var(--s-4);
   color: var(--ink); background: var(--surface-soft);
   border-left: 3px solid var(--text-2); border-radius: 0 8px 8px 0;
   font-size: 13px; line-height: 1.55;
@@ -3389,3 +3394,191 @@ button:disabled {
   min-height: 18px;
 }
 .product-card .product-category { min-height: 32px; align-content: flex-start; }
+
+
+/* Mobile catalog. On a 390x844 phone the index pages shipped 750px of hero,
+   filter rail and toolbar before the first product card, so the grid the page
+   exists to show opened below the fold. Three steps, all on the scale: the hero
+   drops to the s-6/s-5 pair, the H1 takes the next step down, and the hero's
+   descriptive paragraph is suppressed because it restates what the filter rail,
+   the search field and the live result count already say on screen. Measured
+   750px to 586px, so the first card now lands inside the first screen.
+
+   Scoped to a hero that is immediately followed by a product or bundle grid AND
+   carries no .hero-actions. That second condition matters: the 404 and
+   empty-cart heroes are also followed by a product grid, and their paragraph is
+   the only instruction on the page, so they keep it. Editorial, policy and PDP
+   heroes never match. */
+@media (max-width: 768px) {
+  .page-hero:not(:has(.hero-actions)):has(+ .section .product-grid),
+  .page-hero:not(:has(.hero-actions)):has(+ .section .bundle-grid) {
+    padding: var(--s-6) 0 var(--s-5);
+  }
+
+  .page-hero:not(:has(.hero-actions)):has(+ .section .product-grid) h1,
+  .page-hero:not(:has(.hero-actions)):has(+ .section .bundle-grid) h1 {
+    font-size: 34px;
+  }
+
+  .page-hero:not(:has(.hero-actions)):has(+ .section .product-grid) > .shell > p:not(.eyebrow),
+  .page-hero:not(:has(.hero-actions)):has(+ .section .bundle-grid) > .shell > p:not(.eyebrow) {
+    display: none;
+  }
+}
+
+
+
+/* ── Lot record ──────────────────────────────────────────────────────────────
+   The one artifact the site kept promising and never produced. Styled as a
+   record, not a page: mono for anything that is data, a label above every
+   field, and the unreported rows carried at the same weight as the reported
+   ones. No badges and no status colour, because a record earns trust by being
+   legible and complete rather than decorated. */
+.lot-hero-number { font-family: var(--mono); font-weight: 500; font-size: 0.86em; letter-spacing: -0.02em; }
+
+.lot-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--s-6);
+  align-items: start;
+}
+
+.lot-doc {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.lot-doc-head {
+  display: flex;
+  gap: var(--s-4);
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: var(--s-5);
+  border-bottom: 1px solid var(--line-strong);
+}
+.lot-doc-kicker {
+  margin: 0 0 var(--s-1);
+  color: var(--text-3);
+  font: 500 9px/1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.lot-doc-head h2 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
+.lot-doc-ref { margin: 0; color: var(--text-2); font: 500 12px/1.4 var(--mono); }
+
+.lot-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 0; }
+.lot-field { padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line); }
+.lot-field:nth-child(odd) { border-right: 1px solid var(--line); }
+.lot-field dt {
+  margin: 0 0 var(--s-1);
+  color: var(--text-3);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lot-field dd { margin: 0; color: var(--ink); font: 500 13px/1.5 var(--mono); overflow-wrap: anywhere; }
+
+.lot-block { padding: var(--s-5); border-top: 1px solid var(--line); }
+.lot-block h3 {
+  margin: 0 0 var(--s-4);
+  color: var(--text-2);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lot-omissions { background: var(--surface-soft); }
+
+.lot-methods { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.lot-method {
+  display: grid;
+  grid-template-columns: 0.8fr 1fr 0.9fr;
+  gap: var(--s-4);
+  align-items: baseline;
+  padding: var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+.lot-method:last-child { border-bottom: 0; }
+.lot-method-label { color: var(--ink); font-size: 12px; font-weight: 600; }
+.lot-method-method { color: var(--text-2); font: 400 11px/1.5 var(--mono); }
+.lot-method-result { color: var(--ink); font: 500 13px/1.4 var(--mono); }
+.lot-method.is-omitted .lot-method-method,
+.lot-method.is-omitted .lot-method-result { color: var(--text-3); }
+
+.lot-note { margin: var(--s-4) 0 0; max-width: var(--measure); color: var(--text-2); font-size: 12px; line-height: 1.6; }
+.lot-doc-foot { padding: var(--s-5); border-top: 1px solid var(--line-strong); }
+.lot-doc-foot p { margin: 0 0 var(--s-2); max-width: var(--measure); color: var(--text-2); font-size: 12px; line-height: 1.6; }
+.lot-doc-foot p:last-child { margin-bottom: 0; }
+
+.lot-aside { display: grid; gap: var(--s-3); }
+.lot-aside h2 {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lot-aside h2 + .lot-index { margin-bottom: var(--s-2); }
+.lot-aside-note {
+  margin: 0;
+  padding: var(--s-3);
+  background: var(--surface-soft);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.lot-aside-note strong { color: var(--ink); }
+.lot-aside-links { display: grid; gap: var(--s-2); margin-bottom: var(--s-3); }
+.lot-aside-links a { color: var(--cobalt); font-size: 13px; text-decoration: none; }
+.lot-aside-links a:hover { text-decoration: underline; }
+
+.lot-index { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+.lot-index-row {
+  display: grid;
+  grid-template-columns: 0.55fr 1.1fr 0.4fr 0.6fr;
+  gap: var(--s-4);
+  align-items: baseline;
+  padding: var(--s-4);
+  border-bottom: 1px solid var(--line);
+  color: inherit;
+  text-decoration: none;
+  transition: background 120ms ease-out, box-shadow 120ms ease-out;
+}
+.lot-index-row:last-child { border-bottom: 0; }
+.lot-index-row:hover { background: var(--cobalt-tint); box-shadow: inset 3px 0 0 var(--cobalt); }
+.lot-index-lot { color: var(--ink); font: 500 13px/1.4 var(--mono); }
+.lot-index-name { font-size: 13px; }
+.lot-index-code,
+.lot-index-date { color: var(--text-2); font: 400 11px/1.4 var(--mono); }
+.lot-index.is-compact .lot-index-row { grid-template-columns: minmax(0, 1fr); gap: 2px; padding: var(--s-3) var(--s-4); }
+.lot-index.is-compact .lot-index-name { font-size: 12px; }
+
+/* The lot carried on a cart row, a checkout summary line and a receipt line.
+   Block, because a set puts one lot per component on consecutive lines and they
+   would otherwise run together inside the summary cell. */
+.lot-line { display: block; }
+.summary-line .lot-line a { color: var(--cobalt); text-decoration: none; }
+.summary-line .lot-line a:hover { text-decoration: underline; }
+.cart-row-lots { display: grid; gap: 2px; margin: var(--s-1) 0 0; }
+.cart-row-lots a,
+.cart-row-lots span { font: 400 11px/1.5 var(--mono); }
+.cart-row-lots span { color: var(--text-2); }
+.cart-row-lots a { color: var(--cobalt); text-decoration: none; width: fit-content; }
+.cart-row-lots a:hover { text-decoration: underline; }
+.analytical-meta a { color: var(--cobalt); text-decoration: none; }
+.analytical-meta a:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .lot-layout { grid-template-columns: minmax(0, 1fr); gap: var(--s-6); }
+}
+
+@media (max-width: 640px) {
+  .lot-fields { grid-template-columns: minmax(0, 1fr); }
+  .lot-field:nth-child(odd) { border-right: 0; }
+  .lot-doc-head, .lot-block, .lot-doc-foot { padding: var(--s-4); }
+  .lot-method { grid-template-columns: minmax(0, 1fr); gap: var(--s-1); }
+  .lot-index-row { grid-template-columns: minmax(0, 1fr); gap: var(--s-1); }
+}
