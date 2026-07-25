@@ -1883,3 +1883,21 @@ main {
     color: #000000;
   }
 }
+
+/* The board header carries 9 view tabs as of the Content Intel view. At 1440,
+   the width these boards are screen-shared at, a fixed non-scrolling strip
+   clipped the last tab. Scroll instead of truncating, and tighten horizontal
+   padding on wide viewports so all 9 fit without scrolling at all. */
+.route-tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-wrap: nowrap;
+}
+
+.route-tabs::-webkit-scrollbar { display: none; }
+.route-tabs a { white-space: nowrap; }
+
+@media (min-width: 1100px) {
+  .route-tabs a { padding-left: 11px; padding-right: 11px; }
+}
