@@ -2826,3 +2826,36 @@ button:disabled {
   background: var(--text-2); border-radius: 50%;
 }
 .pdp-testing-link.is-reported { color: var(--cobalt); }
+
+/* Availability. Three states, and the unavailable one is deliberately quiet:
+   a struck-through disabled control rather than a red alarm, because an item we
+   do not sell is a normal catalog state, not an error the shopper caused. */
+.stock-badge {
+  display: inline-block; margin-left: 6px; padding: 2px 7px;
+  border-radius: 99px; font: 500 9px/1.6 var(--mono);
+  letter-spacing: 0.06em; text-transform: uppercase; vertical-align: middle;
+}
+.stock-badge.is-in { color: var(--success); background: var(--success-tint); }
+.stock-badge.is-low { color: #8a5a00; background: #fdf3e2; }
+.stock-badge.is-unavailable { color: var(--text-2); background: var(--surface-soft); }
+
+.add-button.is-unavailable,
+.pdp-add.is-unavailable {
+  color: var(--text-3);
+  background: var(--surface-soft);
+  border-color: var(--line);
+  cursor: not-allowed;
+}
+.add-button.is-unavailable:hover,
+.pdp-add.is-unavailable:hover { background: var(--surface-soft); border-color: var(--line); }
+
+.status-dot.is-blocked { background: var(--text-3); }
+
+.cart-blocked-notice {
+  margin: 0 0 18px; padding: 12px 15px;
+  color: var(--ink); background: var(--surface-soft);
+  border-left: 3px solid var(--text-2); border-radius: 0 8px 8px 0;
+  font-size: 13px; line-height: 1.55;
+}
+.cart-blocked-notice strong { display: block; margin-bottom: 3px; }
+.checkout-cta.is-blocked { pointer-events: none; opacity: 0.45; }

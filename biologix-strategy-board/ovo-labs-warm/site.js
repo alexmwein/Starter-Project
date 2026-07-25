@@ -68,6 +68,76 @@
     ];
   }
 
+  /* Inventory. Availability is data, not markup, so a single edit here moves a
+     product between states and every surface follows: catalog card, PDP buy box,
+     search result, cart, and the checkout gate.
+
+     unavailable = cannot be sold. Retatrutide and cagrilintide are not approved
+     compounds. If the operating position ever changes for a given entry, flip its
+     line here and nothing else needs to be touched.
+
+     LOW_STOCK_AT is the threshold where the remaining count is surfaced. Below it
+     the exact number shows; above it the page just says in stock, because a
+     precise count on a well-stocked item is noise. */
+  const LOW_STOCK_AT = 6;
+  const STOCK = {
+    "retatrutide": 0,
+    "cagrilintide": 0,
+    "tirzepatide": 24,
+    "semaglutide": 31,
+    "bpc-157": 48,
+    "tb-500": 12,
+    "cjc-1295": 37,
+    "ipamorelin": 52,
+    "cjc-ipamorelin-blend": 4,
+    "bpc-tb-blend": 9,
+    "metabolic-reference-set": 0,
+    "peptide-pair-set": 6,
+    "secretagogue-reference-set": 15,
+  };
+
+  function stockFor(slug) {
+    const units = STOCK[slug];
+    return typeof units === "number" ? units : 0;
+  }
+
+  function availability(slug) {
+    const units = stockFor(slug);
+    if (units <= 0) return { state: "unavailable", units: 0, label: "Unavailable", sellable: false };
+    if (units <= LOW_STOCK_AT) return { state: "low", units, label: `Only ${units} left`, sellable: true };
+    return { state: "in", units, label: "In stock", sellable: true };
+  }
+
+  /* A bundle can only be as available as its scarcest component. Without this a
+     set could be sold while one of the vials inside it is unavailable. */
+  function bundleAvailability(bundle) {
+    if (!bundle || !bundle.productSlugs) return availability(bundle ? bundle.slug : "");
+    const own = availability(bundle.slug);
+    if (!own.sellable) return own;
+    const componentUnits = bundle.productSlugs.map((slug) => stockFor(slug));
+    const scarcest = Math.min(...componentUnits, own.units);
+    if (scarcest <= 0) return { state: "unavailable", units: 0, label: "Unavailable", sellable: false };
+    if (scarcest <= LOW_STOCK_AT) return { state: "low", units: scarcest, label: `Only ${scarcest} left`, sellable: true };
+    return { state: "in", units: scarcest, label: "In stock", sellable: true };
+  }
+
+  function availabilityFor(slug) {
+    const bundle = (typeof BUNDLES !== "undefined" ? BUNDLES : []).find((b) => b.slug === slug);
+    return bundle ? bundleAvailability(bundle) : availability(slug);
+  }
+
+  /* Any line in the cart that can no longer be sold. Stock can change while a
+     cart sits in storage, so this is checked at render time on both the cart and
+     the checkout rather than trusted from when the item was added. */
+  function blockedCartLines() {
+    return cart.filter((line) => !availabilityFor(line.slug).sellable);
+  }
+
+  function stockBadge(slug) {
+    const a = availabilityFor(slug);
+    return `<span class="stock-badge is-${a.state}">${escapeHtml(a.label)}</span>`;
+  }
+
   const TAX_RATE = 0.0725;
   const FREE_SHIPPING_THRESHOLD = 500;
 
@@ -513,7 +583,7 @@
           ${productImage(product, eager)}
         </a>
         <div class="product-card-body">
-          <p class="product-category">${escapeHtml(product.category)}</p>
+          <p class="product-category">${escapeHtml(product.category)} ${stockBadge(product.slug)}</p>
           <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</a></h3>
           <p class="product-description">${escapeHtml(product.descriptor)}</p>
           <div class="testing-micro">
@@ -524,7 +594,9 @@
             <div>
               <span class="price">${money.format(product.price)}</span>
             </div>
-            <button class="add-button" type="button" data-add-product="${product.slug}">Add to cart</button>
+            ${(() => { const a = availabilityFor(product.slug); return a.sellable
+              ? `<button class="add-button" type="button" data-add-product="${product.slug}">Add to cart</button>`
+              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">Unavailable</button>`; })()}
           </div>
         </div>
       </article>
@@ -576,7 +648,9 @@
               <span class="price-label">Set price</span>
               <span class="price">${money.format(bundle.price)}</span>
             </div>
-            <button class="add-button" type="button" data-add-product="${bundle.slug}">Add set to cart</button>
+            ${(() => { const a = availabilityFor(bundle.slug); return a.sellable
+              ? `<button class="add-button" type="button" data-add-product="${bundle.slug}">Add set to cart</button>`
+              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">Unavailable</button>`; })()}
           </div>
         </div>
       </article>
@@ -1121,15 +1195,18 @@
               <div class="quantity-control">
                 <button type="button" data-pdp-quantity-change="-1" aria-label="Decrease quantity">−</button>
                 <label class="sr-only" for="pdp-quantity">Quantity</label>
-                <input id="pdp-quantity" type="number" value="1" min="1" max="${MAX_QUANTITY}" inputmode="numeric">
+                <input id="pdp-quantity" type="number" value="1" min="1" max="${Math.max(1, Math.min(MAX_QUANTITY, availabilityFor(product.slug).units))}" inputmode="numeric"${availabilityFor(product.slug).sellable ? "" : " disabled"}>
                 <button type="button" data-pdp-quantity-change="1" aria-label="Increase quantity">+</button>
               </div>
-              <button class="pdp-add" type="button" data-pdp-add="${product.slug}">Add to cart</button>
+              ${availabilityFor(product.slug).sellable
+                ? `<button class="pdp-add" type="button" data-pdp-add="${product.slug}">Add to cart</button>`
+                : `<button class="pdp-add is-unavailable" type="button" disabled aria-disabled="true">Unavailable</button>`}
             </div>
             <div class="buybox-cues">
               <div class="buybox-cue"><strong>${escapeHtml(product.code)}</strong><span>Product code</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(product.strength)}</strong><span>Labeled amount</span></div>
               <div class="buybox-cue"><strong>${testingFor(product.slug) ? "3 of 4" : "No result"}</strong><span>Fields reported</span></div>
+              <div class="buybox-cue"><strong>${escapeHtml(availabilityFor(product.slug).label)}</strong><span>Availability</span></div>
             </div>
             <ul class="pdp-assurances">
               <li>Ships in an insulated mailer · cold chain available at checkout</li>
@@ -1343,7 +1420,9 @@
                 </div>
                 <span class="cart-row-price">${money.format(item.price * line.quantity)}</span>
               </div>
-              <p class="cart-row-status"><span class="status-dot" aria-hidden="true"></span> In stock · ships from the fulfillment partner</p>
+              <p class="cart-row-status">${(() => { const a = availabilityFor(item.slug); return a.sellable
+                ? `<span class="status-dot" aria-hidden="true"></span> ${escapeHtml(a.label)} · ships from the fulfillment partner`
+                : `<span class="status-dot is-blocked" aria-hidden="true"></span> ${escapeHtml(a.label)} · remove to continue`; })()}</p>
               <div class="cart-row-controls">
                 <div class="mini-quantity" aria-label="Quantity for ${escapeHtml(item.name)}">
                   <button type="button" data-cart-quantity="${item.slug}" data-delta="-1" aria-label="Decrease ${escapeHtml(item.name)} quantity">−</button>
@@ -1375,6 +1454,9 @@
       <section class="section">
         <div class="shell cart-layout">
           <div class="cart-main">
+            ${(() => { const blocked = blockedCartLines(); return blocked.length
+              ? `<div class="cart-blocked-notice"><strong>${blocked.length === 1 ? "One item is" : `${blocked.length} items are`} no longer available.</strong><span>Remove ${blocked.length === 1 ? "it" : "them"} to continue to checkout.</span></div>`
+              : ""; })()}
             ${freeShipBar}
             <div class="cart-rows">${rows}</div>
             <div class="cart-actions">
@@ -1385,7 +1467,9 @@
           <div class="cart-aside">
             ${orderSummaryPanel(breakdown, {
               showItems: false,
-              cta: `<a class="button button-primary checkout-cta" href="${path("checkout.html")}">Checkout · ${money.format(breakdown.total)}</a>`,
+              cta: blockedCartLines().length
+                ? `<span class="button button-primary checkout-cta is-blocked" aria-disabled="true">Remove unavailable items</span>`
+                : `<a class="button button-primary checkout-cta" href="${path("checkout.html")}">Checkout · ${money.format(breakdown.total)}</a>`,
             })}
             <form class="promo-form" data-promo-form>
               <label for="promo-input">Discount code</label>
@@ -1414,6 +1498,22 @@
   }
 
   function checkoutPage() {
+    const blocked = blockedCartLines();
+    if (blocked.length) {
+      return `
+        <section class="page-hero">
+          <div class="shell">
+            <p class="eyebrow">Checkout</p>
+            <h1>${blocked.length === 1 ? "An item in your cart is" : "Items in your cart are"} no longer available.</h1>
+            <p>${blocked.map((line) => escapeHtml(cartItemData(line.slug) ? cartItemData(line.slug).name : line.slug)).join(", ")} cannot be sold. Remove ${blocked.length === 1 ? "it" : "them"} from your cart to continue.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="${path("cart.html")}">Back to cart</a>
+              <a class="button button-secondary" href="${path("catalog.html")}">Browse the catalog</a>
+            </div>
+          </div>
+        </section>
+      `;
+    }
     if (cart.length === 0) {
       return `
         <section class="page-hero">
@@ -1915,10 +2015,28 @@
   function addToCart(slug, quantity = 1) {
     const item = cartItemData(slug);
     if (!item) return;
-    const safeQuantity = Math.max(1, Math.min(MAX_QUANTITY, Number.parseInt(quantity, 10) || 1));
+
+    /* Stock gate. This is the authoritative check: disabling a button is a UI
+       courtesy, this is what actually prevents an unsellable line existing. */
+    const stock = availabilityFor(slug);
+    if (!stock.sellable) {
+      showToast(`${item.name} is unavailable.`);
+      return;
+    }
+
+    const ceiling = Math.min(MAX_QUANTITY, stock.units);
     const existing = cart.find((line) => line.slug === slug);
+    const requested = Math.max(1, Number.parseInt(quantity, 10) || 1);
+    const alreadyInCart = existing ? existing.quantity : 0;
+    const safeQuantity = Math.max(0, Math.min(requested, ceiling - alreadyInCart));
+
+    if (safeQuantity === 0) {
+      showToast(`Only ${ceiling} of ${item.name} available.`);
+      return;
+    }
+
     if (existing) {
-      existing.quantity = Math.min(MAX_QUANTITY, existing.quantity + safeQuantity);
+      existing.quantity = Math.min(ceiling, existing.quantity + safeQuantity);
     } else {
       cart.push({ slug, quantity: safeQuantity });
     }
@@ -1938,7 +2056,7 @@
     const line = cart.find((item) => item.slug === slug);
     const product = cartItemData(slug);
     if (!line || !product) return;
-    line.quantity = Math.max(0, Math.min(MAX_QUANTITY, line.quantity + delta));
+    line.quantity = Math.max(0, Math.min(MAX_QUANTITY, availabilityFor(slug).units, line.quantity + delta));
     if (line.quantity === 0) {
       cart = cart.filter((item) => item.slug !== slug);
       track("remove_from_cart", { item_id: product.code, item_name: product.name, demo_only: true });
