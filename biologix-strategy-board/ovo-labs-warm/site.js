@@ -40,20 +40,43 @@
      genuinely unreported on lyophilized research material, which is both accurate
      and what makes the reported-vs-not distinction visible at all. */
   const TESTING = {
-    "retatrutide":            { lot: "RT-2411-A", date: "2026-06-18", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.2 mg (102% of label)"], purity: ["RP-HPLC, area %", "99.1%"] },
-    "semaglutide":            { lot: "SG-2409-C", date: "2026-06-02", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.1 mg (102% of label)"], purity: ["RP-HPLC, area %", "98.7%"] },
-    "tirzepatide":            { lot: "TZ-2410-B", date: "2026-06-11", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.1 mg (101% of label)"], purity: ["RP-HPLC, area %", "99.4%"] },
-    "cagrilintide":           { lot: "CG-2408-A", date: "2026-05-27", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "4.9 mg (98% of label)"],  purity: ["RP-HPLC, area %", "98.2%"] },
-    "bpc-157":                { lot: "BP-2412-D", date: "2026-06-24", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.0 mg (100% of label)"], purity: ["RP-HPLC, area %", "99.0%"] },
-    "tb-500":                 { lot: "TB-2411-B", date: "2026-06-15", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.1 mg (102% of label)"], purity: ["RP-HPLC, area %", "98.9%"] },
-    "ipamorelin":             { lot: "IP-2410-A", date: "2026-06-08", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.0 mg (100% of label)"], purity: ["RP-HPLC, area %", "99.2%"] },
-    "cjc-1295":               { lot: "CJ-2409-E", date: "2026-06-04", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "2.0 mg (100% of label)"], purity: ["RP-HPLC, area %", "98.5%"] },
-    "bpc-tb-blend":           { lot: "BX-2412-A", date: "2026-06-21", identity: ["RP-HPLC / ESI-MS", "Both components conform"], content: ["RP-HPLC, 214 nm", "5.0 + 5.0 mg"], purity: ["RP-HPLC, area %", "98.4%"] },
-    "cjc-ipamorelin-blend":   { lot: "CX-2411-C", date: "2026-06-13", identity: ["RP-HPLC / ESI-MS", "Both components conform"], content: ["RP-HPLC, 214 nm", "2.0 + 5.0 mg"], purity: ["RP-HPLC, area %", "98.8%"] },
+    "retatrutide":            { lot: "RT-2411-A", date: "2026-06-18", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.2 mg"], purity: ["RP-HPLC, area %", "99.1%"] },
+    "semaglutide":            { lot: "SG-2409-C", date: "2026-06-02", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.2 mg"], purity: ["RP-HPLC, area %", "98.7%"] },
+    "tirzepatide":            { lot: "TZ-2410-B", date: "2026-06-11", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.1 mg"], purity: ["RP-HPLC, area %", "99.4%"] },
+    "cagrilintide":           { lot: "CG-2408-A", date: "2026-05-27", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "9.8 mg"],  purity: ["RP-HPLC, area %", "98.2%"] },
+    "bpc-157":                { lot: "BP-2412-D", date: "2026-06-24", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.0 mg"], purity: ["RP-HPLC, area %", "99.0%"] },
+    "tb-500":                 { lot: "TB-2411-B", date: "2026-06-15", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.2 mg"], purity: ["RP-HPLC, area %", "98.9%"] },
+    "ipamorelin":             { lot: "IP-2410-A", date: "2026-06-08", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.0 mg"], purity: ["RP-HPLC, area %", "99.2%"] },
+    "cjc-1295":               { lot: "CJ-2409-E", date: "2026-06-04", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.0 mg"], purity: ["RP-HPLC, area %", "98.5%"] },
+    "bpc-tb-blend":           { lot: "BX-2412-A", date: "2026-06-21", identity: ["RP-HPLC / ESI-MS", "Both components conform"], content: ["RP-HPLC, 214 nm", "10.0 + 10.0 mg"], purity: ["RP-HPLC, area %", "98.4%"] },
+    "cjc-ipamorelin-blend":   { lot: "CX-2411-C", date: "2026-06-13", identity: ["RP-HPLC / ESI-MS", "Both components conform"], content: ["RP-HPLC, 214 nm", "5.0 + 5.0 mg"], purity: ["RP-HPLC, area %", "98.8%"] },
   };
+
+  /* Sample references are derived from the lot so the analytical record can name
+     the tested sample without a second hand-maintained table drifting out of sync. */
+  function sampleReference(lot) {
+    return `SMP-${String(lot).replace(/-/g, "")}`;
+  }
 
   function testingFor(slug) {
     return TESTING[slug] || null;
+  }
+
+  /* The reported mass and the "% of label" figure used to be one hand-typed
+     string, so seven of ten entries contradicted their own labeled amount. The
+     measured mass is the only stored value now; the percentage is derived from
+     it against the product's labeled amount, and if either side cannot be parsed
+     the percentage is omitted rather than guessed. */
+  function contentResult(slug) {
+    const record = testingFor(slug);
+    if (!record) return "Result not reported";
+    const measured = String(record.content[1]).replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const product = PRODUCTS.find((entry) => entry.slug === slug);
+    const masses = (measured.match(/\d+(?:\.\d+)?/g) || []).map(Number);
+    const labeled = product ? Number.parseFloat(product.strength) : Number.NaN;
+    if (!masses.length || !Number.isFinite(labeled) || labeled <= 0) return measured;
+    const total = masses.reduce((sum, value) => sum + value, 0);
+    return `${measured} (${Math.round((total / labeled) * 100)}% of label)`;
   }
 
   /* One renderer for all three surfaces that used to hardcode these rows, so a
@@ -62,7 +85,7 @@
     const t = testingFor(slug);
     return [
       { label: "Identity", method: t ? t.identity[0] : "Method not assigned", result: t ? t.identity[1] : "Result not reported", reported: Boolean(t) },
-      { label: "Content / mass", method: t ? t.content[0] : "Method not assigned", result: t ? t.content[1] : "Result not reported", reported: Boolean(t) },
+      { label: "Content / mass", method: t ? t.content[0] : "Method not assigned", result: t ? contentResult(slug) : "Result not reported", reported: Boolean(t) },
       { label: "Purity profile", method: t ? t.purity[0] : "Method not assigned", result: t ? t.purity[1] : "Result not reported", reported: Boolean(t) },
       { label: "Sterility / endotoxin", method: "Not represented", result: "Result not reported", reported: false },
     ];
@@ -80,6 +103,22 @@
      the exact number shows; above it the page just says in stock, because a
      precise count on a well-stocked item is noise. */
   const LOW_STOCK_AT = 6;
+
+  /* Restricted is a reason, not just a zero. Two compounds are not offered as a
+     position rather than as a stock accident, and a shopper who sees the same
+     grey "Unavailable" pill on both cannot tell the difference. Stock stays 0
+     either way; this only carries the reason to the surfaces that show it. */
+  const RESTRICTED = {
+    "retatrutide":
+      "OVO Labs does not offer retatrutide. It has no approved reference product and no established compendial standard to test against, so we cannot state what conformance would mean. The entry stays listed so the catalog is complete and the position is on the record.",
+    "cagrilintide":
+      "OVO Labs does not offer cagrilintide. It has no approved reference product and no established compendial standard to test against, so we cannot state what conformance would mean. The entry stays listed so the catalog is complete and the position is on the record.",
+  };
+
+  function restrictionFor(slug) {
+    return RESTRICTED[slug] || "";
+  }
+
   const STOCK = {
     "retatrutide": 0,
     "cagrilintide": 0,
@@ -103,22 +142,30 @@
 
   function availability(slug) {
     const units = stockFor(slug);
-    if (units <= 0) return { state: "unavailable", units: 0, label: "Unavailable", sellable: false };
-    if (units <= LOW_STOCK_AT) return { state: "low", units, label: `Only ${units} left`, sellable: true };
-    return { state: "in", units, label: "In stock", sellable: true };
+    if (restrictionFor(slug)) {
+      return { state: "unavailable", units: 0, label: "Not offered", sellable: false, restricted: true };
+    }
+    if (units <= 0) return { state: "unavailable", units: 0, label: "Unavailable", sellable: false, restricted: false };
+    if (units <= LOW_STOCK_AT) return { state: "low", units, label: `Only ${units} left`, sellable: true, restricted: false };
+    return { state: "in", units, label: "In stock", sellable: true, restricted: false };
   }
 
   /* A bundle can only be as available as its scarcest component. Without this a
      set could be sold while one of the vials inside it is unavailable. */
   function bundleAvailability(bundle) {
     if (!bundle || !bundle.productSlugs) return availability(bundle ? bundle.slug : "");
+    /* A set that contains a compound we will not offer is itself not offered, and
+       must say so with the same reason rather than reading as a stock shortage. */
+    if (bundle.productSlugs.some((slug) => restrictionFor(slug))) {
+      return { state: "unavailable", units: 0, label: "Not offered", sellable: false, restricted: true };
+    }
     const own = availability(bundle.slug);
     if (!own.sellable) return own;
     const componentUnits = bundle.productSlugs.map((slug) => stockFor(slug));
     const scarcest = Math.min(...componentUnits, own.units);
-    if (scarcest <= 0) return { state: "unavailable", units: 0, label: "Unavailable", sellable: false };
-    if (scarcest <= LOW_STOCK_AT) return { state: "low", units: scarcest, label: `Only ${scarcest} left`, sellable: true };
-    return { state: "in", units: scarcest, label: "In stock", sellable: true };
+    if (scarcest <= 0) return { state: "unavailable", units: 0, label: "Unavailable", sellable: false, restricted: false };
+    if (scarcest <= LOW_STOCK_AT) return { state: "low", units: scarcest, label: `Only ${scarcest} left`, sellable: true, restricted: false };
+    return { state: "in", units: scarcest, label: "In stock", sellable: true, restricted: false };
   }
 
   function availabilityFor(slug) {
@@ -129,8 +176,47 @@
   /* Any line in the cart that can no longer be sold. Stock can change while a
      cart sits in storage, so this is checked at render time on both the cart and
      the checkout rather than trusted from when the item was added. */
+  /* Curated rails are recommendations, so leading them with something that
+     cannot be bought wastes the strongest slot on the page. Sort is stable, so
+     entries keep their editorial order inside each group. The catalog grid is
+     deliberately NOT sorted this way: the unsellable entries must stay visible
+     there so the position on them is on the record. */
+  const sellableFirst = (list) =>
+    [...list].sort(
+      (a, b) => (availabilityFor(b.slug).sellable === true) - (availabilityFor(a.slug).sellable === true),
+    );
+
+  /* A cart line can go bad two different ways while it sits in storage: the
+     entry stops being sellable, or stock drops below the saved quantity. They
+     need different wording, so they are classified rather than merged. */
+  function cartLineIssue(line) {
+    const stock = availabilityFor(line.slug);
+    const item = cartItemData(line.slug);
+    const name = item ? item.name : line.slug;
+    if (!stock.sellable) {
+      return { type: stock.restricted ? "restricted" : "unavailable", name, units: 0 };
+    }
+    if (line.quantity > stock.units) {
+      return { type: "partial", name, units: stock.units };
+    }
+    return null;
+  }
+
   function blockedCartLines() {
-    return cart.filter((line) => !availabilityFor(line.slug).sellable);
+    return cart.filter((line) => cartLineIssue(line));
+  }
+
+  /* The per-order ceiling is whichever runs out first, the order cap or the
+     shelf. Every quantity control reads it from here so the drawer, the cart
+     page and the PDP cannot disagree about where the "+" stops. */
+  function cartLineCeiling(slug) {
+    const stock = availabilityFor(slug);
+    return stock.sellable ? Math.min(MAX_QUANTITY, stock.units) : 0;
+  }
+
+  function cartLineAtCap(line) {
+    const ceiling = cartLineCeiling(line.slug);
+    return ceiling > 0 && line.quantity >= ceiling;
   }
 
   function stockBadge(slug) {
@@ -492,6 +578,12 @@
                 </span>
               </a>
               <p>Clear product data, focused categories, and visible testing status at the point of choice.</p>
+              <div class="footer-column footer-contact">
+                <h2>Contact</h2>
+                <a href="mailto:support@ovolabs.example">support@ovolabs.example</a>
+                <p>Monday to Friday, 9:00 to 17:00 Pacific</p>
+                <p>First response within one business day</p>
+              </div>
             </div>
             <div class="footer-column">
               <h2>Shop</h2>
@@ -509,7 +601,7 @@
               <a href="${path("policies.html")}">Site policies</a>
             </div>
             <div class="footer-column">
-              <h2>Popular entries</h2>
+              <h2>Catalog entries</h2>
               <a href="${productPath(PRODUCTS[0])}">Retatrutide 10 mg</a>
               <a href="${productPath(PRODUCTS[1])}">Tirzepatide 10 mg</a>
               <a href="${productPath(PRODUCTS[4])}">BPC-157 10 mg</a>
@@ -517,7 +609,7 @@
             </div>
           </div>
           <div class="footer-bottom">
-            <div>© 2026 OVO Labs.</div>
+            <div>© 2026 OVO Labs LLC · Portland, Oregon.</div>
             <span>This catalog does not provide medical advice or human-use instructions.</span>
           </div>
         </div>
@@ -596,7 +688,7 @@
             </div>
             ${(() => { const a = availabilityFor(product.slug); return a.sellable
               ? `<button class="add-button" type="button" data-add-product="${product.slug}">Add to cart</button>`
-              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">Unavailable</button>`; })()}
+              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`; })()}
           </div>
         </div>
       </article>
@@ -650,10 +742,40 @@
             </div>
             ${(() => { const a = availabilityFor(bundle.slug); return a.sellable
               ? `<button class="add-button" type="button" data-add-product="${bundle.slug}">Add set to cart</button>`
-              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">Unavailable</button>`; })()}
+              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`; })()}
           </div>
         </div>
       </article>
+    `;
+  }
+
+  /* One derived component for the drawer and the cart page, so the two surfaces
+     can never disagree about how far an order sits from free shipping. The fill
+     is cobalt: it is progress, not a verified result, so green is not available
+     to it. The met label is the one allowed green, because at that point the
+     free shipping is applied rather than promised. */
+  function shipProgressBar(subtotal, options = {}) {
+    const { link = false } = options;
+    const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
+    const met = remaining <= 0;
+    const percent = Math.min(100, Math.max(0, Math.round((subtotal / FREE_SHIPPING_THRESHOLD) * 100)));
+    const pending = `Add <strong>${money.format(remaining)}</strong> for free standard shipping`;
+    return `
+      <div class="ship-progress-bar${met ? " is-met" : ""}" data-ship-progress>
+        <div
+          class="ship-progress-bar__track"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="${FREE_SHIPPING_THRESHOLD}"
+          aria-valuenow="${Math.min(Math.round(subtotal), FREE_SHIPPING_THRESHOLD)}"
+          aria-label="Progress to free standard shipping"
+        >
+          <div class="ship-progress-bar__fill" style="width:${percent}%"></div>
+        </div>
+        ${met
+          ? `<p class="ship-progress-bar__label"><span class="status-dot" aria-hidden="true"></span> Free standard shipping applied.</p>`
+          : `<p class="ship-progress-bar__label">${link ? `<a href="${path("catalog.html")}">${pending}</a>` : pending}</p>`}
+      </div>
     `;
   }
 
@@ -691,22 +813,31 @@
           </div>
           <div class="hero-visual">
             <img src="${path("assets/ovo-hero-still.webp")}" alt="An OVO Labs amber peptide vial with a gold cap resting on a travertine ledge in warm window light" width="1536" height="1024" fetchpriority="high">
-            <a class="hero-product-chip" href="${productPath(PRODUCTS[0])}">
+            ${(() => {
+              /* The hero chip and the hero testing card both read from data now.
+                 The chip used to hardcode the one entry that cannot be bought,
+                 and the card used to say "Reported result: None" directly above a
+                 catalog where every entry reports three fields. */
+              const featured = sellableFirst(PRODUCTS)[0];
+              const record = testingFor("retatrutide");
+              return `
+            <a class="hero-product-chip" href="${productPath(featured)}">
               <span>Featured catalog entry</span>
-              <strong>Retatrutide · 10 mg</strong>
-              <p>${money.format(PRODUCTS[0].price)} · View product →</p>
+              <strong>${escapeHtml(featured.name)} · ${escapeHtml(featured.strength)}</strong>
+              <p>${money.format(featured.price)} · View product →</p>
             </a>
             <a class="hero-coa-card" href="${path("testing.html")}">
               <span>Testing status</span>
               <div class="hero-coa-row">
                 <span>Reported result</span>
-                <strong>None</strong>
+                <strong>Identity, content, purity</strong>
               </div>
               <div class="hero-coa-row">
-                <span>Method scope</span>
-                <strong>See framework</strong>
+                <span>Lot</span>
+                <strong>${escapeHtml(record.lot)} · ${escapeHtml(record.date)}</strong>
               </div>
-            </a>
+            </a>`;
+            })()}
           </div>
         </div>
       </section>
@@ -726,7 +857,8 @@
             <a class="text-link" href="${path("catalog.html")}">View all products ${icons.arrow}</a>
           </div>
           <div class="product-grid">
-            ${PRODUCTS.slice(0, 4)
+            ${sellableFirst(PRODUCTS)
+              .slice(0, 4)
               .map((product, index) => productCard(product, { eager: index < 2 }))
               .join("")}
           </div>
@@ -773,7 +905,7 @@
             </div>
             <a class="text-link" href="${path("bundles.html")}">Explore every set ${icons.arrow}</a>
           </div>
-          <div class="bundle-grid">${BUNDLES.map(bundleCard).join("")}</div>
+          <div class="bundle-grid">${sellableFirst(BUNDLES).map(bundleCard).join("")}</div>
         </div>
       </section>
       <section class="section section-surface">
@@ -840,9 +972,10 @@
               </select>
             </div>
             <p class="result-summary" data-result-summary aria-live="polite">${PRODUCTS.length} catalog entries</p>
-            <div class="product-grid" data-collection-grid>
-              ${PRODUCTS.map((product) => productCard(product)).join("")}
-            </div>
+            <!-- Grid is owned by initCollection(): it has to run on load anyway to
+                 honour ?category= and ?q=, and building the cards here as well
+                 rendered every card twice on first paint. -->
+            <div class="product-grid" data-collection-grid></div>
           </div>
         </div>
       </section>
@@ -883,11 +1016,14 @@
             <h2>Four fields. Four different questions.</h2>
             <p class="article-lede">A single number cannot answer identity, amount, composition, and microbiological questions at once.</p>
           </div>
-          <div class="testing-table">
-            <div class="testing-row is-reported"><strong>Identity</strong><span>Does the observed analytical profile match the intended compound?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
-            <div class="testing-row is-reported"><strong>Content / mass</strong><span>How much material is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
-            <div class="testing-row is-reported"><strong>Purity profile</strong><span>What relative composition is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
-            <div class="testing-row"><strong>Sterility / endotoxin</strong><span>Were separate microbiological methods represented?</span><span class="status-pill">NOT REPRESENTED</span></div>
+          <div>
+            <div class="testing-table">
+              <div class="testing-row is-reported"><strong>Identity</strong><span>Does the observed analytical profile match the intended compound?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
+              <div class="testing-row is-reported"><strong>Content / mass</strong><span>How much material is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
+              <div class="testing-row is-reported"><strong>Purity profile</strong><span>What relative composition is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
+              <div class="testing-row"><strong>Sterility / endotoxin</strong><span>Were separate microbiological methods represented?</span><span class="status-pill">NOT REPRESENTED</span></div>
+            </div>
+            <p class="testing-attribution">Analysis performed by an independent contract laboratory. Methods, sample reference, lot and report date are shown per entry. OVO Labs does not perform its own release testing.</p>
           </div>
         </div>
       </section>
@@ -957,7 +1093,8 @@
       </section>
       <section class="section">
         <div class="shell">
-          <div class="bundle-grid">${BUNDLES.map(bundleCard).join("")}</div>
+          <h2 class="sr-only">Catalog bundles</h2>
+          <div class="bundle-grid">${sellableFirst(BUNDLES).map(bundleCard).join("")}</div>
         </div>
       </section>
       <section class="section section-surface">
@@ -1139,9 +1276,60 @@
           <li>It does not provide dosing, preparation, administration, clinical, therapeutic, safety, efficacy, or human-use information.</li>
         </ul>
         <div class="article-callout"><strong>The cart is local.</strong> Its contents and any order reference are stored only in this browser. Checkout runs end to end without taking payment, and clearing browser storage removes both.</div>
+        <h2 id="fulfillment">Fulfillment and resolution</h2>
+        <p>This is the policy the concept operates under, so the checkout and the confirmation page can point at a stated position rather than an implied one.</p>
+        <ul>
+          <li>Damaged or wrong on arrival: photograph the box, the mailer and the vial label within 72 hours and open a case with the order reference.</li>
+          <li>Wrong item or wrong labeled amount: replacement from the same or a later lot at no cost.</li>
+          <li>Broken vial in transit: replacement at no cost.</li>
+          <li>Cold-chain logger above range: replaced regardless of vial condition.</li>
+          <li>Unopened vials: returnable within 14 days, refunded to the original method less outbound shipping.</li>
+          <li>Opened vials: not returnable, because a returned vial cannot be re-verified.</li>
+        </ul>
         <h2>Why the banner stays visible</h2>
         <p>The thin top notice keeps the concept status clear on every route while allowing the rest of the prototype to be evaluated as a real ecommerce design.</p>
         <p><a class="text-link" href="${path("catalog.html")}">Return to the concept catalog ${icons.arrow}</a></p>
+      </article>
+    `;
+  }
+
+  /* eligibility.html shipped with data-page="policy", so it rendered the policies
+     page verbatim: two routes, one document, and a checkout consent line that
+     pointed at terms which did not exist. It gets its own renderer, selected off
+     the pathname so the shell does not have to change. */
+  function eligibilityPage() {
+    return `
+      <section class="page-hero">
+        <div class="shell">
+          <p class="eyebrow">Eligibility</p>
+          <h1>Who this catalog is offered to.</h1>
+          <p>OVO Labs presents research material for laboratory and research settings only. This page states the restriction, the compounds the catalog will not sell, and where material would ship.</p>
+        </div>
+      </section>
+      <article class="article-shell">
+        <h2>Who may order</h2>
+        <p>Material is offered to laboratory and research settings, and to the people who work in them, for in vitro and research use. Placing an order is an affirmative statement that the material will be used that way.</p>
+        <h2>Not for human or veterinary use</h2>
+        <p>Nothing in this catalog is a drug, a supplement, a food, a cosmetic, or a medical device. It is not for human use, veterinary use, therapeutic use, diagnostic use, or household use. No dosing, preparation, administration, safety, or efficacy information is provided anywhere on this site, and none will be provided on request.</p>
+        <div class="article-callout"><strong>The consent at checkout is the same statement.</strong> Confirming it is confirming that the order is for laboratory research use only.</div>
+        <h2>What the catalog will not sell</h2>
+        <p>Two entries stay listed and cannot be ordered:</p>
+        <ul>
+          ${Object.keys(RESTRICTED)
+            .map((slug) => {
+              const product = PRODUCTS.find((entry) => entry.slug === slug);
+              return product
+                ? `<li><a href="${productPath(product)}">${escapeHtml(product.name)}</a>: ${escapeHtml(restrictionFor(slug))}</li>`
+                : "";
+            })
+            .join("")}
+        </ul>
+        <p>They are kept in the catalog rather than deleted, so the position is visible instead of silent.</p>
+        <h2>Where it would ship</h2>
+        <p>The concept ships within the United States only, to a street address rather than a mailbox service, from a single US fulfillment center. It does not ship internationally, because export control and import rules for research material differ per destination and this concept does not represent that work.</p>
+        <h2>What this page is not</h2>
+        <p>OVO Labs is a fictional concept storefront. This eligibility statement describes the rules the concept operates under. It does not create a customer relationship, a supply agreement, or a legal obligation, and no material exists to ship.</p>
+        <p><a class="text-link" href="${path("policies.html")}">Read the site policies ${icons.arrow}</a></p>
       </article>
     `;
   }
@@ -1150,8 +1338,15 @@
     if (!product) return notFoundPage();
     const related = PRODUCTS.filter(
       (candidate) => candidate.slug !== product.slug && candidate.categoryKey === product.categoryKey,
-    ).slice(0, 4);
-    const fallbackRelated = related.length >= 3 ? related : PRODUCTS.filter((candidate) => candidate.slug !== product.slug).slice(0, 4);
+    );
+    /* The old fallback REPLACED the true siblings with the first four catalog
+       entries whenever a category held fewer than three of them, so most pages
+       showed two entries that cannot be bought and hid the one genuine sibling.
+       Siblings lead, the rest of the catalog backfills, unsellable entries sink. */
+    const relatedRail = sellableFirst([
+      ...related,
+      ...PRODUCTS.filter((candidate) => candidate.slug !== product.slug && !related.includes(candidate)),
+    ]).slice(0, 4);
 
     return `
       <div class="product-page">
@@ -1191,21 +1386,39 @@
               <strong>${money.format(product.price)}</strong>
             </div>
             <p class="selection-label"><span>Strength</span><span data-selected-strength>${escapeHtml(product.strength)}</span></p>
+            ${(() => {
+              const stock = availabilityFor(product.slug);
+              /* A compound we decline to offer is a position, not a stock
+                 shortage, so it gets a stated reason where the buy control sits
+                 instead of a grey disabled button that reads as "sold out". */
+              if (stock.restricted) {
+                return `
+            <div class="restricted-notice" role="note">
+              <span class="restricted-notice__pill">Not offered</span>
+              <p>${escapeHtml(restrictionFor(product.slug))}</p>
+            </div>`;
+              }
+              const ceiling = Math.max(1, Math.min(MAX_QUANTITY, stock.units));
+              return `
             <div class="buy-controls">
               <div class="quantity-control">
                 <button type="button" data-pdp-quantity-change="-1" aria-label="Decrease quantity">−</button>
                 <label class="sr-only" for="pdp-quantity">Quantity</label>
-                <input id="pdp-quantity" type="number" value="1" min="1" max="${Math.max(1, Math.min(MAX_QUANTITY, availabilityFor(product.slug).units))}" inputmode="numeric"${availabilityFor(product.slug).sellable ? "" : " disabled"}>
-                <button type="button" data-pdp-quantity-change="1" aria-label="Increase quantity">+</button>
+                <input id="pdp-quantity" type="number" value="1" min="1" max="${ceiling}" inputmode="numeric"${stock.sellable ? "" : " disabled"}>
+                <button type="button" data-pdp-quantity-change="1" aria-label="Increase quantity"${stock.sellable ? "" : " disabled"}>+</button>
               </div>
-              ${availabilityFor(product.slug).sellable
+              ${stock.sellable
                 ? `<button class="pdp-add" type="button" data-pdp-add="${product.slug}">Add to cart</button>`
-                : `<button class="pdp-add is-unavailable" type="button" disabled aria-disabled="true">Unavailable</button>`}
+                : `<button class="pdp-add is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(stock.label)}</button>`}
             </div>
+            ${stock.sellable && ceiling < MAX_QUANTITY
+              ? `<p class="pdp-note" data-quantity-cap>Maximum ${ceiling} per order at current stock.</p>`
+              : ""}`;
+            })()}
             <div class="buybox-cues">
               <div class="buybox-cue"><strong>${escapeHtml(product.code)}</strong><span>Product code</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(product.strength)}</strong><span>Labeled amount</span></div>
-              <div class="buybox-cue"><strong>${testingFor(product.slug) ? "3 of 4" : "No result"}</strong><span>Fields reported</span></div>
+              <div class="buybox-cue"><strong>${testingFor(product.slug) ? "Identity, content, purity" : "No result"}</strong><span>${testingFor(product.slug) ? `Reported for lot ${escapeHtml(testingFor(product.slug).lot)}` : "Fields reported"}</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(availabilityFor(product.slug).label)}</strong><span>Availability</span></div>
             </div>
             <ul class="pdp-assurances">
@@ -1239,13 +1452,37 @@
             <p class="eyebrow">Testing status</p>
             <h2>Every missing result stays visible.</h2>
           </div>
-          <div class="testing-table">
-            ${testingFields(product.slug).map((f) => `
-              <div class="testing-row${f.reported ? " is-reported" : ""}">
-                <strong>${escapeHtml(f.label)}</strong>
-                <span>${escapeHtml(f.method)}</span>
-                <span class="status-pill${f.reported ? " is-reported" : ""}">${f.reported ? escapeHtml(f.result) : "NOT REPORTED"}</span>
-              </div>`).join("")}
+          <div>
+            ${(() => {
+              const record = testingFor(product.slug);
+              return record
+                ? `<div class="analytical-meta">
+                <p><strong>Lot ${escapeHtml(record.lot)}</strong> · sample ${escapeHtml(sampleReference(record.lot))} · reported ${escapeHtml(record.date)}</p>
+              </div>`
+                : "";
+            })()}
+            <div class="testing-table">
+              ${testingFields(product.slug).map((f) => `
+                <div class="testing-row${f.reported ? " is-reported" : ""}">
+                  <strong>${escapeHtml(f.label)}</strong>
+                  <span>${escapeHtml(f.method)}</span>
+                  <span class="status-pill${f.reported ? " is-reported" : ""}">${f.reported ? escapeHtml(f.result) : "NOT REPORTED"}</span>
+                </div>`).join("")}
+            </div>
+            <p class="testing-scope-note">Not represented. Lyophilized research material is not released as sterile, so no microbiological result exists to report. Do not infer sterility from the purity figure above.</p>
+            <p class="testing-attribution">Analysis performed by an independent contract laboratory. Methods, sample reference, lot and report date are shown per entry. OVO Labs does not perform its own release testing.</p>
+          </div>
+        </div>
+      </section>
+      <section class="detail-section">
+        <div class="shell detail-grid">
+          <div>
+            <p class="eyebrow">Storage and handling</p>
+            <h2>What to do when the box arrives.</h2>
+          </div>
+          <div>
+            <p>Lyophilized vials are stable at ambient temperature for the transit window and ship in an insulated mailer as standard. Cold chain is optional and adds a gel pack plus a temperature logger with a printed range. On arrival, check the logger before opening; if it reads outside the stated range, photograph it and open a case before use. Store unopened lyophilized vials refrigerated at 2 to 8 C, protected from light.</p>
+            <p><a class="text-link" href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy ${icons.arrow}</a></p>
           </div>
         </div>
       </section>
@@ -1256,12 +1493,32 @@
             <h2>Know what this page means.</h2>
           </div>
           <div>
-            ${accordion([
-              ["Is this product available?", "No. This storefront is fictional and has no material, inventory, availability, ordering, or fulfillment."],
-              ["What does the listed price mean?", "It lets the storefront demonstrate sorting, merchandising, cart totals, and product hierarchy. It is not an offer or quote."],
-              ["Has this entry been tested?", "No testing or laboratory relationship is represented. Every analytical field on the page explicitly says that no result has been reported."],
-              ["Where is administration information?", "It is intentionally absent. OVO Labs does not provide dosing, preparation, administration, human-use, safety, efficacy, or outcome information."],
-            ])}
+            ${(() => {
+              /* This accordion used to open by denying the analytical panel
+                 directly above it. The testing question now leads and reads from
+                 the same record the panel does; availability is demoted and
+                 explains the inventory model instead of contradicting the page. */
+              const record = testingFor(product.slug);
+              const stock = availabilityFor(product.slug);
+              return accordion([
+                [
+                  "Has this entry been tested?",
+                  record
+                    ? `Identity, content and purity are reported for the lot named on this page (${record.lot}, reported ${record.date}) using the methods in the analytical panel. Sterility and endotoxin are not represented, so those fields stay empty rather than being implied. A reported result applies to the identified sample under the stated method, not to every vial produced.`
+                    : "No analytical result is reported for this entry, so every field on the panel stays visibly empty rather than being implied.",
+                ],
+                [
+                  "Is this entry available?",
+                  stock.restricted
+                    ? restrictionFor(product.slug)
+                    : stock.sellable
+                      ? `Stock is held per catalog entry and the buy box shows the current count. ${stock.units <= LOW_STOCK_AT ? `Only ${stock.units} remain, so the quantity control is capped at what exists.` : "The quantity control is capped at what exists, so a cart can never hold more than the count shown."}`
+                      : "This entry is out of stock, so the buy control is closed until the count recovers. Nothing on this page reserves or backorders material.",
+                ],
+                ["What does the listed price mean?", "It lets the storefront demonstrate sorting, merchandising, cart totals, and product hierarchy. It is not an offer or quote."],
+                ["Where is administration information?", "It is intentionally absent. OVO Labs does not provide dosing, preparation, administration, human-use, safety, efficacy, or outcome information."],
+              ]);
+            })()}
           </div>
         </div>
       </section>
@@ -1274,13 +1531,15 @@
             </div>
             <a class="text-link" href="${path("catalog.html")}">View the full catalog ${icons.arrow}</a>
           </div>
-          <div class="product-grid">${fallbackRelated.slice(0, 4).map((item) => productCard(item)).join("")}</div>
+          <div class="product-grid">${relatedRail.map((item) => productCard(item)).join("")}</div>
         </div>
       </section>
-      <button class="mobile-cart-bar" type="button" data-mobile-add="${product.slug}" data-visible="false">
+      ${availabilityFor(product.slug).sellable
+        ? `<button class="mobile-cart-bar" type="button" data-mobile-add="${product.slug}" data-visible="false">
         <span>Add ${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</span>
         <strong>${money.format(product.price)}</strong>
-      </button>
+      </button>`
+        : ""}
     `;
   }
 
@@ -1366,7 +1625,7 @@
       <section class="section">
         <div class="shell">
           ${categoryRail()}
-          <div class="product-grid">${PRODUCTS.slice(0, 4).map((product) => productCard(product)).join("")}</div>
+          <div class="product-grid">${sellableFirst(PRODUCTS).slice(0, 4).map((product) => productCard(product)).join("")}</div>
         </div>
       </section>
     `;
@@ -1393,11 +1652,11 @@
             <div class="section-head">
               <div>
                 <p class="eyebrow">Start here</p>
-                <h2>Most ordered.</h2>
+                <h2>Start with the catalog.</h2>
               </div>
               <a class="text-link" href="${path("catalog.html")}">View all products ${icons.arrow}</a>
             </div>
-            <div class="product-grid">${PRODUCTS.slice(0, 4).map((product) => productCard(product)).join("")}</div>
+            <div class="product-grid">${sellableFirst(PRODUCTS).slice(0, 4).map((product) => productCard(product)).join("")}</div>
           </div>
         </section>
       `;
@@ -1410,7 +1669,7 @@
         return `
           <article class="cart-row" data-cart-row="${item.slug}">
             <a class="cart-row-image" href="${item.productSlugs ? path("bundles.html") : path(`peptides/${item.slug}.html`)}">
-              <img src="${path(item.productSlugs ? "assets/ovo-set-pair.webp" : "assets/ovo-vial-front.webp")}" alt="" width="120" height="135">
+              <img src="${path(item.productSlugs ? "assets/ovo-set-pair.webp" : "assets/ovo-vial-front.webp")}" alt="${escapeHtml(item.name)}" width="120" height="135">
             </a>
             <div class="cart-row-body">
               <div class="cart-row-head">
@@ -1421,17 +1680,20 @@
                 <span class="cart-row-price">${money.format(item.price * line.quantity)}</span>
               </div>
               <p class="cart-row-status">${(() => { const a = availabilityFor(item.slug); return a.sellable
-                ? `<span class="status-dot" aria-hidden="true"></span> ${escapeHtml(a.label)} · ships from the fulfillment partner`
+                ? `<span class="status-dot" aria-hidden="true"></span> ${escapeHtml(a.label)} · ships from the US fulfillment center`
                 : `<span class="status-dot is-blocked" aria-hidden="true"></span> ${escapeHtml(a.label)} · remove to continue`; })()}</p>
               <div class="cart-row-controls">
                 <div class="mini-quantity" aria-label="Quantity for ${escapeHtml(item.name)}">
                   <button type="button" data-cart-quantity="${item.slug}" data-delta="-1" aria-label="Decrease ${escapeHtml(item.name)} quantity">−</button>
                   <span>${line.quantity}</span>
-                  <button type="button" data-cart-quantity="${item.slug}" data-delta="1" aria-label="Increase ${escapeHtml(item.name)} quantity">+</button>
+                  <button type="button" data-cart-quantity="${item.slug}" data-delta="1" aria-label="Increase ${escapeHtml(item.name)} quantity"${cartLineAtCap(line) ? " disabled" : ""}>+</button>
                 </div>
                 <span class="cart-row-unit">${money.format(item.price)} each</span>
                 <button class="remove-item" type="button" data-remove-product="${item.slug}">Remove</button>
               </div>
+              ${cartLineAtCap(line)
+                ? `<p class="cart-row-cap">Maximum ${cartLineCeiling(line.slug)} per order at current stock.</p>`
+                : ""}
             </div>
           </article>
         `;
@@ -1440,9 +1702,24 @@
 
     /* Both this bar and the summary shipping line derive from the same
        threshold, so they can never contradict each other on screen. */
-    const freeShipBar = breakdown.freeShippingRemaining > 0
-      ? `<p class="ship-progress">Add <strong>${money.format(breakdown.freeShippingRemaining)}</strong> for free standard shipping.</p>`
-      : `<p class="ship-progress is-met"><span class="status-dot" aria-hidden="true"></span> Standard shipping is free on this order.</p>`;
+    const freeShipBar = shipProgressBar(breakdown.subtotal, { link: true });
+
+    /* Cross-sell reads from the cart's own research area, so the suggestion is a
+       neighbour of what is already there rather than a generic four-up. Only
+       entries that can actually be bought are eligible. */
+    const cartCategories = new Set(
+      cart
+        .map((line) => cartItemData(line.slug))
+        .filter(Boolean)
+        .map((item) => item.categoryKey)
+        .filter(Boolean),
+    );
+    const inCart = new Set(cart.map((line) => line.slug));
+    const eligible = PRODUCTS.filter((entry) => !inCart.has(entry.slug) && availabilityFor(entry.slug).sellable);
+    const pairsWith = [
+      ...eligible.filter((entry) => cartCategories.has(entry.categoryKey)),
+      ...eligible.filter((entry) => !cartCategories.has(entry.categoryKey)),
+    ].slice(0, 3);
 
     return `
       <section class="page-hero is-compact">
@@ -1454,11 +1731,33 @@
       <section class="section">
         <div class="shell cart-layout">
           <div class="cart-main">
-            ${(() => { const blocked = blockedCartLines(); return blocked.length
-              ? `<div class="cart-blocked-notice"><strong>${blocked.length === 1 ? "One item is" : `${blocked.length} items are`} no longer available.</strong><span>Remove ${blocked.length === 1 ? "it" : "them"} to continue to checkout.</span></div>`
-              : ""; })()}
+            ${(() => {
+              /* "No longer available" and "we only have four of these" are not the
+                 same problem and do not have the same fix, so the notice names
+                 which lines are which instead of collapsing both into one word. */
+              const issues = cart.map((line) => cartLineIssue(line)).filter(Boolean);
+              if (!issues.length) return "";
+              const unsellable = issues.filter((issue) => issue.type !== "partial");
+              const partial = issues.filter((issue) => issue.type === "partial");
+              const parts = [];
+              if (unsellable.length) {
+                parts.push(
+                  `<span>${unsellable.map((issue) => escapeHtml(issue.name)).join(", ")} cannot be sold. Remove ${unsellable.length === 1 ? "it" : "them"} to continue to checkout.</span>`,
+                );
+              }
+              partial.forEach((issue) => {
+                parts.push(`<span>Only ${issue.units} of ${escapeHtml(issue.name)} available. Lower the quantity to continue.</span>`);
+              });
+              return `<div class="cart-blocked-notice"><strong>${issues.length === 1 ? "One line needs attention" : `${issues.length} lines need attention`} before checkout.</strong>${parts.join("")}</div>`;
+            })()}
             ${freeShipBar}
             <div class="cart-rows">${rows}</div>
+            ${pairsWith.length
+              ? `<section class="cart-cross-sell" aria-labelledby="cart-cross-sell-title">
+              <h2 id="cart-cross-sell-title">Pairs with your cart</h2>
+              <div class="product-grid">${pairsWith.map((entry) => productCard(entry)).join("")}</div>
+            </section>`
+              : ""}
             <div class="cart-actions">
               <a class="button button-secondary button-small" href="${path("catalog.html")}">Continue shopping</a>
               <button class="remove-item" type="button" data-clear-cart>Clear cart</button>
@@ -1487,14 +1786,25 @@
   }
 
   function checkoutField(id, label, options = {}) {
-    const { type = "text", autocomplete = "", placeholder = "", required = true, width = "full", value = "" } = options;
+    const { type = "text", autocomplete = "", placeholder = "", required = true, width = "full", value = "", inputmode = "", note = "" } = options;
     return `
       <div class="field is-${width}">
         <label for="${id}">${escapeHtml(label)}${required ? "" : ` <span class="field-optional">optional</span>`}</label>
-        <input id="${id}" name="${id}" type="${type}" ${autocomplete ? `autocomplete="${autocomplete}"` : ""} ${placeholder ? `placeholder="${escapeHtml(placeholder)}"` : ""} ${required ? "required" : ""} value="${escapeHtml(value)}">
-        <p class="field-error" data-error-for="${id}"></p>
+        <input id="${id}" name="${id}" type="${type}"${autocomplete ? ` autocomplete="${autocomplete}"` : ""}${inputmode ? ` inputmode="${inputmode}"` : ""}${placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : ""}${required ? " required" : ""}${note ? ` aria-describedby="${id}-note"` : ""} value="${escapeHtml(value)}">
+        ${note ? `<p class="field-note" id="${id}-note">${escapeHtml(note)}</p>` : ""}
+        <p class="field-error" id="${id}-error" data-error-for="${id}"></p>
       </div>
     `;
+  }
+
+  /* Digits are what a carrier needs; the punctuation is only for reading it back
+     to the person who typed it, so it is applied at display time and never
+     stored. */
+  function formatPhone(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+    if (digits.length === 11 && digits.startsWith("1")) return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+    return String(value || "");
   }
 
   function checkoutPage() {
@@ -1532,11 +1842,22 @@
     const draft = readCheckoutDraft();
     const breakdown = priceBreakdown(draft);
 
+    /* A completed step is a place you can go back to. The indicator looked
+       clickable and was not, so completed steps are real buttons now; the
+       Review step's Edit links already proved jumping backwards is safe. */
     const steps = CHECKOUT_STEPS.map(
       (step, index) => `
         <li class="step" data-step-indicator="${step.key}">
-          <span class="step-index">${index + 1}</span>
-          <span class="step-label">${escapeHtml(step.label)}</span>
+          <button
+            class="step-jump"
+            type="button"
+            data-step-jump="${step.key}"
+            disabled
+            style="display:flex;gap:8px;align-items:center;margin:0;padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left"
+          >
+            <span class="step-index">${index + 1}</span>
+            <span class="step-label">${escapeHtml(step.label)}</span>
+          </button>
         </li>
       `,
     ).join("");
@@ -1571,7 +1892,15 @@
               <p class="step-hint">Order confirmation and tracking are sent here.</p>
               <div class="field-grid">
                 ${checkoutField("email", "Email address", { type: "email", autocomplete: "email", placeholder: "you@company.com", value: draft.email || "" })}
-                ${checkoutField("phone", "Phone", { type: "tel", autocomplete: "tel", placeholder: "(555) 010-0199", value: draft.phone || "" })}
+                ${checkoutField("phone", "Phone", {
+                  type: "tel",
+                  autocomplete: "tel",
+                  inputmode: "tel",
+                  placeholder: "(555) 010-0199",
+                  required: false,
+                  note: "Used only if the carrier needs to reach you about a cold-chain delivery.",
+                  value: draft.phone || "",
+                })}
               </div>
               <div class="step-actions">
                 <a class="button button-secondary" href="${path("cart.html")}">Back to cart</a>
@@ -1593,22 +1922,25 @@
                     <option value="">Select</option>
                     ${US_STATES.map((s) => `<option value="${s}" ${draft.state === s ? "selected" : ""}>${s}</option>`).join("")}
                   </select>
-                  <p class="field-error" data-error-for="state"></p>
+                  <p class="field-error" id="state-error" data-error-for="state"></p>
                 </div>
-                ${checkoutField("zip", "ZIP code", { autocomplete: "postal-code", placeholder: "94107", width: "quarter", value: draft.zip || "" })}
+                ${checkoutField("zip", "ZIP code", { autocomplete: "postal-code", inputmode: "numeric", placeholder: "94107", width: "quarter", value: draft.zip || "" })}
               </div>
               <div class="step-actions">
                 <button class="button button-secondary" type="button" data-back="contact">Back</button>
+                <a class="button button-secondary" href="${path("cart.html")}">Back to cart</a>
                 <button class="button button-primary" type="button" data-next="shipping">Continue to delivery</button>
               </div>
             </fieldset>
 
             <fieldset class="checkout-step" data-step="delivery" hidden>
               <legend><span>3</span> Delivery method</legend>
-              <p class="step-hint">Lyophilized vials are shipped in an insulated mailer. Cold chain adds a gel pack and a temperature logger.</p>
+              <p class="step-hint">Standard is sufficient for lyophilized vials. Choose cold chain if you want a temperature record.</p>
               <div class="choice-group" data-delivery-group>${deliveryOptions}</div>
+              <p class="step-hint">On arrival, check the logger before opening. If it reads outside the stated range, photograph it and open a case before use. <a href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy</a>.</p>
               <div class="step-actions">
                 <button class="button button-secondary" type="button" data-back="shipping">Back</button>
+                <a class="button button-secondary" href="${path("cart.html")}">Back to cart</a>
                 <button class="button button-primary" type="button" data-next="delivery">Continue to payment</button>
               </div>
             </fieldset>
@@ -1640,6 +1972,7 @@
               </label>
               <div class="step-actions">
                 <button class="button button-secondary" type="button" data-back="delivery">Back</button>
+                <a class="button button-secondary" href="${path("cart.html")}">Back to cart</a>
                 <button class="button button-primary" type="button" data-next="payment">Review order</button>
               </div>
             </fieldset>
@@ -1649,19 +1982,31 @@
               <div class="review-blocks" data-review-blocks></div>
               <label class="checkbox-row" data-terms-row>
                 <input type="checkbox" name="terms" ${draft.terms ? "checked" : ""}>
-                <span>I have read the <a href="${path("policies.html")}">policies</a> and the <a href="${path("eligibility.html")}">eligibility terms</a>.</span>
+                <span>I have read the <a href="${path("policies.html")}">policies</a> and confirm this order is for laboratory research use only. See the <a href="${path("eligibility.html")}">eligibility terms</a>.</span>
               </label>
-              <p class="field-error" data-error-for="terms"></p>
+              <p class="field-error" id="terms-error" data-error-for="terms"></p>
               <div class="step-actions">
                 <button class="button button-secondary" type="button" data-back="payment">Back</button>
+                <a class="button button-secondary" href="${path("cart.html")}">Back to cart</a>
                 <button class="button button-primary" type="button" data-place-order>Place order · ${money.format(breakdown.total)}</button>
               </div>
               <p class="step-hint">Placing the order records it in this browser and issues a reference number. It does not charge a card or ship anything.</p>
             </fieldset>
 
           </form>
-          <div class="checkout-aside" data-checkout-summary>
-            ${orderSummaryPanel(breakdown)}
+          <div class="checkout-aside">
+            <div data-checkout-summary>${orderSummaryPanel(breakdown)}</div>
+            <details class="promo-disclosure"${draft.promo ? " open" : ""}>
+              <summary>Have a discount code?</summary>
+              <form class="promo-form" data-promo-form>
+                <label class="sr-only" for="promo-input">Discount code</label>
+                <div class="promo-input-row">
+                  <input id="promo-input" name="promo" type="text" autocomplete="off" placeholder="Enter code" value="${escapeHtml(draft.promo || "")}">
+                  <button class="button button-secondary button-small" type="submit">Apply</button>
+                </div>
+                <p class="promo-feedback" data-promo-feedback role="status" aria-live="polite">${breakdown.promo ? `Applied: ${escapeHtml(breakdown.promo.label)}` : ""}</p>
+              </form>
+            </details>
           </div>
         </div>
       </section>
@@ -1687,20 +2032,26 @@
       `;
     }
 
+    /* The receipt carries the lot it was ordered against, and the name links
+       back to that record, so the vial in the box can be checked against
+       something rather than trusted. */
     const lines = order.items
       .map(
         (line) => `
           <div class="summary-line">
-            <img src="${path(line.isBundle ? "assets/ovo-set-pair.webp" : "assets/ovo-vial-front.webp")}" alt="" width="48" height="54">
+            <img src="${path(line.isBundle ? "assets/ovo-set-pair.webp" : "assets/ovo-vial-front.webp")}" alt="${escapeHtml(line.name)}" width="48" height="54">
             <div>
-              <strong>${escapeHtml(line.name)}</strong>
+              <strong><a href="${path(`testing.html?product=${line.code}`)}">${escapeHtml(line.name)}</a></strong>
               <span>${escapeHtml(line.code)} · ${escapeHtml(line.strength)} · Qty ${line.quantity}</span>
+              ${line.lot ? `<span>Lot ${escapeHtml(line.lot)} · reported ${escapeHtml(line.lotDate || "")}</span>` : ""}
             </div>
             <span class="summary-line-price">${money.format(line.price * line.quantity)}</span>
           </div>
         `,
       )
       .join("");
+
+    const firstLotCode = (order.items.find((line) => line.lot) || {}).code || "";
 
     const rows = [
       ["Subtotal", money.format(order.totals.subtotal)],
@@ -1729,7 +2080,7 @@
               <li><span></span>Delivered<em>Estimated ${escapeHtml(order.etaLabel)}</em></li>
             </ol>
 
-            <div class="detail-grid">
+            <div class="confirmation-details">
               <div class="detail-card">
                 <h3>Shipping to</h3>
                 <p>${escapeHtml(order.firstName)} ${escapeHtml(order.lastName)}<br>
@@ -1746,7 +2097,11 @@
               </div>
               <div class="detail-card">
                 <h3>Contact</h3>
-                <p>${escapeHtml(order.email)}<br>${escapeHtml(order.phone)}</p>
+                <p>${escapeHtml(order.email)}${order.phone ? `<br>${escapeHtml(formatPhone(order.phone))}` : "<br>No phone provided"}</p>
+              </div>
+              <div class="detail-card">
+                <h3>If something is wrong</h3>
+                <p>Photograph the box, mailer and vial label within 72 hours and open a case with reference ${escapeHtml(order.reference)}.<br><a href="${path("policies.html")}#fulfillment">Fulfillment and resolution policy</a></p>
               </div>
             </div>
           </div>
@@ -1756,7 +2111,12 @@
             <div class="summary-lines">${lines}</div>
             <div class="summary-rows">${rows}</div>
             <div class="summary-total"><strong>Total</strong><strong>${money.format(order.totals.total)}</strong></div>
-            <a class="button button-secondary checkout-cta" href="${path("catalog.html")}">Continue shopping</a>
+            <p class="summary-note">The lot shipped is the lot shown on your product page at the time of order. If the vial label differs from the record, open a case before use.</p>
+            ${firstLotCode
+              ? `<a class="button button-primary checkout-cta" href="${path(`testing.html?product=${firstLotCode}`)}">View the lot record</a>`
+              : ""}
+            <a class="button button-secondary checkout-cta" href="${path("catalog.html")}">Back to the catalog</a>
+            <p class="summary-note">Save reference ${escapeHtml(order.reference)} to look this order up.</p>
           </aside>
         </div>
       </section>
@@ -1795,7 +2155,7 @@
       learn: learnPage,
       faq: faqPage,
       about: aboutPage,
-      policy: policyPage,
+      policy: () => (/eligibility(\.html)?$/.test(window.location.pathname) ? eligibilityPage() : policyPage()),
       product: () => productPage(PRODUCTS.find((product) => product.slug === PRODUCT_SLUG)),
       article: () => articlePage(body.dataset.article || ""),
       cart: cartPage,
@@ -1813,10 +2173,16 @@
       if (!Array.isArray(parsed)) return [];
       return parsed
         .filter((item) => ALL_CART_ITEMS.some((candidate) => candidate.slug === item.slug))
-        .map((item) => ({
-          slug: item.slug,
-          quantity: Math.max(1, Math.min(MAX_QUANTITY, Number.parseInt(item.quantity, 10) || 1)),
-        }));
+        .map((item) => {
+          const requested = Math.max(1, Number.parseInt(item.quantity, 10) || 1);
+          /* A cart can sit in storage for weeks. Stock is re-checked on read so a
+             stale saved quantity can never walk into checkout above what exists.
+             Unsellable lines keep their quantity: they are surfaced and removed
+             by the blocked notice rather than silently rewritten. */
+          const units = availabilityFor(item.slug).units;
+          const ceiling = units > 0 ? Math.min(MAX_QUANTITY, units) : MAX_QUANTITY;
+          return { slug: item.slug, quantity: Math.max(1, Math.min(requested, ceiling)) };
+        });
     } catch {
       return [];
     }
@@ -2193,7 +2559,7 @@
 
   function searchMatches(query) {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return PRODUCTS.slice(0, 5);
+    if (!normalized) return sellableFirst(PRODUCTS).slice(0, 5);
     return PRODUCTS.filter((product) =>
       [product.name, product.code, product.category, product.strength, product.descriptor]
         .join(" ")
@@ -2528,23 +2894,39 @@
     }
   }
 
-  function initCartPage() {
-    if (PAGE !== "cart") return;
+  /* Bound exactly once, outside initCartPage. An earlier version registered this
+     inside initCartPage AND called initCartPage from within the handler, so every
+     interaction doubled the listener count: 1, 2, 4, 8... Nine clicks produced 512
+     full-page renders. The repaint below no longer re-binds. */
+  let cartPageListenerBound = false;
+
+  function bindCartPageRepaint() {
+    if (cartPageListenerBound || PAGE !== "cart") return;
+    cartPageListenerBound = true;
 
     /* Quantity and remove are handled by the shared cart handlers, which only
-       repaint the drawer. On the cart page the summary, the free-shipping bar
-       and the Checkout total all read from the same cart, so they must repaint
-       too or the page shows a stale total. Deferred so the shared handler has
-       already written the cart before we re-render from it. */
+       repaint the drawer. On the cart page the summary, the free-shipping bar and
+       the Checkout total all read from the same cart, so they must repaint too or
+       the page shows a stale total. Deferred so the shared handler has already
+       written the cart before we re-render from it. */
     document.addEventListener("click", (event) => {
       if (!event.target.closest("[data-cart-quantity], [data-remove-product], [data-clear-cart]")) return;
       setTimeout(() => {
         renderPage();
-        initCartPage();
+        bindPromoForm();
         renderCart();
       }, 0);
     });
+  }
 
+  function initCartPage() {
+    if (PAGE !== "cart") return;
+    bindCartPageRepaint();
+    bindPromoForm();
+  }
+
+  function bindPromoForm() {
+    if (PAGE !== "cart") return;
     const form = document.querySelector("[data-promo-form]");
     if (!form) return;
 
@@ -2561,7 +2943,7 @@
         feedback.textContent = "";
         feedback.classList.remove("is-error");
         renderPage();
-        initCartPage();
+        bindPromoForm();
         return;
       }
 
@@ -2575,7 +2957,7 @@
       writeCheckoutDraft(draft);
       track("promo_applied", { code });
       renderPage();
-      initCartPage();
+      bindPromoForm();
     });
   }
 

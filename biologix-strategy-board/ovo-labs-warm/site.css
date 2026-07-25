@@ -111,6 +111,32 @@
   --shell: min(1320px, calc(100vw - 48px));
   --sans: "Inter", Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Spacing scale. 4px base, doubling at the top so large steps stay distinct.
+     The file already clustered here (8px x28, 12px x40, 16px x23, 24px x11);
+     the 41 distinct values were outliers, not a system. This formalises what
+     was already mostly true and snaps the exceptions.
+
+     1px, 2px, 3px, 6px and 7px stay literals. Those are badge, pill, dot,
+     focus-ring and glyph-scale optical corrections, not layout spacing, and
+     forcing them onto the scale breaks the components. */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+  --measure: 34em; /* ~65 characters per line at any locked size */
+  --gutter-grid: var(--s-4);
+
+  /* Radius scale. Consolidation only, no new values. */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-pill: 99px;
 }
 
 * {
@@ -189,6 +215,19 @@ button:disabled {
 :focus-visible {
   outline: 2px solid var(--cobalt);
   outline-offset: 3px;
+}
+
+/* Cobalt on a dark surface is not a focus ring, it is a rumour. The newsletter
+   panel is cobalt itself (1.00:1 against the ring) and --slate measures 2.80:1,
+   both under the 3:1 non-text minimum. White clears on every dark surface we
+   ship, so the ring inverts there rather than disappearing. */
+.newsletter :focus-visible,
+.site-footer :focus-visible,
+.testing-feature :focus-visible,
+.concept-banner :focus-visible,
+.toast :focus-visible,
+.mobile-cart-bar:focus-visible {
+  outline-color: #ffffff;
 }
 
 .shell {
@@ -525,7 +564,7 @@ button:disabled {
   gap: 9px;
   padding: 0 20px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 13px;
   font-weight: 600;
   transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out;
@@ -579,9 +618,9 @@ button:disabled {
   min-height: 438px;
   display: grid;
   grid-template-columns: minmax(0, 0.88fr) minmax(520px, 1.12fr);
-  gap: 46px;
+  gap: var(--s-7);
   align-items: center;
-  padding-block: 36px 32px;
+  padding-block: var(--s-6) var(--s-6);
 }
 
 .hero-copy h1 {
@@ -598,8 +637,8 @@ button:disabled {
 }
 
 .hero-copy > p:not(.eyebrow) {
-  max-width: 600px;
-  margin: 20px 0 0;
+  max-width: var(--measure);
+  margin: var(--s-5) 0 0;
   color: var(--text-2);
   font-size: 16px;
   line-height: 1.55;
@@ -607,8 +646,8 @@ button:disabled {
 
 .hero-actions {
   display: flex;
-  gap: 10px;
-  margin-top: 28px;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
 }
 
 .hero-visual {
@@ -617,7 +656,7 @@ button:disabled {
   overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
 
 .hero-visual > img {
@@ -723,11 +762,11 @@ button:disabled {
 }
 
 .section {
-  padding-block: 68px;
+  padding-block: var(--s-8);
 }
 
 .section-tight {
-  padding-block: 48px;
+  padding-block: var(--s-7);
 }
 
 .section-surface {
@@ -738,9 +777,9 @@ button:disabled {
 .section-head {
   display: flex;
   justify-content: space-between;
-  gap: 30px;
+  gap: var(--s-6);
   align-items: end;
-  margin-bottom: 24px;
+  margin-bottom: var(--s-4);
 }
 
 .section-head h2 {
@@ -759,7 +798,7 @@ button:disabled {
 }
 
 .category-section-head {
-  margin-top: 52px;
+  margin-top: var(--s-7);
 }
 
 .text-link {
@@ -778,8 +817,8 @@ button:disabled {
 .category-rail {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 34px;
+  gap: var(--gutter-grid);
+  margin-bottom: var(--s-6);
 }
 
 .category-tile {
@@ -787,8 +826,8 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: end;
-  gap: 18px;
-  padding: 18px;
+  gap: var(--s-5);
+  padding: var(--s-5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -820,7 +859,7 @@ button:disabled {
 .product-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--gutter-grid);
 }
 
 .product-card {
@@ -888,7 +927,7 @@ button:disabled {
 }
 
 .product-card-body {
-  padding: 15px;
+  padding: var(--s-4);
 }
 
 .product-category {
@@ -911,7 +950,7 @@ button:disabled {
   min-height: 38px;
   display: -webkit-box;
   overflow: hidden;
-  margin: 7px 0 12px;
+  margin: var(--s-2) 0 var(--s-3);
   color: var(--text-2);
   font-size: 12px;
   line-height: 1.45;
@@ -954,9 +993,9 @@ button:disabled {
 .product-buy-row {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 12px;
+  gap: var(--s-3);
   align-items: end;
-  margin-top: 12px;
+  margin-top: var(--s-3);
 }
 
 .price-label {
@@ -980,7 +1019,7 @@ button:disabled {
   color: var(--on-dark);
   background: var(--cobalt);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   font-size: 11px;
   font-weight: 600;
 }
@@ -995,14 +1034,14 @@ button:disabled {
   min-height: 380px;
   overflow: hidden;
   background: var(--slate);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
 
 .testing-feature-copy {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: clamp(30px, 5vw, 68px);
+  padding: clamp(var(--s-5), 5vw, var(--s-7));
   color: var(--on-dark);
 }
 
@@ -1019,14 +1058,14 @@ button:disabled {
 }
 
 .testing-feature-copy p {
-  max-width: 500px;
-  margin: 18px 0 24px;
+  max-width: var(--measure);
+  margin: var(--s-5) 0 var(--s-5);
   color: #c9b9a4;
 }
 
 .testing-document {
-  margin: 24px;
-  padding: clamp(24px, 4vw, 48px);
+  margin: var(--s-5);
+  padding: clamp(var(--s-5), 4vw, var(--s-6));
   background: var(--surface);
   border-radius: 8px;
 }
@@ -1034,9 +1073,9 @@ button:disabled {
 .document-head {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
+  gap: var(--s-4);
   align-items: start;
-  padding-bottom: 18px;
+  padding-bottom: var(--s-4);
   border-bottom: 1px solid var(--line-strong);
 }
 
@@ -1061,8 +1100,8 @@ button:disabled {
 .document-row {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 18px;
-  padding: 16px 0;
+  gap: var(--s-4);
+  padding: var(--s-4) 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1083,7 +1122,7 @@ button:disabled {
 .bundle-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  gap: var(--gutter-grid);
 }
 
 .bundle-card {
@@ -1121,7 +1160,7 @@ button:disabled {
 }
 
 .bundle-body {
-  padding: 18px;
+  padding: var(--s-5);
 }
 
 .bundle-body h3 {
@@ -1132,14 +1171,14 @@ button:disabled {
 
 .bundle-body > p {
   min-height: 42px;
-  margin: 8px 0 14px;
+  margin: var(--s-2) 0 var(--s-4);
   color: var(--text-2);
   font-size: 12px;
 }
 
 .bundle-items {
-  margin: 0 0 16px;
-  padding: 12px 0;
+  margin: 0 0 var(--s-4);
+  padding: var(--s-3) 0;
   list-style: none;
   border-block: 1px solid var(--line);
 }
@@ -1156,7 +1195,7 @@ button:disabled {
 .bundle-footer {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 14px;
+  gap: var(--s-4);
   align-items: end;
 }
 
@@ -1164,7 +1203,7 @@ button:disabled {
 .value-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  gap: var(--gutter-grid);
 }
 
 .education-card,
@@ -1173,7 +1212,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 24px;
+  padding: var(--s-5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1188,7 +1227,7 @@ button:disabled {
 
 .education-card p,
 .value-card p {
-  margin: 12px 0 22px;
+  margin: var(--s-2) 0 var(--s-5);
   color: var(--text-2);
   font-size: 13px;
 }
@@ -1196,12 +1235,12 @@ button:disabled {
 .newsletter {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 24px;
+  gap: var(--s-6);
   align-items: center;
-  padding: 32px;
+  padding: var(--s-6);
   color: var(--on-dark);
   background: var(--cobalt);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
 
 .newsletter h2 {
@@ -1211,13 +1250,14 @@ button:disabled {
 }
 
 .newsletter p {
-  margin: 6px 0 0;
+  max-width: var(--measure);
+  margin: var(--s-4) 0 0;
   color: #f0d8cd;
 }
 
 .newsletter-form {
   display: flex;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .newsletter-form[hidden] {
@@ -1231,7 +1271,7 @@ button:disabled {
   color: var(--ink);
   background: var(--surface);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
 }
 
 .newsletter-form button {
@@ -1239,8 +1279,17 @@ button:disabled {
   color: var(--on-dark);
   background: var(--slate);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   font-weight: 600;
+  transition: color 120ms ease-out, background 120ms ease-out;
+}
+
+/* This button sits on the cobalt panel, so there is no darker step available and
+   no lighter slate in the palette. It inverts instead: white plate, cobalt
+   label, 6.38:1. Same two tokens, read the other way round. */
+.newsletter-form button:hover {
+  color: var(--cobalt);
+  background: var(--on-dark);
 }
 
 .newsletter-success {
@@ -1249,7 +1298,7 @@ button:disabled {
 }
 
 .page-hero {
-  padding: 64px 0 46px;
+  padding: var(--s-8) 0 var(--s-7);
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -1263,9 +1312,11 @@ button:disabled {
   line-height: 1;
 }
 
+/* The H1 above runs line-height 1, so its descender eats part of this gap.
+   24px measured is the first value that reads as a deliberate step. */
 .page-hero p:not(.eyebrow) {
-  max-width: 680px;
-  margin: 18px 0 0;
+  max-width: var(--measure);
+  margin: var(--s-5) 0 0;
   color: var(--text-2);
   font-size: 16px;
 }
@@ -1273,21 +1324,21 @@ button:disabled {
 .collection-layout {
   display: grid;
   grid-template-columns: 232px 1fr;
-  gap: 28px;
+  gap: var(--s-6);
   align-items: start;
 }
 
 .filter-panel {
   position: sticky;
   top: 126px;
-  padding: 18px;
+  padding: var(--s-5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
 
 .filter-panel h2 {
-  margin: 0 0 12px;
+  margin: 0 0 var(--s-3);
   font-size: 13px;
 }
 
@@ -1325,10 +1376,10 @@ button:disabled {
 .collection-toolbar {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 14px;
+  gap: var(--s-4);
   align-items: center;
-  margin-bottom: 18px;
-  padding: 12px;
+  margin-bottom: var(--s-4);
+  padding: var(--s-3);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1339,7 +1390,7 @@ button:disabled {
   padding: 0 12px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--r-sm);
 }
 
 .collection-sort {
@@ -1347,11 +1398,11 @@ button:disabled {
   padding: 0 34px 0 12px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--r-sm);
 }
 
 .result-summary {
-  margin: 0 0 14px;
+  margin: 0 0 var(--s-4);
   color: var(--text-2);
   font: 400 10px/1.4 var(--mono);
   letter-spacing: 0.03em;
@@ -1359,7 +1410,7 @@ button:disabled {
 
 .empty-state {
   grid-column: 1 / -1;
-  padding: 60px 24px;
+  padding: var(--s-8) var(--s-5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1371,7 +1422,7 @@ button:disabled {
 }
 
 .empty-state p {
-  margin: 8px 0 18px;
+  margin: var(--s-2) 0 var(--s-5);
   color: var(--text-2);
 }
 
@@ -1381,9 +1432,9 @@ button:disabled {
 
 .breadcrumb {
   display: flex;
-  gap: 8px;
+  gap: var(--s-2);
   align-items: center;
-  padding-top: 22px;
+  padding-top: var(--s-5);
   color: var(--text-2);
   font-size: 11px;
 }
@@ -1395,8 +1446,8 @@ button:disabled {
 .pdp-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(410px, 0.92fr);
-  gap: clamp(40px, 6vw, 84px);
-  padding: 28px 0 62px;
+  gap: var(--s-7);
+  padding: var(--s-6) 0 var(--s-8);
 }
 
 .pdp-gallery {
@@ -1411,7 +1462,7 @@ button:disabled {
   overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
 
 .pdp-main-image img {
@@ -1433,8 +1484,8 @@ button:disabled {
 .pdp-thumbnails {
   display: grid;
   grid-template-columns: repeat(3, 82px);
-  gap: 10px;
-  margin-top: 10px;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
 }
 
 .pdp-thumb {
@@ -1443,10 +1494,19 @@ button:disabled {
   padding: 0;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
+  transition: border-color 140ms ease-out;
 }
 
-.pdp-thumb[aria-current="true"] {
+/* Hover stops at --line-strong on purpose. Cobalt is the selected state on this
+   control, so borrowing it for hover would make an unselected thumbnail look
+   chosen for as long as the pointer sits on it. */
+.pdp-thumb:hover {
+  border-color: var(--line-strong);
+}
+
+.pdp-thumb[aria-current="true"],
+.pdp-thumb[aria-current="true"]:hover {
   border-color: var(--cobalt);
 }
 
@@ -1457,7 +1517,7 @@ button:disabled {
 }
 
 .pdp-buybox {
-  padding-top: 8px;
+  padding-top: var(--s-2);
 }
 
 .pdp-buybox h1 {
@@ -1470,7 +1530,7 @@ button:disabled {
 
 .pdp-code {
   display: block;
-  margin: 10px 0 0;
+  margin: var(--s-3) 0 0;
   color: var(--text-2);
   font: 400 10px/1.4 var(--mono);
 }
@@ -1478,15 +1538,24 @@ button:disabled {
 .pdp-testing-link {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--s-3);
   align-items: center;
-  margin: 20px 0;
-  padding: 12px;
+  margin: var(--s-5) 0;
+  padding: var(--s-3);
   color: var(--cobalt);
   background: var(--cobalt-tint);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 12px;
   font-weight: 600;
+  transition: color 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+/* An inset ring rather than a darker tint: the panel already sits on cobalt-tint
+   and there is no darker tint token, so the hover reads as an outline gaining
+   definition instead of inventing a colour outside the palette. */
+.pdp-testing-link:hover {
+  color: var(--cobalt-deep);
+  box-shadow: inset 0 0 0 1px var(--cobalt);
 }
 
 .pdp-description {
@@ -1497,9 +1566,9 @@ button:disabled {
 
 .pdp-price {
   display: flex;
-  gap: 10px;
+  gap: var(--s-3);
   align-items: baseline;
-  margin: 22px 0;
+  margin: var(--s-5) 0;
 }
 
 .pdp-price strong {
@@ -1509,8 +1578,8 @@ button:disabled {
 .selection-label {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 12px;
+  gap: var(--s-3);
+  margin: 0 0 var(--s-3);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1518,22 +1587,33 @@ button:disabled {
 .buy-controls {
   display: grid;
   grid-template-columns: 112px 1fr;
-  gap: 10px;
+  gap: var(--s-3);
 }
 
 .quantity-control {
   display: grid;
   grid-template-columns: 34px 1fr 34px;
   height: 48px;
-  overflow: hidden;
+  /* overflow:hidden clipped the focus ring on the two stepper buttons, so a
+     keyboard user could not see which one they were on. overflow:clip with a
+     clip-margin keeps the corner rounding and lets the 2px ring + 3px offset
+     escape. */
+  overflow: clip;
+  overflow-clip-margin: 6px;
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 
 .quantity-control button {
   padding: 0;
   background: var(--surface);
   border: 0;
+  transition: color 120ms ease-out, background 120ms ease-out;
+}
+
+.quantity-control button:hover:not(:disabled) {
+  color: var(--cobalt);
+  background: var(--surface-soft);
 }
 
 .quantity-control input {
@@ -1549,7 +1629,7 @@ button:disabled {
   color: var(--on-dark);
   background: var(--cobalt);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-weight: 600;
 }
 
@@ -1557,18 +1637,21 @@ button:disabled {
   background: var(--cobalt-deep);
 }
 
+/* 2x2, not a 4-up row. The fourth tile carries availability, whose string is
+   variable length ("In stock" / "Only 4 left" / "Not offered"), and a single
+   row of four wraps the moment the longest one appears. */
 .buybox-cues {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 1px;
-  margin-top: 18px;
+  margin-top: var(--s-4);
   background: var(--line);
   border: 1px solid var(--line);
   border-radius: 6px;
 }
 
 .buybox-cue {
-  padding: 12px 8px;
+  padding: var(--s-3) var(--s-2);
   background: var(--bg);
   text-align: center;
 }
@@ -1584,20 +1667,20 @@ button:disabled {
 }
 
 .pdp-note {
-  margin: 14px 0 0;
+  margin: var(--s-4) 0 0;
   color: var(--text-2);
   font-size: 10px;
 }
 
 .detail-section {
-  padding-block: 66px;
+  padding-block: var(--s-8);
   border-top: 1px solid var(--line);
 }
 
 .detail-grid {
   display: grid;
   grid-template-columns: 0.72fr 1.28fr;
-  gap: 48px;
+  gap: var(--s-7);
 }
 
 .detail-grid h2 {
@@ -1617,9 +1700,9 @@ button:disabled {
 .spec-row {
   display: grid;
   grid-template-columns: 1fr 0.8fr auto;
-  gap: 18px;
+  gap: var(--s-4);
   align-items: center;
-  padding: 16px;
+  padding: var(--s-4);
   border-bottom: 1px solid var(--line);
 }
 
@@ -1632,8 +1715,16 @@ button:disabled {
   border-bottom: 0;
 }
 
+/* The catalog-status table is ten near-identical rows of small type. A tint that
+   is one shade off the page background is not a hit target cue. Cobalt tint plus
+   an inset leading edge makes the row a shopper is aiming at unambiguous. */
+.testing-table a {
+  transition: background 120ms ease-out, box-shadow 120ms ease-out;
+}
+
 .testing-table a:hover {
-  background: var(--bg);
+  background: var(--cobalt-tint);
+  box-shadow: inset 3px 0 0 var(--cobalt);
 }
 
 .testing-row strong,
@@ -1660,48 +1751,84 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+/* The item is the animated container: an auto row for the trigger and a 1fr row
+   for the panel that collapses to 0fr. This is the only way to transition to and
+   from an unknown content height without measuring in script. */
 .accordion-item {
+  display: grid;
+  grid-template-rows: auto 1fr;
   border-bottom: 1px solid var(--line);
+  transition: grid-template-rows 200ms var(--ease);
+}
+
+.accordion-item:has(> .accordion-panel[hidden]) {
+  grid-template-rows: auto 0fr;
 }
 
 .accordion-trigger {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  gap: 20px;
-  padding: 18px 0;
+  gap: var(--s-5);
+  padding: var(--s-5) 0;
   background: transparent;
   border: 0;
   font-weight: 600;
   text-align: left;
+  transition: color 120ms ease-out;
 }
 
-.accordion-trigger::after {
-  content: "+";
+.accordion-trigger:hover {
   color: var(--cobalt);
-  font: 500 18px/1 var(--mono);
+}
+
+/* Drawn rather than typeset. A "+" glyph swapped for a "−" glyph cannot be
+   transitioned, so the icon is two gradient bars and the vertical one collapses
+   to zero height on open. Same plus-to-minus reading, now animated. */
+.accordion-trigger::after {
+  content: "";
+  flex: 0 0 13px;
+  align-self: center;
+  height: 13px;
+  background-image:
+    linear-gradient(var(--cobalt), var(--cobalt)),
+    linear-gradient(var(--cobalt), var(--cobalt));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 13px 1.5px, 1.5px 13px;
+  transition: background-size 200ms var(--ease);
 }
 
 .accordion-trigger[aria-expanded="true"]::after {
-  content: "−";
+  background-size: 13px 1.5px, 1.5px 0;
 }
 
+/* The panel keeps its `hidden` attribute, so the semantics do not move. The
+   attribute's UA display:none is overridden so the row can animate, and
+   visibility:hidden stands in for it: same removal from the accessibility tree
+   and from the tab order. The flip is delayed on close so the text is still
+   painted while the row collapses, and immediate on open. */
 .accordion-panel {
-  padding: 0 0 18px;
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 0 var(--s-5);
   color: var(--text-2);
   font-size: 13px;
+  transition: visibility 0s;
 }
 
 .accordion-panel[hidden] {
-  display: none;
+  visibility: hidden;
+  transition: visibility 0s 200ms;
 }
 
 .testing-lookup {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 8px;
+  gap: var(--s-2);
   max-width: 720px;
-  margin-top: 24px;
+  margin-top: var(--s-5);
 }
 
 .testing-lookup input {
@@ -1713,11 +1840,11 @@ button:disabled {
 }
 
 .lookup-results {
-  margin-top: 20px;
+  margin-top: var(--s-5);
 }
 
 .lookup-card {
-  padding: 18px;
+  padding: var(--s-5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1732,10 +1859,13 @@ button:disabled {
   color: var(--text-2);
 }
 
+/* Width inherits --shell so the article edge lands on the same page gutter as
+   every other section. The old hardcoded 48px produced two different left
+   edges at 390, where --shell is 12px. */
 .article-shell {
-  width: min(780px, calc(100vw - 48px));
+  width: min(780px, var(--shell));
   margin-inline: auto;
-  padding-block: 62px 82px;
+  padding-block: var(--s-8) var(--s-9);
 }
 
 .article-shell h1 {
@@ -1746,37 +1876,50 @@ button:disabled {
 }
 
 .article-lede {
-  margin: 22px 0 40px;
+  margin: var(--s-5) 0 var(--s-7);
   color: var(--text-2);
   font-size: 18px;
 }
 
 .article-shell h2 {
-  margin: 44px 0 12px;
+  margin: var(--s-7) 0 var(--s-4);
   font-size: 27px;
   letter-spacing: -0.035em;
 }
 
 .article-shell p,
 .article-shell li {
+  max-width: var(--measure);
   color: #343b45;
   font-size: 15px;
   line-height: 1.7;
 }
 
+/* A lede reads better slightly narrower than the body it introduces, so it keeps
+   its own measure. The selector is raised only to outrank `.article-shell p`,
+   which was silently overriding all four of these declarations: the intended
+   18px lede has been rendering at 15px body size everywhere it appears. Nothing
+   here is a new value, it is the existing intent finally winning. */
+.article-shell p.article-lede {
+  max-width: 32em;
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1.6;
+}
+
 .article-callout {
-  margin: 32px 0;
-  padding: 22px;
+  margin: var(--s-6) 0;
+  padding: var(--s-5);
   background: var(--cobalt-tint);
   border-left: 3px solid var(--cobalt);
 }
 
 .article-shell .button + .button {
-  margin-left: 8px;
+  margin-left: var(--s-2);
 }
 
 .site-footer {
-  padding: 48px 0 28px;
+  padding: var(--s-7) 0 var(--s-6);
   color: var(--on-dark);
   background: var(--slate);
 }
@@ -1784,18 +1927,18 @@ button:disabled {
 .footer-grid {
   display: grid;
   grid-template-columns: 1.4fr repeat(3, 1fr);
-  gap: 42px;
+  gap: var(--s-7);
 }
 
 .footer-brand p {
   max-width: 340px;
-  margin: 14px 0 0;
+  margin: var(--s-4) 0 0;
   color: #b3a390;
   font-size: 12px;
 }
 
 .footer-column h2 {
-  margin: 0 0 12px;
+  margin: 0 0 var(--s-3);
   color: #a4937f;
   font: 500 9px/1.3 var(--mono);
   letter-spacing: 0.08em;
@@ -1804,7 +1947,7 @@ button:disabled {
 
 .footer-column a {
   display: block;
-  margin: 8px 0;
+  margin: var(--s-2) 0;
   color: #ddd0bf;
   font-size: 12px;
 }
@@ -1816,9 +1959,9 @@ button:disabled {
 .footer-bottom {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
-  margin-top: 42px;
-  padding-top: 20px;
+  gap: var(--s-5);
+  margin-top: var(--s-7);
+  padding-top: var(--s-5);
   color: #96856f;
   border-top: 1px solid rgba(243, 234, 218, 0.18);
   font: 400 9px/1.5 var(--mono);
@@ -1869,10 +2012,10 @@ button:disabled {
 .drawer-head {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
+  gap: var(--s-5);
   align-items: center;
   min-height: 70px;
-  padding: 0 20px;
+  padding: 0 var(--s-5);
   border-bottom: 1px solid var(--line);
 }
 
@@ -1886,12 +2029,21 @@ button:disabled {
   height: 36px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--r-sm);
+  transition: color 120ms ease-out, background 120ms ease-out, border-color 120ms ease-out;
+}
+
+/* Matches .icon-button, so the two square controls on the page answer to the
+   pointer the same way. */
+.drawer-close:hover {
+  color: var(--cobalt);
+  background: var(--cobalt-tint);
+  border-color: var(--cobalt);
 }
 
 .cart-items {
   overflow-y: auto;
-  padding: 14px 20px;
+  padding: var(--s-4) var(--s-5);
 }
 
 .cart-empty {
@@ -1911,8 +2063,8 @@ button:disabled {
 .cart-item {
   display: grid;
   grid-template-columns: 72px 1fr;
-  gap: 13px;
-  padding: 14px 0;
+  gap: var(--s-3);
+  padding: var(--s-4) 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1927,7 +2079,7 @@ button:disabled {
 .cart-item-top {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--s-3);
 }
 
 .cart-item h3 {
@@ -1941,7 +2093,7 @@ button:disabled {
 }
 
 .cart-item-meta {
-  margin: 3px 0 10px;
+  margin: 3px 0 var(--s-3);
   color: var(--text-2);
   font-size: 10px;
 }
@@ -1949,7 +2101,7 @@ button:disabled {
 .cart-item-controls {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--s-3);
   align-items: center;
 }
 
@@ -1980,10 +2132,18 @@ button:disabled {
   border: 0;
   font-size: 10px;
   text-decoration: underline;
+  transition: color 120ms ease-out;
+}
+
+/* The one destructive control in the cart. --danger on hover only: it stays
+   quiet in its resting state so it never competes with the price, and it names
+   itself the moment the pointer commits. */
+.remove-item:hover {
+  color: var(--danger);
 }
 
 .cart-footer {
-  padding: 18px 20px 22px;
+  padding: var(--s-5);
   background: var(--surface);
   border-top: 1px solid var(--line);
 }
@@ -1991,8 +2151,8 @@ button:disabled {
 .cart-subtotal {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 14px;
+  gap: var(--s-5);
+  margin-bottom: var(--s-4);
 }
 
 .cart-subtotal strong:last-child {
@@ -2000,8 +2160,8 @@ button:disabled {
 }
 
 .cart-terminus {
-  margin: 0 0 12px;
-  padding: 12px;
+  margin: 0 0 var(--s-3);
+  padding: var(--s-3);
   color: var(--text-2);
   background: var(--bg);
   border-radius: 5px;
@@ -2015,10 +2175,10 @@ button:disabled {
 .toast {
   position: fixed;
   z-index: 300;
-  bottom: 24px;
-  left: 24px;
+  bottom: var(--s-5);
+  left: var(--s-5);
   max-width: min(380px, calc(100vw - 48px));
-  padding: 13px 16px;
+  padding: var(--s-3) var(--s-4);
   color: var(--on-dark);
   background: var(--slate);
   border-radius: 6px;
@@ -2041,7 +2201,7 @@ button:disabled {
   right: 12px;
   bottom: 12px;
   left: 12px;
-  display: none;
+  display: flex;
   min-height: 50px;
   justify-content: space-between;
   gap: 18px;
@@ -2050,12 +2210,26 @@ button:disabled {
   color: var(--on-dark);
   background: var(--slate);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   box-shadow: var(--shadow);
+  /* Was display:none/display:flex, which made a persistent bar appear out of
+     nowhere mid-scroll. It now stays laid out and slides, so the arrival is
+     motivated. visibility carries what display used to: while hidden the bar is
+     out of the tab order and the accessibility tree, and the flip is delayed on
+     exit so the slide is still painted. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(calc(100% + 12px));
+  pointer-events: none;
+  transition: opacity 180ms ease-out, transform 260ms var(--ease), visibility 0s 260ms;
 }
 
 .mobile-cart-bar[data-visible="true"] {
-  display: flex;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition: opacity 180ms ease-out, transform 260ms var(--ease), visibility 0s;
 }
 
 .mobile-cart-bar span {
@@ -2069,7 +2243,7 @@ button:disabled {
 .mobile-drawer {
   width: min(390px, 94vw);
   display: block;
-  padding: 18px;
+  padding: var(--s-5);
 }
 
 .mobile-drawer .drawer-head {
@@ -2078,12 +2252,12 @@ button:disabled {
 
 .mobile-nav {
   display: grid;
-  gap: 4px;
-  padding-top: 18px;
+  gap: var(--s-1);
+  padding-top: var(--s-5);
 }
 
 .mobile-nav a {
-  padding: 13px 0;
+  padding: var(--s-3) 0;
   border-bottom: 1px solid var(--line);
   font-size: 16px;
   font-weight: 600;
@@ -2146,7 +2320,7 @@ button:disabled {
 
   .hero-grid {
     grid-template-columns: 1fr;
-    padding-block: 42px 26px;
+    padding-block: var(--s-6) var(--s-5);
   }
 
   .hero-copy h1 {
@@ -2179,14 +2353,26 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  /* The category filters become a horizontal scroller here, and the last pill
+     used to end flush at the viewport edge, which reads as the end of the list.
+     A fade on the right edge is the only cue that says the row continues. The
+     mask is on the border box, so it stays pinned to the edge as the row
+     scrolls rather than travelling with the content. */
   .filter-panel {
     position: static;
     display: flex;
-    gap: 8px;
+    gap: var(--s-2);
     overflow-x: auto;
     padding: 0;
     background: transparent;
     border: 0;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+
+  .filter-panel::-webkit-scrollbar {
+    display: none;
   }
 
   .filter-panel h2 {
@@ -2218,7 +2404,7 @@ button:disabled {
 
   .detail-grid {
     grid-template-columns: 1fr;
-    gap: 28px;
+    gap: var(--s-6);
   }
 
   .footer-grid {
@@ -2261,21 +2447,28 @@ button:disabled {
     letter-spacing: 0.16em;
   }
 
+  /* 36x36 with a 5px gap is under the 44px touch minimum on the two controls a
+     phone user reaches for most, and they sit close enough to mis-hit. Both go
+     to 44 with a full 8px between them. */
   .header-actions {
-    gap: 5px;
+    gap: var(--s-2);
   }
 
   .icon-button {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
   }
 
   .header-main > .search-wrap {
     margin-bottom: 8px;
   }
 
+  /* Any control under 16px triggers the iOS focus zoom, which then leaves the
+     page scrolled sideways. 16px is the platform floor, not a scale change:
+     desktop keeps the 15px body size. */
   .search-input {
     height: 38px;
+    font-size: 16px;
   }
 
   .home-hero {
@@ -2283,8 +2476,8 @@ button:disabled {
   }
 
   .hero-grid {
-    gap: 26px;
-    padding-top: 34px;
+    gap: var(--s-5);
+    padding-top: var(--s-6);
   }
 
   .hero-copy h1 {
@@ -2339,21 +2532,22 @@ button:disabled {
     border-bottom: 0;
   }
 
-  .section {
-    padding-block: 48px;
+  .section,
+  .detail-section {
+    padding-block: var(--s-7);
   }
 
   .section-tight {
-    padding-block: 36px;
+    padding-block: var(--s-6);
   }
 
   .section-head {
     display: block;
-    margin-bottom: 18px;
+    margin-bottom: var(--s-4);
   }
 
   .category-section-head {
-    margin-top: 38px;
+    margin-top: var(--s-6);
   }
 
   .section-head h2 {
@@ -2362,12 +2556,12 @@ button:disabled {
 
   .section-head p,
   .section-head .text-link {
-    margin-top: 10px;
+    margin-top: var(--s-3);
   }
 
   .category-rail {
     display: flex;
-    gap: 8px;
+    gap: var(--gutter-grid);
     overflow-x: auto;
     margin-right: -12px;
     padding-right: 12px;
@@ -2381,7 +2575,7 @@ button:disabled {
 
   .product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: var(--gutter-grid);
   }
 
   .product-image-wrap {
@@ -2389,7 +2583,7 @@ button:disabled {
   }
 
   .product-card-body {
-    padding: 10px;
+    padding: var(--s-3);
   }
 
   .product-category {
@@ -2418,29 +2612,31 @@ button:disabled {
 
   .product-buy-row {
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: var(--s-2);
   }
 
   .price {
     font-size: 13px;
   }
 
+  /* The primary conversion control on a phone. 40px was four short of the
+     touch minimum, on the one button the whole grid exists to serve. */
   .add-button {
-    min-height: 40px;
+    min-height: 44px;
     font-size: 11px;
   }
 
   .testing-feature {
-    border-radius: 7px;
+    border-radius: var(--r-lg);
   }
 
   .testing-feature-copy,
   .testing-document {
-    padding: 24px;
+    padding: var(--s-5);
   }
 
   .testing-document {
-    margin: 0 12px 12px;
+    margin: 0 var(--s-3) var(--s-3);
   }
 
   .testing-feature-copy h2 {
@@ -2463,7 +2659,7 @@ button:disabled {
   }
 
   .newsletter {
-    padding: 24px;
+    padding: var(--s-5);
   }
 
   .newsletter-form {
@@ -2483,12 +2679,18 @@ button:disabled {
   }
 
   .article-shell .button + .button {
-    margin-top: 8px;
+    margin-top: var(--s-2);
     margin-left: 0;
   }
 
+  /* The article gutter and the section gutter are the same 12px here, so the
+     vertical rhythm steps down with them. */
+  .article-shell {
+    padding-block: var(--s-7) var(--s-8);
+  }
+
   .page-hero {
-    padding: 44px 0 34px;
+    padding: var(--s-7) 0 var(--s-6);
   }
 
   .page-hero h1 {
@@ -2500,8 +2702,8 @@ button:disabled {
   }
 
   .pdp-grid {
-    gap: 26px;
-    padding-top: 18px;
+    gap: var(--s-5);
+    padding-top: var(--s-5);
   }
 
   .pdp-main-image {
@@ -2516,8 +2718,10 @@ button:disabled {
     grid-template-columns: 96px 1fr;
   }
 
+  /* Stays 2x2. A three-column override here would orphan the fourth tile onto a
+     row of its own, which is the bug this grid was changed to fix. */
   .buybox-cues {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .buybox-cue {
@@ -2553,7 +2757,7 @@ button:disabled {
 
   .footer-grid {
     grid-template-columns: repeat(2, 1fr);
-    gap: 30px 18px;
+    gap: var(--s-6) var(--s-4);
   }
 
   .footer-brand {
@@ -2607,65 +2811,69 @@ button:disabled {
    type scale or the grid conventions used elsewhere.
    ========================================================================= */
 
-.page-hero.is-compact { padding-block: 42px 22px; }
+.page-hero.is-compact { padding-block: var(--s-6) var(--s-5); }
 
 /* ---- shared: order summary panel ---- */
 .order-summary {
-  padding: 22px;
+  padding: var(--s-5);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
-.order-summary h2 { margin: 0 0 16px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-.summary-lines { display: grid; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
-.summary-line { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; }
-.summary-line img { border: 1px solid var(--line); border-radius: 6px; }
+.order-summary h2 { margin: 0 0 var(--s-4); font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.summary-lines { display: grid; gap: var(--s-4); padding-bottom: var(--s-4); border-bottom: 1px solid var(--line); }
+.summary-line { display: grid; grid-template-columns: 48px 1fr auto; gap: var(--s-3); align-items: center; }
+.summary-line img { width: 48px; height: 54px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--r-sm); }
 .summary-line strong { display: block; font-size: 13px; font-weight: 600; }
 .summary-line span { color: var(--text-2); font: 400 11px/1.4 var(--mono); }
 .summary-line-price { font-size: 13px; font-weight: 600; white-space: nowrap; }
-.summary-rows { display: grid; gap: 9px; padding: 16px 0; border-bottom: 1px solid var(--line); }
-.summary-row { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; color: var(--text-2); }
+.summary-rows { display: grid; gap: var(--s-2); padding: var(--s-4) 0; border-bottom: 1px solid var(--line); }
+.summary-row { display: flex; justify-content: space-between; gap: var(--s-4); font-size: 13px; color: var(--text-2); }
 .summary-row.is-credit span:last-child { color: var(--success); }
-.summary-total { display: flex; justify-content: space-between; padding-top: 16px; font-size: 17px; font-weight: 650; }
-.summary-note { margin: 12px 0 0; color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.summary-total { display: flex; justify-content: space-between; padding-top: var(--s-4); font-size: 17px; font-weight: 650; }
+.summary-note { margin: var(--s-3) 0 0; color: var(--text-3); font-size: 11px; line-height: 1.5; }
 
 /* ---- cart page ---- */
-.cart-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 40px; align-items: start; }
+.cart-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
 .ship-progress {
-  margin: 0 0 18px; padding: 11px 14px;
+  margin: 0 0 var(--s-5); padding: var(--s-3) var(--s-4);
   background: var(--cobalt-tint); border-radius: 8px;
   font-size: 13px; color: var(--ink);
 }
 .ship-progress.is-met { background: var(--success-tint); }
 .status-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; background: var(--success); border-radius: 50%; vertical-align: middle; }
 .cart-rows { display: grid; gap: 0; border-top: 1px solid var(--line); }
-.cart-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 20px; padding: 22px 0; border-bottom: 1px solid var(--line); }
-.cart-row-image img { border: 1px solid var(--line); border-radius: 8px; }
-.cart-row-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+.cart-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--s-5); padding: var(--s-5) 0; border-bottom: 1px solid var(--line); }
+/* Explicit box + cover. The intrinsic art is 4:3 and the slot is 8:9, so with
+   no dimensions the vials rendered stretched in both the cart and the checkout
+   summary. Scoped rather than a global img { height: auto }, which would move
+   every cart row height on the site. */
+.cart-row-image img { width: 120px; height: 135px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--r-md); }
+.cart-row-head { display: flex; justify-content: space-between; gap: var(--s-4); align-items: flex-start; }
 .cart-row-head h3 { margin: 0 0 3px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
 .cart-row-meta { margin: 0; color: var(--text-2); font: 400 11px/1.4 var(--mono); }
 .cart-row-price { font-size: 15px; font-weight: 650; white-space: nowrap; }
-.cart-row-status { margin: 10px 0 14px; color: var(--text-2); font-size: 12px; }
-.cart-row-controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.cart-row-status { margin: var(--s-3) 0 var(--s-4); color: var(--text-2); font-size: 12px; }
+.cart-row-controls { display: flex; gap: var(--s-4); align-items: center; flex-wrap: wrap; }
 .cart-row-unit { color: var(--text-3); font-size: 12px; }
-.cart-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 22px; }
-.cart-aside { display: grid; gap: 14px; position: sticky; top: 96px; }
-.checkout-cta { display: block; margin-top: 16px; text-align: center; }
-.promo-form { padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-.promo-form label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; }
-.promo-input-row { display: flex; gap: 8px; }
+.cart-actions { display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); margin-top: var(--s-5); }
+.cart-aside { display: grid; gap: var(--s-4); position: sticky; top: 96px; }
+.checkout-cta { display: block; margin-top: var(--s-4); text-align: center; }
+.promo-form { padding: var(--s-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.promo-form label { display: block; margin-bottom: var(--s-2); font-size: 12px; font-weight: 600; }
+.promo-input-row { display: flex; gap: var(--s-2); }
 .promo-input-row input {
-  flex: 1; min-width: 0; height: 38px; padding: 0 12px;
+  flex: 1; min-width: 0; height: 38px; padding: 0 var(--s-3);
   color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px;
 }
 .promo-input-row input:focus { background: var(--surface); border-color: var(--cobalt); outline: none; box-shadow: 0 0 0 2px var(--cobalt-tint); }
-.promo-feedback { margin: 9px 0 0; color: var(--success); font-size: 12px; min-height: 1em; }
+.promo-feedback { margin: var(--s-2) 0 0; color: var(--success); font-size: 12px; min-height: 1em; }
 .promo-feedback.is-error { color: var(--danger); }
 
 /* ---- checkout ---- */
-.stepper { display: flex; gap: 8px; flex-wrap: wrap; margin: 22px 0 0; padding: 0; list-style: none; }
-.step { display: flex; gap: 8px; align-items: center; padding: 7px 13px 7px 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 99px; }
+.stepper { display: flex; gap: var(--s-2); flex-wrap: wrap; margin: var(--s-5) 0 0; padding: 0; list-style: none; }
+.step { display: flex; gap: var(--s-2); align-items: center; padding: 7px var(--s-3) 7px 7px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-pill); }
 .step-index { display: grid; width: 21px; height: 21px; place-items: center; color: var(--text-2); background: var(--bg); border-radius: 50%; font: 500 11px/1 var(--mono); }
 .step-label { color: var(--text-2); font-size: 12px; font-weight: 500; }
 .step.is-current { border-color: var(--cobalt); }
@@ -2673,20 +2881,20 @@ button:disabled {
 .step.is-current .step-label { color: var(--cobalt); font-weight: 600; }
 .step.is-done .step-index { color: #fff; background: var(--success); }
 
-.checkout-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 40px; align-items: start; }
-.checkout-step { margin: 0; padding: 26px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-.checkout-step legend { display: flex; gap: 10px; align-items: center; padding: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; }
+.checkout-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
+.checkout-step { margin: 0; padding: var(--s-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.checkout-step legend { display: flex; gap: var(--s-3); align-items: center; padding: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; }
 .checkout-step legend span { display: grid; width: 24px; height: 24px; place-items: center; color: #fff; background: var(--cobalt); border-radius: 50%; font: 500 12px/1 var(--mono); }
-.step-hint { margin: 12px 0 0; color: var(--text-2); font-size: 13px; line-height: 1.55; }
+.step-hint { margin: var(--s-3) 0 0; color: var(--text-2); font-size: 13px; line-height: 1.55; }
 
-.field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+.field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-4); margin-top: var(--s-5); }
 .field.is-full { grid-column: span 4; }
 .field.is-half { grid-column: span 2; }
 .field.is-quarter { grid-column: span 1; }
 .field label { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 600; }
 .field-optional { color: var(--text-3); font-weight: 400; }
 .field input, .field select {
-  width: 100%; height: 42px; padding: 0 12px;
+  width: 100%; height: 42px; padding: 0 var(--s-3);
   color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px;
 }
@@ -2737,8 +2945,11 @@ button:disabled {
 .tracker li.is-done span { background: var(--success); border-color: var(--success); }
 .tracker li em { display: block; margin-top: 3px; color: var(--text-3); font: 400 12px/1.4 var(--mono); font-style: normal; }
 
-.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.detail-card { padding: 17px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+/* Confirmation-only. This was previously declared as .detail-grid, which
+   collided with the global editorial .detail-grid (0.72fr 1.28fr) defined
+   earlier and silently flattened it site-wide. */
+.confirmation-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+.detail-card { padding: 17px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .detail-card h3 { margin: 0 0 8px; color: var(--text-2); font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
 .detail-card p { margin: 0; font-size: 13px; line-height: 1.65; }
 
@@ -2753,14 +2964,32 @@ button:disabled {
   .field.is-full, .field.is-half { grid-column: span 2; }
   .field.is-quarter { grid-column: span 1; }
   .cart-row { grid-template-columns: 84px minmax(0, 1fr); gap: 14px; }
-  .cart-row-image img { width: 84px; height: auto; }
+  .cart-row-image img { width: 84px; height: 95px; }
   .checkout-step { padding: 20px 17px; }
-  .detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .confirmation-details { grid-template-columns: minmax(0, 1fr); }
   .step-actions { flex-direction: column-reverse; align-items: stretch; }
   .step-actions .button { width: 100%; text-align: center; }
   .stepper { gap: 6px; }
   .step { padding: 5px 10px 5px 5px; }
   .step-label { font-size: 11px; }
+}
+
+/* iOS zooms into any focused control rendering under 16px and does not zoom back
+   out, which leaves a half-finished checkout scrolled sideways with the next
+   field off-screen. 16px is the platform floor for text entry, not a type-scale
+   change: it applies to touch-width inputs only, and the desktop 15px body size
+   is untouched. The breakpoint is 768 rather than 640 because tablet-width
+   Safari zooms too. */
+@media (max-width: 768px) {
+  .field input,
+  .field select,
+  .promo-input-row input,
+  .testing-lookup input,
+  .collection-search,
+  .collection-sort,
+  .newsletter-form input {
+    font-size: 16px;
+  }
 }
 
 .promo-hint { margin: 9px 0 0; color: var(--text-3); font-size: 12px; }
@@ -2859,3 +3088,304 @@ button:disabled {
 }
 .cart-blocked-notice strong { display: block; margin-bottom: 3px; }
 .checkout-cta.is-blocked { pointer-events: none; opacity: 0.45; }
+
+/* ============================================================================
+   New components. Free-shipping progress, the restricted-compound notice, and
+   the in-checkout discount disclosure. Plus two fixes that had nowhere else to
+   live: the footer spacer under the mobile cart bar, and the aria-invalid
+   companion to .has-error.
+   ========================================================================= */
+
+/* ---- free-shipping progress (cart drawer + cart page) ----
+   The fill is cobalt, not green. Green on this site means "reported/verified",
+   which is the single signal the catalog's credibility rests on. Spending it on
+   a shipping threshold would dilute the one thing a buyer is meant to trust.
+   The one green allowed here is the met-state label and its status dot, which
+   is a genuine applied/confirmed state. */
+.ship-progress-bar {
+  display: grid;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+}
+
+.ship-progress-bar__track {
+  height: 6px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border-radius: var(--r-pill);
+}
+
+.ship-progress-bar__fill {
+  height: 100%;
+  background: var(--cobalt);
+  border-radius: var(--r-pill);
+  transition: width 240ms var(--ease);
+}
+
+.ship-progress-bar__label {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.ship-progress-bar__label strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ship-progress-bar.is-met .ship-progress-bar__fill {
+  background: var(--success);
+}
+
+.ship-progress-bar.is-met .ship-progress-bar__label {
+  color: var(--success);
+}
+
+/* Inside the drawer footer the bar sits directly above the subtotal, so it
+   loses its own bottom margin and borrows the subtotal's. */
+.cart-footer .ship-progress-bar {
+  margin-bottom: var(--s-3);
+}
+
+/* ---- restricted compound notice (buy box) ----
+   Deliberately not the out-of-stock treatment. "Unavailable" says come back
+   later; this says we will not sell it, and why. Neutral grey throughout: the
+   pill is a status, but a negative one, so it takes neither cobalt (which means
+   interactive) nor green (which means verified) nor gold (brand material). */
+.restricted-notice {
+  padding: var(--s-4);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.restricted-notice__pill {
+  display: inline-block;
+  margin-bottom: var(--s-2);
+  padding: 3px 8px;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  font: 500 9px/1.6 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.restricted-notice p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Catalog and search pills for the same two entries, in the same neutral grey,
+   so the state reads identically wherever the entry appears. */
+.stock-badge.is-restricted {
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+}
+
+/* ---- in-checkout discount disclosure ----
+   A real <details>, so the trigger is keyboard-operable and picks up the
+   standard focus ring without any script. */
+.promo-disclosure {
+  padding: var(--s-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.promo-disclosure > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  align-items: center;
+  color: var(--cobalt);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  transition: color 120ms ease-out;
+}
+
+.promo-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.promo-disclosure > summary::after {
+  content: "";
+  flex: 0 0 11px;
+  height: 11px;
+  background-image:
+    linear-gradient(var(--cobalt), var(--cobalt)),
+    linear-gradient(var(--cobalt), var(--cobalt));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 11px 1.5px, 1.5px 11px;
+  transition: background-size 200ms var(--ease);
+}
+
+.promo-disclosure[open] > summary::after {
+  background-size: 11px 1.5px, 1.5px 0;
+}
+
+.promo-disclosure > summary:hover {
+  color: var(--cobalt-deep);
+}
+
+/* The promo form is already a panel elsewhere. Inside the disclosure it is just
+   the contents, so it drops its own frame. */
+.promo-disclosure .promo-form {
+  margin-top: var(--s-3);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+/* ---- invalid field ----
+   Pairs with .has-error so the red border follows aria-invalid on its own. A
+   field can then be announced and outlined from a single state change. */
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+/* ---- mobile cart bar clearance ----
+   The bar is fixed at the bottom of the viewport and was sitting on top of the
+   last two footer rows. Any page that renders the bar reserves its height plus
+   its offset. */
+@media (max-width: 640px) {
+  body:has(.mobile-cart-bar) .site-footer {
+    padding-bottom: 74px;
+  }
+}
+
+/* ============================================================================
+   Components the interrupted build emitted in site.js but never styled.
+   Each of these was rendering as an unstyled element: no error thrown, just
+   silently wrong. Values use the spacing scale rather than new magic numbers.
+   ========================================================================= */
+
+/* Cart page: left column and row internals */
+.cart-main { min-width: 0; }
+.cart-row-body { display: flex; flex-direction: column; min-width: 0; }
+.cart-row-cap {
+  margin: var(--s-2) 0 0;
+  color: var(--text-3);
+  font: 400 11px/1.4 var(--mono);
+}
+
+/* Cart drawer actions: full-width stacked, primary first */
+.cart-checkout,
+.cart-view { display: block; width: 100%; text-align: center; }
+.cart-view { margin-top: var(--s-2); }
+
+/* Cross-sell below the cart lines. Deliberately quieter than the catalog grid
+   so it reads as a suggestion rather than competing with the checkout action. */
+.cart-cross-sell {
+  margin-top: var(--s-7);
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--line);
+}
+.cart-cross-sell h2 {
+  margin: 0 0 var(--s-4);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.cart-cross-sell .product-grid { gap: var(--s-4); }
+
+/* Search dropdown thumbnail. Fixed box + cover, since the source art is 4:3
+   and this slot is square. */
+.search-result-image {
+  flex: 0 0 auto;
+  display: block;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.search-result-image img { width: 52px; height: 52px; object-fit: cover; }
+
+/* Lot and report date beneath the analytical panel */
+.analytical-meta {
+  display: flex;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font: 400 11px/1.5 var(--mono);
+}
+
+/* Footer contact column: same grid cell, looser leading for the address block */
+.footer-contact p { margin: 0 0 var(--s-2); line-height: 1.6; }
+.footer-contact a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Confirmation left column */
+.confirmation-main { min-width: 0; }
+
+@media (max-width: 640px) {
+  .cart-cross-sell { margin-top: var(--s-6); padding-top: var(--s-5); }
+  .search-result-image, .search-result-image img { width: 44px; height: 44px; }
+}
+
+/* Checkout stepper: the pills double as back-navigation to a completed step */
+.step-jump {
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.step-jump:disabled { cursor: default; }
+.step-jump:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 3px; border-radius: var(--r-sm); }
+
+/* Who ran the analysis, and why one field is deliberately empty. These carry
+   the credibility of the analytical panel, so they read as record, not legalese. */
+.testing-attribution,
+.testing-scope-note {
+  margin: var(--s-4) 0 0;
+  max-width: var(--measure);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.testing-scope-note {
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--line-strong);
+}
+
+/* Footer contact heading sat flush against the paragraph above it, reading as
+   a stray line rather than a column label. */
+.footer-contact h2 { margin-top: var(--s-5); }
+
+/* "View status" was wrapping mid-phrase inside the card's testing row, which
+   broke the line into "View / status" on narrower cards. */
+.testing-micro { gap: var(--s-3); align-items: baseline; }
+.testing-micro a { flex: 0 0 auto; white-space: nowrap; }
+
+/* The simulated vial label is only 40% of the image width, so a catalog code
+   was breaking mid-token ("OVO-" / "002"), which reads as a rendering fault on
+   what is meant to look like printed packaging. */
+.product-image-label span { white-space: nowrap; }
+.product-image-label { width: 62%; }
+
+/* Category + stock badge share a line. A long category ("Growth Hormone
+   Research") pushed the badge to a second line and knocked that card's title
+   out of alignment with its neighbours in the same row. */
+.product-category {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 18px;
+}
+.product-card .product-category { min-height: 32px; align-content: flex-start; }
