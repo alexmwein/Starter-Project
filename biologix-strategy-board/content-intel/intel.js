@@ -45,6 +45,19 @@
 
   var plat = function (p) { return p.charAt(0).toUpperCase() + p.slice(1); };
 
+  // Bios arrive from two collectors. The Apify-sourced ones keep literal "\n"
+  // and "\u002F" two-character escapes, which rendered as visible backslash-n
+  // inside the table. Normalise to single-line text for display.
+  var flat = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/\\u002F/gi, '/')
+      .replace(/\\u0026/gi, '&')
+      .replace(/\\r\\n|\\n|\\r/g, ' ')
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  };
+
   // Captions, descriptions and bios are third-party content. Anything that ends
   // up in an href or src must be a real http(s) URL, or we drop it - otherwise a
   // "javascript:" value in a scraped caption would survive HTML-escaping.
@@ -621,7 +634,41 @@
     }).join('');
   }
 
+  function renderCohort() {
+    var C = D.civilian_cohort;
+    var sec = document.getElementById('cohort-section');
+    if (!C || !(C.creators || []).length) { if (sec) sec.hidden = true; return; }
+    var verified = C.creators.filter(function (c) { return c.affiliate_verified; });
+    var rest = C.creators.filter(function (c) { return !c.affiliate_verified; });
+
+    $('cohort-count').textContent = verified.length + ' verified of ' + C.probed + ' probed';
+    $('cohort-note').textContent = C.discovery_note + ' Verified means a peptide or GLP-1 vendor URL was actually found behind the bio link, with link aggregators crawled one level down, or a discount code is stated in the bio. Simply having a linktr.ee is not evidence.';
+
+    $('cohort-body').innerHTML = verified.map(function (c) {
+      var dest = (c.peptide_vendor_links || []).slice(0, 2);
+      return '<tr>' +
+        '<td><span class="group-key">' + link(c.url || ('https://www.tiktok.com/@' + c.handle), '@' + c.handle) + '</span></td>' +
+        '<td class="num">' + (c.followers == null ? '<span class="null-cell">n/a</span>' : num(c.followers)) + '</td>' +
+        '<td style="font-size:12px;max-width:260px">' + esc(flat(c.bio).slice(0, 130)) + '</td>' +
+        '<td><span class="mech-value">' + (dest.length
+            ? dest.map(function (u) { return link(/^https?:/i.test(u) ? u : 'https://' + u, String(u).slice(0, 62)); }).join('<br>')
+            : (c.code_in_bio ? 'code <b>' + esc(c.code_in_bio) + '</b>' : '<span class="null-cell">via code only</span>')) +
+          '</span></td>' +
+        '<td style="font-size:11.5px">' + esc(c.verification || c.affiliate_evidence || '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    $('cohort-excluded').innerHTML = rest.slice(0, 60).map(function (c) {
+      var why = (c.exclusion_reasons || []).length ? c.exclusion_reasons.join('; ')
+        : (c.verification || 'no peptide vendor found behind the bio link');
+      return '<tr><td>@' + esc(c.handle) + '</td>' +
+        '<td class="num">' + (c.followers == null ? '<span class="null-cell">n/a</span>' : num(c.followers)) + '</td>' +
+        '<td style="font-size:12px">' + esc(why) + '</td></tr>';
+    }).join('');
+  }
+
   /* ------------------------------------------------------------- init --- */
+  renderCohort();
   renderBrands();
   renderFindings();
   renderCoverage();

@@ -38,6 +38,7 @@ const tt = readJson(path.join(RAW, 'tiktok.json'));
 const ig = readJson(path.join(RAW, 'instagram.json'));
 const recon = readJson(path.join(RAW, 'recon-structured.json'));
 const ttDisc = readJson(path.join(RAW, 'tiktok-discovered.json'));
+const civilians = readJson(path.join(RAW, 'civilian-cohort.json'));
 
 /* ------------------------------------------------------------------ *
  * SCORING MODEL
@@ -1214,6 +1215,19 @@ const dataset = {
   recon_accounts: (recon && recon.accounts) || [],
   hook_taxonomy: HOOK_RULES.map((r) => r.archetype),
   discovered_tiktok_cohort: (ttDisc && ttDisc.creators || []).map(({posts, ...rest}) => rest),
+  /* The scan target: individual civilians with a VERIFIED peptide affiliate link.
+   * "Verified" means a peptide/GLP-1 vendor URL was actually found behind the bio
+   * link (aggregators crawled one level down), or a discount code is stated in
+   * the bio. Having a linktr.ee is not evidence - five large accounts were
+   * dropped precisely because nothing peptide-related sat behind theirs. */
+  civilian_cohort: civilians ? {
+    spec: civilians.spec,
+    discovery_note: civilians.discovery_note,
+    reference_example: civilians.reference_example,
+    probed: civilians.probed,
+    verified_affiliate: (civilians.creators || []).filter((c) => c.affiliate_verified).length,
+    creators: civilians.creators || [],
+  } : null,
 };
 
 fs.mkdirSync(PORTAL, { recursive: true });
