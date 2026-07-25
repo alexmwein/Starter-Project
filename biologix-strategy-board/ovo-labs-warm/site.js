@@ -1107,8 +1107,10 @@
             <p class="product-category">${escapeHtml(product.category)}</p>
             <h1>${escapeHtml(product.name)}</h1>
             <span class="pdp-code">${escapeHtml(product.code)} · ${escapeHtml(product.format)}</span>
-            <a class="pdp-testing-link" href="${path(`testing.html?product=${product.code}`)}">
-              <span>Testing status: no result reported</span><span aria-hidden="true">→</span>
+            <a class="pdp-testing-link${testingFor(product.slug) ? " is-reported" : ""}" href="${path(`testing.html?product=${product.code}`)}">
+              <span>${testingFor(product.slug)
+                ? `Identity, content and purity reported · lot ${escapeHtml(testingFor(product.slug).lot)}`
+                : "Testing status: no result reported"}</span><span aria-hidden="true">→</span>
             </a>
             <p class="pdp-description">${escapeHtml(product.overview)}</p>
             <div class="pdp-price">
@@ -1127,8 +1129,13 @@
             <div class="buybox-cues">
               <div class="buybox-cue"><strong>${escapeHtml(product.code)}</strong><span>Product code</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(product.strength)}</strong><span>Labeled amount</span></div>
-              <div class="buybox-cue"><strong>No result</strong><span>Testing state</span></div>
+              <div class="buybox-cue"><strong>${testingFor(product.slug) ? "3 of 4" : "No result"}</strong><span>Fields reported</span></div>
             </div>
+            <ul class="pdp-assurances">
+              <li>Ships in an insulated mailer · cold chain available at checkout</li>
+              <li>Lot COA reported before dispatch${testingFor(product.slug) ? ` · reported ${escapeHtml(testingFor(product.slug).date)}` : ""}</li>
+              <li>Free standard shipping over ${money.format(FREE_SHIPPING_THRESHOLD)}</li>
+            </ul>
             <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>
           </div>
         </section>

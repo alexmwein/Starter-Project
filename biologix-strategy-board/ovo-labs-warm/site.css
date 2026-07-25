@@ -2808,3 +2808,18 @@ button:disabled {
 .lookup-field strong { grid-column: 2; grid-row: 1; font-size: 13px; text-align: right; }
 .lookup-field em { grid-column: 1 / -1; color: var(--text-3); font: 400 11px/1.4 var(--mono); font-style: normal; }
 .lookup-field.is-reported strong { color: var(--success); }
+
+/* Fulfillment expectations at the decision point. Three facts a buyer of a
+   temperature-sensitive vial wants before committing: how it travels, whether
+   the lot was tested, and what shipping costs. */
+.pdp-assurances { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.pdp-assurances li {
+  position: relative; padding-left: 22px;
+  color: var(--text-2); font-size: 13px; line-height: 1.5;
+}
+.pdp-assurances li::before {
+  position: absolute; top: 6px; left: 0;
+  width: 6px; height: 6px; content: "";
+  background: var(--success); border-radius: 50%;
+}
+.pdp-testing-link.is-reported { color: var(--cobalt); }
