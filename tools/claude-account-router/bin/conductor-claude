@@ -1,0 +1,63 @@
+#!/bin/bash
+# Account-isolated Claude Code launcher for Conductor.
+#
+# Conductor calls this as its Claude Code executable. The selected account is
+# resolved once, when the Claude process starts, so already-running chats keep
+# their original credentials and cannot overwrite a later account selection.
+
+set -euo pipefail
+umask 077
+
+STORE="${CLAUDE_ACCOUNT_STORE:-$HOME/.claude-accounts}"
+PROFILE_ROOT="${CLAUDE_PROFILE_ROOT:-$HOME/.claude-profiles}"
+GLOBAL_CONFIG="${CLAUDE_GLOBAL_CONFIG:-$HOME/.claude}"
+SELECTED_FILE="${CLAUDE_ACCOUNT_SELECTED_FILE:-$STORE/.conductor-active}"
+CLAUDE_BIN="${CONDUCTOR_CLAUDE_BIN:-$HOME/Library/Application Support/com.conductor.app/bin/claude}"
+
+die() {
+  echo "conductor-claude: $*" >&2
+  exit 2
+}
+
+valid_name() {
+  case "$1" in
+    *[!A-Za-z0-9@._-]*|'') return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+account="${CLAUDE_ACCOUNT_OVERRIDE:-}"
+if [ -z "$account" ] && [ -f "$SELECTED_FILE" ]; then
+  account="$(sed -n '1p' "$SELECTED_FILE")"
+fi
+
+[ -n "$account" ] || die "no account selected; run: claude-acct use <account>"
+valid_name "$account" || die "invalid selected account: $account"
+[ -x "$CLAUDE_BIN" ] || die "Claude executable not found: $CLAUDE_BIN"
+
+profile_dir="$PROFILE_ROOT/$account"
+snapshot="$STORE/$account.json"
+mkdir -p "$profile_dir"
+chmod 700 "$PROFILE_ROOT" "$profile_dir"
+
+if [ ! -f "$profile_dir/.credentials.json" ]; then
+  [ -f "$snapshot" ] || die "no credentials for '$account'; run: claude-acct login $account"
+  install -m 600 "$snapshot" "$profile_dir/.credentials.json"
+fi
+
+# Keep global instructions/settings consistent while credentials remain
+# account-specific. Runtime transcript continuity is installed as a shared
+# projects symlink by install.sh.
+for config_file in CLAUDE.md settings.json settings.local.json; do
+  if [ -f "$GLOBAL_CONFIG/$config_file" ]; then
+    install -m 600 "$GLOBAL_CONFIG/$config_file" "$profile_dir/$config_file"
+  fi
+done
+
+for config_dir in agents commands hooks output-styles plugins skills; do
+  if [ -d "$GLOBAL_CONFIG/$config_dir" ] && [ ! -e "$profile_dir/$config_dir" ]; then
+    ln -s "$GLOBAL_CONFIG/$config_dir" "$profile_dir/$config_dir"
+  fi
+done
+
+exec env CLAUDE_CONFIG_DIR="$profile_dir" "$CLAUDE_BIN" "$@"
