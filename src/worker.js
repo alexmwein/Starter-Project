@@ -1,13 +1,5 @@
 import vinext from "vinext/server/fetch-handler";
 
-import {
-  BiologixIntelStore,
-  handleBiologixIntelRequest,
-  runScheduledBiologixSnapshot,
-} from "./biologix-intel.js";
-
-export { BiologixIntelStore };
-
 const OVO_LABS_ROOT = "/ovo-labs";
 const OVO_LABS_PORCELAIN_ROOT = "/ovo-labs-porcelain";
 const STOREFRONT_ROOTS = [OVO_LABS_ROOT, OVO_LABS_PORCELAIN_ROOT];
@@ -117,13 +109,6 @@ export default {
     );
     const storefrontRoot = getStorefrontRoot(pathname);
 
-    if (
-      pathname === "/api/biologix-intel" ||
-      pathname.startsWith("/api/biologix-intel/")
-    ) {
-      return handleBiologixIntelRequest(request, env);
-    }
-
     if (legacyRoot) {
       return redirectLegacyOVOPath(request, legacyRoot);
     }
@@ -142,8 +127,5 @@ export default {
     }
 
     return vinext.fetch(request, env, ctx);
-  },
-  async scheduled(controller, env, ctx) {
-    ctx.waitUntil(runScheduledBiologixSnapshot(env));
   },
 };

@@ -145,9 +145,10 @@ and not an accounting system.
 
 ## Cloud deployment
 
-The connected Sites Worker runs the cloud collector every 15 minutes. Its
-SQLite-backed Durable Object retains 120 days of snapshot summaries, event
-deltas, probable-basket inferences, and public site signals.
+The production service at
+`https://biologix-public-intel.vercel.app` runs every 15 minutes on Vercel
+Cron. A private Vercel Blob store retains 120 days of snapshot summaries,
+event deltas, probable-basket inferences, and public site signals.
 
 The cloud runtime additionally records:
 
@@ -173,4 +174,6 @@ POST /api/biologix-intel/snapshot
 ```
 
 Only the health endpoint is public. The remaining endpoints require the private
-`BIOLOGIX_INTEL_TOKEN` bearer token stored in the Sites production environment.
+`INTEL_API_TOKEN` bearer token stored as a sensitive Vercel production variable.
+The cron route has a separate `CRON_SECRET`. See `vercel/` for the deployable
+service and its verification commands.

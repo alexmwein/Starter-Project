@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
+    "build": "vinext build && node scripts/package-sites-build.mjs",
     "start": "vinext start",
     "test:intel": "node --test test/biologix-intel.test.mjs"
   },
