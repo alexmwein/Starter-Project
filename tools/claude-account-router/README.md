@@ -6,6 +6,8 @@ with the most five-hour headroom whenever a Claude process starts. It avoids
 rewriting the shared macOS Keychain while other Claude chats are running.
 
 The user-facing command is `claude-switcher`.
+The installer links it into `~/.local/bin` so it is discoverable on the normal
+shell PATH.
 
 ## Why this fixes the restart problem
 

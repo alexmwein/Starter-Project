@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_PATH="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 WATCH_LABEL="com.alexweinstein.claude-switcher"
 WATCH_PLIST="$HOME/Library/LaunchAgents/$WATCH_LABEL.plist"
 FIVE_HOUR_DRAIN="${CLAUDE_SWITCHER_FIVE_HOUR_DRAIN:-90}"

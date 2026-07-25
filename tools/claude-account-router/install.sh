@@ -7,6 +7,7 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_SOURCE="$SCRIPT_DIR/bin"
 TARGET_BIN="${CLAUDE_ACCOUNT_BIN_DIR:-$HOME/.claude/bin}"
+DISCOVERY_BIN="${CLAUDE_SWITCHER_DISCOVERY_BIN:-$HOME/.local/bin}"
 STORE="${CLAUDE_ACCOUNT_STORE:-$HOME/.claude-accounts}"
 PROFILE_ROOT="${CLAUDE_PROFILE_ROOT:-$HOME/.claude-profiles}"
 GLOBAL_CONFIG="${CLAUDE_GLOBAL_CONFIG:-$HOME/.claude}"
@@ -19,8 +20,8 @@ LEGACY_LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.alexweinstein.claude-account
 stamp="$(date +%Y%m%d-%H%M%S)"
 backup="$BACKUP_ROOT/$stamp"
 
-mkdir -p "$TARGET_BIN" "$STORE" "$PROFILE_ROOT" "$GLOBAL_CONFIG/projects" "$backup"
-chmod 700 "$TARGET_BIN" "$STORE" "$PROFILE_ROOT" "$BACKUP_ROOT" "$backup"
+mkdir -p "$TARGET_BIN" "$DISCOVERY_BIN" "$STORE" "$PROFILE_ROOT" "$GLOBAL_CONFIG/projects" "$backup"
+chmod 700 "$TARGET_BIN" "$DISCOVERY_BIN" "$STORE" "$PROFILE_ROOT" "$BACKUP_ROOT" "$backup"
 
 for name in claude-acct claude-acct-run claude-acct-usage.py conductor-claude claude-rate-limit-watch.py claude-switcher; do
   if [ -e "$TARGET_BIN/$name" ]; then
@@ -28,6 +29,7 @@ for name in claude-acct claude-acct-run claude-acct-usage.py conductor-claude cl
   fi
   install -m 700 "$BIN_SOURCE/$name" "$TARGET_BIN/$name"
 done
+ln -sfn "$TARGET_BIN/claude-switcher" "$DISCOVERY_BIN/claude-switcher"
 
 # Conductor caches its executable-path setting in the running sidecar. Route
 # the live bundled symlink through the launcher so future Claude processes use

@@ -11,6 +11,7 @@ export CLAUDE_ACCOUNT_STORE="$HOME/.claude-accounts"
 export CLAUDE_PROFILE_ROOT="$HOME/.claude-profiles"
 export CLAUDE_GLOBAL_CONFIG="$HOME/.claude"
 export CLAUDE_ACCOUNT_BIN_DIR="$HOME/.claude/bin"
+export CLAUDE_SWITCHER_DISCOVERY_BIN="$HOME/.local/bin"
 export CLAUDE_ACCOUNT_BACKUP_ROOT="$HOME/backups"
 export CLAUDE_ACCOUNT_INSTALL_WATCHER=0
 export CONDUCTOR_BIN_DIR="$HOME/conductor-bin"
@@ -75,6 +76,7 @@ chmod 700 "$CLAUDE_USAGE_HELPER"
 [ -f "$CLAUDE_GLOBAL_CONFIG/projects/session.jsonl" ]
 [ "$(readlink "$CONDUCTOR_BIN_DIR/claude")" = "$CLAUDE_ACCOUNT_BIN_DIR/conductor-claude" ]
 [ "$(readlink "$CONDUCTOR_BIN_DIR/claude-router-target")" = "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$CONDUCTOR_CLAUDE_BIN")" ]
+[ "$(readlink "$CLAUDE_SWITCHER_DISCOVERY_BIN/claude-switcher")" = "$CLAUDE_ACCOUNT_BIN_DIR/claude-switcher" ]
 
 "$CLAUDE_ACCOUNT_BIN_DIR/claude-acct" use beta >/dev/null
 [ "$("$CLAUDE_ACCOUNT_BIN_DIR/claude-acct" current)" = "beta" ]
@@ -92,6 +94,7 @@ chmod 700 "$CLAUDE_USAGE_HELPER"
 "$CLAUDE_ACCOUNT_BIN_DIR/conductor-claude" --version
 [ "$("$CLAUDE_ACCOUNT_BIN_DIR/claude-acct" current)" = "beta" ]
 "$CLAUDE_ACCOUNT_BIN_DIR/claude-switcher" help >/dev/null
+"$CLAUDE_SWITCHER_DISCOVERY_BIN/claude-switcher" help >/dev/null
 
 python3 - "$ROOT/bin/claude-rate-limit-watch.py" <<'PY'
 import importlib.util
