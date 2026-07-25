@@ -6,6 +6,29 @@
     "nodejs_compat"
   ],
   "main": "src/worker.js",
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BIOLOGIX_INTEL",
+        "class_name": "BiologixIntelStore"
+      }
+    ]
+  },
+  "exports": {
+    "BiologixIntelStore": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
   "assets": {
     "directory": "dist/client",
     "not_found_handling": "404-page",
@@ -17,7 +40,9 @@
       "/datum-peptides",
       "/datum-peptides/*",
       "/third-standard",
-      "/third-standard/*"
+      "/third-standard/*",
+      "/api/biologix-intel",
+      "/api/biologix-intel/*"
     ],
     "binding": "ASSETS"
   }

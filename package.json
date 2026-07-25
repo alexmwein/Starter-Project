@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
-    "start": "vinext start"
+    "start": "vinext start",
+    "test:intel": "node --test test/biologix-intel.test.mjs"
   },
   "dependencies": {
     "react": "19.2.8",
