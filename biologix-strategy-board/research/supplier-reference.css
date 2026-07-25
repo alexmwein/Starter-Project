@@ -132,6 +132,75 @@
   font-size: 14px;
 }
 
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 40px 0 20px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.channel-card {
+  padding: 24px;
+  background: var(--paper-raised);
+}
+
+.channel-card-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.channel-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 23px;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+.channel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.channel-label {
+  color: var(--ink-3);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.channel-value {
+  color: var(--ink);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.channel-row a {
+  width: fit-content;
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.channel-caveat {
+  margin: 14px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
 .reference-jump {
   display: flex;
   gap: 8px;
@@ -664,6 +733,7 @@
   }
 
   .signal-grid,
+  .channel-grid,
   .exception-grid,
   .seller-grid,
   .two-column,
