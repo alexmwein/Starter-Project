@@ -37,6 +37,7 @@ const yt = readJson(path.join(RAW, 'youtube.json'));
 const tt = readJson(path.join(RAW, 'tiktok.json'));
 const ig = readJson(path.join(RAW, 'instagram.json'));
 const recon = readJson(path.join(RAW, 'recon-structured.json'));
+const ttDisc = readJson(path.join(RAW, 'tiktok-discovered.json'));
 
 /* ------------------------------------------------------------------ *
  * SCORING MODEL
@@ -199,6 +200,35 @@ function replicationFit(text, duration) {
 const PEPTIDE_RX =
   /\b(peptide|peptid|retatrutide|reta\b|tirzepatide|tirz\b|semaglutide|sema\b|glp[\s-]?1|glp1|mounjaro|zepbound|ozempic|wegovy|bpc[\s-]?157|tb[\s-]?500|ipamorelin|cjc[\s-]?1295|tesamorelin|hgh\b|mots[\s-]?c|sermorelin|survodutide|cagrilintide|mazdutide|aod[\s-]?9604|glow\s?protocol|research\s?chem|trt\b|testosterone|sarm|anabolic|weight[\s-]?loss|fat[\s-]?loss|glp)/i;
 
+
+/* Signal extraction for the discovered TikTok cohort. Its captions were captured
+ * by yt-dlp rather than by a collector that already ran an extractor, so URLs,
+ * bare vendor domains and codes have to be lifted here. @retadaily's caption
+ * "Pure #peptides. Nothing else. peptora.co.uk" is exactly the kind of vendor
+ * pointer that would otherwise be invisible. */
+const URL_RX = /\bhttps?:\/\/[^\s)\]"']+|\b[a-z0-9][a-z0-9-]{1,60}\.(?:co\\.uk|com\\.au|co\\.nz|com|io|net|org|shop|store|app|nl|is|de|eu|us|to|ai|xyz|co)\b(?:\/[^\s)\]"']*)?/gi;
+const CODE_RX = /\b(?:code|coupon|promo)\s*[:=]?\s*([A-Z0-9][A-Z0-9_-]{2,18})\b/g;
+const PCT_RX = /\b(\d{1,2}\s?%\s?off)\b/gi;
+
+function signalsFromText(text) {
+  const t = String(text || '');
+  const out = [];
+  const seen = new Set();
+  for (const m of t.matchAll(URL_RX)) {
+    const v = m[0].replace(/[.,;]+$/, '');
+    if (/^(?:tiktok|instagram|youtube|youtu|facebook|twitter|x)\.com$/i.test(v)) continue;
+    if (seen.has(v.toLowerCase())) continue;
+    seen.add(v.toLowerCase());
+    out.push({ kind: 'url', value: v, context_snippet: t.slice(0, 180) });
+  }
+  for (const m of t.matchAll(CODE_RX)) out.push({ kind: 'code', value: m[1], context_snippet: t.slice(0, 180) });
+  for (const m of t.matchAll(PCT_RX)) out.push({ kind: 'discount_phrase', value: m[1], context_snippet: t.slice(0, 180) });
+  if (/\blink in bio\b/i.test(t)) out.push({ kind: 'bio_pointer', value: 'link in bio', context_snippet: t.slice(0, 180) });
+  if (/\bdm\b|\bdm me\b/i.test(t)) out.push({ kind: 'dm_gate', value: 'DM CTA', context_snippet: t.slice(0, 180) });
+  if (/\bcomment\b/i.test(t)) out.push({ kind: 'comment_drop', value: 'comment CTA', context_snippet: t.slice(0, 180) });
+  return out;
+}
+
 const posts = [];
 
 /* The three collectors do NOT agree on the shape of affiliate_signals:
@@ -241,7 +271,7 @@ function normaliseSignals(raw) {
 
 function pushPost(p) {
   if (!p.url) return;
-  p.on_topic = PEPTIDE_RX.test(p._text || '');
+  p.on_topic = PEPTIDE_RX.test(p._text || '') || p.handle_is_topic === true;
   p.affiliate_signals = normaliseSignals(p.affiliate_signals);
   posts.push(p);
 }
@@ -349,6 +379,49 @@ if (ig && Array.isArray(ig.posts)) {
       metric_source: 'instagram web_profile_info (unauthenticated)',
       _text: hookText,
     });
+  }
+}
+
+/* ---- discovered peptide-NATIVE TikTok cohort ----
+ * The original TikTok seed list came from the recon doc and turned out to be
+ * personality/clip accounts (2 of 152 posts on topic). This cohort was found by
+ * crosswalking TikTok handles out of the YouTube descriptions and IG bios we
+ * already had, mining @mentions in on-topic captions, and probing topic-morpheme
+ * handle patterns - then verifying each against TikTok. These are the accounts
+ * whose whole identity is the topic. */
+if (ttDisc && Array.isArray(ttDisc.creators)) {
+  for (const c of ttDisc.creators) {
+    for (const p of c.posts || []) {
+      if (!p.id) continue;
+      const cap = p.caption || '';
+      pushPost({
+        id: `tt:${p.id}`,
+        platform: 'tiktok',
+        provenance: 'api_collected',
+        discovery_cohort: 'peptide_native_tiktok',
+        url: p.url || `https://www.tiktok.com/@${c.handle}/video/${p.id}`,
+        creator: c.handle,
+        creator_id: c.handle,
+        creator_url: c.profile_url,
+        creator_followers: c.follower_count ?? null,
+        hook: cap,
+        caption: cap ? String(cap).slice(0, 600) : null,
+        published_at: p.upload_date
+          ? `${String(p.upload_date).slice(0, 4)}-${String(p.upload_date).slice(4, 6)}-${String(p.upload_date).slice(6, 8)}`
+          : null,
+        duration: p.duration ?? null,
+        views: p.views ?? null,
+        likes: p.likes ?? null,
+        comments: p.comments ?? null,
+        shares: p.reposts ?? null,
+        thumbnail: null,
+        affiliate_signals: signalsFromText(cap),
+        metric_source: 'yt-dlp (TikTok user feed stats block), discovery cohort',
+        // The handle itself is topic evidence for these accounts.
+        handle_is_topic: c.topic_evidence !== 'captions only',
+        _text: `${cap} ${c.handle}`,
+      });
+    }
   }
 }
 
@@ -786,6 +859,171 @@ const mechanics_one_off_urls = allMechanics.length - affiliate_mechanics.length;
 const bio_funnels = (ig && ig.bio_funnels) || [];
 
 /* ------------------------------------------------------------------ *
+ * AFFILIATE ATTRIBUTION — who is promoting WHOM
+ *
+ * The mechanics map above says HOW people link (bio pointer, code, comment
+ * gate). It does not say WHO they link FOR. This resolves every observed URL to
+ * a domain, classifies that domain, and matches it against the 18 documented
+ * peptide affiliate programs plus 9 other known seller/aggregator domains, so
+ * each creator gets an actual list of brands they promote.
+ * ------------------------------------------------------------------ */
+const PROGRAMS = (recon && recon.affiliate_programs) || [];
+const SELLERS = (recon && recon.other_seller_domains) || [];
+
+const domainToProgram = new Map();
+for (const pr of PROGRAMS) for (const dom of pr.domains || []) domainToProgram.set(dom, pr);
+const domainToSeller = new Map(SELLERS.map((x) => [x.domain, x]));
+
+// Affiliate/tracking networks: presence proves a program exists behind the link.
+const NETWORK_RX = /(refersion|goaffpro|leaddyno|slicewp|shareasale|impact\.com|clickbank|partnerize|awin|cj\.com|tapfiliate|firstpromoter|rewardful|postaffiliatepro)/i;
+// Creator's own offer surfaces, not a third-party affiliate relationship.
+const OWN_OFFER_RX = /(skool\.com|patreon|substack|gumroad|teachable|kajabi|podia|circle\.so|whop\.com|stan\.store|beacons\.ai|linktr\.ee|link\.me|calendly|cal\.com|typeform|mailchimp|beehiiv|convertkit)/i;
+const SOCIAL_RX = /(instagram\.com|tiktok\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|reddit\.com|discord|t\.me|whatsapp|linkedin\.com|threads\.net|snapchat)/i;
+// Looks like a peptide/research-chem vendor even if not in the documented set.
+const VENDOR_HEURISTIC_RX = /(peptide|peptid|pepti|pept|peptor|reta\b|glp-?[0-9]|researchchem|research-chem|sarms?|nootrop|biotech|bioscience|labs?\b|pharma|chem\b)/i;
+const VENDOR_NOT_RX = /^(labs?|www)\.|huberman|journal|society|university|academy|pubmed|ncbi|nih|wikipedia|sciencedirect|oup\.com|truehealthlabs|consumerlab|omegaquant|examine\.com|mentorship|profitacademy/i;
+const ADJACENT_RX = /(electrolyte|lmnt|redmond|athleticgreens|ag1|thorne|momentous|seed\.com|element|hume|ketone|supplement|protein|creatine|magnesium)/i;
+
+function hostOf(u) {
+  try {
+    const h = new URL(/^https?:\/\//i.test(u) ? u : 'https://' + u).hostname.toLowerCase();
+    return h.replace(/^www\./, '');
+  } catch (e) {
+    return null;
+  }
+}
+
+function classifyDomain(host) {
+  if (!host) return { klass: 'unparseable', brand: null, program: null };
+  const bare = host.replace(/^www\./, '');
+  // exact or suffix match against documented programs
+  for (const [dom, pr] of domainToProgram) {
+    if (bare === dom || bare.endsWith('.' + dom) || dom.endsWith('.' + bare)) {
+      return { klass: 'documented_peptide_program', brand: pr.brand, program: pr.n };
+    }
+  }
+  for (const [dom, sl] of domainToSeller) {
+    if (bare === dom || bare.endsWith('.' + dom)) {
+      return { klass: 'known_seller_or_aggregator', brand: sl.brand, program: null };
+    }
+  }
+  if (NETWORK_RX.test(bare)) return { klass: 'affiliate_network', brand: null, program: null };
+  if (SOCIAL_RX.test(bare)) return { klass: 'social', brand: null, program: null };
+  if (OWN_OFFER_RX.test(bare)) return { klass: 'own_offer_platform', brand: null, program: null };
+  if (ADJACENT_RX.test(bare)) return { klass: 'adjacent_product', brand: null, program: null };
+  // Guard the vendor heuristic. "labs"/"pharma"/"society" alone produced false
+  // positives on hubermanlab.com, pharmaceutical-journal.com, peptidesociety.org
+  // and truehealthlabs.com (a blood-testing service, not a peptide seller).
+  if (VENDOR_NOT_RX.test(bare)) return { klass: 'reference_or_media', brand: null, program: null };
+  if (VENDOR_HEURISTIC_RX.test(bare)) return { klass: 'suspected_peptide_vendor', brand: bare, program: null };
+  return { klass: 'other', brand: null, program: null };
+}
+
+// Resolve every URL signal on every post.
+const domainRows = new Map();
+for (const p of posts) {
+  const seen = new Set();
+  p.linked_domains = [];
+  for (const sig of p.affiliate_signals || []) {
+    if (sig.kind !== 'url' && sig.kind !== 'vendor_domain') continue;
+    const host = hostOf(sig.value);
+    if (!host || seen.has(host)) continue;
+    seen.add(host);
+    const c = classifyDomain(host);
+    p.linked_domains.push({ host, ...c });
+    const key = host;
+    if (!domainRows.has(key)) {
+      domainRows.set(key, { host, ...c, times_seen: 0, creators: new Set(), platforms: new Set(), example_post: p.url });
+    }
+    const row = domainRows.get(key);
+    row.times_seen++;
+    if (p.creator) row.creators.add(p.creator);
+    row.platforms.add(p.platform);
+  }
+  // A creator's own domain is their own offer, not an affiliate relationship.
+  p.promotes_brands = [...new Set(p.linked_domains.filter((d) => d.brand).map((d) => d.brand))];
+}
+
+const linked_domains = [...domainRows.values()]
+  .map((r) => ({ ...r, creators: [...r.creators], platforms: [...r.platforms] }))
+  .sort((a, b) => b.times_seen - a.times_seen);
+
+/* Brand -> creators. Only documented programs and known sellers count as a
+ * confirmed brand relationship; a suspected vendor is reported separately so a
+ * heuristic never gets presented as a confirmed fact. */
+const brandRows = new Map();
+for (const d of linked_domains) {
+  if (!d.brand) continue;
+  const k = d.brand;
+  if (!brandRows.has(k)) {
+    brandRows.set(k, {
+      brand: k,
+      confirmed: d.klass === 'documented_peptide_program' || d.klass === 'known_seller_or_aggregator',
+      klass: d.klass,
+      program: PROGRAMS.find((x) => x.brand === k) || null,
+      domains: [], creators: new Set(), platforms: new Set(), times_seen: 0,
+    });
+  }
+  const row = brandRows.get(k);
+  row.domains.push(d.host);
+  d.creators.forEach((c) => row.creators.add(c));
+  d.platforms.forEach((pl) => row.platforms.add(pl));
+  row.times_seen += d.times_seen;
+}
+const brands_promoted = [...brandRows.values()]
+  .map((b) => ({
+    ...b,
+    creators: [...b.creators],
+    platforms: [...b.platforms],
+    commission: b.program ? b.program.commission : null,
+    attribution: b.program ? b.program.attribution : null,
+    restrictions: b.program ? b.program.restrictions : null,
+    risk_note: b.program ? b.program.risk_note : null,
+    sells_retatrutide: b.program ? b.program.sells_retatrutide : null,
+  }))
+  .sort((a, b) => b.times_seen - a.times_seen);
+
+/* Per-creator monetisation posture. This is the distinction that actually
+ * matters strategically: a creator who links a peptide VENDOR is a competitor
+ * for the same affiliate dollar, whereas a creator monetising their own
+ * community or coaching is a potential partner with no conflicting deal. */
+const creatorAffiliate = new Map();
+for (const [key, ps] of byCreator) {
+  const doms = ps.flatMap((p) => p.linked_domains || []);
+  const codes = [...new Set(ps.flatMap((p) => (p.affiliate_signals || []).filter((s) => s.kind === 'code' || s.kind === 'discount_code').map((s) => s.value)))];
+  const discountPhrases = [...new Set(ps.flatMap((p) => (p.affiliate_signals || []).filter((s) => s.kind === 'discount_phrase').map((s) => s.value)))];
+  const vendorBrands = [...new Set(doms.filter((d) => d.klass === 'documented_peptide_program' || d.klass === 'known_seller_or_aggregator').map((d) => d.brand))];
+  const suspected = [...new Set(doms.filter((d) => d.klass === 'suspected_peptide_vendor').map((d) => d.host))];
+  const networks = [...new Set(doms.filter((d) => d.klass === 'affiliate_network').map((d) => d.host))];
+  const own = [...new Set(doms.filter((d) => d.klass === 'own_offer_platform').map((d) => d.host))];
+  const adjacent = [...new Set(doms.filter((d) => d.klass === 'adjacent_product').map((d) => d.host))];
+  const hasBioPointer = ps.some((p) => (p.affiliate_signals || []).some((s) => s.kind === 'bio_pointer'));
+  const hasGate = ps.some((p) => (p.affiliate_signals || []).some((s) => /dm_gate|dm_trigger|comment_drop|comment_trigger/.test(s.kind)));
+  const leadMagnets = [...new Set(ps.flatMap((p) => (p.affiliate_signals || []).filter((s) => s.kind === 'lead_magnet').map((s) => s.value)))];
+
+  let posture = 'none_observed';
+  if (vendorBrands.length || networks.length) posture = 'peptide_vendor_affiliate';
+  else if (suspected.length) posture = 'suspected_vendor_affiliate';
+  else if (adjacent.length && (codes.length || discountPhrases.length)) posture = 'adjacent_product_affiliate';
+  else if (own.length || leadMagnets.length || hasGate) posture = 'own_offer_operator';
+  else if (codes.length || discountPhrases.length) posture = 'code_only_unresolved_brand';
+
+  creatorAffiliate.set(key, {
+    posture,
+    vendor_brands: vendorBrands,
+    suspected_vendor_domains: suspected,
+    affiliate_networks: networks,
+    own_offer_platforms: own,
+    adjacent_products: adjacent,
+    codes,
+    discount_phrases: discountPhrases,
+    lead_magnets: leadMagnets,
+    uses_bio_pointer: hasBioPointer,
+    uses_dm_or_comment_gate: hasGate,
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * CREATORS
  * ------------------------------------------------------------------ */
 const LANE_RULES = [
@@ -819,6 +1057,7 @@ for (const [key, ps] of byCreator) {
     lane: lane(bioText),
     bio: igc ? igc.biography : null,
     bio_link: igc ? igc.external_url : null,
+    affiliate: creatorAffiliate.get(key) || null,
     posts_collected: ps.length,
     median_views: base.median_views ?? null,
     baseline_confidence: base.confidence ?? 'low',
@@ -966,10 +1205,15 @@ const dataset = {
   topic_comparison,
   affiliate_mechanics,
   mechanics_one_off_urls,
+  linked_domains,
+  brands_promoted,
+  affiliate_programs: PROGRAMS,
+  other_seller_domains: SELLERS,
   bio_funnels,
   content_patterns: (recon && recon.content_patterns) || [],
   recon_accounts: (recon && recon.accounts) || [],
   hook_taxonomy: HOOK_RULES.map((r) => r.archetype),
+  discovered_tiktok_cohort: (ttDisc && ttDisc.creators || []).map(({posts, ...rest}) => rest),
 };
 
 fs.mkdirSync(PORTAL, { recursive: true });

@@ -568,7 +568,61 @@
     }).join('');
   }
 
+  var KLASS_LABEL = {
+    documented_peptide_program: 'documented program',
+    known_seller_or_aggregator: 'known seller',
+    suspected_peptide_vendor: 'suspected vendor (heuristic)',
+    affiliate_network: 'affiliate network',
+    own_offer_platform: 'own offer platform',
+    adjacent_product: 'adjacent product',
+    reference_or_media: 'citation / media',
+    social: 'social',
+    other: 'unclassified'
+  };
+
+  function renderBrands() {
+    var doms = (D.linked_domains || []).filter(function (d) {
+      return /documented_peptide_program|known_seller_or_aggregator|suspected_peptide_vendor|affiliate_network|adjacent_product/.test(d.klass);
+    });
+    $('brands-body').innerHTML = doms.length ? doms.slice(0, 60).map(function (d) {
+      return '<tr><td><span class="group-key">' + esc(d.host) + '</span>' +
+        (d.klass === 'suspected_peptide_vendor' ? '<span class="thin-flag">heuristic</span>' : '') + '</td>' +
+        '<td>' + esc(KLASS_LABEL[d.klass] || d.klass) + '</td>' +
+        '<td class="num">' + d.times_seen + '</td>' +
+        '<td style="font-size:12px">' + esc((d.creators || []).slice(0, 4).join(', ')) +
+        ((d.creators || []).length > 4 ? ' +' + (d.creators.length - 4) : '') + '</td></tr>';
+    }).join('') : '<tr><td colspan="4"><span class="null-cell">No vendor or network domains resolved.</span></td></tr>';
+
+    var withPosture = (D.creators || []).filter(function (c) {
+      return c.affiliate && c.affiliate.posture !== 'none_observed';
+    });
+    $('posture-body').innerHTML = withPosture.length ? withPosture.map(function (c) {
+      var a = c.affiliate;
+      var vend = (a.vendor_brands || []).concat(a.suspected_vendor_domains || []);
+      return '<tr><td><span class="group-key">' + (c.url ? link(c.url, c.handle) : esc(c.handle)) + '</span></td>' +
+        '<td>' + esc(a.posture.replace(/_/g, ' ')) + '</td>' +
+        '<td style="font-size:12px">' + (vend.length ? esc(vend.slice(0, 3).join(', ')) : '<span class="null-cell">none</span>') + '</td>' +
+        '<td style="font-size:12px">' + ((a.codes || []).length ? esc(a.codes.slice(0, 3).join(', ')) : '<span class="null-cell">none</span>') + '</td>' +
+        '<td style="font-size:12px">' + ((a.own_offer_platforms || []).length ? esc(a.own_offer_platforms.slice(0, 2).join(', ')) : '<span class="null-cell">none</span>') + '</td></tr>';
+    }).join('') : '<tr><td colspan="5"><span class="null-cell">No monetisation posture resolved.</span></td></tr>';
+
+    var progs = D.affiliate_programs || [];
+    var matched = (D.linked_domains || []).filter(function (d) { return d.klass === 'documented_peptide_program'; }).length;
+    $('program-match-note').textContent = matched === 0
+      ? progs.length + ' programs documented in the research. ZERO of them appear in any link posted by any creator we collected. The programs and the creators are two separate populations.'
+      : matched + ' of ' + progs.length + ' documented programs were actually observed in collected links.';
+    $('program-body').innerHTML = progs.map(function (pr) {
+      return '<tr><td><span class="group-key">' + esc(pr.brand) + '</span>' +
+        (pr.sells_retatrutide ? '<span class="thin-flag">sells reta</span>' : '') + '</td>' +
+        '<td style="font-size:12px">' + esc(pr.commission || '') + '</td>' +
+        '<td style="font-size:12px">' + esc(pr.attribution || '') + '</td>' +
+        '<td style="font-size:12px">' + esc(pr.restrictions || '') + '</td>' +
+        '<td style="font-size:12px">' + (pr.risk_note ? '<span style="color:var(--reject)">' + esc(pr.risk_note) + '</span>' : '<span class="null-cell">none noted</span>') + '</td></tr>';
+    }).join('');
+  }
+
   /* ------------------------------------------------------------- init --- */
+  renderBrands();
   renderFindings();
   renderCoverage();
   rebuildChips();
