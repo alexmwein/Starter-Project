@@ -644,10 +644,20 @@ function upstreamOrigin(env) {
 }
 
 function affiliateCookieHeader(request) {
-  const affiliateSession = cookiesFromRequest(request).get(AFFILIATE_COOKIE);
-  return /^[A-Za-z0-9_-]{40,96}$/u.test(affiliateSession ?? "")
-    ? `${AFFILIATE_COOKIE}=${affiliateSession}`
-    : "";
+  const raw = request.headers.get("Cookie") ?? "";
+  for (const pair of raw.split(";")) {
+    const separator = pair.indexOf("=");
+    if (separator <= 0) continue;
+    const name = pair.slice(0, separator).trim();
+    const value = pair.slice(separator + 1).trim();
+    if (
+      name === AFFILIATE_COOKIE &&
+      /^[A-Za-z0-9_-]{40,96}$/u.test(value)
+    ) {
+      return `${AFFILIATE_COOKIE}=${value}`;
+    }
+  }
+  return "";
 }
 
 function safeUpstreamHeaders(

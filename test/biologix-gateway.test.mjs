@@ -396,6 +396,32 @@ test("creator sessions are forwarded only by the routes that consume them", asyn
   );
   assert.equal(enrollment.status, 401);
   assert.equal(malformedCookie, null);
+
+  for (const cookieHeader of [
+    `biologix_session=${AFFILIATE_SESSION}; biologix_session=`,
+    `biologix_session=; biologix_session=${AFFILIATE_SESSION}`,
+  ]) {
+    let forwardedCookie = "not-called";
+    const duplicatePathCookies = await handleBiologixGatewayRequest(
+      new Request(`${ROOT}/api/biologix/enrollment`, {
+        headers: { Cookie: cookieHeader },
+      }),
+      baseEnv(),
+      {
+        async fetchImpl(_url, init) {
+          forwardedCookie = init.headers.get("Cookie");
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      },
+    );
+    assert.equal(duplicatePathCookies.status, 200);
+    assert.equal(
+      forwardedCookie,
+      `biologix_session=${AFFILIATE_SESSION}`,
+    );
+  }
 });
 
 test("request media types and streamed body sizes fail closed at the Worker", async () => {
