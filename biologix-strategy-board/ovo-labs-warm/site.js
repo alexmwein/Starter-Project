@@ -190,7 +190,7 @@
   const BUNDLES = [
     {
       slug: "metabolic-reference-set",
-      code: "DB-001",
+      code: "OVO-S01",
       name: "Metabolic Reference Set",
       category: "Curated Set",
       strength: "2 vials",
@@ -201,7 +201,7 @@
     },
     {
       slug: "peptide-pair-set",
-      code: "DB-002",
+      code: "OVO-S02",
       name: "Peptide Pair Set",
       category: "Curated Set",
       strength: "2 vials",
@@ -212,7 +212,7 @@
     },
     {
       slug: "secretagogue-reference-set",
-      code: "DB-003",
+      code: "OVO-S03",
       name: "Secretagogue Reference Set",
       category: "Curated Set",
       strength: "2 vials",
