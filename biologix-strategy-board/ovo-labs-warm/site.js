@@ -23,7 +23,7 @@
   ];
 
   const SHIPPING_METHODS = [
-    { id: "standard", name: "Standard", detail: "3 to 5 business days", note: "Insulated mailer", price: 0 },
+    { id: "standard", name: "Standard", detail: "3 to 5 business days", note: "Insulated mailer", price: 12 },
     { id: "express", name: "Express", detail: "2 business days", note: "Insulated mailer, tracked", price: 18 },
     { id: "cold", name: "Cold chain overnight", detail: "Next business day by 12:00", note: "Gel pack, temperature logger", price: 45 },
   ];
@@ -1296,7 +1296,7 @@
                 </div>
                 <span class="cart-row-price">${money.format(item.price * line.quantity)}</span>
               </div>
-              <p class="cart-row-status"><span class="status-dot" aria-hidden="true"></span> In stock · ships from the fulfilment partner</p>
+              <p class="cart-row-status"><span class="status-dot" aria-hidden="true"></span> In stock · ships from the fulfillment partner</p>
               <div class="cart-row-controls">
                 <div class="mini-quantity" aria-label="Quantity for ${escapeHtml(item.name)}">
                   <button type="button" data-cart-quantity="${item.slug}" data-delta="-1" aria-label="Decrease ${escapeHtml(item.name)} quantity">−</button>
@@ -1312,6 +1312,8 @@
       })
       .join("");
 
+    /* Both this bar and the summary shipping line derive from the same
+       threshold, so they can never contradict each other on screen. */
     const freeShipBar = breakdown.freeShippingRemaining > 0
       ? `<p class="ship-progress">Add <strong>${money.format(breakdown.freeShippingRemaining)}</strong> for free standard shipping.</p>`
       : `<p class="ship-progress is-met"><span class="status-dot" aria-hidden="true"></span> Standard shipping is free on this order.</p>`;
@@ -1334,16 +1336,19 @@
             </div>
           </div>
           <div class="cart-aside">
-            ${orderSummaryPanel(breakdown, { showItems: false })}
+            ${orderSummaryPanel(breakdown, {
+              showItems: false,
+              cta: `<a class="button button-primary checkout-cta" href="${path("checkout.html")}">Checkout · ${money.format(breakdown.total)}</a>`,
+            })}
             <form class="promo-form" data-promo-form>
               <label for="promo-input">Discount code</label>
               <div class="promo-input-row">
-                <input id="promo-input" name="promo" type="text" autocomplete="off" placeholder="OVO-FIRST" value="${escapeHtml(readCheckoutDraft().promo || "")}">
+                <input id="promo-input" name="promo" type="text" autocomplete="off" placeholder="Enter code" value="${escapeHtml(readCheckoutDraft().promo || "")}">
                 <button class="button button-secondary button-small" type="submit">Apply</button>
               </div>
+              <p class="promo-hint">Try <button type="button" class="link-button" data-fill-promo="OVO-FIRST">OVO-FIRST</button></p>
               <p class="promo-feedback" data-promo-feedback role="status">${breakdown.promo ? `Applied: ${escapeHtml(breakdown.promo.label)}` : ""}</p>
             </form>
-            <a class="button button-primary checkout-cta" href="${path("checkout.html")}">Checkout · ${money.format(breakdown.total)}</a>
           </div>
         </div>
       </section>
@@ -1792,6 +1797,7 @@
         ${items ? `<div class="summary-lines">${items}</div>` : ""}
         <div class="summary-rows">${summaryRows(breakdown)}</div>
         <div class="summary-total"><strong>Total</strong><strong>${money.format(breakdown.total)}</strong></div>
+        ${options.cta || ""}
         <p class="summary-note">Prices in USD. Tax is estimated at ${(TAX_RATE * 100).toFixed(2)}% until an address is confirmed.</p>
       </aside>
     `;
@@ -2295,6 +2301,14 @@
       }
       track("quality_lookup", { search_term: query, result_count: matches.length });
     };
+
+    form.addEventListener("click", (event) => {
+      const fill = event.target.closest("[data-fill-promo]");
+      if (!fill) return;
+      event.preventDefault();
+      form.querySelector("#promo-input").value = fill.getAttribute("data-fill-promo");
+      form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    });
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();

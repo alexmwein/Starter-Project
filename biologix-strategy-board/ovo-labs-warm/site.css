@@ -2650,7 +2650,7 @@ button:disabled {
 .cart-row-unit { color: var(--text-3); font-size: 12px; }
 .cart-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 22px; }
 .cart-aside { display: grid; gap: 14px; position: sticky; top: 96px; }
-.checkout-cta { display: block; text-align: center; }
+.checkout-cta { display: block; margin-top: 16px; text-align: center; }
 .promo-form { padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .promo-form label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; }
 .promo-input-row { display: flex; gap: 8px; }
@@ -2761,4 +2761,24 @@ button:disabled {
   .stepper { gap: 6px; }
   .step { padding: 5px 10px 5px 5px; }
   .step-label { font-size: 11px; }
+}
+
+.promo-hint { margin: 9px 0 0; color: var(--text-3); font-size: 12px; }
+.promo-hint .link-button { font-size: 12px; }
+
+/* Mobile checkout: the order summary must not bury the actual task. Collapse it
+   into the standard mobile pattern (summary header + total, tap to expand) so
+   step 1 of the form is the first thing in the viewport. Desktop is unchanged. */
+@media (max-width: 960px) {
+  .checkout-aside { order: 0; }
+  .checkout-layout .checkout-main { order: -1; }
+  .checkout-aside .order-summary { padding: 0; }
+  .checkout-aside .order-summary h2 {
+    display: flex; justify-content: space-between; align-items: center;
+    margin: 0; padding: 16px 18px; cursor: default;
+  }
+  .checkout-aside .summary-lines,
+  .checkout-aside .summary-rows { padding-inline: 18px; }
+  .checkout-aside .summary-total { padding: 16px 18px; }
+  .checkout-aside .summary-note { padding: 0 18px 16px; margin-top: 0; }
 }
