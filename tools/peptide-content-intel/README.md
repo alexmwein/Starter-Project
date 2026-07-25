@@ -118,3 +118,53 @@ is what the person PROMOTES, not who they ARE — leaving it in made
 - **Apify: free plan exhausted**, $0.37 remaining. Scaling this needs a paid plan.
 - **yt-dlp + the public TikTok/Instagram endpoints remain free** and are what the
   rest of this pipeline runs on.
+
+---
+
+## Affiliate-army playbook (ScrapeCreators lane)
+
+Goal: find regular people already promoting peptides with an affiliate link, measure
+what actually gets them traction, and turn it into a brief an army can execute.
+
+```bash
+CREDIT_BUDGET=40  node sc_discover.mjs       # keyword search -> handles     (1 cr/query)
+CREDIT_BUDGET=400 node sc_enrich.mjs         # bio + bioLink + filter        (1 cr/handle)
+CREDIT_BUDGET=80  node sc_posts.mjs          # posts for qualified only      (1 cr/creator)
+node civilian_playbook.mjs                   # scoring + brief               (free)
+node analyze.mjs                             # -> content-intel/intel-data.js
+```
+
+Total spend for the full run: **436 credits** (22 + 365 + 49). All cached, so a
+re-run costs nothing for anything already fetched. Every script hard-caps on
+`CREDIT_BUDGET` and refuses to exceed it.
+
+### Endpoints that work
+
+| endpoint | returns |
+|---|---|
+| `/v1/tiktok/search/keyword` | ~19-30 posts per query with author + statistics |
+| `/v1/tiktok/profile` | `signature`, `bioLink{link,risk}`, `isOrganization`, statsV2 |
+| `/v3/tiktok/profile/videos` | `aweme_list` with statistics, desc, duration, `cha_list` |
+
+`/v1/tiktok/search/users` returns an empty `user_list`. `/v1/tiktok/search/hashtag`
+503s. `/v1/tiktok/{search,hashtag}` and `/v2/tiktok/search/keyword` are 404.
+
+### Filtering
+
+`isOrganization` (TikTok's own flag) beats regex for company detection. Credential
+matching must be substring, not `\b`-anchored. Link aggregators (linktr.ee,
+beacons.ai, stan.store, allmylinks, komi.io, snipfeed, milkshake, hoo.be) are
+crawled one level down — **29 of 49 qualified creators had their vendor found
+inside the aggregator, not in the bio link itself**, so skipping that step loses
+most of the cohort.
+
+### Evidence bar
+
+A rule only becomes a directive at **>=8 posts across >=3 creators**. Anything
+thinner is published as a lead to test. Two rules were nearly shipped wrong:
+- 78% of posts fell into `other` under the first hook taxonomy, making the ranking
+  noise. Rebuilt around how civilians actually write (sw/cw/gw, regain defense,
+  alias-tag-only, vendor-tagged).
+- Median alone produced "avoid vendor-tagged posts", which the cohort's own top two
+  breakouts contradict. Vendor-tagged has the lowest median (312 plays) AND the
+  highest ceiling (4.99M). Report the variance, not one side of it.

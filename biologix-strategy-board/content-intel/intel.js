@@ -667,7 +667,54 @@
     }).join('');
   }
 
+  function renderPlaybook() {
+    var P = D.affiliate_playbook;
+    var sec = document.getElementById('playbook-section');
+    if (!P || !P.brief) { if (sec) sec.hidden = true; return; }
+    var g = P.generated_from || {};
+    $('pb-basis').textContent = g.posts_scored + ' posts from ' + g.creators +
+      ' civilian affiliates \u00b7 ' + P.on_topic_posts + ' on topic';
+
+    $('pb-directives').innerHTML = (P.brief.directives || []).map(function (x) {
+      return '<article class="finding">' +
+        '<h3>' + esc(x.rule) + '</h3>' +
+        '<p class="detail">' + esc(x.evidence) + '</p>' +
+        '<p class="so-what"><b>' + (x.directive ? 'Brief it as' : 'Evidence') + '</b>' +
+          (x.directive ? esc(x.directive) + ' ' : '') +
+          (x.example ? link(x.example, 'best example') : (x.directive ? '' : 'Aggregate across the cohort; no single exemplar.')) + '</p>' +
+        '</article>';
+    }).join('') || '<p class="empty-state">No directive cleared the evidence bar.</p>';
+
+    $('pb-leads').innerHTML = (P.brief.leads_to_test || []).map(function (x) {
+      return '<tr><td><span class="group-key">' + esc(x.angle) + '</span><span class="thin-flag">thin</span></td>' +
+        '<td class="num">' + (x.median_outlier == null ? '<span class="null-cell">n/a</span>' : Math.round(x.median_outlier * 100) / 100 + '\u00d7') + '</td>' +
+        '<td class="num">' + x.n_posts + '</td><td class="num">' + x.n_creators + '</td>' +
+        '<td>' + (x.example ? link(x.example, 'example') : '<span class="null-cell">none</span>') + '</td></tr>';
+    }).join('') || '<tr><td colspan="5"><span class="null-cell">none</span></td></tr>';
+
+    $('pb-alias').innerHTML = (P.brief.coded_aliases_in_live_use || []).map(function (x) {
+      return '<tr><td><span class="group-key">' + esc(x.tag) + '</span></td>' +
+        '<td class="num">' + x.n_posts + '</td><td class="num">' + x.n_creators + '</td>' +
+        '<td class="num">' + (x.median_outlier == null ? '<span class="null-cell">n/a</span>' : x.median_outlier + '\u00d7') + '</td></tr>';
+    }).join('') || '<tr><td colspan="4"><span class="null-cell">none observed</span></td></tr>';
+
+    $('pb-breakouts').innerHTML = (P.breakouts || []).slice(0, 20).map(function (b) {
+      return '<tr>' +
+        '<td><span class="group-key">' + link('https://www.tiktok.com/@' + b.handle, '@' + b.handle) + '</span>' +
+          (b.followers != null ? '<br><span class="w" style="font-family:var(--mono);font-size:10px;color:var(--ink-3)">' + num(b.followers) + ' followers</span>' : '') + '</td>' +
+        '<td class="num">' + (b.plays == null ? '<span class="null-cell">n/a</span>' : num(b.plays)) + '</td>' +
+        '<td class="num">' + (b.outlier == null ? '<span class="null-cell">n/a</span>' : b.outlier + '\u00d7') + '</td>' +
+        '<td style="font-size:12px">' + esc(String(b.hook || '').replace(/-/g, ' ')) +
+          (b.band ? '<br><span class="w" style="font-family:var(--mono);font-size:10px;color:var(--ink-3)">' + esc(b.band) + '</span>' : '') + '</td>' +
+        '<td style="font-size:12px;max-width:300px">' + link(b.url, String(b.desc || '(no caption)').slice(0, 110)) + '</td>' +
+        '</tr>';
+    }).join('');
+
+    $('pb-compliance').textContent = P.brief.compliance_flag || '';
+  }
+
   /* ------------------------------------------------------------- init --- */
+  renderPlaybook();
   renderCohort();
   renderBrands();
   renderFindings();

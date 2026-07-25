@@ -39,6 +39,8 @@ const ig = readJson(path.join(RAW, 'instagram.json'));
 const recon = readJson(path.join(RAW, 'recon-structured.json'));
 const ttDisc = readJson(path.join(RAW, 'tiktok-discovered.json'));
 const civilians = readJson(path.join(RAW, 'civilian-cohort.json'));
+const scCohort = readJson(path.join(RAW, 'sc-civilian-cohort.json'));
+const playbook = readJson(path.join(RAW, 'civilian-playbook.json'));
 
 /* ------------------------------------------------------------------ *
  * SCORING MODEL
@@ -1220,6 +1222,25 @@ const dataset = {
    * link (aggregators crawled one level down), or a discount code is stated in
    * the bio. Having a linktr.ee is not evidence - five large accounts were
    * dropped precisely because nothing peptide-related sat behind theirs. */
+  /* The affiliate-army playbook: 49 civilian affiliates found via ScrapeCreators
+   * keyword search, 487 of their real posts scored against each creator's own
+   * baseline. Directives require >=8 posts across >=3 creators; anything thinner
+   * is a lead to test, never presented as a finding. */
+  affiliate_playbook: playbook ? {
+    brief: playbook.brief,
+    generated_from: playbook.generated_from,
+    on_topic_posts: playbook.on_topic_posts,
+    off_topic_posts: playbook.off_topic_posts,
+    rollups: playbook.rollups,
+    hashtags: playbook.hashtags,
+    breakouts: playbook.breakouts,
+    creators: playbook.reference_creators,
+  } : null,
+  sc_civilian_cohort: scCohort ? {
+    probed: scCohort.probed, qualifies: scCohort.qualifies,
+    credits_spent: scCohort.credits_spent,
+    creators: (scCohort.creators || []).filter((c) => c.qualifies).map(({search_posts, aggregator_links, ...r}) => r),
+  } : null,
   civilian_cohort: civilians ? {
     spec: civilians.spec,
     discovery_note: civilians.discovery_note,
