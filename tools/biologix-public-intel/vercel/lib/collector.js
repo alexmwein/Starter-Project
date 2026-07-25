@@ -99,6 +99,13 @@ function withQuery(url, values) {
   return parsed.toString();
 }
 
+export function freshPublicUrl(url, now = Date.now()) {
+  const bucketMs = POLL_INTERVAL_MINUTES * 60_000;
+  return withQuery(url, {
+    ovo_intel_poll: Math.floor(now / bucketMs),
+  });
+}
+
 async function fetchJsonCollection(url) {
   const first = await fetchBounded(withQuery(url, { page: 1 }), {
     accept: "application/json",
@@ -145,6 +152,7 @@ async function fetchJsonCollection(url) {
         10,
       ),
       first_page_duration_ms: first.duration_ms,
+      headers: publicHeaders(first.response),
     },
   };
 }
@@ -344,9 +352,18 @@ async function collectDeepSignals(homepage) {
 
 export async function collectPublicSnapshot(previousState, trigger) {
   const started = Date.now();
-  const parentUrl = `${BIOLOGIX_BASE_URL}/wp-json/wc/store/v1/products?per_page=100&orderby=popularity&order=desc`;
-  const variationUrl = `${BIOLOGIX_BASE_URL}/wp-json/wc/store/v1/products?per_page=100&type=variation`;
-  const wpProductUrl = `${BIOLOGIX_BASE_URL}/wp-json/wp/v2/product?per_page=100&_fields=id,modified_gmt`;
+  const parentUrl = freshPublicUrl(
+    `${BIOLOGIX_BASE_URL}/wp-json/wc/store/v1/products?per_page=100&orderby=popularity&order=desc`,
+    started,
+  );
+  const variationUrl = freshPublicUrl(
+    `${BIOLOGIX_BASE_URL}/wp-json/wc/store/v1/products?per_page=100&type=variation`,
+    started,
+  );
+  const wpProductUrl = freshPublicUrl(
+    `${BIOLOGIX_BASE_URL}/wp-json/wp/v2/product?per_page=100&_fields=id,modified_gmt`,
+    started,
+  );
   const [parents, variations, wpProducts, homepage] = await Promise.all([
     fetchJsonCollection(parentUrl),
     fetchJsonCollection(variationUrl),
@@ -393,6 +410,11 @@ export async function collectPublicSnapshot(previousState, trigger) {
       parent_count: parents.records.length,
       variation_count: variations.records.length,
       ...inventory,
+      public_catalog_sources: {
+        products: parents.meta,
+        variations: variations.meta,
+        modification_times: wpProducts.meta,
+      },
       homepage: {
         status: homepage.status,
         duration_ms: homepage.duration_ms,
