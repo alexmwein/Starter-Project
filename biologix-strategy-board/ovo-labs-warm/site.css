@@ -2782,3 +2782,29 @@ button:disabled {
   .checkout-aside .summary-total { padding: 16px 18px; }
   .checkout-aside .summary-note { padding: 0 18px 16px; margin-top: 0; }
 }
+
+/* Reported analytical results. The stylesheet previously only had an empty
+   state, because nothing was ever reported. A reported field reads as
+   confirmed; an unreported one stays visibly, deliberately blank. */
+.status-pill.is-reported {
+  color: var(--success);
+  background: var(--success-tint);
+  border-color: transparent;
+}
+.testing-row.is-reported strong { color: var(--ink); }
+.document-tag.is-reported {
+  color: var(--on-dark);
+  background: rgba(255, 255, 255, 0.14);
+}
+.document-row.is-reported span { color: var(--on-dark); opacity: 0.92; }
+
+.lookup-lot { margin: 4px 0 12px; color: var(--text-2); font: 400 12px/1 var(--mono); }
+.lookup-fields { display: grid; gap: 8px; margin-bottom: 14px; }
+.lookup-field {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 14px;
+  padding: 9px 12px; background: var(--bg); border-radius: 6px;
+}
+.lookup-field span { color: var(--text-2); font-size: 12px; font-weight: 600; }
+.lookup-field strong { grid-column: 2; grid-row: 1; font-size: 13px; text-align: right; }
+.lookup-field em { grid-column: 1 / -1; color: var(--text-3); font: 400 11px/1.4 var(--mono); font-style: normal; }
+.lookup-field.is-reported strong { color: var(--success); }

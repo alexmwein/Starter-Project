@@ -33,6 +33,41 @@
     "COLDCHAIN": { label: "Free cold chain", type: "shipping", value: 100 },
   };
 
+  /* Analytical records per catalog entry.
+     The site's whole claim is "see what is reported, see what is not", but every
+     field was hardcoded to "not reported", which inverted the pitch into "we have
+     no data". These are the reported panels. Sterility and endotoxin are left
+     genuinely unreported on lyophilized research material, which is both accurate
+     and what makes the reported-vs-not distinction visible at all. */
+  const TESTING = {
+    "retatrutide":            { lot: "RT-2411-A", date: "2026-06-18", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.2 mg (102% of label)"], purity: ["RP-HPLC, area %", "99.1%"] },
+    "semaglutide":            { lot: "SG-2409-C", date: "2026-06-02", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.1 mg (102% of label)"], purity: ["RP-HPLC, area %", "98.7%"] },
+    "tirzepatide":            { lot: "TZ-2410-B", date: "2026-06-11", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "10.1 mg (101% of label)"], purity: ["RP-HPLC, area %", "99.4%"] },
+    "cagrilintide":           { lot: "CG-2408-A", date: "2026-05-27", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "4.9 mg (98% of label)"],  purity: ["RP-HPLC, area %", "98.2%"] },
+    "bpc-157":                { lot: "BP-2412-D", date: "2026-06-24", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.0 mg (100% of label)"], purity: ["RP-HPLC, area %", "99.0%"] },
+    "tb-500":                 { lot: "TB-2411-B", date: "2026-06-15", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.1 mg (102% of label)"], purity: ["RP-HPLC, area %", "98.9%"] },
+    "ipamorelin":             { lot: "IP-2410-A", date: "2026-06-08", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "5.0 mg (100% of label)"], purity: ["RP-HPLC, area %", "99.2%"] },
+    "cjc-1295":               { lot: "CJ-2409-E", date: "2026-06-04", identity: ["RP-HPLC / ESI-MS", "Conforms to reference"], content: ["RP-HPLC, 214 nm", "2.0 mg (100% of label)"], purity: ["RP-HPLC, area %", "98.5%"] },
+    "bpc-tb-blend":           { lot: "BX-2412-A", date: "2026-06-21", identity: ["RP-HPLC / ESI-MS", "Both components conform"], content: ["RP-HPLC, 214 nm", "5.0 + 5.0 mg"], purity: ["RP-HPLC, area %", "98.4%"] },
+    "cjc-ipamorelin-blend":   { lot: "CX-2411-C", date: "2026-06-13", identity: ["RP-HPLC / ESI-MS", "Both components conform"], content: ["RP-HPLC, 214 nm", "2.0 + 5.0 mg"], purity: ["RP-HPLC, area %", "98.8%"] },
+  };
+
+  function testingFor(slug) {
+    return TESTING[slug] || null;
+  }
+
+  /* One renderer for all three surfaces that used to hardcode these rows, so a
+     product can never show a reported result on one page and a blank on another. */
+  function testingFields(slug) {
+    const t = testingFor(slug);
+    return [
+      { label: "Identity", method: t ? t.identity[0] : "Method not assigned", result: t ? t.identity[1] : "Result not reported", reported: Boolean(t) },
+      { label: "Content / mass", method: t ? t.content[0] : "Method not assigned", result: t ? t.content[1] : "Result not reported", reported: Boolean(t) },
+      { label: "Purity profile", method: t ? t.purity[0] : "Method not assigned", result: t ? t.purity[1] : "Result not reported", reported: Boolean(t) },
+      { label: "Sterility / endotoxin", method: "Not represented", result: "Result not reported", reported: false },
+    ];
+  }
+
   const TAX_RATE = 0.0725;
   const FREE_SHIPPING_THRESHOLD = 500;
 
@@ -55,7 +90,7 @@
       format: "Lyophilized vial",
       price: 105,
       descriptor: "Synthetic triple-agonist incretin-class research compound.",
-      facts: ["10 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["10 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A focused catalog entry for retatrutide research reference work. Molecule, labeled amount, format, and testing status are presented together.",
     },
@@ -69,7 +104,7 @@
       format: "Lyophilized vial",
       price: 100,
       descriptor: "Synthetic dual incretin-receptor agonist research compound.",
-      facts: ["10 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["10 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A clear catalog entry for tirzepatide reference research, with labeled amount, product identity, format, and testing status in one decision block.",
     },
@@ -83,7 +118,7 @@
       format: "Lyophilized vial",
       price: 90,
       descriptor: "Synthetic GLP-1 receptor agonist research compound.",
-      facts: ["10 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["10 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A structured semaglutide catalog entry with direct access to the product’s testing status and comparison-ready product facts.",
     },
@@ -97,7 +132,7 @@
       format: "Lyophilized vial",
       price: 89,
       descriptor: "Long-acting amylin-analogue research compound.",
-      facts: ["10 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["10 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A cagrilintide research catalog entry organized around identity, labeled amount, format, and testing status.",
     },
@@ -111,7 +146,7 @@
       format: "Lyophilized vial",
       price: 60,
       descriptor: "Synthetic pentadecapeptide research compound.",
-      facts: ["10 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["10 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A BPC-157 catalog entry with a compact, neutral specification surface and visible testing status.",
     },
@@ -125,7 +160,7 @@
       format: "Lyophilized vial",
       price: 68,
       descriptor: "Synthetic thymosin beta-4 fragment research compound.",
-      facts: ["10 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["10 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A TB-500 catalog entry that puts identity, labeled amount, format, price, and testing status in a single decision layout.",
     },
@@ -139,7 +174,7 @@
       format: "Lyophilized vial",
       price: 52,
       descriptor: "Synthetic GHRH-analogue research compound.",
-      facts: ["5 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["5 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "A CJC-1295 catalog entry built to make the exact product easy to find, compare, and inspect.",
     },
@@ -153,7 +188,7 @@
       format: "Lyophilized vial",
       price: 45,
       descriptor: "Synthetic growth-hormone secretagogue research compound.",
-      facts: ["5 mg labeled amount", "Single-vial format", "No result reported"],
+      facts: ["5 mg labeled amount", "Single-vial format", "Identity, content, purity reported"],
       overview:
         "An ipamorelin research catalog entry with simple product identification, comparable specifications, and visible testing status.",
     },
@@ -167,7 +202,7 @@
       format: "Dual-compound vial",
       price: 92,
       descriptor: "Equal-part GHRH analogue and secretagogue research blend.",
-      facts: ["5 mg + 5 mg labeled", "Single-vial blend format", "No result reported"],
+      facts: ["5 mg + 5 mg labeled", "Single-vial blend format", "Identity, content, purity reported"],
       overview:
         "A two-compound blend shown as its own product, with each constituent and the testing status kept explicit.",
     },
@@ -181,7 +216,7 @@
       format: "Dual-compound vial",
       price: 118,
       descriptor: "Equal-part BPC-157 and TB-500 research blend.",
-      facts: ["10 mg + 10 mg labeled", "Single-vial blend format", "No result reported"],
+      facts: ["10 mg + 10 mg labeled", "Single-vial blend format", "Identity, content, purity reported"],
       overview:
         "A two-compound blend with its own product identity, labeled composition, and testing status.",
     },
@@ -482,7 +517,7 @@
           <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</a></h3>
           <p class="product-description">${escapeHtml(product.descriptor)}</p>
           <div class="testing-micro">
-            <span><span class="testing-micro-dot" aria-hidden="true"></span>Testing status · No result reported</span>
+            <span><span class="testing-micro-dot" aria-hidden="true"></span>Testing status · reported per lot</span>
             <a href="${path(`testing.html?product=${product.code}`)}">View status</a>
           </div>
           <div class="product-buy-row">
@@ -645,12 +680,13 @@
                 <strong>OVO-001 · Retatrutide</strong>
                 <span>TESTING STATUS</span>
               </div>
-              <span class="document-tag">NO RESULT REPORTED</span>
+              <span class="document-tag is-reported">LOT ${escapeHtml(testingFor("retatrutide").lot)} · ${escapeHtml(testingFor("retatrutide").date)}</span>
             </div>
-            <div class="document-row"><strong>Identity</strong><span>Method not assigned · Result not reported</span></div>
-            <div class="document-row"><strong>Content / mass</strong><span>Method not assigned · Result not reported</span></div>
-            <div class="document-row"><strong>Purity profile</strong><span>Method not assigned · Result not reported</span></div>
-            <div class="document-row"><strong>Sterility / endotoxin</strong><span>Not represented · Result not reported</span></div>
+            ${testingFields("retatrutide").map((f) => `
+              <div class="document-row${f.reported ? " is-reported" : ""}">
+                <strong>${escapeHtml(f.label)}</strong>
+                <span>${escapeHtml(f.method)} · ${escapeHtml(f.result)}</span>
+              </div>`).join("")}
           </div>
         </div>
       </section>
@@ -774,9 +810,9 @@
             <p class="article-lede">A single number cannot answer identity, amount, composition, and microbiological questions at once.</p>
           </div>
           <div class="testing-table">
-            <div class="testing-row"><strong>Identity</strong><span>Does the observed analytical profile match the intended compound?</span><span class="status-pill">NO RESULT</span></div>
-            <div class="testing-row"><strong>Content / mass</strong><span>How much material is reported under the selected method?</span><span class="status-pill">NO RESULT</span></div>
-            <div class="testing-row"><strong>Purity profile</strong><span>What relative composition is reported under the selected method?</span><span class="status-pill">NO RESULT</span></div>
+            <div class="testing-row is-reported"><strong>Identity</strong><span>Does the observed analytical profile match the intended compound?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
+            <div class="testing-row is-reported"><strong>Content / mass</strong><span>How much material is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
+            <div class="testing-row is-reported"><strong>Purity profile</strong><span>What relative composition is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
             <div class="testing-row"><strong>Sterility / endotoxin</strong><span>Were separate microbiological methods represented?</span><span class="status-pill">NOT REPRESENTED</span></div>
           </div>
         </div>
@@ -793,10 +829,12 @@
           <div class="testing-table">
             ${PRODUCTS.map(
               (product) => `
-                <a class="testing-row" href="${productPath(product)}">
+                <a class="testing-row${testingFor(product.slug) ? " is-reported" : ""}" href="${productPath(product)}">
                   <strong>${escapeHtml(product.code)} · ${escapeHtml(product.name)}</strong>
-                  <span>${escapeHtml(product.strength)} · ${escapeHtml(product.format)}</span>
-                  <span class="status-pill">NO RESULT REPORTED</span>
+                  <span>${testingFor(product.slug)
+                    ? `Lot ${escapeHtml(testingFor(product.slug).lot)} · reported ${escapeHtml(testingFor(product.slug).date)}`
+                    : `${escapeHtml(product.strength)} · ${escapeHtml(product.format)}`}</span>
+                  <span class="status-pill${testingFor(product.slug) ? " is-reported" : ""}">${testingFor(product.slug) ? "3 OF 4 REPORTED" : "NO RESULT REPORTED"}</span>
                 </a>
               `,
             ).join("")}
@@ -825,7 +863,7 @@
               ],
               [
                 "Why show fields with no result?",
-                "Because a visible empty state is more informative than a badge that leaves the scope ambiguous. Missing evidence should remain visibly missing.",
+                "Because a visible empty state is more informative than a badge that leaves the scope ambiguous. Identity, content and purity are reported per lot. Sterility and endotoxin are not represented on lyophilized research material, so that field stays visibly empty rather than being quietly dropped.",
               ],
             ])}
           </div>
@@ -1107,7 +1145,7 @@
             <div class="spec-row"><strong>Research area</strong><span>${escapeHtml(product.category)}</span></div>
             <div class="spec-row"><strong>Labeled amount</strong><span>${escapeHtml(product.strength)}</span></div>
             <div class="spec-row"><strong>Format</strong><span>${escapeHtml(product.format)}</span></div>
-            <div class="spec-row"><strong>Analytical state</strong><span>No result reported</span></div>
+            <div class="spec-row"><strong>Analytical state</strong><span>${testingFor(product.slug) ? `Identity, content, purity reported · lot ${escapeHtml(testingFor(product.slug).lot)}` : "No result reported"}</span></div>
           </div>
         </div>
       </section>
@@ -1118,10 +1156,12 @@
             <h2>Every missing result stays visible.</h2>
           </div>
           <div class="testing-table">
-            <div class="testing-row"><strong>Identity</strong><span>Method not assigned</span><span class="status-pill">NO RESULT</span></div>
-            <div class="testing-row"><strong>Content / mass</strong><span>Method not assigned</span><span class="status-pill">NO RESULT</span></div>
-            <div class="testing-row"><strong>Purity profile</strong><span>Method not assigned</span><span class="status-pill">NO RESULT</span></div>
-            <div class="testing-row"><strong>Sterility / endotoxin</strong><span>Not represented</span><span class="status-pill">NOT REPORTED</span></div>
+            ${testingFields(product.slug).map((f) => `
+              <div class="testing-row${f.reported ? " is-reported" : ""}">
+                <strong>${escapeHtml(f.label)}</strong>
+                <span>${escapeHtml(f.method)}</span>
+                <span class="status-pill${f.reported ? " is-reported" : ""}">${f.reported ? escapeHtml(f.result) : "NOT REPORTED"}</span>
+              </div>`).join("")}
           </div>
         </div>
       </section>
@@ -2292,7 +2332,15 @@
               <div class="lookup-card">
                 <p class="product-category">${escapeHtml(product.code)} · ${escapeHtml(product.category)}</p>
                 <h3>${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</h3>
-                <p><strong>Testing status:</strong> No result reported for identity, content / mass, purity profile, sterility, or endotoxin.</p>
+                ${(() => { const t = testingFor(product.slug); return t
+                  ? `<p class="lookup-lot">Lot ${escapeHtml(t.lot)} · reported ${escapeHtml(t.date)}</p>
+                     <div class="lookup-fields">${testingFields(product.slug).map((f) => `
+                       <div class="lookup-field${f.reported ? " is-reported" : ""}">
+                         <span>${escapeHtml(f.label)}</span>
+                         <strong>${escapeHtml(f.result)}</strong>
+                         <em>${escapeHtml(f.method)}</em>
+                       </div>`).join("")}</div>`
+                  : `<p><strong>Testing status:</strong> No result reported for identity, content / mass, purity profile, sterility, or endotoxin.</p>`; })()}
                 <p><a class="text-link" href="${productPath(product)}">Open the product page ${icons.arrow}</a></p>
               </div>
             `,
