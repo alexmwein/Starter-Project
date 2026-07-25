@@ -1,9 +1,11 @@
-# Claude account router for Conductor
+# Claude Switcher for Conductor
 
 This router keeps Claude subscription credentials in persistent account
-profiles and makes Conductor resolve the selected profile when each Claude
-process starts. It avoids rewriting the shared macOS Keychain while other
-Claude chats are running.
+profiles and makes Conductor automatically resolve the authenticated profile
+with the most five-hour headroom whenever a Claude process starts. It avoids
+rewriting the shared macOS Keychain while other Claude chats are running.
+
+The user-facing command is `claude-switcher`.
 
 ## Why this fixes the restart problem
 
@@ -45,10 +47,20 @@ The installer:
 - merges and shares Claude's `projects` transcript directory so a Conductor
   session can resume after selecting another account;
 - leaves the macOS Keychain untouched.
+- routes Conductor's live bundled `bin/claude` symlink through the selector, so
+  the change takes effect without restarting Conductor;
+- installs a small launchd watcher that stops only a Claude child whose own
+  transcript just recorded a new subscription-limit error.
 
 ## Use
 
 ```bash
+claude-switcher status
+claude-switcher help
+claude-switcher accounts
+claude-switcher switch
+
+# Legacy low-level commands:
 claude-acct list
 claude-acct usage
 claude-acct use hello@ovo
@@ -56,7 +68,18 @@ claude-acct best
 claude-acct next
 ```
 
-After `use`, `best`, or `next`, restart only the affected Claude chat.
+Manual selection remains available for diagnostics, but normal Conductor
+launches call the read-only usage helper and choose the best account
+automatically.
+
+By default, Claude Switcher marks an account as draining at 90% of its
+five-hour allocation or 95% of its seven-day allocation. It waits for each
+chat to finish its active turn, stops only the idle Claude child using that
+account, and lets the next message resume on the healthiest account.
+
+When a running chat hits a limit, the watcher stops only that capped Claude
+process. Conductor's next retry or message starts the same session through the
+best available account. Other Claude and Codex chats remain running.
 
 If a profile says `login required`:
 

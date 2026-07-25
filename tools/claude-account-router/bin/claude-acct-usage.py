@@ -23,6 +23,8 @@ SELECTED = Path(
 CACHE = STORE / ".usage-cache.json"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USER_AGENT = "claude-cli/2.1.201 (external, cli)"
+FIVE_HOUR_DRAIN = float(os.environ.get("CLAUDE_SWITCHER_FIVE_HOUR_DRAIN", "90"))
+SEVEN_DAY_DRAIN = float(os.environ.get("CLAUDE_SWITCHER_SEVEN_DAY_DRAIN", "95"))
 
 
 def read_json(path: Path) -> dict | None:
@@ -208,12 +210,18 @@ def main() -> int:
 
     if "--best" in sys.argv:
         candidates = []
+        fallback_candidates = []
         for row in rows:
             entry = row["usage"] or {}
             five_hour = entry.get("five_hour")
             seven_day = entry.get("seven_day")
-            if row["authenticated"] and five_hour is not None and (seven_day or 0) < 95:
-                candidates.append((five_hour, seven_day or 0, row["name"]))
+            if row["authenticated"] and five_hour is not None:
+                candidate = (five_hour, seven_day or 0, row["name"])
+                fallback_candidates.append(candidate)
+                if five_hour < FIVE_HOUR_DRAIN and (seven_day or 0) < SEVEN_DAY_DRAIN:
+                    candidates.append(candidate)
+        if not candidates:
+            candidates = fallback_candidates
         if not candidates:
             return 1
         print(min(candidates)[2])

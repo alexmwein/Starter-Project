@@ -12,7 +12,9 @@ STORE="${CLAUDE_ACCOUNT_STORE:-$HOME/.claude-accounts}"
 PROFILE_ROOT="${CLAUDE_PROFILE_ROOT:-$HOME/.claude-profiles}"
 GLOBAL_CONFIG="${CLAUDE_GLOBAL_CONFIG:-$HOME/.claude}"
 SELECTED_FILE="${CLAUDE_ACCOUNT_SELECTED_FILE:-$STORE/.conductor-active}"
-CLAUDE_BIN="${CONDUCTOR_CLAUDE_BIN:-$HOME/Library/Application Support/com.conductor.app/bin/claude}"
+CLAUDE_BIN="${CONDUCTOR_CLAUDE_BIN:-$HOME/Library/Application Support/com.conductor.app/bin/claude-router-target}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+USAGE_HELPER="${CLAUDE_USAGE_HELPER:-$SCRIPT_DIR/claude-acct-usage.py}"
 
 die() {
   echo "conductor-claude: $*" >&2
@@ -27,6 +29,11 @@ valid_name() {
 }
 
 account="${CLAUDE_ACCOUNT_OVERRIDE:-}"
+if [ -z "$account" ] && [ -x "$USAGE_HELPER" ]; then
+  # Resolve the healthiest authenticated subscription for every new Claude
+  # process. Existing chats keep the profile they already started with.
+  account="$("$USAGE_HELPER" --best 2>/dev/null || true)"
+fi
 if [ -z "$account" ] && [ -f "$SELECTED_FILE" ]; then
   account="$(sed -n '1p' "$SELECTED_FILE")"
 fi
@@ -34,6 +41,13 @@ fi
 [ -n "$account" ] || die "no account selected; run: claude-acct use <account>"
 valid_name "$account" || die "invalid selected account: $account"
 [ -x "$CLAUDE_BIN" ] || die "Claude executable not found: $CLAUDE_BIN"
+
+if [ -z "${CLAUDE_ACCOUNT_OVERRIDE:-}" ]; then
+  selected_tmp="$SELECTED_FILE.tmp.$$"
+  printf '%s\n' "$account" > "$selected_tmp"
+  chmod 600 "$selected_tmp"
+  mv "$selected_tmp" "$SELECTED_FILE"
+fi
 
 profile_dir="$PROFILE_ROOT/$account"
 snapshot="$STORE/$account.json"
