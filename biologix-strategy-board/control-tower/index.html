@@ -23,21 +23,28 @@
       <span class="crm-brand-sub">Affiliate CRM — internal</span>
     </div>
     <div class="crm-tools">
-      <a class="crm-btn is-quiet" href="../index.html">Board</a>
-      <button type="button" class="crm-btn" id="tool-import">Import CSV</button>
+      <span class="crm-sync" id="crm-sync" aria-live="polite">Connecting…</span>
+      <button type="button" class="crm-btn is-quiet" id="tool-refresh">Refresh</button>
       <button type="button" class="crm-btn" id="tool-export">Export CSV</button>
-      <button type="button" class="crm-btn is-quiet" id="tool-reset">Reset demo data</button>
-      <button type="button" class="crm-btn is-danger" id="tool-clear">Clear all</button>
-      <input type="file" id="tool-file" accept=".csv,text/csv" class="visually-hidden" aria-hidden="true" tabindex="-1">
+      <button type="button" class="crm-btn" id="tool-program">Program setup</button>
+      <button type="button" class="crm-btn" id="tool-history">History</button>
+      <button type="button" class="crm-btn is-primary" id="tool-invite">Invite affiliate</button>
+      <button type="button" class="crm-btn is-quiet" id="tool-logout">Log out</button>
     </div>
   </header>
+
+  <div class="crm-system-state crm-banner is-info" id="crm-system-state" role="status">
+    <div class="crm-banner-title" id="crm-system-title">Loading the live control tower</div>
+    <div class="crm-banner-body" id="crm-system-body">Connecting to the authoritative program record…</div>
+    <button type="button" class="crm-btn is-primary" id="crm-retry" hidden>Try again</button>
+  </div>
 
   <noscript>
     <div class="crm-banner is-warn">
       <div class="crm-banner-title">This view needs JavaScript</div>
       <div class="crm-banner-body">
-        The Control Tower reads and writes records in your browser, so it cannot render without JavaScript.
-        Turn it on and reload, or go back to the <a href="../index.html">decision board</a>.
+        The Control Tower connects to the live program record, so it cannot render without JavaScript.
+        Turn it on and reload.
       </div>
     </div>
   </noscript>
@@ -56,13 +63,9 @@
     <!-- ------------------------------------------------------- dashboard -->
     <section class="crm-view is-active" id="view-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" tabindex="-1">
 
-      <div class="crm-banner is-warn">
-        <div class="crm-banner-title">Nothing in the Biologix deal is signed</div>
-        <div class="crm-banner-body">
-          Three calls are recorded, 2026-07-21, 2026-07-22 and 2026-07-23, and a fourth is pending.<br>
-          No commission rate has been agreed, so commission reads "no rate set", never zero.<br>
-          Every Biologix revenue figure is founder-reported and unverified.
-        </div>
+      <div class="crm-banner is-info" id="program-banner">
+        <div class="crm-banner-title" id="program-banner-title">Live program status</div>
+        <div class="crm-banner-body" id="program-banner-body">Waiting for the authoritative program record.</div>
       </div>
 
       <div class="crm-metrics" id="dash-metrics"></div>
@@ -114,6 +117,23 @@
               <tbody id="dash-defects"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="crm-two-col">
+        <div class="crm-panel">
+          <div class="crm-panel-head">
+            <h2 class="crm-panel-title">Program</h2>
+            <span class="crm-sub">Current server-owned configuration.</span>
+          </div>
+          <div id="dash-program"></div>
+        </div>
+        <div class="crm-panel">
+          <div class="crm-panel-head">
+            <h2 class="crm-panel-title">Recent history</h2>
+            <button type="button" class="crm-btn is-quiet" id="dash-history-open">View all</button>
+          </div>
+          <div id="dash-history"></div>
         </div>
       </div>
 
@@ -201,7 +221,7 @@
           <select class="crm-select" id="pipe-owner"></select>
         </div>
         <span class="crm-spacer"></span>
-        <span class="crm-sub">Move a card with the back and forward buttons. Every move saves.</span>
+        <span class="crm-sub">Move a card with the back and forward buttons. The server confirms every move before it appears.</span>
       </div>
       <div class="crm-board" id="pipe-board"></div>
     </section>
@@ -214,7 +234,7 @@
           <select class="crm-select" id="onb-owner"></select>
         </div>
         <span class="crm-spacer"></span>
-        <span class="crm-sub">Signed and onboarding affiliates. Nine gates, all nine must pass before links go live.</span>
+        <span class="crm-sub">Signed and onboarding affiliates. Gates come from the authoritative onboarding record and cannot be edited here.</span>
       </div>
       <div id="onb-list"></div>
     </section>

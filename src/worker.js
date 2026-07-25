@@ -1,4 +1,5 @@
 import vinext from "vinext/server/fetch-handler";
+import { handleBiologixGatewayRequest } from "./biologix-gateway.js";
 
 const OVO_LABS_ROOT = "/ovo-labs";
 const OVO_LABS_PORCELAIN_ROOT = "/ovo-labs-porcelain";
@@ -104,6 +105,12 @@ async function renderStorefrontNotFound(request, env, storefrontRoot) {
 export default {
   async fetch(request, env, ctx) {
     const pathname = new URL(request.url).pathname;
+    const biologixResponse = await handleBiologixGatewayRequest(
+      request,
+      env,
+    );
+    if (biologixResponse) return biologixResponse;
+
     const legacyRoot = LEGACY_ROOTS.find(
       (candidate) => pathname === candidate || pathname.startsWith(`${candidate}/`),
     );

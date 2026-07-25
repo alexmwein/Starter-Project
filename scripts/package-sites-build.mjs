@@ -3,6 +3,15 @@ import path from "node:path";
 
 const distDirectory = path.resolve("dist");
 const serverDirectory = path.join(distDirectory, "server");
+const passportSourceDirectory = path.resolve(
+  "biologix-affiliate-passport-site",
+  "dist",
+);
+const passportClientDirectory = path.join(
+  distDirectory,
+  "client",
+  "passport",
+);
 const entries = await readdir(distDirectory, { withFileTypes: true });
 const workerDirectory = entries
   .filter((entry) => entry.isDirectory())
@@ -19,4 +28,11 @@ await cp(path.join(distDirectory, workerDirectory), serverDirectory, {
   recursive: true,
 });
 
+await rm(passportClientDirectory, { recursive: true, force: true });
+await mkdir(path.dirname(passportClientDirectory), { recursive: true });
+await cp(passportSourceDirectory, passportClientDirectory, {
+  recursive: true,
+});
+
 console.log(`Packaged dist/${workerDirectory} as dist/server for Sites`);
+console.log("Packaged the affiliate Passport as dist/client/passport");
