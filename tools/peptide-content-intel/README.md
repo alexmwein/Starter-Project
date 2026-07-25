@@ -168,3 +168,43 @@ thinner is published as a lead to test. Two rules were nearly shipped wrong:
 - Median alone produced "avoid vendor-tagged posts", which the cohort's own top two
   breakouts contradict. Vendor-tagged has the lowest median (312 plays) AND the
   highest ceiling (4.99M). Report the variance, not one side of it.
+
+---
+
+## The cohort splits into two different businesses
+
+Measured over 487 posts. Only **5 posts (1%)** contain "retatrutide" or a direct
+variant. **39 use the coded vocabulary**, which is where the retatrutide talk
+actually lives. The substitution set observed live:
+
+| written | means |
+|---|---|
+| ratatouille, r3t4, retaa, reda | retatrutide |
+| peppers, pepperz, peps | peptides |
+| pins | injections |
+| d0se | dose |
+| b\|o | bio |
+| GLP-ONE, gLp-one | GLP-1 |
+
+Searching for the real word finds almost nothing. Searching the aliases finds the
+cohort.
+
+### Research-peptide lane — 13 creators, the one Biologix competes in
+
+Ceiling is roughly **427k plays**. Accounts are small: 910 to 133k followers, most
+under 13k. Vendors carry named referral links:
+`ionpeptide.com?ref=cayla`, `peptrack.co/c/chrisriosss`, `staraminos.com`,
+`pnwbiocompounds.com`, plus bio codes RICO10, ADKISSON, JACKIEC.
+`@papi.peptide` (133k) runs a DM-gated source-broker pattern: "DM me SOURCE" —
+never posts the vendor publicly.
+
+### Compounded GLP-1 telehealth lane — 9 creators, a different business
+
+Ceiling is **10.3M plays**. These promote licensed compounded-GLP-1 telehealth
+(ShedRx, Gala GLP-1, Ellie MD, LifeRx, Orderly Meds, Zappy Health), not gray-market
+research peptides.
+
+**This distinction governs benchmarking.** The multi-million-play posts in the
+cohort belong to the telehealth lane. A gray-market research-peptide affiliate's
+realistic ceiling on this evidence is ~427k, not 5M. Do not set army targets off
+the telehealth numbers.
