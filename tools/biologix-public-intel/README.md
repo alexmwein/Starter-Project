@@ -142,3 +142,35 @@ into a sale.
 
 This is competitive and operational research, not a professional security audit
 and not an accounting system.
+
+## Cloud deployment
+
+The connected Sites Worker runs the cloud collector every 15 minutes. Its
+SQLite-backed Durable Object retains 120 days of snapshot summaries, event
+deltas, probable-basket inferences, and public site signals.
+
+The cloud runtime additionally records:
+
+- sitemap page counts and latest public modification times;
+- public WordPress route and plugin-namespace fingerprints;
+- installed analytics, email, payment, cache, CDN, and storefront technology;
+- whether aggregate analytics and WooCommerce report endpoints are public or
+  correctly require authorization;
+- public DNS and origin/cache headers;
+- origin response latency and response size.
+
+It deliberately does not collect visitors, IP addresses, cookies, customer
+records, review identities, order records, cart contents, or raw homepage HTML.
+Installed tag IDs do not expose the tag owner's analytics reports.
+
+Cloud endpoints:
+
+```text
+GET  /api/biologix-intel/health
+GET  /api/biologix-intel/latest
+GET  /api/biologix-intel/report?hours=24
+POST /api/biologix-intel/snapshot
+```
+
+Only the health endpoint is public. The remaining endpoints require the private
+`BIOLOGIX_INTEL_TOKEN` bearer token stored in the Sites production environment.
