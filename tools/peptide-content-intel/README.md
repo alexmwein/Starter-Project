@@ -58,3 +58,63 @@ Then `npm run build && npx wrangler deploy` from the repo root.
   false positive.
 - `recon-structured.json` is the earlier **hand-collected** research, tagged
   `provenance: "hand_collected"` and never mixed into API-measured statistics.
+
+---
+
+## Civilian affiliate cohort (the scan target)
+
+Target shape: an individual person posting their own peptide experience who
+carries an affiliate link. Reference example @gretatrutide, 1,361 followers, bio
+link `https://spartanbiolab.com/?ref=GRETA`.
+
+Excluded by spec: companies and vendor-run accounts, clinics and med spas,
+credentialed clinicians (MD/DO/RN/NP/PA/RD/PhD), coaches and program sellers.
+
+### TikTok suppresses the compound names — this governs all discovery
+
+Verified with a positive control through Apify `clockworks/tiktok-scraper`:
+
+| query | videos returned |
+|---|---|
+| coffee | 12 |
+| ozempic | 12 |
+| peptides | 12 |
+| glp1 journey | 12 |
+| ratatouille weight loss | 12 |
+| tirzepatide | 0 |
+| **retatrutide** | **0** |
+
+TikTok serves the approved brand name and the coded alias but returns an empty
+set for the unapproved compounds. This is why hashtag pages are captcha-gated and
+why only 2 of 152 originally-seeded TikTok posts were on topic.
+
+**Never discover on the compound name.** Use the journey language and the coded
+aliases. The cohort itself evades text matching the same way:
+- `@alexisthepeptidegirl` bio: "R3ta is GLP-3Rț" (Romanian ț breaks the match)
+- `@glpbabe` bio: "4mg ℛ𝒯 weekly" (Unicode mathematical script)
+- recon doc also records "ratatouille", "r3ta", "GLP-3"
+
+### Pipeline
+
+```bash
+node discover_tiktok.mjs      # crosswalk + @mentions + handle patterns
+node enrich_civilians.mjs     # bio, bio link, followers -> classify + filter
+node filter_candidates.mjs    # classify an Apify candidate list
+node enrich_candidates.mjs    # resolve bio links incl. linktree/beacons one level down
+```
+
+Affiliate evidence counts if ANY of: bio-link query param (`?ref=`, `?aff=`),
+referral subdomain or path (`refer.boltpharmacy.co.uk/w.pickering`), a vendor
+domain behind a link aggregator, or a discount code stated in the bio.
+
+Identity classification strips URLs from the bio first. A vendor domain in a bio
+is what the person PROMOTES, not who they ARE — leaving it in made
+`spartanbiolab.com` match a `labs?` rule and labelled @gretatrutide a company.
+
+### Provider status (verified 2026-07-25)
+
+- **ScrapeCreators: DEAD.** Two distinct keys both HTTP 402. A sweep of every
+  file referencing scrapecreators found no funded key. No credits endpoint exists.
+- **Apify: free plan exhausted**, $0.37 remaining. Scaling this needs a paid plan.
+- **yt-dlp + the public TikTok/Instagram endpoints remain free** and are what the
+  rest of this pipeline runs on.
