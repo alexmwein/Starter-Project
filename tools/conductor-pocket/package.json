@@ -1,0 +1,22 @@
+{
+  "name": "@ovo/conductor-pocket",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "check": "node --check src/server.mjs && node --check src/security.mjs && node --check src/conductor-db.mjs && node --check src/accessibility.mjs && node --check src/tailscale-config.mjs && node --check scripts/install-relay.mjs && node --check public/app.js && node --check public/service-worker.js && npm test",
+    "doctor": "node --no-warnings=ExperimentalWarning src/cli.mjs doctor",
+    "install:relay": "node --no-warnings=ExperimentalWarning scripts/install-relay.mjs",
+    "pair": "node --no-warnings=ExperimentalWarning src/cli.mjs pair",
+    "setup": "node --no-warnings=ExperimentalWarning src/cli.mjs setup",
+    "start": "node --no-warnings=ExperimentalWarning src/cli.mjs serve",
+    "start:ui-fixture": "node --no-warnings=ExperimentalWarning scripts/ui-fixture.mjs",
+    "test": "node --no-warnings=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "13.3.2"
+  }
+}
