@@ -7,9 +7,9 @@
  * Every text pairing below clears WCAG AA:
  *   espresso on ivory   13.86:1
  *   secondary on ivory   6.18:1
- *   clay on porcelain    5.57:1
+ *   berry on porcelain   5.06:1
  *   sage on porcelain    5.40:1
- *   warm white on clay   5.45:1
+ *   warm white on berry  4.95:1
  */
 :root {
   color-scheme: light;
@@ -27,10 +27,10 @@
   --text-3: #76655d;
   --slate: #2e211d;
 
-  /* 8%: muted clay rose, used only for action and navigation */
-  --cobalt: #9d4f56;
-  --cobalt-deep: #7f3d45;
-  --cobalt-tint: #f3e3e3;
+  /* 8%: berry coral, with enough red to feel alive rather than earthen */
+  --cobalt: #b34a5d;
+  --cobalt-deep: #8e3348;
+  --cobalt-tint: #fbf2f4;
 
   /* 2%: sage, reserved for reported testing and evidence states */
   --success: #4f705b;
