@@ -22,6 +22,7 @@ async function createConfirmationFixture(context) {
       id TEXT PRIMARY KEY,
       repository_id TEXT,
       workspace_name TEXT,
+      secondary_directory_name TEXT,
       placeholder_branch_name TEXT,
       branch TEXT,
       directory_name TEXT,
@@ -60,9 +61,31 @@ async function createConfirmationFixture(context) {
     INSERT INTO repos (id, name, hidden)
     VALUES ('repo-1', 'Quickstart', 0);
     INSERT INTO workspaces
-      (id, repository_id, workspace_name, branch, directory_name, state, unread, updated_at)
+      (
+        id,
+        repository_id,
+        workspace_name,
+        secondary_directory_name,
+        placeholder_branch_name,
+        branch,
+        directory_name,
+        state,
+        unread,
+        updated_at
+      )
     VALUES
-      ('workspace-1', 'repo-1', 'Pocket test', 'feature/pocket', 'test', 'ready', 0, '2026-01-01');
+      (
+        'workspace-1',
+        'repo-1',
+        NULL,
+        'visible-workspace-name',
+        'folder-codename',
+        'feature/pocket',
+        'folder-codename',
+        'ready',
+        0,
+        '2026-01-01'
+      );
     INSERT INTO sessions
       (id, workspace_id, title, agent_type, model, status, unread_count, created_at, updated_at, is_hidden)
     VALUES
@@ -98,6 +121,7 @@ test('database adapter exposes sanitized chat events without tool payloads', asy
       id TEXT PRIMARY KEY,
       repository_id TEXT,
       workspace_name TEXT,
+      secondary_directory_name TEXT,
       placeholder_branch_name TEXT,
       branch TEXT,
       directory_name TEXT,
@@ -231,6 +255,19 @@ test('database adapter exposes sanitized chat events without tool payloads', asy
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('must-not-leak'), false);
   assert.equal(serialized.includes('highly sensitive output'), false);
+});
+
+test('workspace routes use the visible Conductor name instead of the folder codename', async (context) => {
+  const { database } = await createConfirmationFixture(context);
+  assert.equal(database.listWorkspaces()[0].name, 'visible workspace name');
+  assert.equal(
+    database.listRecentSessions(1)[0].workspaceName,
+    'visible workspace name',
+  );
+  assert.equal(
+    database.getSessionRoute('session-1').workspaceName,
+    'visible workspace name',
+  );
 });
 
 test('send confirmation ignores old, inexact, foreign, non-user, and cancelled rows', async (context) => {

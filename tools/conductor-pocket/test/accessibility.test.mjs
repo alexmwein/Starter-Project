@@ -87,3 +87,20 @@ test('the structural accessibility linefeed is not treated as a Mac draft', asyn
   assert.match(source, /if \(length of valueText\) is 1 then return ""/);
   assert.equal(source.match(/my normalizedDraft/g)?.length, 5);
 });
+
+test('session lookup scans every radio button in the Conductor tab group', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /repeat with tabGroupChild in tabGroupChildren/);
+  assert.match(source, /repeat with tabGroupElement in tabGroupElements/);
+  assert.match(
+    source,
+    /if \(role of tabGroupElement as text\) is "AXRadioButton" then copy tabGroupElement to end of sessionTabs/,
+  );
+  assert.doesNotMatch(
+    source,
+    /return UI elements of item 1 of tabGroupChildren/,
+  );
+});

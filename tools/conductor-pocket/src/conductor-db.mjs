@@ -6,6 +6,7 @@ import { DB_POLL_MS } from './constants.mjs';
 function workspaceDisplayName(row) {
   return (
     row.workspace_name ||
+    row.secondary_directory_name?.replaceAll('-', ' ') ||
     row.placeholder_branch_name ||
     row.branch ||
     row.directory_name ||
@@ -129,6 +130,7 @@ export class ConductorDatabase {
         SELECT
           w.id,
           w.workspace_name,
+          w.secondary_directory_name,
           w.placeholder_branch_name,
           w.branch,
           w.directory_name,
@@ -191,6 +193,7 @@ export class ConductorDatabase {
           s.updated_at,
           s.last_user_message_at,
           w.workspace_name,
+          w.secondary_directory_name,
           w.placeholder_branch_name,
           w.branch,
           w.directory_name
@@ -211,6 +214,7 @@ export class ConductorDatabase {
             s.agent_type,
             s.model,
             w.workspace_name,
+            w.secondary_directory_name,
             w.placeholder_branch_name,
             w.branch,
             w.directory_name,
