@@ -315,14 +315,14 @@ button:disabled {
 }
 
 .wordmark-name {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 650;
   letter-spacing: -0.025em;
 }
 
 .wordmark-category {
   color: var(--text-2);
-  font: 500 8px/1 var(--mono);
+  font: 500 9px/1 var(--mono);
   letter-spacing: 0.24em;
 }
 
@@ -511,7 +511,7 @@ button:disabled {
 
 .search-result span {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .search-result-price {
@@ -588,7 +588,7 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out;
 }
 
@@ -715,13 +715,13 @@ button:disabled {
 .hero-product-chip strong {
   display: block;
   margin-top: 4px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .hero-product-chip p {
   margin: 3px 0 0;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .hero-coa-card {
@@ -744,7 +744,7 @@ button:disabled {
 
 .hero-coa-row strong {
   color: var(--cobalt);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .trust-strip {
@@ -779,8 +779,8 @@ button:disabled {
 }
 
 .trust-item strong {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .section {
@@ -816,7 +816,7 @@ button:disabled {
   max-width: 520px;
   margin: 0;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .category-section-head {
@@ -829,7 +829,7 @@ button:disabled {
   align-items: center;
   color: var(--cobalt);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .text-link:hover {
@@ -863,14 +863,14 @@ button:disabled {
 
 .category-tile strong {
   display: block;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .category-tile span {
   display: block;
   margin-top: 4px;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .category-tile .category-arrow {
@@ -934,7 +934,7 @@ button:disabled {
   display: block;
   overflow: hidden;
   font-size: clamp(9px, 1.1vw, 12px);
-  font-weight: 700;
+  font-weight: 650;
   letter-spacing: -0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -944,7 +944,7 @@ button:disabled {
   display: block;
   margin-top: 2px;
   color: var(--cobalt);
-  font: 500 clamp(7px, 0.7vw, 9px)/1 var(--mono);
+  font: 500 9px/1 var(--mono);
   letter-spacing: 0.06em;
 }
 
@@ -1009,7 +1009,7 @@ button:disabled {
   min-height: 24px;
   align-items: center;
   color: var(--cobalt);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .product-buy-row {
@@ -1042,8 +1042,8 @@ button:disabled {
   background: var(--cobalt);
   border: 0;
   border-radius: var(--r-sm);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .add-button:hover {
@@ -1103,7 +1103,7 @@ button:disabled {
 
 .document-head strong {
   display: block;
-  font-size: 17px;
+  font-size: 16px;
 }
 
 .document-head span {
@@ -1187,7 +1187,7 @@ button:disabled {
 
 .bundle-body h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
   letter-spacing: -0.025em;
 }
 
@@ -1211,7 +1211,7 @@ button:disabled {
   gap: 12px;
   padding: 3px 0;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .bundle-footer {
@@ -1243,7 +1243,7 @@ button:disabled {
 .education-card h3,
 .value-card h3 {
   margin: 0;
-  font-size: 19px;
+  font-size: 20px;
   letter-spacing: -0.025em;
 }
 
@@ -1302,7 +1302,7 @@ button:disabled {
   background: var(--slate);
   border: 0;
   border-radius: var(--r-sm);
-  font-weight: 600;
+  font-weight: 650;
   transition: color 120ms ease-out, background 120ms ease-out;
 }
 
@@ -1458,7 +1458,7 @@ button:disabled {
   align-items: center;
   padding-top: var(--s-5);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .breadcrumb a:hover {
@@ -1568,7 +1568,7 @@ button:disabled {
   background: var(--cobalt-tint);
   border-radius: var(--r-sm);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   transition: color 140ms ease-out, box-shadow 140ms ease-out;
 }
 
@@ -1594,7 +1594,7 @@ button:disabled {
 }
 
 .pdp-price strong {
-  font: 500 27px/1 var(--mono);
+  font: 500 26px/1 var(--mono);
 }
 
 .selection-label {
@@ -1603,7 +1603,7 @@ button:disabled {
   gap: var(--s-3);
   margin: 0 0 var(--s-3);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .buy-controls {
@@ -1652,7 +1652,7 @@ button:disabled {
   background: var(--cobalt);
   border: 0;
   border-radius: var(--r-sm);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .pdp-add:hover {
@@ -1757,7 +1757,7 @@ button:disabled {
 .testing-row span,
 .spec-row span {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .testing-row .status-pill {
@@ -1795,7 +1795,7 @@ button:disabled {
   padding: var(--s-5) 0;
   background: transparent;
   border: 0;
-  font-weight: 600;
+  font-weight: 650;
   text-align: left;
   transition: color 120ms ease-out;
 }
@@ -1926,7 +1926,7 @@ button:disabled {
 .article-lede {
   margin: var(--s-5) 0 var(--s-7);
   color: var(--text-2);
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .article-shell h2 {
@@ -1957,7 +1957,7 @@ button:disabled {
 .article-shell p.article-lede {
   max-width: 32em;
   color: var(--text-2);
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1.6;
 }
 
@@ -2075,7 +2075,7 @@ button:disabled {
 
 .drawer-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .drawer-close {
@@ -2111,7 +2111,7 @@ button:disabled {
 .cart-empty strong {
   display: block;
   color: var(--ink);
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .cart-item {
@@ -2142,7 +2142,7 @@ button:disabled {
 }
 
 .cart-item-price {
-  font: 500 11px/1.3 var(--mono);
+  font: 500 12px/1.3 var(--mono);
   white-space: nowrap;
 }
 
@@ -2219,7 +2219,7 @@ button:disabled {
   color: var(--text-2);
   background: var(--bg);
   border-radius: 5px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cart-footer .button {
@@ -2287,11 +2287,11 @@ button:disabled {
 }
 
 .mobile-cart-bar span {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mobile-cart-bar strong {
-  font: 500 11px/1 var(--mono);
+  font: 500 12px/1 var(--mono);
 }
 
 .mobile-drawer {
@@ -2314,7 +2314,7 @@ button:disabled {
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--line);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 @media (max-width: 1180px) {
@@ -2497,7 +2497,7 @@ button:disabled {
   }
 
   .wordmark-category {
-    font-size: 8px;
+    font-size: 9px;
     letter-spacing: 0.16em;
   }
 
@@ -2539,7 +2539,7 @@ button:disabled {
   }
 
   .hero-copy > p:not(.eyebrow) {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .hero-actions {
@@ -2649,7 +2649,7 @@ button:disabled {
 
   .product-description {
     min-height: 32px;
-    font-size: 11px;
+    font-size: 12px;
     -webkit-line-clamp: 2;
   }
 
@@ -2675,7 +2675,7 @@ button:disabled {
      touch minimum, on the one button the whole grid exists to serve. */
   .add-button {
     min-height: 44px;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .testing-feature {
@@ -2778,7 +2778,7 @@ button:disabled {
   }
 
   .buybox-cue strong {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .buybox-cue span {
@@ -2789,7 +2789,7 @@ button:disabled {
   .remove-item,
   .pdp-note,
   .result-summary {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .testing-row {
@@ -2898,14 +2898,14 @@ button:disabled {
 .summary-line > div > strong { grid-column: 2; }
 .summary-line > div > span { grid-column: 2 / -1; }
 .summary-line img { width: 48px; height: 54px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--r-sm); }
-.summary-line strong { display: block; font-size: 13px; font-weight: 600; }
-.summary-line span { color: var(--text-2); font: 400 11px/1.4 var(--mono); }
-.summary-line span.summary-line-price { grid-column: 3; grid-row: 1; color: var(--ink); font: 600 13px/1.4 var(--sans); white-space: nowrap; }
+.summary-line strong { display: block; font-size: 13px; font-weight: 650; }
+.summary-line span { color: var(--text-2); font: 400 12px/1.4 var(--mono); }
+.summary-line span.summary-line-price { grid-column: 3; grid-row: 1; color: var(--ink); font: 650 13px/1.4 var(--sans); white-space: nowrap; }
 .summary-rows { display: grid; gap: var(--s-2); padding: var(--s-4) 0; border-bottom: 1px solid var(--line); }
 .summary-row { display: flex; justify-content: space-between; gap: var(--s-4); font-size: 13px; color: var(--text-2); }
 .summary-row.is-credit span:last-child { color: var(--success); }
-.summary-total { display: flex; justify-content: space-between; padding-top: var(--s-4); font-size: 17px; font-weight: 650; }
-.summary-note { margin: var(--s-3) 0 0; color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.summary-total { display: flex; justify-content: space-between; padding-top: var(--s-4); font-size: 16px; font-weight: 650; }
+.summary-note { margin: var(--s-3) 0 0; color: var(--text-3); font-size: 12px; line-height: 1.5; }
 
 /* ---- cart page ---- */
 .cart-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
@@ -2925,7 +2925,7 @@ button:disabled {
 .cart-row-image img { width: 120px; height: 135px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--r-md); }
 .cart-row-head { display: flex; justify-content: space-between; gap: var(--s-4); align-items: flex-start; }
 .cart-row-head h3 { margin: 0 0 3px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-.cart-row-meta { margin: 0; color: var(--text-2); font: 400 11px/1.4 var(--mono); }
+.cart-row-meta { margin: 0; color: var(--text-2); font: 400 12px/1.4 var(--mono); }
 .cart-row-price { font-size: 15px; font-weight: 650; white-space: nowrap; }
 .cart-row-status { margin: var(--s-3) 0 var(--s-4); color: var(--text-2); font-size: 12px; }
 .cart-row-controls { display: flex; gap: var(--s-4); align-items: center; flex-wrap: wrap; }
@@ -2934,7 +2934,7 @@ button:disabled {
 .cart-aside { display: grid; gap: var(--s-4); position: sticky; top: 96px; }
 .checkout-cta { display: block; margin-top: var(--s-4); text-align: center; }
 .promo-form { padding: var(--s-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
-.promo-form label { display: block; margin-bottom: var(--s-2); font-size: 12px; font-weight: 600; }
+.promo-form label { display: block; margin-bottom: var(--s-2); font-size: 12px; font-weight: 650; }
 .promo-input-row { display: flex; gap: var(--s-2); }
 .promo-input-row input {
   flex: 1; min-width: 0; height: 38px; padding: 0 var(--s-3);
@@ -2948,11 +2948,11 @@ button:disabled {
 /* ---- checkout ---- */
 .stepper { display: flex; gap: var(--s-2); flex-wrap: wrap; margin: var(--s-5) 0 0; padding: 0; list-style: none; }
 .step { display: flex; gap: var(--s-2); align-items: center; padding: 8px var(--s-3) 8px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-pill); }
-.step-index { display: grid; width: 21px; height: 21px; place-items: center; color: var(--text-2); background: var(--bg); border-radius: 50%; font: 500 11px/1 var(--mono); }
+.step-index { display: grid; width: 21px; height: 21px; place-items: center; color: var(--text-2); background: var(--bg); border-radius: 50%; font: 500 12px/1 var(--mono); }
 .step-label { color: var(--text-2); font-size: 12px; font-weight: 500; }
 .step.is-current { border-color: var(--cobalt); }
 .step.is-current .step-index { color: #fff; background: var(--cobalt); }
-.step.is-current .step-label { color: var(--cobalt); font-weight: 600; }
+.step.is-current .step-label { color: var(--cobalt); font-weight: 650; }
 /* --success is this site's reported/verified signal. Spending it on "you filled
    in a form step" puts four green pills next to a summary whose whole argument
    is which analytics are green. Done reads solid, current cobalt, upcoming light. */
@@ -2961,7 +2961,7 @@ button:disabled {
 
 .checkout-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
 .checkout-step { margin: 0; padding: var(--s-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
-.checkout-step legend { display: flex; gap: var(--s-3); align-items: center; padding: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; }
+.checkout-step legend { display: flex; gap: var(--s-3); align-items: center; padding: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
 .checkout-step legend span { display: grid; width: 24px; height: 24px; place-items: center; color: #fff; background: var(--cobalt); border-radius: 50%; font: 500 12px/1 var(--mono); }
 .step-hint { margin: var(--s-3) 0 0; color: var(--text-2); font-size: 13px; line-height: 1.55; }
 
@@ -2969,7 +2969,7 @@ button:disabled {
 .field.is-full { grid-column: span 4; }
 .field.is-half { grid-column: span 2; }
 .field.is-quarter { grid-column: span 1; }
-.field label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; }
+.field label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 650; }
 .field-optional { color: var(--text-3); font-weight: 400; }
 .field input, .field select {
   width: 100%; height: 42px; padding: 0 var(--s-3);
@@ -2981,7 +2981,7 @@ button:disabled {
 .field input[readonly] { color: var(--text-2); background: var(--surface-soft); cursor: not-allowed; }
 .field input.has-error, .field select.has-error { border-color: var(--danger); }
 .field-error { margin: 8px 0 0; color: var(--danger); font-size: 12px; min-height: 1em; }
-.field-note { margin: 8px 0 0; color: var(--text-3); font: 400 11px/1.4 var(--mono); }
+.field-note { margin: 8px 0 0; color: var(--text-3); font: 400 12px/1.4 var(--mono); }
 
 .choice-group { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
 .choice { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-4); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; transition: border-color 140ms var(--ease), background 140ms var(--ease); }
@@ -2989,7 +2989,7 @@ button:disabled {
 .choice:has(input:checked) { border-color: var(--cobalt); background: var(--cobalt-tint); }
 .choice input { margin-top: 3px; accent-color: var(--cobalt); }
 .choice-body { flex: 1; }
-.choice-title { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; font-weight: 600; }
+.choice-title { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; font-weight: 650; }
 .choice-price { font-weight: 650; }
 .choice-detail { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; }
 
@@ -3013,12 +3013,12 @@ button:disabled {
 .review-block-head { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
 .review-block h3 { margin: 0 0 8px; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2); }
 .review-block p { margin: 0; font-size: 13px; line-height: 1.6; }
-.link-button { padding: 0; color: var(--cobalt); background: none; border: 0; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link-button { padding: 0; color: var(--cobalt); background: none; border: 0; font-size: 12px; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
 /* ---- confirmation ---- */
 .confirmation-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
 .tracker { display: grid; gap: 0; margin: 0 0 var(--s-6); padding: 0; list-style: none; }
-.tracker li { position: relative; padding: 0 0 var(--s-5) 30px; color: var(--text-2); font-size: 13px; font-weight: 600; }
+.tracker li { position: relative; padding: 0 0 var(--s-5) 30px; color: var(--text-2); font-size: 13px; font-weight: 650; }
 .tracker li:last-child { padding-bottom: 0; }
 .tracker li::before { position: absolute; top: 16px; bottom: 0; left: 6px; width: 2px; content: ""; background: var(--line); }
 .tracker li:last-child::before { display: none; }
@@ -3036,7 +3036,7 @@ button:disabled {
 .confirmation-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
 .confirmation-details .detail-card:last-child { grid-column: span 2; }
 .detail-card { padding: var(--s-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
-.detail-card h3 { margin: 0 0 8px; color: var(--text-2); font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
+.detail-card h3 { margin: 0 0 8px; color: var(--text-2); font-size: 12px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
 .detail-card p { margin: 0; font-size: 13px; line-height: 1.65; }
 
 /* ---- narrow ---- */
@@ -3063,7 +3063,7 @@ button:disabled {
   .step-actions .button-primary { flex: 1 0 100%; margin-left: 0; }
   .stepper { gap: 8px; }
   .step { padding: 4px 12px 4px 4px; }
-  .step-label { font-size: 11px; }
+  .step-label { font-size: 12px; }
 }
 
 /* iOS zooms into any focused control rendering under 16px and does not zoom back
@@ -3130,9 +3130,9 @@ button:disabled {
   display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 16px;
   padding: 8px 12px; background: var(--bg); border-radius: 6px;
 }
-.lookup-field span { color: var(--text-2); font-size: 12px; font-weight: 600; }
+.lookup-field span { color: var(--text-2); font-size: 12px; font-weight: 650; }
 .lookup-field strong { grid-column: 2; grid-row: 1; font-size: 13px; text-align: right; }
-.lookup-field em { grid-column: 1 / -1; color: var(--text-3); font: 400 11px/1.4 var(--mono); font-style: normal; }
+.lookup-field em { grid-column: 1 / -1; color: var(--text-3); font: 400 12px/1.4 var(--mono); font-style: normal; }
 .lookup-field.is-reported strong { color: var(--success); }
 
 /* Fulfillment expectations at the decision point. Three facts a buyer of a
@@ -3301,7 +3301,7 @@ button:disabled {
   align-items: center;
   color: var(--cobalt);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   cursor: pointer;
   list-style: none;
   transition: color 120ms ease-out;
@@ -3372,7 +3372,7 @@ button:disabled {
 .cart-row-cap {
   margin: var(--s-2) 0 0;
   color: var(--text-3);
-  font: 400 11px/1.4 var(--mono);
+  font: 400 12px/1.4 var(--mono);
 }
 
 /* Cart drawer actions: full-width stacked, primary first */
@@ -3418,7 +3418,7 @@ button:disabled {
   padding-top: var(--s-4);
   border-top: 1px solid var(--line);
   color: var(--text-2);
-  font: 400 11px/1.5 var(--mono);
+  font: 400 12px/1.5 var(--mono);
 }
 
 /* Footer contact column: same grid cell, looser leading for the address block */
@@ -3509,7 +3509,7 @@ button:disabled {
 
   .page-hero:not(:has(.hero-actions)):has(+ .section .product-grid) h1,
   .page-hero:not(:has(.hero-actions)):has(+ .section .bundle-grid) h1 {
-    font-size: 34px;
+    font-size: var(--t-section);
   }
 
   .page-hero:not(:has(.hero-actions)):has(+ .section .product-grid) > .shell > p:not(.eyebrow),
@@ -3558,7 +3558,7 @@ button:disabled {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
-.lot-doc-head h2 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
+.lot-doc-head h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
 .lot-doc-ref { margin: 0; color: var(--text-2); font: 500 12px/1.4 var(--mono); }
 
 .lot-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 0; }
@@ -3577,7 +3577,7 @@ button:disabled {
 .lot-block h3 {
   margin: 0 0 var(--s-4);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -3593,8 +3593,8 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 .lot-method:last-child { border-bottom: 0; }
-.lot-method-label { color: var(--ink); font-size: 12px; font-weight: 600; }
-.lot-method-method { color: var(--text-2); font: 400 11px/1.5 var(--mono); }
+.lot-method-label { color: var(--ink); font-size: 12px; font-weight: 650; }
+.lot-method-method { color: var(--text-2); font: 400 12px/1.5 var(--mono); }
 .lot-method-result { color: var(--ink); font: 500 13px/1.4 var(--mono); }
 .lot-method.is-omitted .lot-method-method,
 .lot-method.is-omitted .lot-method-result { color: var(--text-3); }
@@ -3608,7 +3608,7 @@ button:disabled {
 .lot-aside h2 {
   margin: 0;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -3644,7 +3644,7 @@ button:disabled {
 .lot-index-lot { color: var(--ink); font: 500 13px/1.4 var(--mono); }
 .lot-index-name { font-size: 13px; }
 .lot-index-code,
-.lot-index-date { color: var(--text-2); font: 400 11px/1.4 var(--mono); }
+.lot-index-date { color: var(--text-2); font: 400 12px/1.4 var(--mono); }
 .lot-index.is-compact .lot-index-row { grid-template-columns: minmax(0, 1fr); gap: 2px; padding: var(--s-3) var(--s-4); }
 .lot-index.is-compact .lot-index-name { font-size: 12px; }
 
@@ -3656,7 +3656,7 @@ button:disabled {
 .summary-line .lot-line a:hover { text-decoration: underline; }
 .cart-row-lots { display: grid; gap: 2px; margin: var(--s-1) 0 0; }
 .cart-row-lots a,
-.cart-row-lots span { font: 400 11px/1.5 var(--mono); }
+.cart-row-lots span { font: 400 12px/1.5 var(--mono); }
 .cart-row-lots span { color: var(--text-2); }
 .cart-row-lots a { color: var(--cobalt); text-decoration: none; width: fit-content; }
 .cart-row-lots a:hover { text-decoration: underline; }
@@ -3827,7 +3827,7 @@ button:disabled {
   background: var(--on-dark);
   border: 0;
   border-radius: var(--r-sm);
-  font-weight: 600;
+  font-weight: 650;
   transition: color 120ms ease-out, background 120ms ease-out;
 }
 
@@ -3914,13 +3914,13 @@ button:disabled {
   gap: var(--s-3);
   padding: var(--s-1) 0;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* Bundle and education cards sit in adjacent bands at the same tier; their
    titles were 18px and 19px with nothing deliberate behind the difference. */
 .education-card h3 {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 /* ============================================================================
@@ -3975,7 +3975,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
-.drawer-cross-row strong { display: block; font-size: 13px; font-weight: 600; }
+.drawer-cross-row strong { display: block; font-size: 13px; font-weight: 650; }
 .drawer-cross-row span { color: var(--text-3); font: 400 10px/1.4 var(--mono); }
 .drawer-cross-add {
   padding: var(--s-2) var(--s-3);
@@ -3984,7 +3984,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
   transition: border-color 140ms var(--ease), background 140ms var(--ease);
@@ -4086,7 +4086,7 @@ button:disabled {
    information the cart page already shows for the same item. */
 .cart-item-unit {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -4358,7 +4358,7 @@ button:disabled {
 }
 .product-card .price {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 
@@ -4597,7 +4597,7 @@ button:disabled {
   max-width: var(--measure);
   margin: var(--s-4) 0 var(--s-5);
   color: var(--text-2);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
@@ -4632,3 +4632,21 @@ button:disabled {
 /* The wordmark subtitle uses --text-2, which is correct on white but rendered at
    2.99:1 inside the slate footer. Scoped to the on-dark token there. */
 .site-footer .wordmark-category { color: var(--on-dark-3); }
+
+/* The cart row head is a two-column flex; at 390 the price was being pushed
+   22px past the viewport because the title column had no lower bound and the
+   price could not shrink. Give the title room to wrap and stop the price
+   growing. */
+@media (max-width: 640px) {
+  .cart-row-head { flex-wrap: wrap; gap: var(--s-1) var(--s-2); }
+  .cart-row-head > div { min-width: 0; flex: 1 1 60%; }
+  .cart-row-price { flex: 0 0 auto; }
+  .cart-row-meta { overflow-wrap: anywhere; }
+}
+
+/* The measured type inventory still showed 700 and 900 weights despite no such
+   declaration existing in this file: they come from the user-agent stylesheet,
+   which renders strong, b and headings at bold. Inter's variable axis makes 650
+   the system's emphasis weight, so normalise the UA defaults to it rather than
+   leaving two competing bolds on the page. */
+strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
