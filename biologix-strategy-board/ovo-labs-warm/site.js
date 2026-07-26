@@ -739,7 +739,7 @@
           <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</a></h3>
           <p class="product-description">${escapeHtml(product.descriptor)}</p>
           <div class="testing-micro">
-            <span><span class="testing-micro-dot" aria-hidden="true"></span>Testing status · reported per lot</span>
+            <span><span class="testing-micro-dot" aria-hidden="true"></span>Testing reported per lot</span>
             <a href="${path(`testing.html?product=${product.code}`)}">View status</a>
           </div>
           <div class="product-buy-row">
@@ -781,7 +781,10 @@
       <article class="bundle-card">
         <div class="bundle-image">
           <img src="${path("assets/ovo-set-pair.webp")}" alt="Two OVO Labs amber peptide vials for ${escapeHtml(bundle.name)}" width="1536" height="1024" loading="lazy">
-          <span class="bundle-count">2 products</span>
+          <span class="bundle-plate" aria-hidden="true">
+            <span class="bundle-plate__format">${escapeHtml(bundle.format)}</span>
+            <span class="bundle-plate__code">${escapeHtml(bundle.code)}</span>
+          </span>
         </div>
         <div class="bundle-body">
           <p class="product-category">Catalog set</p>
@@ -795,15 +798,31 @@
               )
               .join("")}
           </ul>
+          ${(() => {
+            const a = availabilityFor(bundle.slug);
+            /* A set held back on position is not a sold-out set. The product page
+               already refuses the grey disabled button here and states the reason
+               where the buy control sits; the card now says the same thing instead
+               of a full-weight price above a dead slab. */
+            if (a.restricted) {
+              const held = items.filter((product) => restrictionFor(product.slug)).map((product) => product.name);
+              return `
+          <div class="restricted-notice bundle-restricted" role="note">
+            <span class="restricted-notice__pill">Not offered</span>
+            <p>${escapeHtml(held.join(" and "))} cannot be ordered, so this set cannot be either. It stays listed at ${money.format(bundle.price)} so the position is on the record.</p>
+          </div>`;
+            }
+            return `
           <div class="bundle-footer">
             <div>
               <span class="price-label">Set price</span>
               <span class="price">${money.format(bundle.price)}</span>
             </div>
-            ${(() => { const a = availabilityFor(bundle.slug); return a.sellable
+            ${a.sellable
               ? `<button class="add-button" type="button" data-add-product="${bundle.slug}">Add set to cart</button>`
-              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`; })()}
-          </div>
+              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`}
+          </div>`;
+          })()}
         </div>
       </article>
     `;
@@ -897,7 +916,7 @@
                 <span>Content</span>
                 <strong>${escapeHtml(record ? record.content[1] : "Not reported")}</strong>
               </div>
-              <div class="hero-coa-row">
+              <div class="hero-coa-row is-unreported">
                 <span>Sterility</span>
                 <strong>Not reported</strong>
               </div>
@@ -1103,7 +1122,7 @@
         </div>
       </section>
       <section class="section section-surface">
-        <div class="shell">
+        <div class="shell testing-catalog">
           <div class="section-head">
             <div>
               <p class="eyebrow">Catalog status</p>
@@ -1177,6 +1196,8 @@
           <div>
             <p class="eyebrow">Why sets exist</p>
             <h2>Reduce search work without creating ambiguity.</h2>
+            <p class="detail-lede">Three sets exist. Each one is a shorter route to entries that are already listed on their own, for the pairs most often evaluated together.</p>
+            <p><a class="text-link" href="${path("catalog.html")}">See every individual entry ${icons.arrow}</a></p>
           </div>
           <div class="value-grid">
             <article class="value-card"><div><h3>Separate identities</h3><p>Every molecule keeps its own code, strength, product page, and testing state.</p></div></article>
@@ -1317,27 +1338,6 @@
             <article class="value-card"><div><h3>No decorative proof</h3><p>An analytical figure appears only with its method, lot and report date attached. Ratings, testimonials, seals, laboratory photography and quality slogans do not appear at all, and a field with no method behind it is labeled unreported rather than dressed up.</p></div></article>
             <article class="value-card"><div><h3>No urgency machinery</h3><p>No stock countdown, sale timer, crossed-out anchor price, or invented best-seller ranking pushes the click.</p></div></article>
             <article class="value-card"><div><h3>No fake transaction</h3><p>The full purchase path is here to evaluate, from cart to order confirmation. Payment is the deliberate exception: no card is captured and no charge is possible.</p></div></article>
-          </div>
-        </div>
-      </section>
-      <section class="section">
-        <div class="shell detail-grid">
-          <div>
-            <p class="eyebrow">Who we are</p>
-            <h2>The entity behind the catalog, in full.</h2>
-          </div>
-          <div>
-            <p class="article-lede">A store that will not name itself is asking for trust it has not offered. Every line below is fictional. Every line below is stated anyway, because a concept that leaves them blank cannot be judged on the thing it claims to be.</p>
-            <div class="spec-table">
-              <div class="spec-row"><strong>Operating entity</strong><span>OVO Labs LLC, an Oregon limited liability company</span></div>
-              <div class="spec-row"><strong>Registered office</strong><span>1420 NW Marshall Street, Suite 300, Portland, Oregon 97209</span></div>
-              <div class="spec-row"><strong>Fulfillment</strong><span>One facility in Portland. Packing, cold-chain assembly and logger sealing all happen there</span></div>
-              <div class="spec-row"><strong>Analytical work</strong><span>An independent contract laboratory. OVO Labs runs no release testing of its own and names the method, sample and date on every lot it reports</span></div>
-              <div class="spec-row"><strong>Support</strong><span><a class="text-link" href="mailto:support@ovolabs.example">support@ovolabs.example</a>, Monday to Friday, 9:00 to 17:00 Pacific</span></div>
-              <div class="spec-row"><strong>Response</strong><span>First reply within one business day. Fulfillment cases get a written decision within three business days</span></div>
-              <div class="spec-row"><strong>Ships to</strong><span>United States only, street addresses only, from the Portland facility</span></div>
-            </div>
-            <p><a class="text-link" href="${path("policies.html")}#fulfillment">Read the fulfillment and resolution policy ${icons.arrow}</a></p>
           </div>
         </div>
       </section>
@@ -1532,7 +1532,8 @@
             <div class="restricted-notice" role="note">
               <span class="restricted-notice__pill">Not offered</span>
               <p>${escapeHtml(restrictionFor(product.slug))}</p>
-            </div>`;
+            </div>
+            <a class="button button-secondary pdp-alt-action" href="${path("catalog.html")}">Browse entries you can order ${icons.arrow}</a>`;
               }
               const ceiling = Math.max(1, Math.min(MAX_QUANTITY, stock.units));
               return `
@@ -1557,12 +1558,18 @@
               <div class="buybox-cue"><strong>${testingFor(product.slug) ? "Identity, content, purity" : "No result"}</strong><span>${testingFor(product.slug) ? `Reported for lot ${escapeHtml(testingFor(product.slug).lot)}` : "Fields reported"}</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(availabilityFor(product.slug).label)}</strong><span>Availability</span></div>
             </div>
-            <ul class="pdp-assurances">
+            ${availabilityFor(product.slug).restricted
+              ? `<ul class="pdp-assurances">
+              <li>The lot record for this entry stays published</li>
+              <li>Sterility and endotoxin stay unreported here, as on every entry</li>
+            </ul>
+            <p class="pdp-note">Nothing on this page can be added to a cart. No order, payment, or shipment is created.</p>`
+              : `<ul class="pdp-assurances">
               <li>Ships in an insulated mailer · cold chain available at checkout</li>
               <li>Lot COA reported before dispatch${testingFor(product.slug) ? ` · ${escapeHtml(testingFor(product.slug).date)}` : ""}</li>
               <li>Free standard shipping over ${money.format(FREE_SHIPPING_THRESHOLD)}</li>
             </ul>
-            <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>
+            <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>`}
           </div>
         </section>
       </div>
@@ -1911,7 +1918,15 @@
       </section>
       <section class="section">
         <div class="shell">
-          ${categoryRail()}
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Recover</p>
+              <h2>Pick up from a known path.</h2>
+            </div>
+            <p>Four research areas, and four catalog entries to start from. The header search also takes a molecule name or a catalog code such as OVO-002.</p>
+          </div>
+          <div class="recovery-rail">${categoryRail()}</div>
+          <p class="eyebrow">Catalog entries</p>
           <div class="product-grid">${sellableFirst(PRODUCTS).slice(0, 4).map((product) => productCard(product)).join("")}</div>
         </div>
       </section>
@@ -2046,16 +2061,21 @@
             })()}
             ${freeShipBar}
             <div class="cart-rows">${rows}</div>
+            {/* Continue shopping and Clear cart belong to the lines, not to the
+               suggestion. Rendered after the cross-sell they landed at y1440,
+               680px below the last cart row, so Clear cart operated on rows two
+               screens above it. They close the cart block; the suggestion is
+               what comes after. */}
+            <div class="cart-actions">
+              <a class="button button-secondary button-small" href="${path("catalog.html")}">Continue shopping</a>
+              <button class="remove-item" type="button" data-clear-cart>Clear cart</button>
+            </div>
             ${pairsWith.length
               ? `<section class="cart-cross-sell" aria-labelledby="cart-cross-sell-title">
               <h2 id="cart-cross-sell-title">Pairs with your cart</h2>
               <div class="product-grid">${pairsWith.map((entry) => productCard(entry)).join("")}</div>
             </section>`
               : ""}
-            <div class="cart-actions">
-              <a class="button button-secondary button-small" href="${path("catalog.html")}">Continue shopping</a>
-              <button class="remove-item" type="button" data-clear-cart>Clear cart</button>
-            </div>
           </div>
           <div class="cart-aside">
             ${orderSummaryPanel(breakdown, {
@@ -2185,12 +2205,13 @@
               <legend><span>1</span> Contact</legend>
               <p class="step-hint">Order confirmation and tracking are sent here.</p>
               <div class="field-grid">
-                ${checkoutField("email", "Email address", { type: "email", autocomplete: "email", placeholder: "you@company.com", value: draft.email || "" })}
+                ${checkoutField("email", "Email address", { type: "email", autocomplete: "email", placeholder: "you@company.com", width: "half", value: draft.email || "" })}
                 ${checkoutField("phone", "Phone", {
                   type: "tel",
                   autocomplete: "tel",
                   inputmode: "tel",
                   placeholder: "(555) 010-0199",
+                  width: "half",
                   required: false,
                   note: "Used only if the carrier needs to reach you about a cold-chain delivery.",
                   value: draft.phone || "",
@@ -2246,16 +2267,16 @@
                 <p>The card below is a locked placeholder. No card number is collected, nothing is transmitted, and no charge is possible. Every other part of this checkout behaves normally.</p>
               </div>
               <div class="field-grid">
-                <div class="field is-full">
+                <div class="field is-half">
                   <label for="cardNumber">Card number</label>
                   <input id="cardNumber" name="cardNumber" type="text" value="4242 4242 4242 4242" readonly aria-readonly="true">
                   <p class="field-note">Placeholder value · input disabled</p>
                 </div>
-                <div class="field is-half">
+                <div class="field is-quarter">
                   <label for="cardExpiry">Expiry</label>
                   <input id="cardExpiry" name="cardExpiry" type="text" value="04 / 30" readonly aria-readonly="true">
                 </div>
-                <div class="field is-half">
+                <div class="field is-quarter">
                   <label for="cardCvc">CVC</label>
                   <input id="cardCvc" name="cardCvc" type="text" value="•••" readonly aria-readonly="true">
                 </div>
@@ -2729,6 +2750,7 @@
                   <span>${line.quantity}</span>
                   <button type="button" data-cart-quantity="${item.slug}" data-delta="1" aria-label="Increase ${escapeHtml(item.name)} quantity">+</button>
                 </div>
+                <span class="cart-item-unit">${money.format(item.price)} each</span>
                 <button class="remove-item" type="button" data-remove-product="${item.slug}">Remove</button>
               </div>
             </div>
@@ -3473,7 +3495,7 @@
         </div>
       `;
       holder.innerHTML = [
-        block("Contact", `${escapeHtml(d.email || "")}<br>${escapeHtml(d.phone || "")}`, "contact"),
+        block("Contact", `${escapeHtml(d.email || "")}${d.phone ? `<br>${escapeHtml(formatPhone(d.phone))}` : ""}`, "contact"),
         block(
           "Ship to",
           `${escapeHtml(d.firstName || "")} ${escapeHtml(d.lastName || "")}<br>${escapeHtml(d.address1 || "")}${d.address2 ? `<br>${escapeHtml(d.address2)}` : ""}<br>${escapeHtml(d.city || "")}, ${escapeHtml(d.state || "")} ${escapeHtml(d.zip || "")}`,

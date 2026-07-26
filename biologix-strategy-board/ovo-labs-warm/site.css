@@ -75,7 +75,10 @@
   --text-2: #5b6472;
   /* was #7b8491 at 3.78:1 on white, which failed AA for small text and was the
      single root cause of most measured contrast failures across the site. */
-  --text-3: #6b7480;
+  /* #6b7480 cleared 4.5 on --surface but only reached 4.42 on --bg and 4.22 on
+     --surface-soft, so muted text failed AA wherever it sat on a tinted panel.
+     #646d79 clears 4.5 on all three. */
+  --text-3: #646d79;
 
   /* Dark surface, split out from --ink. It backs the concept banner, the
      testing feature, the footer, the newsletter button, toasts and the mobile
@@ -1726,7 +1729,7 @@ button:disabled {
 }
 
 .spec-row {
-  grid-template-columns: 0.7fr 1.3fr;
+  grid-template-columns: 0.4fr 1.6fr;
 }
 
 .testing-row:last-child,
@@ -1834,7 +1837,17 @@ button:disabled {
   padding: 0 0 var(--s-5);
   color: var(--text-2);
   font-size: 13px;
-  transition: visibility 0s;
+  transition: visibility 0s, padding 200ms var(--ease);
+}
+
+/* A collapsed panel is a 0fr track, but min-height:0 does not zero its own 24px
+   bottom padding, so the track floored at 24px and every CLOSED row carried
+   24px of invisible space (95.5px row for a 71.5px trigger). Nine closed rows on
+   the FAQ page was 216px of nothing; the page measures 2293px before this and
+   1989px after. The padding now collapses with the row, on the same duration as
+   the row transition so the open and close animations are unchanged. */
+.accordion-item:has(> .accordion-panel[hidden]) > .accordion-panel {
+  padding-block-end: 0;
 }
 
 .accordion-panel[hidden] {
@@ -1846,7 +1859,7 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: var(--s-2);
-  max-width: 720px;
+  max-width: var(--measure);
   margin-top: var(--s-5);
 }
 
@@ -1881,10 +1894,26 @@ button:disabled {
 /* Width inherits --shell so the article edge lands on the same page gutter as
    every other section. The old hardcoded 48px produced two different left
    edges at 390, where --shell is 12px. */
+/* The document column IS the measure. The column was 780px while every paragraph
+   inside it was separately capped at 34em, so on policies and eligibility the
+   prose ended 270px short of the headings and callouts sharing the same column:
+   four different right edges on one page. One width now governs the document. */
 .article-shell {
-  width: min(780px, var(--shell));
+  width: min(var(--measure), var(--shell));
   margin-inline: auto;
   padding-block: var(--s-8) var(--s-9);
+}
+
+/* And the hero band above a document takes that same column, so the page title,
+   the lede, the body and the callouts all start on one left edge. Measured
+   before: hero at x=53, body at x=323, footer back at x=53. */
+.page-hero:has(+ .article-shell) > .shell {
+  width: min(var(--measure), var(--shell));
+}
+
+.page-hero:has(+ .article-shell) h1,
+.page-hero:has(+ .article-shell) p:not(.eyebrow) {
+  max-width: none;
 }
 
 .article-shell h1 {
@@ -1908,10 +1937,16 @@ button:disabled {
 
 .article-shell p,
 .article-shell li {
-  max-width: var(--measure);
   color: #343b45;
   font-size: 15px;
   line-height: 1.7;
+}
+
+/* 40px of UA list indent pushed every bullet's right edge 40px past the
+   paragraph above it. 24px is on scale and still hangs the marker clear. */
+.article-shell ul,
+.article-shell ol {
+  padding-inline-start: var(--s-5);
 }
 
 /* A lede reads better slightly narrower than the body it introduces, so it keeps
@@ -2759,10 +2794,26 @@ button:disabled {
 
   .testing-row {
     grid-template-columns: 1fr auto;
+    gap: var(--s-2) var(--s-4);
+  }
+
+  /* Deleting this column deleted the page's entire argument on a phone: the
+     framework table lost all four questions and the catalog list lost every lot
+     number and report date, leaving only the badge. It stacks under the label
+     instead of disappearing. */
+  .testing-row strong {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .testing-row .status-pill {
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .testing-row span:nth-child(2) {
-    display: none;
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .testing-lookup {
@@ -2836,11 +2887,20 @@ button:disabled {
 }
 .order-summary h2 { margin: 0 0 var(--s-4); font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
 .summary-lines { display: grid; gap: var(--s-4); padding-bottom: var(--s-4); border-bottom: 1px solid var(--line); }
-.summary-line { display: grid; grid-template-columns: 48px 1fr auto; gap: var(--s-3); align-items: center; }
+/* The line price was vertically centred against a three-line meta block, and the
+   211px meta column forced `reported 2026-06-24` to break across two lines mid
+   date. The price now sits on the product-name row where it can be compared,
+   and the meta spans the full width beneath both, which is what buys the lot
+   line the width it needs to stay on one line. */
+.summary-line { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; column-gap: var(--s-3); row-gap: var(--s-1); align-items: start; }
+.summary-line > div { display: contents; }
+.summary-line > img { grid-row: 1 / span 3; align-self: start; }
+.summary-line > div > strong { grid-column: 2; }
+.summary-line > div > span { grid-column: 2 / -1; }
 .summary-line img { width: 48px; height: 54px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--r-sm); }
 .summary-line strong { display: block; font-size: 13px; font-weight: 600; }
 .summary-line span { color: var(--text-2); font: 400 11px/1.4 var(--mono); }
-.summary-line-price { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.summary-line span.summary-line-price { grid-column: 3; grid-row: 1; color: var(--ink); font: 600 13px/1.4 var(--sans); white-space: nowrap; }
 .summary-rows { display: grid; gap: var(--s-2); padding: var(--s-4) 0; border-bottom: 1px solid var(--line); }
 .summary-row { display: flex; justify-content: space-between; gap: var(--s-4); font-size: 13px; color: var(--text-2); }
 .summary-row.is-credit span:last-child { color: var(--success); }
@@ -2893,7 +2953,11 @@ button:disabled {
 .step.is-current { border-color: var(--cobalt); }
 .step.is-current .step-index { color: #fff; background: var(--cobalt); }
 .step.is-current .step-label { color: var(--cobalt); font-weight: 600; }
-.step.is-done .step-index { color: #fff; background: var(--success); }
+/* --success is this site's reported/verified signal. Spending it on "you filled
+   in a form step" puts four green pills next to a summary whose whole argument
+   is which analytics are green. Done reads solid, current cobalt, upcoming light. */
+.step.is-done .step-index { color: #fff; background: var(--slate); }
+.step.is-done .step-label { color: var(--ink); }
 
 .checkout-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--s-6); align-items: start; }
 .checkout-step { margin: 0; padding: var(--s-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
@@ -2937,7 +3001,11 @@ button:disabled {
 .checkbox-row input { margin-top: 2px; accent-color: var(--cobalt); }
 .checkbox-row a { color: var(--cobalt); text-decoration: underline; text-underline-offset: 2px; }
 
-.step-actions { display: flex; justify-content: space-between; gap: var(--s-3); align-items: center; margin-top: var(--s-5); }
+/* Steps 2 to 5 carry three buttons. Under space-between that stranded `Back to
+   cart` alone in the middle of an 878px row, aligned to nothing. Retreats group
+   at the left, the single forward action holds the right edge. */
+.step-actions { display: flex; justify-content: flex-start; gap: var(--s-3); align-items: center; margin-top: var(--s-5); }
+.step-actions .button-primary { margin-left: auto; }
 .step-actions .button { min-width: 0; }
 
 .review-blocks { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
@@ -2956,13 +3024,17 @@ button:disabled {
 .tracker li:last-child::before { display: none; }
 .tracker li span { position: absolute; top: 3px; left: 0; width: 14px; height: 14px; background: var(--surface); border: 2px solid var(--line-strong); border-radius: 50%; }
 .tracker li.is-done { color: var(--ink); }
-.tracker li.is-done span { background: var(--success); border-color: var(--success); }
+.tracker li.is-done span { background: var(--slate); border-color: var(--slate); }
 .tracker li em { display: block; margin-top: 3px; color: var(--text-3); font: 400 12px/1.4 var(--mono); font-style: normal; }
 
 /* Confirmation-only. This was previously declared as .detail-grid, which
    collided with the global editorial .detail-grid (0.72fr 1.28fr) defined
    earlier and silently flattened it site-wide. */
-.confirmation-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+/* Five cards in two columns left the fifth alone in a half-width row with a dead
+   cell beside it. Three across, and the long resolution card takes the two
+   remaining tracks, so no row is left half-built. */
+.confirmation-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
+.confirmation-details .detail-card:last-child { grid-column: span 2; }
 .detail-card { padding: var(--s-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .detail-card h3 { margin: 0 0 8px; color: var(--text-2); font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
 .detail-card p { margin: 0; font-size: 13px; line-height: 1.65; }
@@ -2981,8 +3053,14 @@ button:disabled {
   .cart-row-image img { width: 84px; height: 95px; }
   .checkout-step { padding: var(--s-5) var(--s-4); }
   .confirmation-details { grid-template-columns: minmax(0, 1fr); }
-  .step-actions { flex-direction: column-reverse; align-items: stretch; }
-  .step-actions .button { width: 100%; text-align: center; }
+  .confirmation-details .detail-card:last-child { grid-column: auto; }
+  /* column-reverse produced three identical full-width stacked buttons, two of
+     them retreats, which is 150px of equal-weight exit routes under the one
+     action that matters. wrap-reverse floats the primary onto its own full-width
+     line above the two back paths, which share a row. */
+  .step-actions { flex-direction: row; flex-wrap: wrap-reverse; align-items: stretch; }
+  .step-actions .button { flex: 1 1 0; width: auto; text-align: center; }
+  .step-actions .button-primary { flex: 1 0 100%; margin-left: 0; }
   .stepper { gap: 8px; }
   .step { padding: 4px 12px 4px 4px; }
   .step-label { font-size: 11px; }
@@ -3021,7 +3099,7 @@ button:disabled {
     margin: 0; padding: var(--s-4); cursor: default;
   }
   .checkout-aside .summary-lines,
-  .checkout-aside .summary-rows { padding-inline: 18px; }
+  .checkout-aside .summary-rows { padding-inline: var(--s-4); }
   .checkout-aside .summary-total { padding: var(--s-4); }
   .checkout-aside .summary-note { padding: 0 var(--s-4) var(--s-4); margin-top: 0; }
 }
@@ -3941,3 +4019,616 @@ button:disabled {
 .remove-item,
 .drawer-close { position: relative; }
 .drawer-close { min-width: 44px; min-height: 44px; }
+
+
+/* ============================================================================
+   Cart page and cart drawer. Everything below was measured on rendered
+   1440x900 and 390x844 captures, not read off the source.
+   ========================================================================= */
+
+/* The suggestion grid inherited the catalog's four-track layout while the cart
+   only ever renders three entries, so the row stopped at x752 inside a column
+   whose progress bar, cart lines and actions all end at x988. Three tracks fill
+   the column. The buy row is bottom-set at the same time: "Growth Hormone
+   Research" wraps to a second line where the other two categories do not, and
+   the 32px reserve is 6px short of the wrapped height, which was pushing that
+   card's price and button off the baseline its neighbours share. */
+@media (min-width: 961px) {
+  .cart-cross-sell .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.cart-cross-sell .product-card { display: flex; flex-direction: column; }
+.cart-cross-sell .product-card-body { display: flex; flex-direction: column; flex: 1 1 auto; }
+.cart-cross-sell .product-buy-row { margin-top: auto; }
+
+/* Remove sat at x376 in a 928px row with 574px of nothing after it. It now
+   holds the same right rail as the line price directly above it, so the row is
+   read between two edges instead of trailing off into the middle. */
+.cart-row-controls .remove-item { margin-left: auto; }
+
+@media (max-width: 960px) {
+  /* Lot and reported date are one string. At 390 it broke after the hyphen and
+     printed "2026-06-" over "24" with 39px of column still unused. */
+  .lot-line { white-space: nowrap; }
+
+  /* On a phone the summary, total and checkout button sat below 1,089px of
+     cross-sell. The left column is unwrapped so the aside can be ordered above
+     the suggestions and the suggestion becomes what it should be: the last
+     thing offered, after the buyer has been given the way out. Desktop is
+     untouched. */
+  .cart-layout { display: flex; flex-direction: column; align-items: stretch; }
+  .cart-main { display: contents; }
+  .cart-aside { order: 1; }
+  .cart-cross-sell { order: 2; margin-top: 0; }
+  .cart-actions { margin-top: 0; }
+}
+
+/* Drawer. The cross-sell reduced the dead region from 196px to 99px but left it
+   stranded between two hairlines, which looks like a section that failed to
+   render. The scroll body becomes a column so the suggestion block can be set
+   against the footer as a tinted full-bleed band: the residual white now sits
+   between the cart lines and a deliberate band rather than below everything. */
+.cart-items { display: flex; flex-direction: column; }
+.cart-empty { flex: 1 1 auto; }
+.cart-item:last-of-type { border-bottom: 0; }
+.drawer-cross {
+  margin: auto calc(var(--s-5) * -1) calc(var(--s-4) * -1);
+  padding: var(--s-4) var(--s-5) var(--s-5);
+  background: var(--bg);
+}
+
+/* "Add · $100" was 88px and "Add · $68" was 83px, right-aligned, so the two
+   left edges disagreed by 5px in a stack the eye reads as a column. A fixed
+   terminal track on the scale gives both one width and one pair of edges. */
+.drawer-cross-row { grid-template-columns: 44px minmax(0, 1fr) var(--s-9); }
+
+/* Unit price in the drawer line, so the quantity and the line total reconcile
+   on screen and Remove is no longer 184px of white away from the stepper. Same
+   information the cart page already shows for the same item. */
+.cart-item-unit {
+  color: var(--text-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* The browser-storage note was flush against the bottom edge of View cart:
+   measured button bottom 807, note top 807. */
+.cart-footer .cart-terminus { margin-top: var(--s-4); }
+
+
+/* ============================================================================
+   Catalog grid composition, anchored to what the rendered page does at
+   1440x900 rather than to what the markup implies.
+   ========================================================================= */
+
+/* Card footers align across a row. The buy row previously sat wherever the
+   title happened to stop, so CJC-1295 + Ipamorelin, the one two-line name in
+   row two, dropped its Add to cart button 20px below its three neighbours. */
+.product-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.product-card-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+/* The hairline testing block is the card's terminal zone. Pinning it to the
+   bottom aligns both it and the buy row across every card in the row. */
+.product-card .testing-micro {
+  margin-top: auto;
+}
+
+@media (min-width: 641px) {
+  /* One price column for every card. `auto` sized it to the digits, so $100
+     and $90 put their buttons on two different left edges in the same row. */
+  .product-buy-row {
+    grid-template-columns: var(--s-7) 1fr;
+  }
+}
+
+/* The count is a line-height:1 span stretched to the flex line, so it painted
+   from the top of that box and read as a superscript beside its label. */
+.filter-button {
+  align-items: baseline;
+}
+
+/* Amber was the only warm chip on a cool page and read as the brand gold,
+   which is product material and can never carry a badge. Low stock is a
+   status, so it takes the status colour. */
+.stock-badge.is-low {
+  color: var(--cobalt);
+  background: var(--cobalt-tint);
+}
+
+
+/* .section-head is set to display:block under 640px, then a later unscoped
+   .section-head re-declares display:flex and wins on order, so on a 390px
+   phone the closing head on the catalog and the related-products head on every
+   PDP stay two-column: the h2 renders in an 87px track and stacks to five
+   lines beside its own paragraph. */
+@media (max-width: 640px) {
+  .section-head {
+    display: block;
+    margin-bottom: var(--s-4);
+  }
+}
+
+
+/* The four cue tiles were the only centred text in a buy column where the
+   eyebrow, title, code, price, strength row, bullets and note all start on the
+   same left edge. */
+.buybox-cue {
+  text-align: left;
+}
+
+/* Strength is a stated fact, not the label of the quantity stepper sitting
+   directly beneath it. The hairline closes the spec pair before the controls
+   open. */
+.selection-label {
+  padding-bottom: var(--s-3);
+  margin-bottom: var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+
+/* A not-offered entry has no buy control, so without this the buy column ends
+   on a grey notice butted against the grey cue grid and the visitor has
+   nowhere to go from the page. White on grey also breaks the two greys apart. */
+.pdp-alt-action {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  margin-top: var(--s-4);
+}
+
+
+@media (min-width: 641px) {
+  /* Both tables now share one label column, so the spec value column and the
+     analytical method column start at the same x. Each row is its own grid, so
+     the trailing `auto` pill track resized the two tracks in front of it per
+     row: the four method strings landed on four different left edges, measured
+     at 929, 935, 962 and 983 on BPC-157 at 1440. */
+  .spec-row {
+    grid-template-columns: 224px minmax(0, 1fr);
+  }
+
+  .testing-row {
+    grid-template-columns: 224px minmax(0, 1fr) 224px;
+  }
+
+  .testing-row .status-pill {
+    justify-self: end;
+  }
+}
+
+
+/* Ten rows of 12px type stretched across the full 1320px shell: the name column
+   measured 644px for ~200px of text and the lot column 515px for ~250px, so each
+   row carried roughly 700px of dead space and the section caption was flush to a
+   right edge it shared with nothing. The catalog status list is a document, so it
+   takes the document column and the caption sits under the heading it belongs to. */
+.testing-catalog {
+  width: min(780px, var(--shell));
+}
+
+.testing-catalog .section-head {
+  display: block;
+}
+
+.testing-catalog .section-head p {
+  max-width: none;
+  margin-top: var(--s-2);
+}
+
+/* An accordion column runs 995px while its heading rail holds 64px of content,
+   which leaves a 458x930 empty rectangle beside the questions on the FAQ page and
+   strands the heading at the top. The rail travels with the list instead. Scoped
+   above 960 because .detail-grid is a single column below it. */
+@media (min-width: 961px) {
+  .detail-grid:has(.accordion) > :first-child {
+    position: sticky;
+    top: 132px;
+    align-self: start;
+  }
+}
+
+/* Two identical white buttons on the cobalt panel stated no order. The catalog
+   stays filled; the testing link becomes an outline of the same size. */
+.newsletter .hero-actions .button-secondary:last-child {
+  color: var(--on-dark);
+  background: transparent;
+  border-color: var(--on-dark);
+}
+
+.newsletter .hero-actions .button-secondary:last-child:hover {
+  color: var(--cobalt);
+  background: var(--surface);
+  border-color: var(--surface);
+}
+
+
+/* Confirmation tracker. As a bare vertical list it was the only unboxed element
+   on the page, sat directly on the grey background, and stranded roughly 700px
+   of empty space to its right above the detail cards. Horizontal inside a card
+   at desktop width: it uses the row it is given and the four states read as one
+   sequence rather than a list. */
+@media (min-width: 961px) {
+  .tracker {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    column-gap: var(--s-4);
+    padding: var(--s-5);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+  }
+  .tracker li { padding: var(--s-5) 0 0; }
+  .tracker li::before { top: 6px; right: calc(var(--s-4) * -1); bottom: auto; left: 18px; width: auto; height: 2px; }
+  .tracker li span { top: 0; left: 0; }
+}
+
+
+/* The discount disclosure sits flush against the summary card (measured gap: 0 at
+   390, 800 and 1440), so the right rail showed two 1px borders meeting and two
+   sets of rounded corners pinching against each other. One object, one outline. */
+.checkout-aside .order-summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.checkout-aside .promo-disclosure { margin-top: -1px; border-top-left-radius: 0; border-top-right-radius: 0; }
+
+
+/* ===========================================================================
+   FABLE 5 — homepage, 1440 and 390.
+   Three unscoped rules at the tail of this file (.hero-grid, .newsletter,
+   .section-head) were declared after the responsive blocks, so they won at
+   every width and the phone got the desktop layout squeezed. .hero-grid
+   computed to "0px 480px" at 390: the copy column was literally zero wide,
+   the photograph sat on top of the paragraph, and the document scrolled 508px
+   inside a 375px viewport. The rules below restate the intended responsive
+   behaviour at higher specificity, so a later unscoped rule cannot silently
+   undo the phone layout again.
+   ======================================================================== */
+@media (max-width: 960px) {
+  .home-hero .hero-grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: var(--s-6) var(--s-5);
+  }
+  .section-tight > .newsletter {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-5);
+  }
+}
+
+@media (max-width: 640px) {
+  .shell > .section-head {
+    display: block;
+  }
+  .shell > .section-head > p,
+  .shell > .section-head > .text-link {
+    margin-top: var(--s-3);
+  }
+  .section-tight .newsletter-form input {
+    width: 100%;
+  }
+}
+
+
+/* The headline broke as "Peptides, without the / mystery.", a 265px orphan
+   under a 625px line, with the article left dangling. Balanced wrapping only,
+   no scale change. */
+.hero-copy h1 {
+  text-wrap: balance;
+}
+
+
+/* The trust strip was the only band on the page that ignored the shell: full
+   bleed 0 to 1425 with its labels centred in quarter-viewport cells, so
+   nothing in it lined up with the hero, the catalog or the footer. The band
+   stays full width; its content now sits on the same four columns as the
+   cards below and reads left like every other line of type. The four cobalt
+   dots were decoration in a colour this system reserves for interactive and
+   status, and the vertical rules were dividing cells that no longer exist. */
+.trust-strip {
+  padding-inline: calc((100% - var(--shell)) / 2);
+  column-gap: var(--s-5);
+}
+.trust-item {
+  justify-content: flex-start;
+  padding-inline: 0;
+  border-right: 0;
+  text-align: left;
+}
+.trust-dot {
+  display: none;
+}
+
+
+/* Catalog card hierarchy. The buy row was "auto 1fr" with a full-width button,
+   so a 38px price sat beside a 228px cobalt slab and the four cards drew one
+   continuous blue bar across the band. The price, which is what a shopper
+   actually compares, takes the free space; the button sizes to its label.
+   Mobile keeps the full-width tap target. */
+@media (min-width: 641px) {
+  .product-card .product-buy-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .product-card .add-button {
+    width: auto;
+    padding-inline: var(--s-5);
+  }
+}
+.product-card .price {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+
+/* Every sellable card carried a green IN STOCK pill, so --success, which this
+   system reserves for reported and verified, meant nothing by the time the eye
+   reached the testing band. Availability goes quiet and keeps its own outline;
+   the category label stops competing with the two real links in the card. */
+.product-card .stock-badge.is-in {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.product-card .product-category {
+  color: var(--text-3);
+}
+
+
+/* The unavailable control read as an unfinished grey blob: text-3 on
+   surface-soft with a border-color but no border width to paint it, then
+   knocked to 0.55 by button:disabled. It is a normal catalog state, so it gets
+   a deliberate outlined treatment at readable contrast. Still disabled, still
+   non-interactive, still not sellable. */
+.add-button.is-unavailable,
+.pdp-add.is-unavailable {
+  color: var(--text-2);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  opacity: 1;
+}
+
+
+/* The hero proof card printed the measured purity, the measured content and
+   the unreported sterility in the same cobalt at the same weight, flattening
+   the one contrast this catalog is built on. Reported values hold; the
+   unreported row recedes, exactly as the testing band below it already does. */
+.hero-coa-row.is-unreported strong {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+
+/* The category band's standfirst floated at x=860, which is not a column edge,
+   not the centre and not the shell; space-between pushed it right and a 34em
+   measure stopped it 100px short of the grid. On the grid it starts at the
+   third card and ends flush with the fourth. */
+@media (min-width: 641px) {
+  .category-section-head {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-5);
+    align-items: end;
+  }
+  .category-section-head > p {
+    max-width: none;
+  }
+}
+
+
+/* The newsletter was a 1320px saturated cobalt slab: the loudest surface on
+   the page, louder than any Add to cart, spent on the lowest-value action, in
+   a colour reserved for interactive and status. Its copy was also the only
+   text on the page indented off the shell edge, 32px in from every other
+   heading. It becomes a quiet closing band under a rule, aligned to the page,
+   and the submit button carries the only cobalt in it. Two states inverted
+   with the surface: the success message was white on cobalt and the focus
+   ring was white, both of which would now be invisible. */
+.section-tight > .newsletter {
+  padding: var(--s-7) 0 0;
+  color: var(--ink);
+  background: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+.section-tight > .newsletter > div > h2 {
+  color: var(--ink);
+}
+.section-tight > .newsletter > div > p {
+  color: var(--text-2);
+}
+.section-tight .newsletter-form input {
+  border: 1px solid var(--line-strong);
+}
+.section-tight .newsletter-form button {
+  color: var(--on-dark);
+  background: var(--cobalt);
+}
+.section-tight .newsletter-form button:hover {
+  color: var(--on-dark);
+  background: var(--cobalt-deep);
+}
+.section-tight > .newsletter .newsletter-success {
+  color: var(--ink);
+}
+.section-tight > .newsletter :focus-visible {
+  outline-color: var(--cobalt);
+}
+@media (max-width: 640px) {
+  .section-tight > .newsletter {
+    padding: var(--s-6) 0 0;
+  }
+}
+
+
+/* The set card opened with 90px of empty white between the photograph and the
+   set name, because its "Catalog set" line is a flex container carrying a 42px
+   box around a 16px line. The label sits on the title it belongs to. */
+.bundle-body .product-category {
+  display: block;
+  min-height: 0;
+  margin-bottom: var(--s-2);
+}
+
+
+
+/* ===========================================================================
+   EDGE SURFACES — the bundle rail, the 404, and long-form pages at 390.
+   ======================================================================== */
+
+/* 1. The cobalt CTA band never collapsed on a phone. `.newsletter` and
+   `.newsletter-form input` are re-declared in the FABLE 5 block above, which
+   sits after the 960 and 640 media blocks and therefore wins on source order
+   at equal specificity. Measured at 390: the grid stayed two columns of 106px
+   and 164px, "Get the catalog brief." and "Ready to browse?" broke over three
+   lines, the paragraph ran two words wide for seven lines, and the email
+   placeholder clipped to "you@example.co". No new values: the original mobile
+   intent, restated after the rules that were overriding it. */
+@media (max-width: 960px) {
+  .newsletter {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .newsletter {
+    padding: var(--s-5);
+  }
+
+  .newsletter-form input {
+    width: 100%;
+  }
+}
+
+/* 2. Same dead override, second victim: `.section-head` is re-declared after
+   the 640 block that sets it to display:block, so every band head with a
+   supporting sentence stays a two-column flex on a phone and the heading is
+   crushed into a 45% column. */
+@media (max-width: 640px) {
+  .section-head {
+    display: block;
+    margin-bottom: var(--s-4);
+  }
+
+  .section-head p,
+  .section-head .text-link {
+    margin-top: var(--s-3);
+  }
+}
+
+/* 3. Three sets, one photograph. The rail shipped the same anonymous pair shot
+   on all three cards, so the largest element on every card carried nothing
+   that told the cards apart. Product cards already answer this by labelling
+   the vial; the set gets a label plate at the frame edge, where the contents
+   and the set code differ card to card. */
+.bundle-plate {
+  position: absolute;
+  right: var(--s-3);
+  bottom: var(--s-3);
+  left: var(--s-3);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font: 500 10px/1.3 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bundle-plate__format {
+  overflow: hidden;
+  color: var(--ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bundle-plate__code {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* 4. The unsellable set now carries the product page's stated reason instead of
+   a 308px grey slab under a full-weight price. Card density, not buy-box
+   density. The notice is taller than the 38px buy row and grid items stretch,
+   so the body becomes the flexible part and the terminal row pins to the card
+   floor: all three buy rows and the notice sit on one bottom edge instead of
+   leaving 90px of white under two buttons. */
+.bundle-restricted {
+  padding: var(--s-3) var(--s-4);
+}
+
+.bundle-restricted p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.bundle-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.bundle-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.bundle-footer,
+.bundle-restricted {
+  margin-top: auto;
+}
+
+/* 5. "Why sets exist": min-height 210 against 119px of content left 43px of
+   white under all three cards, and the heading column beside them held 55px of
+   content in a 210px box. The cards size to their text and the row closes up;
+   the column beside them carries the supporting line and the exit link. */
+.value-grid .value-card {
+  min-height: 0;
+}
+
+.detail-grid .detail-lede {
+  max-width: var(--measure);
+  margin: var(--s-4) 0 var(--s-5);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 6. The 404's category tiles are the recovery path, and at 390 they sat in a
+   940px horizontal scroller inside a 378px frame with no edge fade: tile two
+   was cut mid-word at the viewport edge and tiles three and four were
+   invisible. On a dead end all four destinations stay on screen. */
+@media (max-width: 640px) {
+  .recovery-rail .category-rail {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    overflow: visible;
+    margin-right: 0;
+    padding-right: 0;
+  }
+
+  .recovery-rail .category-tile {
+    min-width: 0;
+  }
+}
+
+/* 7. Long-form pages: the bullet lists sat at the browser default 40px indent
+   while every heading and paragraph around them started at 0. At 390 that is
+   11% of the column, and the eligibility and policy lists visibly wrapped
+   tighter than the prose they belong to. */
+.article-shell ul,
+.article-shell ol {
+  padding-left: var(--s-5);
+}
+
+
+/* The wordmark subtitle uses --text-2, which is correct on white but rendered at
+   2.99:1 inside the slate footer. Scoped to the on-dark token there. */
+.site-footer .wordmark-category { color: var(--on-dark-3); }
