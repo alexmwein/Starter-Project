@@ -951,6 +951,83 @@ body {
   font-style: normal;
 }
 
+.storefront-state-machine {
+  margin-top: 24px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
+}
+
+.storefront-state-machine > header {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.6fr) minmax(260px, 1fr) minmax(260px, 1.2fr);
+  gap: 24px;
+  align-items: start;
+  padding: 22px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.storefront-state-machine > header strong {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.storefront-state-machine > header p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.storefront-state-machine > div {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--hairline);
+}
+
+.storefront-state-machine article {
+  padding: 18px;
+  background: var(--paper);
+}
+
+.storefront-state-machine article b {
+  color: var(--accent);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.storefront-state-machine article strong,
+.storefront-state-machine article p,
+.storefront-state-machine article small {
+  display: block;
+}
+
+.storefront-state-machine article strong {
+  min-height: 58px;
+  margin-top: 18px;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.storefront-state-machine article p {
+  margin: 12px 0 0;
+  color: var(--ink);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.storefront-state-machine article small {
+  margin-top: 8px;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .presale-gates {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2262,6 +2339,15 @@ body {
     display: none;
   }
 
+  .storefront-state-machine > header {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .storefront-state-machine > div {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .schedule-grid-header,
   .schedule-row {
     grid-template-columns: 150px repeat(14, minmax(0, 1fr));
@@ -2431,6 +2517,14 @@ body {
   .daily-command,
   .evidence-legend > div {
     grid-template-columns: 1fr;
+  }
+
+  .storefront-state-machine > div {
+    grid-template-columns: 1fr;
+  }
+
+  .storefront-state-machine article strong {
+    min-height: 0;
   }
 
   .presale-flow > i {
