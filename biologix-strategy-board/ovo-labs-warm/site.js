@@ -100,7 +100,7 @@
     const { link = true } = options;
     const entries = lotTrace(slug);
     return entries.map((entry) => {
-      const label = `${entries.length > 1 ? `${escapeHtml(entry.name)} · ` : ""}Lot ${escapeHtml(entry.lot)} · reported ${escapeHtml(entry.date)}`;
+      const label = `${entries.length > 1 ? `${escapeHtml(entry.name)} · ` : ""}<span class="lot-nb">Lot ${escapeHtml(entry.lot)}</span> · <span class="lot-nb">reported ${escapeHtml(entry.date)}</span>`;
       return link
         ? `<a class="lot-line" href="${lotPath(entry.lot)}">${label}</a>`
         : `<span class="lot-line">${label}</span>`;
@@ -1585,26 +1585,28 @@
               ? `<p class="pdp-note" data-quantity-cap>Maximum ${ceiling} per order at current stock.</p>`
               : ""}
             <ul class="pdp-marks">
-              ${(availabilityFor(product.slug).restricted
-                ? [
-                    testingFor(product.slug) ? `${testingFor(product.slug).purity[1]} purity` : "Purity reported",
-                    "Third-party tested",
-                    "Lot record published",
-                  ]
-                : [
-                    testingFor(product.slug) ? `${testingFor(product.slug).purity[1]} purity` : "Purity reported",
-                    "Third-party tested",
-                    "Cold chain ready",
-                    "Free over " + money.format(FREE_SHIPPING_THRESHOLD),
-                  ]
-              ).map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
+              ${[
+                /* The restricted path returns above this list, so the old
+                   `restricted ? [...] : [...]` fork could never take its first
+                   branch: three marks were written for the not-offered entry and
+                   zero of them ever rendered. The dead branch is removed rather
+                   than left implying a state this list can reach. */
+                testingFor(product.slug) ? `${testingFor(product.slug).purity[1]} purity` : "Purity reported",
+                "Third-party tested",
+                "Cold chain ready",
+                "Free over " + money.format(FREE_SHIPPING_THRESHOLD),
+              ].map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
             </ul>`;
             })()}
+            <!-- All four tiles used to restate a string printed higher in this
+                 same buy box: the code duplicated .pdp-code, the strength
+                 duplicated the Strength row, and the testing tile duplicated the
+                 testing link word for word. Only availability and the report date
+                 are not already on screen, so only those two remain. The grid is
+                 repeat(2, 1fr) at both widths, so two tiles fill one clean row. -->
             <div class="buybox-cues">
-              <div class="buybox-cue"><strong>${escapeHtml(product.code)}</strong><span>Product code</span></div>
-              <div class="buybox-cue"><strong>${escapeHtml(product.strength)}</strong><span>Labeled amount</span></div>
-              <div class="buybox-cue"><strong>${testingFor(product.slug) ? "Identity, content, purity" : "No result"}</strong><span>${testingFor(product.slug) ? `Reported for lot ${escapeHtml(testingFor(product.slug).lot)}` : "Fields reported"}</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(availabilityFor(product.slug).label)}</strong><span>Availability</span></div>
+              <div class="buybox-cue"><strong>${testingFor(product.slug) ? `Lot ${escapeHtml(testingFor(product.slug).lot)}` : "No lot on file"}</strong><span>${testingFor(product.slug) ? `Reported ${escapeHtml(testingFor(product.slug).date)}` : "No result reported"}</span></div>
             </div>
             <p class="pdp-note">${availabilityFor(product.slug).restricted
               ? "Nothing on this page can be added to a cart."
@@ -2100,11 +2102,6 @@
             })()}
             ${freeShipBar}
             <div class="cart-rows">${rows}</div>
-            {/* Continue shopping and Clear cart belong to the lines, not to the
-               suggestion. Rendered after the cross-sell they landed at y1440,
-               680px below the last cart row, so Clear cart operated on rows two
-               screens above it. They close the cart block; the suggestion is
-               what comes after. */}
             <div class="cart-actions">
               <a class="button button-secondary button-small" href="${path("catalog.html")}">Continue shopping</a>
               <button class="remove-item" type="button" data-clear-cart>Clear cart</button>
@@ -2309,7 +2306,7 @@
                 <div class="field is-half">
                   <label for="cardNumber">Card number</label>
                   <input id="cardNumber" name="cardNumber" type="text" value="4242 4242 4242 4242" readonly aria-readonly="true">
-                  <p class="field-note">Placeholder value · input disabled</p>
+                  <p class="field-note">Placeholder value · not editable</p>
                 </div>
                 <div class="field is-quarter">
                   <label for="cardExpiry">Expiry</label>
@@ -2409,7 +2406,7 @@
                 return lots
                   .map(
                     (entry) =>
-                      `<span class="lot-line">${lots.length > 1 ? `${escapeHtml(entry.name)} · ` : ""}Lot ${escapeHtml(entry.lot)} · reported ${escapeHtml(entry.date || "")} · <a href="${lotPath(entry.lot)}">record</a></span>`,
+                      `<span class="lot-line">${lots.length > 1 ? `${escapeHtml(entry.name)} · ` : ""}<span class="lot-nb">Lot ${escapeHtml(entry.lot)}</span> · <span class="lot-nb">reported ${escapeHtml(entry.date || "")}</span> · <a href="${lotPath(entry.lot)}">record</a></span>`,
                   )
                   .join("");
               })()}
@@ -2767,16 +2764,30 @@
 
     if (cart.length === 0) {
       itemsRoot.innerHTML = `
-        <div class="cart-empty">
+        <div class="cart-empty is-compact">
           <div>
             <strong>Your cart is empty.</strong>
             <p>Browse the catalog to add a peptide or bundle.</p>
             <a class="button button-primary button-small" href="${path("catalog.html")}">Shop products</a>
           </div>
         </div>
+        <section class="drawer-cross" aria-labelledby="drawer-cross-title">
+          <h3 id="drawer-cross-title">Start with these</h3>
+          ${PRODUCTS.filter((entry) => availabilityFor(entry.slug).sellable).slice(0, 4).map((entry) => `
+            <div class="drawer-cross-row">
+              <img src="${path("assets/ovo-vial-front.webp")}" alt="" width="44" height="44">
+              <div>
+                <strong>${escapeHtml(entry.name)}</strong>
+                <span>${escapeHtml(entry.code)} · ${escapeHtml(entry.strength)}</span>
+              </div>
+              <button class="drawer-cross-add" type="button" data-add-product="${entry.slug}">
+                Add · ${money.format(entry.price)}
+              </button>
+            </div>`).join("")}
+        </section>
       `;
       footerRoot.innerHTML = `
-        <p class="cart-terminus">Nothing here is stocked or shippable. You can still walk the full checkout.</p>
+        <p class="cart-terminus">Cart is stored in this browser. Nothing here is stocked, shippable, or for sale.</p>
       `;
       return;
     }
@@ -2798,7 +2809,7 @@
                 <div class="mini-quantity" aria-label="Quantity for ${escapeHtml(item.name)}">
                   <button type="button" data-cart-quantity="${item.slug}" data-delta="-1" aria-label="Decrease ${escapeHtml(item.name)} quantity">−</button>
                   <span>${line.quantity}</span>
-                  <button type="button" data-cart-quantity="${item.slug}" data-delta="1" aria-label="Increase ${escapeHtml(item.name)} quantity">+</button>
+                  <button type="button" data-cart-quantity="${item.slug}" data-delta="1" aria-label="Increase ${escapeHtml(item.name)} quantity"${cartLineAtCap(line) ? " disabled" : ""}>+</button>
                 </div>
                 <span class="cart-item-unit">${money.format(item.price)} each</span>
                 <button class="remove-item" type="button" data-remove-product="${item.slug}">Remove</button>
@@ -2814,7 +2825,7 @@
       ${shippingProgress(breakdown)}
       <div class="cart-subtotal"><strong>Subtotal</strong><strong>${money.format(cartTotal())}</strong></div>
       <a class="button button-primary cart-checkout" href="${path("checkout.html")}">Checkout</a>
-      <a class="button button-secondary cart-view" href="${path("cart.html")}">View cart</a>
+      ${PAGE === "cart" ? "" : `<a class="button button-secondary cart-view" href="${path("cart.html")}">View cart</a>`}
       <p class="cart-terminus">Cart is stored in this browser. Checkout runs end to end but cannot take payment.</p>
     `;
   }
@@ -3401,7 +3412,11 @@
   }
 
   function bindPromoForm() {
-    if (PAGE !== "cart") return;
+    /* Two promo forms exist, one on the cart page and one in the checkout order
+       summary. This bailed unless PAGE was "cart" and then bound only the first
+       match, so the checkout Apply button was inert: a control that looks
+       interactive and does nothing. */
+    if (PAGE !== "cart" && PAGE !== "checkout") return;
     const form = document.querySelector("[data-promo-form]");
     if (!form) return;
 
@@ -3458,6 +3473,11 @@
       document.querySelectorAll("[data-step-indicator]").forEach((el, i) => {
         el.classList.toggle("is-current", i === idx);
         el.classList.toggle("is-done", i < idx);
+        /* A completed step is a place you can go back to, so its pill becomes a
+           live control. Everything at or ahead of the current step stays
+           disabled: you cannot skip validation by clicking the stepper. */
+        const jump = el.querySelector("[data-step-jump]");
+        if (jump) jump.disabled = i >= idx;
       });
     }
 
@@ -3491,7 +3511,10 @@
     const RULES = {
       contact: [
         ["email", (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v), "Enter a valid email address."],
-        ["phone", (v) => v.replace(/\D/g, "").length >= 10, "Enter a phone number with at least 10 digits."],
+        /* The label says optional and the input carries no required attribute,
+           so an empty value must pass. A value that is present is still
+           checked, because a half-typed number is worse than none. */
+        ["phone", (v) => v === "" || v.replace(/\D/g, "").length >= 10, "Enter a phone number with at least 10 digits, or leave it blank."],
       ],
       shipping: [
         ["firstName", (v) => v.length >= 1, "Enter a first name."],
@@ -3647,6 +3670,58 @@
       track("order_placed", { reference: order.reference, value: order.totals.total });
       window.location.href = path("order-confirmation.html");
     }
+
+    /* The aside's discount form had no handler on this page: bindPromoForm()
+       returns early unless PAGE === "cart", so Apply fell through to a native
+       GET, reloaded checkout.html?promo=... and dropped the shopper back on
+       step 1 with no code applied and no message. It is bound here, against the
+       same draft the summary already reads from, so nothing re-renders. */
+    const promoForm = document.querySelector("[data-promo-form]");
+    if (promoForm) {
+      promoForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = promoForm.querySelector("#promo-input");
+        const feedback = promoForm.querySelector("[data-promo-feedback]");
+        const code = (input.value || "").trim().toUpperCase();
+        const draft = readCheckoutDraft();
+        if (!code) {
+          delete draft.promo;
+          writeCheckoutDraft(draft);
+          feedback.textContent = "";
+          feedback.classList.remove("is-error");
+          refreshSummary();
+          return;
+        }
+        if (!PROMO_CODES[code]) {
+          feedback.textContent = `${code} is not a valid code.`;
+          feedback.classList.add("is-error");
+          return;
+        }
+        draft.promo = code;
+        writeCheckoutDraft(draft);
+        feedback.textContent = `Applied: ${PROMO_CODES[code].label}`;
+        feedback.classList.remove("is-error");
+        refreshSummary();
+        track("promo_applied", { code });
+      });
+    }
+
+    /* The stepper pills are buttons; paintStepper enables the completed ones.
+       They reuse the same show() the Review step's Edit links already prove is
+       safe to jump backwards with. */
+    const stepper = document.querySelector("[data-stepper]");
+    if (stepper) {
+      stepper.addEventListener("click", (event) => {
+        const jump = event.target.closest("[data-step-jump]");
+        if (jump && !jump.disabled) show(jump.getAttribute("data-step-jump"));
+      });
+    }
+
+    /* The locked card fields are readonly, not disabled, so they were live tab
+       stops on values that can never change. */
+    form.querySelectorAll("input[readonly]").forEach((el) => {
+      el.tabIndex = -1;
+    });
 
     show("contact");
     refreshSummary();

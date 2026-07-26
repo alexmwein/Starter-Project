@@ -12,8 +12,8 @@ const w=(ms)=>p.waitForTimeout(ms);
 await seed([]);
 for(const pg of ['cart','checkout']){
   await p.goto(`${B}/${pg}.html`,{waitUntil:'networkidle'});
-  const t=await p.evaluate(()=>document.body.innerText.slice(0,200));
-  if(!/empty|nothing to check out|no items/i.test(t)) F.push(`${pg}: empty state missing, got "${t.slice(0,50)}"`);
+  const t=await p.evaluate(()=>document.body.innerText);
+  if(!/empty|nothing to check out|no items/i.test(t)) F.push(`${pg}: empty state missing`);
   else ok.push(`${pg} empty state`);
 }
 

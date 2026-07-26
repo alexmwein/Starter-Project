@@ -1649,6 +1649,22 @@ button:disabled {
   appearance: textfield;
 }
 
+/* appearance:textfield no longer removes the native spin-button box in
+   Chromium, it only hides the arrows, so the field still reserves that box and
+   the centred value is pushed off its own track. At 1440 the digit sat 7.2px
+   left of the field centre; at 390 the field is 26px wide and the digit was
+   pushed out of the visible box entirely, so the stepper read as a bare "- +"
+   with no quantity between them. Removing the reserved box lets text-align
+   centre the value again. */
+.quantity-control input::-webkit-outer-spin-button,
+.quantity-control input::-webkit-inner-spin-button,
+.mini-quantity input::-webkit-outer-spin-button,
+.mini-quantity input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+          appearance: none;
+}
+
 .pdp-add {
   height: 48px;
   color: var(--on-dark);
@@ -3187,7 +3203,14 @@ button:disabled {
   font-size: 13px; line-height: 1.55;
 }
 .cart-blocked-notice strong { display: block; margin-bottom: 3px; }
-.checkout-cta.is-blocked { pointer-events: none; opacity: 0.45; }
+.checkout-cta.is-blocked {
+  pointer-events: none;
+  cursor: not-allowed;
+  color: var(--text-2);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  opacity: 1;
+}
 
 /* ============================================================================
    New components. Free-shipping progress, the restricted-compound notice, and
@@ -3448,7 +3471,12 @@ button:disabled {
   font: inherit;
   cursor: pointer;
 }
-.step-jump:disabled { cursor: default; }
+/* The five stepper items are disabled buttons, so button:disabled knocked the
+   whole progress indicator - current step included - to 0.55. The pending step
+   labels measured rgb(165,170,177) = 2.34:1 on their own white pill at 12px.
+   At full opacity the same pixel is --text-2 = 5.98:1. This is a progress
+   indicator, not a control to be read as unavailable. */
+.step-jump:disabled { cursor: default; opacity: 1; }
 .step-jump:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 3px; border-radius: var(--r-sm); }
 
 /* Who ran the analysis, and why one field is deliberately empty. These carry
@@ -4194,8 +4222,17 @@ button:disabled {
 /* A not-offered entry has no buy control, so without this the buy column ends
    on a grey notice butted against the grey cue grid and the visitor has
    nowhere to go from the page. White on grey also breaks the two greys apart. */
-.pdp-alt-action {
-  display: flex;
+/* Doubled class on purpose. The shared `.button { display: inline-grid;
+   place-items: center }` rule sits later in this file and won a
+   same-specificity tie, which made every child of this anchor its own grid row:
+   the trailing arrow dropped onto a second line and the label sat 12.7px above
+   the box centre in a 49px control. inline-flex keeps the label centred and the
+   arrow inline, and the extra class makes the result independent of rule order. */
+.pdp-alt-action.pdp-alt-action {
+  display: inline-flex;
+  gap: var(--s-2);
+  align-items: center;
+  justify-content: center;
   width: 100%;
   min-height: 48px;
   margin-top: var(--s-4);
@@ -4771,7 +4808,10 @@ strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
   .drawer-cross-add { min-height: 44px; }
   /* same reason as above: sizing the button past its grid cell breaks the box.
      Hit area comes from ::after, which is already 44px. */
-  .quantity-control button { min-width: 44px; min-height: 44px; }
+  /* .quantity-control is a 34px/1fr/34px grid at 48px tall. Sizing its buttons
+     to 44px made them wider than their own cells, the same defect that broke
+     .mini-quantity. Hit area comes from the ::after, which is already 44px. */
+  .quantity-control button { min-width: 0; min-height: 0; }
 }
 
 /* ============================================================================
@@ -5600,8 +5640,16 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
 
 
 /* Same class of defect anywhere a button is block-level and sized by min-height. */
+/* Block-level buttons still centre their label from min-height, but the grid
+   must flow in COLUMNS. With the inherited row flow, a button written as
+   `Label <span>arrow</span>` has two grid items and the arrow was laid out on a
+   second row: "Shop peptides" measured 49px tall against its own 46px
+   min-height, with the label at y+3 and the arrow at y+28.5. Column flow puts
+   them back on one line and restores the 46px box. Auto columns still stretch,
+   so single-label buttons wrap exactly as before. */
 .button, .checkout-cta, .add-button, .pdp-add, .drawer-cross-add {
   display: inline-grid;
+  grid-auto-flow: column;
   place-items: center;
 }
 .checkout-cta { display: grid; }
@@ -5642,3 +5690,244 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
    product name above it. */
 .testing-micro-lot { display: inline-flex; gap: var(--s-2); align-items: center; }
 .testing-micro-lot .i-check { flex: 0 0 auto; color: var(--success); }
+
+
+
+/* ===========================================================================
+   CHECKOUT INSPECTION FIXES
+   Everything here is either non-layout, scoped to .checkout-main, or inside its
+   own media query, so appending after the responsive blocks is safe at 390.
+   ======================================================================== */
+
+/* The global button:disabled knocks opacity to .55, and every .step-jump is
+   disabled markup, so the whole stepper — including the CURRENT step — painted
+   cobalt #005eb8 at 55% over white (~rgb(115,166,216)), a value outside the
+   locked palette, and the active step read as dead chrome. The computed-style
+   contrast probe could not see it because the declared colour never changed. */
+.step-jump:disabled { cursor: default; opacity: 1; }
+
+/* .checkout-step gave up its white card further up this file, which left
+   .review-block's var(--bg) fill identical to the page (both rgb(246,247,249))
+   with no border: 24px of padding buying nothing, four unboxed fragments, and
+   an Edit button stranded 880px from its heading. */
+.review-block {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+/* Same root cause on the inputs: var(--bg) fields on a var(--bg) page. Only the
+   editable ones are restored; readonly card fields keep --surface-soft.
+   background-color, not the background shorthand, or the select caret (drawn
+   with background-image gradients) is wiped. */
+.checkout-main .field input:not([readonly]),
+.checkout-main .field select { background-color: var(--surface); }
+
+/* The error <p> was emitted after the note <p>, so on Phone the red line landed
+   49.6px below its input behind two lines of mono and read as part of the note.
+   Label and input keep order 0; the error now precedes the note. */
+.checkout-main .field { display: flex; flex-direction: column; }
+.checkout-main .field-error { order: 1; }
+.checkout-main .field-note { order: 2; }
+
+/* Locked placeholders sized for data they can never take: 456px holding 162px
+   of card number, 220px holding three bullets. max-width only shrinks, so this
+   cannot overflow at any width. */
+.checkout-main #cardNumber { max-width: 24ch; }
+.checkout-main #cardExpiry,
+.checkout-main #cardCvc { max-width: 12ch; }
+
+/* Lot segments are unbreakable units, so the line wraps between them instead of
+   inside the reported date, and no longer needs to be nowrap to stay readable. */
+.summary-line .lot-line .lot-nb { white-space: nowrap; }
+
+/* Delivery method name and its price sat 762px apart across a 928px card. */
+@media (min-width: 961px) {
+  .choice-body { max-width: var(--measure); }
+}
+
+/* The 640px rule made the whole lot line unbreakable, which overflowed the
+   receipt card by 61px and clipped the record link. The segments above carry
+   that job now, so the line itself may wrap again. */
+@media (max-width: 640px) {
+  .summary-line .lot-line { white-space: normal; }
+}
+
+
+/* ============================================================================
+   Cart drawer + cart page. Every number below was read off rendered 1440x900
+   and 390x844 captures, not off the source.
+   ========================================================================= */
+
+/* renderCart() sets .cart-count[hidden], but the class's own display:grid
+   outranks the UA [hidden] rule, so an empty cart shipped an 18x18 cobalt badge
+   reading "0" in the header at both widths. */
+.cart-count[hidden] { display: none; }
+
+/* .checkout-cta.is-blocked used opacity:0.45, which composites the cobalt fill
+   to rgb(140,183,223) under its white 13px/650 label: 2.12:1. Contrast tooling
+   reads background-color (6.30:1) and never sees the composite, which is why
+   this passed 30 combos. Explicit tokens instead, and the pointer says no. */
+.checkout-cta.is-blocked {
+  opacity: 1;
+  color: var(--on-dark);
+  background: var(--text-2);
+  cursor: not-allowed;
+}
+
+/* Empty drawer: the footer holds nothing but the note, and the 16px top margin
+   written to clear View cart became stray padding, 41px above the note against
+   24px below it. */
+.cart-footer > .cart-terminus:first-child { margin-top: 0; }
+
+/* One line in the drawer at 1440: the last suggestion row ends at y503 and the
+   tinted band at y590.5, so 63.5px of tint sat empty after the band's own 24px
+   of padding. The band must keep flex:1 or a white gap opens above the pinned
+   footer, so the rows absorb the slack instead of one dead pocket doing it.
+   Component-scoped, not width-scoped: at 390 the same slack is 7.5px and the
+   rows grow 60px to 75.4px instead of 60px to 89.4px. */
+.drawer-cross { display: flex; flex-direction: column; }
+.drawer-cross-row { flex: 1 1 auto; }
+
+/* Four lines at 1440: .cart-items scrollHeight 622 against clientHeight 521,
+   and the cross-sell heading's text box (y584 to y597) is cut by the scroll
+   edge at y590.5 with nothing saying the region continues, so a hairline plus
+   a half-glyph reads as a section that failed to render. The fade is drawn only
+   when there are cart lines, so the empty drawer keeps its clean edge. */
+.cart-drawer .cart-footer { position: relative; }
+.cart-drawer .cart-items:has(.cart-item) + .cart-footer::before {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 20px;
+  content: "";
+  background: linear-gradient(rgba(12, 24, 38, 0), rgba(12, 24, 38, 0.09));
+  pointer-events: none;
+}
+
+/* Cart page closing actions at 1440. In a 928px space-between row Continue
+   shopping (144.6x38) sat at x60 and Clear cart (46.5x15, 10px underlined) at
+   x941.5, 736.9px apart, and Clear cart, which empties the whole cart, wore the
+   exact .remove-item treatment each line's own Remove wears. Pair them and give
+   the destructive one its own weight. Wrapped in its own min-width query: the
+   narrow layout already renders this row at 12px/44px and is untouched. */
+@media (min-width: 961px) {
+  .cart-actions { justify-content: flex-start; gap: var(--s-5); }
+  .cart-actions .remove-item { font-size: 12px; }
+}
+
+/* 390 cart page: .cart-row-image is a block link stretched by its grid row to
+   84x157.3 around an 84x95 thumbnail, so 62.3px of the link, 40% of it, was
+   invisible clickable area under the image. Own max-width query. */
+@media (max-width: 960px) {
+  .cart-row-image { align-self: start; }
+}
+
+
+
+/* ============================================================================
+   Control states. Everything below is a state, a colour or a single scoped
+   component rule - nothing here changes page layout at any width.
+   ========================================================================= */
+
+/* Selected and hovered filters resolved to the identical computed value
+   (rgb(0,94,184), weight 400, transparent background on both), so hovering any
+   category made two rows read as selected at once. Selection now carries
+   weight; hover moves to --ink instead of borrowing the selection colour. */
+.filter-button[aria-pressed="true"] { color: var(--cobalt); font-weight: 650; }
+.filter-button:hover:not([aria-pressed="true"]) { color: var(--ink); }
+
+/* The card link is a stretched flex item: a 115px label in a 379px box, so its
+   focus ring drew a 385px rectangle with 264px of empty space inside it. */
+.education-card > .text-link { align-self: flex-start; }
+
+/* .empty-state is the full-width catalog empty state and carries 64px of block
+   padding. Reused inside the 320px suggestion popover it produced a 254px panel
+   holding 82.5px of text - 67.5% padding. */
+.search-results .empty-state { padding: var(--s-5) var(--s-4); }
+
+/* The Cmd-K hint is meaningless once the field holds a query, and it sat 11px
+   from the browser's own search-clear control. The clear control keeps working. */
+.search-input:not(:placeholder-shown) ~ .search-shortcut { display: none; }
+
+/* Stepper glyphs and the quantity input inherited the user-agent buttontext
+   black (#000000, off-palette) while the value beside them is --ink #101317. */
+.mini-quantity button,
+.quantity-control button,
+.quantity-control input { color: var(--ink); }
+
+/* .field input:focus sets outline:none and substitutes a 2px --cobalt-tint
+   ring that measures 1.14:1 against the white field. On a field in the error
+   state the border stays --danger, so that invisible ring is the only focus
+   signal there is. Restore the ring the rest of the site already uses. */
+.field input:focus-visible,
+.field select:focus-visible,
+.promo-input-row input:focus-visible,
+.collection-search:focus-visible,
+.search-input:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
+}
+
+/* The stylesheet contained zero :active rules across 5,600 lines. Buttons lift
+   1px on hover and then acknowledge the press with nothing at all. */
+.button:active,
+.add-button:active,
+.pdp-add:active,
+.drawer-cross-add:active,
+.checkout-cta:active,
+.icon-button:active { transform: translateY(1px); }
+
+
+
+/* ============================================================================
+   States you only reach by interacting. Each rule below was measured broken
+   before it was written; the layout rules are inside their own media query so
+   they land after the responsive blocks without touching desktop.
+   ========================================================================= */
+
+/* The header search reused the page-scale .empty-state, so the no-match panel
+   rendered 320x254 with only 120px of copy inside 128px of padding: taller than
+   the 320x155 two-result panel it replaces, centred against left-aligned rows,
+   and drawing a second border 1px inside the dropdown's own. */
+.search-results .empty-state {
+  padding: var(--s-4h) var(--s-4);
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+}
+
+/* An empty cart stretched .cart-empty across the full 673px scroll region for
+   122px of content (81.8% blank). With suggestions rendered underneath it, the
+   region sizes to its content instead of centring in a void. */
+.cart-items:has(.cart-empty) { align-content: start; }
+.cart-empty.is-compact { min-height: 0; padding-block: var(--s-6); }
+
+/* Two .field.is-half cells stretch to equal height, so the field carrying a
+   note pushed its error 41.6px below its neighbour's and put two lines of mono
+   copy between the input and its own error. Error sits under the control it
+   describes; the note follows it. */
+.field { display: flex; flex-direction: column; }
+.field > .field-error { order: 1; }
+.field > .field-note { order: 2; }
+
+@media (max-width: 640px) {
+  /* min-height:44px with margin-block:-12px put 49px menu rows on a 29px pitch:
+     each row overlapped the next by 20px, each row's bottom divider was drawn
+     inside the row below it, the last row hung 12px outside .mobile-nav, and
+     the bottom 41% of every row hit-tested to the next link. These rows already
+     clear 44px from their own padding, so they need no help. */
+  .mobile-nav a { min-height: 0; margin-block: 0; }
+
+  /* Same rule against 18px footer links: 44px boxes on a 32px pitch overlapped
+     by 12px, so the bottom of each link tapped the one beneath it. Keeping the
+     44px target and dropping the negative margin gives a clean 44px pitch. */
+  .footer-column a { margin-block: 0; }
+
+  /* The simulated printed label is sized to 95% of the 96px card thumbnail at
+     this width, so the catalog code ran off the vial onto the countertop and
+     the name truncated mid-word. It is aria-hidden decoration and the card body
+     states name, strength and code 8px to its right. */
+  .product-grid > .product-card .product-image-label { display: none; }
+}
