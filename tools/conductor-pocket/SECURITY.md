@@ -17,8 +17,8 @@ Pocket. They remain inside the processes and profiles Conductor already owns.
 - Alex's logged-in macOS account and its local files.
 - The installed Conductor application.
 - The loopback interface.
-- The authenticated Tailscale Serve proxy after its identity header is
-  matched to the paired identity.
+- The dedicated Pocket Tailscale node and Serve proxy after its identity
+  header is matched to the paired identity.
 - The iPhone platform authenticator after WebAuthn user verification.
 
 ### Not trusted
@@ -38,8 +38,28 @@ Pocket. They remain inside the processes and profiles Conductor already owns.
 The HTTP server refuses non-loopback binds in config validation. It validates
 the Host header and accepts only the configured tailnet host or explicit
 loopback development hosts. Tailscale Serve strips spoofed identity headers
-before adding authenticated values. The installer refuses all nonempty
-Funnel configurations and will not replace an existing Serve configuration.
+before adding authenticated values.
+
+Pocket runs a second, user-mode Tailscale node with a separate node key, IP,
+MagicDNS name, certificate, state directory, Unix socket, and Serve
+configuration. The normal Mac node is never addressed by the formula CLI, and
+every sidecar CLI command carries the explicit private socket. The sidecar
+uses userspace networking, accepts neither routes nor DNS, advertises no exit
+node or subnet, and exposes exactly one tailnet-only HTTPS root proxy to the
+loopback relay. The loaded LaunchAgent arguments and Unix-socket owner must
+match the audited daemon profile; DNS, route, SSH, web-client, connector, and
+advertising preferences fail closed. Funnel and extra handlers fail
+validation.
+
+The one-time sidecar authorization URL is read back from that audited private
+socket, accepted only when it is the canonical
+`https://login.tailscale.com/a/…` shape, and never persisted by Pocket. It is
+opened directly with macOS rather than written to command output unless the
+operator explicitly requests `--print-url`. The short-lived CLI helper has
+both an internal Tailscale timeout and bounded process cleanup, and Pocket
+proves the daemon retained the same request after terminating it. Browser
+approval therefore does not depend on a terminal or agent session remaining
+alive.
 
 ### Authentication
 
@@ -79,9 +99,8 @@ A send uses macOS Accessibility to:
 2. select the database-resolved session title and duplicate ordinal;
 3. refuse a differing Mac draft;
 4. set the real composer value;
-5. identify the rightmost enabled Send control inside that composer group;
-6. press it;
-7. report delivery only after the composer clears.
+5. focus that exact composer and invoke Conductor's documented Return submit;
+6. report delivery only after the composer clears.
 
 If any check fails, the phone sees a specific failure code and the message
 remains available for explicit retry. Reconnect never auto-sends a draft.
@@ -93,11 +112,19 @@ Framing, object embedding, referrers, camera, microphone, location, payment,
 USB, and serial access are disabled. The UI builds transcript nodes with
 `textContent`; transcript Markdown is never injected as HTML.
 
-The service worker caches only the app shell and explicitly excludes `/api/`.
+The service worker handles only an allowlist of Pocket shell paths, deletes
+only `conductor-pocket-shell-*` caches, and never intercepts sibling routes or
+`/api/`.
 Device-local transcript snapshots are bounded and are not rendered until
-after Face ID unlock. Revocation instructs the connected client to purge
-them; a device that never reconnects remains protected by iOS Data
-Protection and the app's Face ID gate.
+after Face ID unlock. During an origin migration, the server records the
+original device set, disables remote revocation, and accepts only a
+version-matched self-sign-out. The phone first writes a persistent origin
+tombstone, prevents every Pocket context from reopening its cache, verifies
+through the service worker that no other browser window remains, and deletes
+Pocket's localStorage keys, IndexedDB, Cache Storage, and root service worker.
+Blocked deletion fails visibly and keeps the device enrolled. Only then does
+the client send its retirement receipt. A device that never reconnects remains
+protected by iOS Data Protection and the app's Face ID gate.
 
 ## Residual risks
 
@@ -106,6 +133,11 @@ Protection and the app's Face ID gate.
   the Mac user account.
 - macOS Accessibility permission is broad. The relay's Node executable must
   be trusted and should not be replaced by an untrusted binary.
+- The dedicated Tailscale state contains a node private key. Its directory is
+  `0700`, files are `0600`, and FileVault remains the at-rest protection.
+- Tailscale HTTPS certificate names can appear in public certificate
+  transparency logs. The hostname reveals the service label, not its content
+  or access.
 - UI automation depends on Conductor's accessible structure. Version changes
   fail closed: a missing workspace, session, composer, or enabled Send
   control produces an error rather than a guessed click.
@@ -116,4 +148,5 @@ Protection and the app's Face ID gate.
   unauthenticated app shell and pairing endpoint, but cannot pair without the
   high-entropy one-time link and matching identity.
 - Device-local browser storage cannot be remotely erased while the iPhone is
-  permanently offline. Revoke plus iOS device security is the recovery path.
+  permanently offline. iOS device security is the recovery boundary until
+  that phone reconnects and completes its own retirement purge.

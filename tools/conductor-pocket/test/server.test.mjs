@@ -3,7 +3,10 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
 import { createConfig } from '../src/config.mjs';
-import { createPocketServer } from '../src/server.mjs';
+import {
+  createPocketServer,
+  waitForExactUserMessage,
+} from '../src/server.mjs';
 
 function createWatcher() {
   return {
@@ -80,6 +83,79 @@ function get(port, { pathname = '/', host = '127.0.0.1:4317', method = 'GET' } =
   });
 }
 
+function postMessage(port, { idempotencyKey, message = 'Test message' }) {
+  const body = JSON.stringify({ message });
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/sessions/test-session/messages',
+        method: 'POST',
+        headers: {
+          Host: '127.0.0.1:4317',
+          Origin: 'http://127.0.0.1:4317',
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Idempotency-Key': idempotencyKey,
+          'X-CSRF-Token': 'test-csrf',
+        },
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    request.end(body);
+  });
+}
+
+function postDeliveryStatus(
+  port,
+  {
+    idempotencyKey,
+    sessionId = 'test-session',
+    deviceId = 'test-device',
+  },
+) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: `/api/sessions/${encodeURIComponent(sessionId)}/delivery-status`,
+        method: 'POST',
+        headers: {
+          Host: '127.0.0.1:4317',
+          Origin: 'http://127.0.0.1:4317',
+          'Idempotency-Key': idempotencyKey,
+          'X-CSRF-Token': 'test-csrf',
+          'X-Test-Device': deviceId,
+        },
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 test('static shell is hardened, host-checked, and development HTTP is not upgraded', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -115,6 +191,14 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
   const health = await get(port, { pathname: '/api/health' });
   assert.equal(health.status, 200);
   assert.equal(health.headers['cache-control'], 'no-store, max-age=0');
+  assert.match(
+    JSON.parse(health.body).configRevision,
+    /^[A-Za-z0-9_-]{43}$/,
+  );
+
+  const applicationScript = await get(port, { pathname: '/app.js' });
+  assert.equal(applicationScript.status, 200);
+  assert.equal(applicationScript.headers['cache-control'], 'no-cache');
 });
 
 test('production shell emits HTTPS upgrade and HSTS', async (context) => {
@@ -146,16 +230,481 @@ test('connection probe reports the real relay version', async (context) => {
   const response = await get(port, { pathname: '/api/connection' });
   assert.equal(response.status, 200);
   const connection = JSON.parse(response.body);
-  assert.equal(connection.relayVersion, '0.1.0');
+  assert.equal(connection.relayVersion, '0.2.0');
   assert.equal(connection.conductor, true);
   assert.equal(connection.sendPath, true);
 });
 
-test('service worker explicitly bypasses every API request', async () => {
+test('a pre-send failure can retry without weakening ambiguous-send idempotency', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let retryableSends = 0;
+  let ambiguousSends = 0;
+  let mappedPermissionFailures = 0;
+  let rejectedSends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      findExactUserMessageAfter() {
+        throw new Error('Confirmation database unavailable');
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send({ message }) {
+        if (message === 'Mapped permission failure') {
+          mappedPermissionFailures += 1;
+          return mappedPermissionFailures === 1
+            ? { ok: false, code: 'accessibility_disabled' }
+            : { ok: true, code: 'sent' };
+        }
+        if (message === 'Rejected send') {
+          rejectedSends += 1;
+          throw new Error('transport failed');
+        }
+        if (message === 'Ambiguous send') {
+          ambiguousSends += 1;
+          return ambiguousSends === 1
+            ? { ok: false, code: 'send_not_confirmed' }
+            : { ok: true, code: 'sent' };
+        }
+        retryableSends += 1;
+        return retryableSends === 1
+          ? {
+              ok: false,
+              code: 'accessibility_disabled',
+              safeToRetry: true,
+            }
+          : { ok: true, code: 'sent' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'retryable_failure_key',
+  });
+  const retry = await postMessage(port, {
+    idempotencyKey: 'retryable_failure_key',
+  });
+
+  assert.equal(first.status, 503);
+  assert.equal(retry.status, 200);
+  assert.equal(retryableSends, 2);
+  assert.equal(JSON.parse(first.body).error.retrySafe, true);
+
+  const mappedPermissionFailure = await postMessage(port, {
+    idempotencyKey: 'mapped_permission_failure_key',
+    message: 'Mapped permission failure',
+  });
+  const mappedPermissionRetry = await postMessage(port, {
+    idempotencyKey: 'mapped_permission_failure_key',
+    message: 'Mapped permission failure',
+  });
+
+  assert.equal(mappedPermissionFailure.status, 503);
+  assert.equal(mappedPermissionRetry.status, 503);
+  assert.equal(mappedPermissionFailures, 1);
+  assert.equal(
+    JSON.parse(mappedPermissionFailure.body).error.retrySafe,
+    false,
+  );
+
+  const ambiguous = await postMessage(port, {
+    idempotencyKey: 'ambiguous_failure_key',
+    message: 'Ambiguous send',
+  });
+  const ambiguousRetry = await postMessage(port, {
+    idempotencyKey: 'ambiguous_failure_key',
+    message: 'Ambiguous send',
+  });
+
+  assert.equal(ambiguous.status, 502);
+  assert.equal(ambiguousRetry.status, 502);
+  assert.equal(ambiguousSends, 1);
+  assert.equal(JSON.parse(ambiguous.body).error.retrySafe, false);
+
+  const rejected = await postMessage(port, {
+    idempotencyKey: 'rejected_send_key',
+    message: 'Rejected send',
+  });
+  const rejectedRetry = await postMessage(port, {
+    idempotencyKey: 'rejected_send_key',
+    message: 'Rejected send',
+  });
+
+  assert.equal(rejected.status, 500);
+  assert.equal(rejectedRetry.status, 500);
+  assert.equal(rejectedSends, 1);
+});
+
+test('an ambiguous UI result is confirmed by the exact new Conductor row', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+  const observed = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session(request) {
+        return {
+          device: {
+            id: request.headers['x-test-device'] || 'test-device',
+          },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute(sessionId) {
+        return {
+          id: sessionId,
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor(sessionId) {
+        observed.push(['cursor', sessionId]);
+        return 41;
+      },
+      listUserMessagesAfter(sessionId, afterRowId) {
+        const exactContent = 'Line one\nLine two';
+        observed.push(['match', sessionId, afterRowId, exactContent]);
+        return [
+          {
+            id: 'user-row-42',
+            rowId: 42,
+            kind: 'user',
+            text: exactContent,
+            createdAt: new Date(pressedAt + 100).toISOString(),
+            sentAt: null,
+            cancelledAt: null,
+            queued: true,
+          },
+        ];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send({ message }) {
+        sends += 1;
+        observed.push(['send', message]);
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const sent = await postMessage(port, {
+    idempotencyKey: 'database_confirmed_key',
+    message: 'Line one\r\nLine two',
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'database_confirmed_key',
+    message: 'Line one\r\nLine two',
+  });
+
+  assert.equal(sent.status, 200);
+  assert.equal(repeated.status, 200);
+  assert.equal(sends, 1);
+  const receipt = JSON.parse(sent.body);
+  assert.equal(receipt.delivery, 'delivered');
+  assert.equal(receipt.confirmation, 'database');
+  assert.equal(receipt.baselineCursor, 41);
+  assert.equal(receipt.rowId, 42);
+  assert.deepEqual(observed.slice(0, 3), [
+    ['cursor', 'test-session'],
+    ['send', 'Line one\nLine two'],
+    ['match', 'test-session', 41, 'Line one\nLine two'],
+  ]);
+
+  const status = await postDeliveryStatus(port, {
+    idempotencyKey: 'database_confirmed_key',
+  });
+  assert.equal(status.status, 200);
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'delivered',
+    deliveredAt: receipt.deliveredAt,
+    baselineCursor: 41,
+    messageId: 'user-row-42',
+    rowId: 42,
+  });
+  assert.equal(status.body.includes('Line one'), false);
+
+  const wrongSession = await postDeliveryStatus(port, {
+    idempotencyKey: 'database_confirmed_key',
+    sessionId: 'other-session',
+  });
+  const wrongDevice = await postDeliveryStatus(port, {
+    idempotencyKey: 'database_confirmed_key',
+    deviceId: 'other-device',
+  });
+  assert.deepEqual(JSON.parse(wrongSession.body).delivery, {
+    state: 'unknown',
+  });
+  assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
+    state: 'unknown',
+  });
+});
+
+test('ambiguous-send attribution retries database reads and rejects interference', async () => {
+  const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+  const exact = {
+    id: 'user-1',
+    rowId: 11,
+    kind: 'user',
+    text: 'Exact',
+    createdAt: new Date(pressedAt + 100).toISOString(),
+  };
+  let reads = 0;
+  const recovered = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        reads += 1;
+        if (reads === 1) throw new Error('briefly busy');
+        return [exact];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 100,
+    pollMs: 1,
+    recheckMs: 1,
+  });
+  assert.equal(recovered, exact);
+  assert.ok(reads >= 3);
+
+  const interfered = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        return [
+          exact,
+          {
+            ...exact,
+            id: 'manual-user-2',
+            rowId: 12,
+            text: 'Manual message',
+          },
+        ];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 10,
+    pollMs: 1,
+    recheckMs: 1,
+  });
+  assert.equal(interfered, null);
+
+  let unownedReads = 0;
+  const unowned = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        unownedReads += 1;
+        return [exact];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: false,
+  });
+  assert.equal(unowned, null);
+  assert.equal(unownedReads, 0);
+});
+
+test('concurrent identical sends claim distinct post-cursor rows', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let cursor = 0;
+  const rows = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return cursor;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter(
+          (row) => row.rowId > afterRowId,
+        );
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send({ message }) {
+        await Promise.resolve();
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        cursor += 1;
+        rows.push({
+          id: `user-${cursor}`,
+          rowId: cursor,
+          text: message,
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const [first, second] = await Promise.all([
+    postMessage(port, {
+      idempotencyKey: 'concurrent_identical_key_a',
+      message: 'Identical',
+    }),
+    postMessage(port, {
+      idempotencyKey: 'concurrent_identical_key_b',
+      message: 'Identical',
+    }),
+  ]);
+  const receipts = [JSON.parse(first.body), JSON.parse(second.body)].sort(
+    (left, right) => left.rowId - right.rowId,
+  );
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.deepEqual(
+    receipts.map((receipt) => [
+      receipt.baselineCursor,
+      receipt.rowId,
+    ]),
+    [
+      [0, 1],
+      [1, 2],
+    ],
+  );
+});
+
+test('service worker handles only Pocket shell paths and Pocket-owned caches', async () => {
   const source = await fs.readFile(
     new URL('../public/service-worker.js', import.meta.url),
     'utf8',
   );
-  assert.match(source, /requestUrl\.pathname\.startsWith\('\/api\/'\)/);
+  assert.match(source, /!SHELL_PATHS\.has\(requestUrl\.pathname\)/);
   assert.match(source, /requestUrl\.origin !== self\.location\.origin/);
+  assert.match(
+    source,
+    /key\.startsWith\('conductor-pocket-shell-'\)/,
+  );
+  assert.match(
+    source,
+    /matchAll\(\{ type: 'window', includeUncontrolled: true \}\)/,
+  );
+});
+
+test('sign-out purge removes the Pocket cache and root service worker', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /name\.startsWith\(SHELL_CACHE_PREFIX\)/);
+  assert.match(source, /scriptUrl\.pathname === '\/service-worker\.js'/);
+  assert.match(source, /registration\.unregister\(\)/);
+  assert.match(source, /service_worker_retirement_failed/);
+  assert.match(source, /transcript_cache_delete_blocked/);
+  assert.doesNotMatch(
+    source,
+    /requestValue\.onblocked\s*=\s*resolve/,
+  );
+  assert.match(
+    source,
+    /if \(currentDevice\) await purgeLocalData\(\);[\s\S]*localPurgeCompleted: true/,
+  );
+  assert.match(source, /clientVersion: CLIENT_VERSION/);
+  assert.match(source, /localStorage\.setItem\(ORIGIN_RETIRED_KEY, '1'\)/);
+  assert.match(source, /response\.count !== 1/);
+});
+
+test('pending sends persist before draft clearing and recover for the full send window', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const optimisticPush = source.indexOf('state.optimistic.push(optimistic)');
+  const requiredPersistence = source.indexOf(
+    'await persistPendingDeliveries({ required: true })',
+    optimisticPush,
+  );
+  const draftClear = source.indexOf("field.value = ''", requiredPersistence);
+  assert.ok(optimisticPush >= 0);
+  assert.ok(requiredPersistence > optimisticPush);
+  assert.ok(draftClear > requiredPersistence);
+  assert.match(source, /const DELIVERY_RECOVERY_MS = 27_000/);
+  assert.match(source, /await restorePendingDeliveries\(\)/);
+  assert.match(source, /void recoverPendingDeliveries\(\)/);
+  assert.match(
+    source,
+    /activeDeliveryKey\s*\|\|\s*message\.idempotencyKey/,
+  );
 });

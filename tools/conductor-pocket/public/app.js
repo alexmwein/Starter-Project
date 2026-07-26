@@ -1,9 +1,18 @@
+import { reconcileDeliveryReceipts } from './delivery-receipts.js?v=0.2.0-delivery-fix-2';
+
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
 const announcer = document.querySelector('#announcer');
 const AWAY_LOCK_MS = 5 * 60 * 1000;
 const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
 const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
+const CLIENT_VERSION = '0.2.0';
+const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
+const CACHE_PURGE_CHANNEL = 'conductor-pocket-cache-purge-v1';
+const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
+const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
+const DELIVERY_RECOVERY_MS = 27_000;
+const DELIVERY_STATUS_REQUEST_MS = 2_500;
 
 const state = {
   auth: null,
@@ -386,8 +395,7 @@ async function bootstrap() {
     else renderLock();
   } catch (error) {
     if (error.status === 401 || error.code === 'device_revoked') {
-      await purgeLocalData();
-      renderSignedOut();
+      await purgeThenRenderSignedOut();
     } else {
       renderConnectionGate(error.code);
     }
@@ -452,6 +460,15 @@ function renderLock({ errorMessage = '' } = {}) {
 
 function renderSignedOut() {
   stopEvents();
+  state.auth = null;
+  state.csrfToken = null;
+  state.workspaces = [];
+  state.recentSessions = [];
+  state.sessionsByWorkspace.clear();
+  state.messagesBySession.clear();
+  state.cursorsBySession.clear();
+  state.optimistic = [];
+  state.seenMessageIds.clear();
   gateView({
     mark: 'lock',
     title: 'This device was signed out',
@@ -464,19 +481,58 @@ function renderSignedOut() {
   });
 }
 
-function renderConnectionGate(code) {
+function isLocalPurgeFailure(error) {
+  return /transcript_cache_delete|service_worker_retirement|other_pocket_window|origin_retired|cache/i.test(
+    error?.message || '',
+  );
+}
+
+function renderLocalPurgeFailure(retry) {
+  stopEvents();
   gateView({
-    mark: 'wifiOff',
-    title: 'Mac unreachable',
+    mark: 'warn',
+    title: 'Local data was not erased',
     body:
-      code === 'tailscale_identity_required'
+      'Close every other Pocket window on this phone, then retry. This device stays enrolled until the cleanup finishes.',
+    action: node('button', {
+      className: 'primary-button',
+      type: 'button',
+      text: 'Retry cleanup',
+      on: { click: retry },
+    }),
+  });
+}
+
+async function purgeThenRenderSignedOut() {
+  try {
+    await purgeLocalData();
+    renderSignedOut();
+  } catch {
+    renderLocalPurgeFailure(() => purgeThenRenderSignedOut());
+  }
+}
+
+function renderConnectionGate(code) {
+  const upgradeRequired = code === 'retirement_client_upgrade_required';
+  gateView({
+    mark: upgradeRequired ? 'refresh' : 'wifiOff',
+    title: upgradeRequired ? 'Pocket must refresh' : 'Mac unreachable',
+    body:
+      upgradeRequired
+        ? 'Fully close Pocket, reopen it while online, then sign out again. The old app cannot retire this phone.'
+        : code === 'tailscale_identity_required'
         ? 'Connect this phone to your private Tailscale network, then try again.'
         : 'Conductor Pocket could not reach the relay on your Mac.',
     action: node('button', {
       className: 'primary-button',
       type: 'button',
-      text: 'Try again',
-      on: { click: () => bootstrap() },
+      text: upgradeRequired ? 'Reload Pocket' : 'Try again',
+      on: {
+        click: () => {
+          if (upgradeRequired) location.reload();
+          else bootstrap();
+        },
+      },
     }),
   });
 }
@@ -554,8 +610,21 @@ function saveDraft(sessionId, value) {
 }
 
 let cacheDatabasePromise;
+let originRetired = localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
+const cachePurgeChannel =
+  'BroadcastChannel' in window
+    ? new BroadcastChannel(CACHE_PURGE_CHANNEL)
+    : null;
+let serviceWorkerRegistrationPromise = null;
 
 function cacheDatabase() {
+  if (
+    originRetired ||
+    localStorage.getItem(ORIGIN_RETIRED_KEY) === '1'
+  ) {
+    originRetired = true;
+    return Promise.reject(new Error('origin_retired'));
+  }
   if (!cacheDatabasePromise) {
     cacheDatabasePromise = new Promise((resolve, reject) => {
       const open = indexedDB.open('conductor-pocket-v1', 1);
@@ -570,6 +639,26 @@ function cacheDatabase() {
   }
   return cacheDatabasePromise;
 }
+
+async function closeCacheDatabase() {
+  try {
+    const database = await cacheDatabasePromise;
+    database?.close();
+  } catch {
+    // A failed cache open has nothing to close.
+  }
+  cacheDatabasePromise = null;
+}
+
+cachePurgeChannel?.addEventListener('message', (event) => {
+  if (event.data?.type === 'retire-origin') {
+    originRetired = true;
+    stopEvents();
+    void closeCacheDatabase();
+  } else if (event.data?.type === 'close-transcript-database') {
+    void closeCacheDatabase();
+  }
+});
 
 async function cacheGet(key) {
   try {
@@ -599,23 +688,243 @@ async function cacheSet(key, value) {
   }
 }
 
+async function cacheSetRequired(key, value) {
+  const database = await cacheDatabase();
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction('snapshots', 'readwrite');
+    transaction.objectStore('snapshots').put(value, key);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () =>
+      reject(transaction.error || new Error('cache_write_failed'));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('cache_write_aborted'));
+  });
+}
+
+function validPersistedKey(value) {
+  return (
+    typeof value === 'string' &&
+    value.length >= 16 &&
+    value.length <= 100 &&
+    /^[A-Za-z0-9_-]+$/.test(value)
+  );
+}
+
+function sanitizePendingDelivery(value) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    value.kind !== 'optimistic' ||
+    typeof value.id !== 'string' ||
+    typeof value.sessionId !== 'string' ||
+    value.sessionId.length === 0 ||
+    value.sessionId.length > 200 ||
+    typeof value.text !== 'string' ||
+    value.text.length > 16 * 1024 ||
+    !validPersistedKey(value.idempotencyKey)
+  ) {
+    return null;
+  }
+  const delivery = new Set([
+    'delivering',
+    'confirming',
+    'delivered',
+    'failed',
+  ]).has(value.delivery)
+    ? value.delivery
+    : 'confirming';
+  return {
+    id: value.id,
+    idempotencyKey: value.idempotencyKey,
+    activeDeliveryKey: validPersistedKey(value.activeDeliveryKey)
+      ? value.activeDeliveryKey
+      : value.idempotencyKey,
+    replaceIdempotencyKey: validPersistedKey(value.replaceIdempotencyKey)
+      ? value.replaceIdempotencyKey
+      : null,
+    kind: 'optimistic',
+    sessionId: value.sessionId,
+    text: value.text,
+    delivery,
+    createdAt:
+      typeof value.createdAt === 'string'
+        ? value.createdAt
+        : new Date().toISOString(),
+    deliveredAt:
+      typeof value.deliveredAt === 'string' ? value.deliveredAt : null,
+    receiptBaselineCursor: Number.isSafeInteger(
+      value.receiptBaselineCursor,
+    )
+      ? value.receiptBaselineCursor
+      : null,
+    receiptRowId: Number.isSafeInteger(value.receiptRowId)
+      ? value.receiptRowId
+      : null,
+    retrySafe: value.retrySafe === true,
+    errorCode:
+      typeof value.errorCode === 'string' ? value.errorCode : null,
+    replaceDraft: value.replaceDraft === true,
+    macDraft:
+      typeof value.macDraft === 'string'
+        ? value.macDraft.slice(0, 16 * 1024)
+        : null,
+  };
+}
+
+function pendingDeliverySnapshot() {
+  return state.optimistic
+    .map(sanitizePendingDelivery)
+    .filter(Boolean);
+}
+
+async function persistPendingDeliveries({ required = false } = {}) {
+  const snapshot = pendingDeliverySnapshot();
+  if (required) {
+    await cacheSetRequired(PENDING_DELIVERIES_KEY, snapshot);
+  } else {
+    await cacheSet(PENDING_DELIVERIES_KEY, snapshot);
+  }
+}
+
+async function restorePendingDeliveries() {
+  const cached = await cacheGet(PENDING_DELIVERIES_KEY);
+  state.optimistic = Array.isArray(cached)
+    ? cached.map(sanitizePendingDelivery).filter(Boolean)
+    : [];
+}
+
+async function clearTranscriptCache() {
+  cachePurgeChannel?.postMessage({ type: 'close-transcript-database' });
+  await closeCacheDatabase();
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error('transcript_cache_delete_blocked')),
+      5_000,
+    );
+    const requestValue = indexedDB.deleteDatabase('conductor-pocket-v1');
+    requestValue.onsuccess = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    requestValue.onerror = () => {
+      clearTimeout(timeout);
+      reject(requestValue.error || new Error('transcript_cache_delete_failed'));
+    };
+    requestValue.onblocked = () => {
+      // Another Pocket window receives the BroadcastChannel close request.
+      // If it does not release the database, the timeout fails closed.
+    };
+  });
+}
+
+async function assertOnlyRetiringWindow() {
+  if (!('serviceWorker' in navigator)) return;
+  const registration = serviceWorkerRegistrationPromise
+    ? await serviceWorkerRegistrationPromise
+    : await navigator.serviceWorker.ready;
+  await registration.update();
+  const candidate = registration.installing || registration.waiting;
+  if (candidate && candidate.state !== 'activated') {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('service_worker_retirement_timeout')),
+        4_000,
+      );
+      const onStateChange = () => {
+        if (candidate.state === 'activated') {
+          clearTimeout(timeout);
+          candidate.removeEventListener('statechange', onStateChange);
+          resolve();
+        } else if (candidate.state === 'redundant') {
+          clearTimeout(timeout);
+          candidate.removeEventListener('statechange', onStateChange);
+          reject(new Error('service_worker_retirement_unavailable'));
+        }
+      };
+      candidate.addEventListener('statechange', onStateChange);
+      onStateChange();
+    });
+  }
+  const worker =
+    registration.active || registration.waiting || registration.installing;
+  if (!worker) throw new Error('service_worker_retirement_unavailable');
+  const requestId = crypto.randomUUID
+    ? crypto.randomUUID()
+    : randomIdempotencyKey();
+  const response = await new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    const timeout = setTimeout(
+      () => reject(new Error('service_worker_retirement_timeout')),
+      2_000,
+    );
+    channel.port1.onmessage = (event) => {
+      if (
+        event.data?.type === 'retirement-window-count' &&
+        event.data?.requestId === requestId
+      ) {
+        clearTimeout(timeout);
+        resolve(event.data);
+      }
+    };
+    worker.postMessage(
+      { type: 'retirement-window-count', requestId },
+      [channel.port2],
+    );
+  });
+  if (response.count !== 1) {
+    throw new Error('other_pocket_window_open');
+  }
+}
+
 async function purgeLocalData() {
+  originRetired = true;
+  localStorage.setItem(ORIGIN_RETIRED_KEY, '1');
+  cachePurgeChannel?.postMessage({ type: 'retire-origin' });
+  await assertOnlyRetiringWindow();
   localStorage.removeItem('cp:last-route:v1');
   localStorage.removeItem('cp:drafts:v1');
   localStorage.removeItem(HIDDEN_AT_KEY);
-  try {
-    const database = await cacheDatabasePromise;
-    database?.close();
-  } catch {
-    // A failed cache open has nothing to close.
+  await clearTranscriptCache();
+  if ('caches' in window) {
+    const cacheNames = await caches.keys();
+    await Promise.all(
+      cacheNames
+        .filter((name) => name.startsWith(SHELL_CACHE_PREFIX))
+        .map((name) => caches.delete(name)),
+    );
   }
-  cacheDatabasePromise = null;
-  await new Promise((resolve) => {
-    const requestValue = indexedDB.deleteDatabase('conductor-pocket-v1');
-    requestValue.onsuccess = resolve;
-    requestValue.onerror = resolve;
-    requestValue.onblocked = resolve;
-  });
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(
+      registrations.map(async (registration) => {
+        const worker =
+          registration.active || registration.waiting || registration.installing;
+        if (!worker) return;
+        const scriptUrl = new URL(worker.scriptURL);
+        if (
+          scriptUrl.origin === location.origin &&
+          scriptUrl.pathname === '/service-worker.js'
+        ) {
+          await registration.unregister();
+        }
+      }),
+    );
+    const remaining = await navigator.serviceWorker.getRegistrations();
+    if (
+      remaining.some((registration) => {
+        const worker =
+          registration.active || registration.waiting || registration.installing;
+        if (!worker) return false;
+        const scriptUrl = new URL(worker.scriptURL);
+        return (
+          scriptUrl.origin === location.origin &&
+          scriptUrl.pathname === '/service-worker.js'
+        );
+      })
+    ) {
+      throw new Error('service_worker_retirement_failed');
+    }
+  }
 }
 
 async function startApplication() {
@@ -623,6 +932,7 @@ async function startApplication() {
   state.hiddenAt = null;
   state.route = loadRoute();
   state.workspacesLoaded = false;
+  await restorePendingDeliveries();
   ensureShell();
   updateRoutePanels();
   const cachedWorkspaces = await cacheGet('workspaces');
@@ -634,6 +944,7 @@ async function startApplication() {
   await loadRecentSessions();
   await restoreRoute();
   startEvents();
+  void recoverPendingDeliveries();
 }
 
 async function restoreRoute() {
@@ -1168,7 +1479,7 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
 }
 
 async function refreshMessages(sessionId, { full = false } = {}) {
-  if (!sessionId) return;
+  if (!sessionId) return [];
   const cursor = full ? 0 : state.cursorsBySession.get(sessionId) || 0;
   try {
     const data = await request(
@@ -1178,14 +1489,16 @@ async function refreshMessages(sessionId, { full = false } = {}) {
     const messages = full ? data.messages : [...existing, ...data.messages];
     state.messagesBySession.set(sessionId, dedupeMessages(messages));
     state.cursorsBySession.set(sessionId, data.cursor);
-    reconcileOptimistic(sessionId);
+    const reconciled = reconcileOptimistic(sessionId);
     await cacheSet(`messages:${sessionId}`, {
       cursor: data.cursor,
       messages: state.messagesBySession.get(sessionId).slice(-50),
     });
     if (state.route.sessionId === sessionId) renderTranscript();
+    return reconciled;
   } catch (error) {
     handleRuntimeError(error);
+    return [];
   }
 }
 
@@ -1199,15 +1512,16 @@ function dedupeMessages(messages) {
 }
 
 function reconcileOptimistic(sessionId) {
-  const serverMessages = state.messagesBySession.get(sessionId) || [];
-  for (const optimistic of state.optimistic.filter(
-    (item) => item.sessionId === sessionId && item.delivery === 'delivered',
-  )) {
-    const found = serverMessages.some(
-      (message) => message.kind === 'user' && message.text === optimistic.text,
-    );
-    if (found) state.optimistic = state.optimistic.filter((item) => item !== optimistic);
+  const result = reconcileDeliveryReceipts(
+    state.optimistic,
+    sessionId,
+    state.cursorsBySession.get(sessionId),
+  );
+  state.optimistic = result.remaining;
+  if (result.reconciled.length > 0) {
+    void persistPendingDeliveries();
   }
+  return result.reconciled;
 }
 
 function currentSession() {
@@ -1339,17 +1653,33 @@ function renderMessage(message, toolResults) {
     const meta = node('div', { className: 'message-meta' });
     if (message.delivery === 'delivering') {
       meta.textContent = 'Delivering…';
+    } else if (message.delivery === 'confirming') {
+      meta.textContent = 'Checking delivery…';
     } else if (message.delivery === 'failed') {
       meta.classList.add('failed');
+      const retrySafe = message.retrySafe === true;
       meta.append(
         icon('warn'),
-        document.createTextNode('Failed to deliver · '),
+        document.createTextNode(
+          retrySafe ? 'Failed to deliver · ' : 'Delivery unconfirmed · ',
+        ),
         node('button', {
           className: 'message-retry',
           type: 'button',
-          text: 'Retry',
-          on: { click: () => retryMessage(message) },
+          text: retrySafe ? 'Retry' : 'Check',
+          on: {
+            click: () =>
+              retrySafe ? retryMessage(message) : checkDelivery(message),
+          },
         }),
+      );
+    } else if (
+      message.kind === 'optimistic' &&
+      message.delivery === 'delivered'
+    ) {
+      meta.append(
+        icon('checkDouble'),
+        document.createTextNode('Delivered · Syncing…'),
       );
     } else if (message.queued) {
       meta.textContent = 'Queued';
@@ -1468,6 +1798,15 @@ async function sendCurrentMessage() {
     createdAt: new Date().toISOString(),
   };
   state.optimistic.push(optimistic);
+  try {
+    await persistPendingDeliveries({ required: true });
+  } catch {
+    state.optimistic = state.optimistic.filter(
+      (item) => item !== optimistic,
+    );
+    announce('Message stayed in your draft because secure delivery storage was unavailable');
+    return;
+  }
   field.value = '';
   saveDraft(sessionId, '');
   state.shell.composer.resize();
@@ -1486,6 +1825,16 @@ async function deliverOptimistic(
   const deliveryKey = replaceDraft
     ? optimistic.replaceIdempotencyKey
     : optimistic.idempotencyKey;
+  optimistic.activeDeliveryKey = deliveryKey;
+  try {
+    await persistPendingDeliveries({ required: true });
+  } catch {
+    optimistic.delivery = 'failed';
+    optimistic.errorCode = 'secure_delivery_storage_unavailable';
+    optimistic.retrySafe = true;
+    renderTranscript();
+    return;
+  }
   try {
     const result = await fetch(
       `/api/sessions/${encodeURIComponent(optimistic.sessionId)}/messages`,
@@ -1512,10 +1861,11 @@ async function deliverOptimistic(
       error.code = payload.error?.code || `http_${result.status}`;
       error.status = result.status;
       error.draft = payload.error?.draft;
+      error.retrySafe = payload.error?.retrySafe === true;
       throw error;
     }
-    optimistic.delivery = 'delivered';
-    optimistic.deliveredAt = payload.deliveredAt;
+    applyDeliveryReceipt(optimistic, payload);
+    await persistPendingDeliveries();
     state.connectionProbe = {
       sendPath: true,
       capabilities: { send: true },
@@ -1524,21 +1874,158 @@ async function deliverOptimistic(
     announce('Message delivered');
     setTimeout(() => refreshMessages(optimistic.sessionId, { full: true }), 120);
   } catch (error) {
-    optimistic.delivery = 'failed';
     optimistic.errorCode = error.code;
-    renderTranscript();
     if (error.code === 'draft_conflict') {
+      optimistic.delivery = 'failed';
+      optimistic.retrySafe = true;
+      await persistPendingDeliveries();
+      renderTranscript();
       optimistic.macDraft = error.draft;
       if (replaceDraft) optimistic.replaceIdempotencyKey = null;
       optimistic.replaceDraft = false;
       openDraftConflict(optimistic);
+    } else if (error.status === 401 || error.status === 423) {
+      optimistic.delivery = 'failed';
+      optimistic.retrySafe = false;
+      await persistPendingDeliveries();
+      renderTranscript();
+      handleRuntimeError(error);
+    } else if (!error.status) {
+      await checkDelivery(optimistic);
+    } else {
+      optimistic.delivery = 'failed';
+      optimistic.retrySafe = error.retrySafe === true;
+      await persistPendingDeliveries();
+      renderTranscript();
     }
-    else if (error.status === 401 || error.status === 423) handleRuntimeError(error);
   }
 }
 
+function applyDeliveryReceipt(message, receipt) {
+  message.delivery = 'delivered';
+  message.deliveredAt = receipt.deliveredAt;
+  message.receiptBaselineCursor = Number.isSafeInteger(receipt.baselineCursor)
+    ? receipt.baselineCursor
+    : null;
+  message.receiptRowId = Number.isSafeInteger(receipt.rowId)
+    ? receipt.rowId
+    : null;
+  message.retrySafe = false;
+}
+
+async function requestDeliveryStatus(message) {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    DELIVERY_STATUS_REQUEST_MS,
+  );
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(message.sessionId)}/delivery-status`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'X-CSRF-Token': state.csrfToken,
+          'Idempotency-Key':
+            message.activeDeliveryKey || message.idempotencyKey,
+        },
+      },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(
+        payload.error?.code || `http_${response.status}`,
+      );
+      error.code = payload.error?.code || `http_${response.status}`;
+      error.status = response.status;
+      throw error;
+    }
+    return payload.delivery || { state: 'unknown' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function checkDelivery(message) {
+  if (!state.optimistic.includes(message)) return true;
+  message.delivery = 'confirming';
+  message.retrySafe = false;
+  await persistPendingDeliveries();
+  renderTranscript();
+  const deadline = Date.now() + DELIVERY_RECOVERY_MS;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const delivery = await requestDeliveryStatus(message);
+      if (delivery.state === 'delivered') {
+        applyDeliveryReceipt(message, delivery);
+        await persistPendingDeliveries();
+        renderTranscript();
+        announce('Message delivered');
+        await refreshMessages(message.sessionId, { full: true });
+        return true;
+      }
+      if (delivery.state !== 'pending') {
+        message.delivery = 'failed';
+        message.errorCode =
+          delivery.state === 'failed'
+            ? delivery.code
+            : 'delivery_unknown';
+        message.retrySafe =
+          delivery.state === 'failed' &&
+          delivery.retrySafe === true;
+        await persistPendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+    } catch (error) {
+      lastError = error;
+      if (error.status === 401 || error.status === 423) {
+        message.delivery = 'failed';
+        message.errorCode = error.code;
+        message.retrySafe = false;
+        await persistPendingDeliveries();
+        renderTranscript();
+        handleRuntimeError(error);
+        return false;
+      }
+    }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(500, remaining)),
+      );
+    }
+  }
+  message.delivery = 'failed';
+  message.errorCode = lastError?.code || 'delivery_confirmation_timeout';
+  message.retrySafe = false;
+  await persistPendingDeliveries();
+  renderTranscript();
+  return false;
+}
+
+async function recoverPendingDeliveries() {
+  await Promise.all(
+    state.optimistic.map(async (message) => {
+      if (message.delivery === 'delivered') {
+        await refreshMessages(message.sessionId, { full: true });
+      } else if (!(message.delivery === 'failed' && message.retrySafe)) {
+        await checkDelivery(message);
+      }
+    }),
+  );
+}
+
 function retryMessage(message) {
+  if (message.retrySafe !== true) return;
   message.delivery = 'delivering';
+  message.retrySafe = false;
+  void persistPendingDeliveries();
   renderTranscript();
   deliverOptimistic(message, { replaceDraft: message.replaceDraft === true });
 }
@@ -1567,6 +2054,7 @@ function openDraftConflict(message) {
       on: {
         click: () => {
           message.delivery = 'delivering';
+          void persistPendingDeliveries();
           closeOverlay();
           renderTranscript();
           deliverOptimistic(message, {
@@ -1585,6 +2073,7 @@ function openDraftConflict(message) {
           state.shell.composer.field.value = message.text;
           saveDraft(message.sessionId, message.text);
           state.optimistic = state.optimistic.filter((item) => item !== message);
+          void persistPendingDeliveries();
           closeOverlay();
           renderTranscript();
         },
@@ -1623,8 +2112,7 @@ function startEvents() {
       // Keep the locked fallback.
     }
     if (code === 'device_revoked' || code === 'authentication_required') {
-      await purgeLocalData();
-      renderSignedOut();
+      await purgeThenRenderSignedOut();
     } else {
       renderLock();
     }
@@ -1674,9 +2162,11 @@ function renderConnectionState() {
 
 function handleRuntimeError(error) {
   if (error.status === 401 || error.code === 'device_revoked') {
-    purgeLocalData().finally(renderSignedOut);
+    void purgeThenRenderSignedOut();
   } else if (error.status === 423 || error.code === 'device_locked') {
     renderLock();
+  } else if (error.code === 'retirement_client_upgrade_required') {
+    renderConnectionGate(error.code);
   }
 }
 
@@ -1883,7 +2373,7 @@ async function openSecurity() {
       settingsRow({
         iconName: 'bolt',
         title: 'Conductor Pocket',
-        subtitle: `pocket ${connection.relayVersion || 'unknown'} · private relay`,
+        subtitle: `relay ${connection.relayVersion || 'unknown'} · client ${CLIENT_VERSION}`,
       }),
     );
     content.append(appSection.root);
@@ -1944,10 +2434,19 @@ function confirmClearCache() {
         text: 'Clear',
         on: {
           click: async () => {
-            await purgeLocalData();
-            state.messagesBySession.clear();
-            closeOverlay();
-            await startApplication();
+            try {
+              await clearTranscriptCache();
+              state.messagesBySession.clear();
+              closeOverlay();
+              await startApplication();
+            } catch (error) {
+              if (isLocalPurgeFailure(error)) {
+                closeOverlay();
+                renderLocalPurgeFailure(() => confirmClearCache());
+              } else {
+                handleRuntimeError(error);
+              }
+            }
           },
         },
       }),
@@ -1979,18 +2478,36 @@ function confirmRevoke(device) {
         on: {
           click: async () => {
             try {
+              const currentDevice = device.id === state.auth?.device?.id;
+              if (currentDevice) await purgeLocalData();
               const result = await request(
                 `/api/devices/${encodeURIComponent(device.id)}/revoke`,
-                { method: 'POST', body: {}, csrf: true },
+                {
+                  method: 'POST',
+                  body: currentDevice
+                    ? {
+                        clientVersion: CLIENT_VERSION,
+                        localPurgeCompleted: true,
+                      }
+                    : {},
+                  csrf: true,
+                },
               );
               if (result.currentDevice) {
-                await purgeLocalData();
                 renderSignedOut();
               } else {
                 openSecurity();
               }
             } catch (error) {
-              handleRuntimeError(error);
+              if (
+                device.id === state.auth?.device?.id &&
+                isLocalPurgeFailure(error)
+              ) {
+                closeOverlay();
+                renderLocalPurgeFailure(() => confirmRevoke(device));
+              } else {
+                handleRuntimeError(error);
+              }
             }
           },
         },
@@ -2090,7 +2607,9 @@ window.addEventListener('pageshow', () => {
 });
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  serviceWorkerRegistrationPromise =
+    navigator.serviceWorker.register('/service-worker.js');
+  serviceWorkerRegistrationPromise.catch(() => {});
 }
 
 const pairingCode = new URLSearchParams(location.hash.slice(1)).get('pair');

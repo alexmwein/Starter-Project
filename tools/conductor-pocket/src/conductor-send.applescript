@@ -82,7 +82,22 @@ on getSessionTabs()
 				try
 					if (role of candidate as text) is "AXTabGroup" then
 						set tabGroupChildren to UI elements of candidate
-						if (count of tabGroupChildren) is greater than 0 then return UI elements of item 1 of tabGroupChildren
+						set sessionTabs to {}
+						repeat with tabGroupChild in tabGroupChildren
+							try
+								if (role of tabGroupChild as text) is "AXRadioButton" then
+									copy tabGroupChild to end of sessionTabs
+								else
+									set tabGroupElements to UI elements of tabGroupChild
+									repeat with tabGroupElement in tabGroupElements
+										try
+											if (role of tabGroupElement as text) is "AXRadioButton" then copy tabGroupElement to end of sessionTabs
+										end try
+									end repeat
+								end if
+							end try
+						end repeat
+						return sessionTabs
 					end if
 				end try
 			end repeat
@@ -246,38 +261,16 @@ if my commitTextAreaValue(textArea, messageText) is false then
 	return "{\"ok\":false,\"code\":\"composer_update_failed\"}"
 end if
 
-set sendButton to missing value
-repeat with waitIndex from 1 to 40
-	tell application "System Events"
-		set composerGroup to my getComposerGroup()
-		if composerGroup is not missing value then
-			set bestX to -1
-			set composerElements to UI elements of composerGroup
-			repeat with candidate in composerElements
-				try
-					if (role of candidate as text) is "AXButton" and (enabled of candidate as boolean) is true then
-						set buttonPosition to position of candidate
-						set buttonX to item 1 of buttonPosition
-						if buttonX is greater than bestX then
-							set bestX to buttonX
-							set sendButton to candidate
-						end if
-					end if
-				end try
-			end repeat
-		end if
-	end tell
-	if sendButton is not missing value then exit repeat
-	delay 0.1
-end repeat
-
-if sendButton is missing value then
-	clearOwnedDraft(messageText)
-	return "{\"ok\":false,\"code\":\"send_unavailable\"}"
-end if
-
 try
-	tell application "System Events" to perform action "AXPress" of sendButton
+	set pressedAt to ((do shell script "/bin/date +%s") as integer) * 1000
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		set focused of textArea to true
+		-- Return is Conductor's documented submit action for both immediate
+		-- and queued messages. The rightmost button becomes Stop while an
+		-- agent is working, so button position is not a safe send signal.
+		key code 36
+	end tell
 on error
 	clearOwnedDraft(messageText)
 	return "{\"ok\":false,\"code\":\"send_failed\"}"
@@ -295,4 +288,18 @@ repeat with waitIndex from 1 to 40
 	end if
 end repeat
 
-return "{\"ok\":false,\"code\":\"send_not_confirmed\"}"
+set composerOwned to false
+set finalTextArea to getTextArea()
+if finalTextArea is not missing value then
+	tell application "System Events"
+		set finalComposerValue to my normalizedDraft(value of finalTextArea as text)
+	end tell
+	considering case
+		if finalComposerValue is messageText then set composerOwned to true
+	end considering
+end if
+
+if composerOwned then
+	return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
+end if
+return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":false}"
