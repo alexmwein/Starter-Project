@@ -105,7 +105,21 @@ if [[ -z "$pr_url" ]]; then
 fi
 print "conductor-land: pull request $pr_url"
 
-check_count="$(gh pr view "$pr_url" --repo "$github_slug" --json statusCheckRollup --jq '.statusCheckRollup | length')"
+check_count="0"
+for attempt in {1..10}; do
+  check_count="$(gh pr view "$pr_url" --repo "$github_slug" --json statusCheckRollup --jq '.statusCheckRollup | length')"
+  if [[ "$check_count" != "0" ]]; then
+    break
+  fi
+  sleep 2
+done
+
+required_check_count="$(gh api "repos/$github_slug/branches/$default_branch/protection/required_status_checks" --jq '([.contexts[]?] + [.checks[]?]) | length' 2>/dev/null || print "0")"
+if [[ "$required_check_count" != "0" && "$check_count" == "0" ]]; then
+  print -u2 "conductor-land: required GitHub checks did not register"
+  exit 3
+fi
+
 if [[ "$check_count" != "0" ]]; then
   gh pr checks "$pr_url" --repo "$github_slug" --watch --fail-fast
 fi
@@ -130,10 +144,19 @@ fi
 
 gh pr merge "$pr_url" \
   --repo "$github_slug" \
+  --auto \
   --squash \
   --match-head-commit "$local_sha"
 
-pr_state="$(gh pr view "$pr_url" --repo "$github_slug" --json state --jq .state)"
+pr_state="OPEN"
+for attempt in {1..60}; do
+  pr_state="$(gh pr view "$pr_url" --repo "$github_slug" --json state --jq .state)"
+  if [[ "$pr_state" != "OPEN" ]]; then
+    break
+  fi
+  sleep 2
+done
+
 merge_oid="$(gh pr view "$pr_url" --repo "$github_slug" --json mergeCommit --jq '.mergeCommit.oid // empty')"
 if [[ "$pr_state" != "MERGED" || -z "$merge_oid" ]]; then
   print -u2 "conductor-land: pull request is not merged yet: $pr_url"

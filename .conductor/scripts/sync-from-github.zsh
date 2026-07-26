@@ -12,6 +12,7 @@ if git show-ref --verify --quiet "refs/remotes/$canonical_ref"; then
     git merge --ff-only "$canonical_ref"
   elif ! git merge-base --is-ancestor "$canonical_ref" HEAD; then
     print -u2 "GitHub sync: this branch diverges from $canonical_ref and must be reconciled before editing."
+    exit 1
   fi
 fi
 
