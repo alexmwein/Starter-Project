@@ -4755,3 +4755,17 @@ strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
   .drawer-cross-add { min-height: 44px; }
   .mini-quantity button, .quantity-control button { min-width: 44px; min-height: 44px; }
 }
+
+/* ============================================================================
+   The last values off the grid were not ours. Paragraphs and lists inherit a
+   1em block margin from the user-agent stylesheet, which at a 15px base resolves
+   to 15px and sits between --s-3 and --s-4. Anywhere a rule did not set margin
+   explicitly, vertical rhythm fell off the scale. Normalised to --s-4.
+   ========================================================================= */
+p, ul, ol { margin-block: var(--s-4); }
+p:first-child, ul:first-child, ol:first-child { margin-block-start: 0; }
+p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
+
+/* button interiors were 14px and 6px, both off the scale */
+.button { padding-inline: var(--s-4); }
+.icon-button, .drawer-close { padding-inline: var(--s-2); }
