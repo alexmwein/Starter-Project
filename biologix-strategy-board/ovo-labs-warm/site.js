@@ -2702,9 +2702,14 @@
 
   function drawerCrossSell() {
     const inCart = new Set(cart.map((line) => line.slug));
+    /* A side drawer pins its footer, so a short cart always leaves a void
+       somewhere between the last line and the summary. Rather than move the gap
+       around, fill it: the fewer lines in the cart, the more suggestions shown.
+       One line gets four, a full cart gets one. */
+    const room = Math.max(1, 5 - cart.length);
     const picks = PRODUCTS
       .filter((p) => !inCart.has(p.slug) && availabilityFor(p.slug).sellable)
-      .slice(0, 2);
+      .slice(0, room);
     if (!picks.length) return "";
     return `
       <section class="drawer-cross" aria-labelledby="drawer-cross-title">

@@ -2167,7 +2167,7 @@ button:disabled {
   grid-template-columns: 28px 28px 28px;
   height: 29px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
 
 .mini-quantity button {
@@ -4003,9 +4003,13 @@ button:disabled {
 
 .mini-quantity button,
 .quantity-control button {
+  /* position only. A previous touch-target pass set min-width/min-height 32px
+     here, but .mini-quantity is a 28/28/28 grid at 29px tall, so the buttons
+     were larger than their own cells and spilled out of the bordered box: the
+     outline read as broken and the container's bottom border showed through
+     under the value. The ::after below already supplies a 44px hit area, so the
+     visual box stays exactly as designed. */
   position: relative;
-  min-width: 32px;
-  min-height: 32px;
 }
 .mini-quantity button::after,
 .quantity-control button::after,
@@ -4074,9 +4078,18 @@ button:disabled {
 .cart-empty { flex: 1 1 auto; }
 .cart-item:last-of-type { border-bottom: 0; }
 .drawer-cross {
-  margin: auto calc(var(--s-5) * -1) calc(var(--s-4) * -1);
+  /* was `margin: auto ...`. In a flex column an auto top margin absorbs all
+     free space, so with one line in the cart it pushed the cross-sell to the
+     bottom of the scroll area and opened a 308px void directly under the item.
+     The block now sits immediately after the last line; the drawer's own 1fr
+     row still holds the footer at the bottom, which is what we actually wanted. */
+  margin: var(--s-5) calc(var(--s-5) * -1) calc(var(--s-4) * -1);
   padding: var(--s-4) var(--s-5) var(--s-5);
   background: var(--bg);
+  /* grow into whatever the pinned footer leaves over. A drawer footer is
+     bottom-anchored by design, so a short cart always leaves free space; letting
+     the tinted block absorb it turns a white void into a finished panel. */
+  flex: 1 1 auto;
 }
 
 /* "Add · $100" was 88px and "Add · $68" was 83px, right-aligned, so the two
@@ -4753,7 +4766,9 @@ strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
   /* the drawer cross-sell action and the quantity steppers both sat under the
      touch floor; the steppers keep their small visual box and gain hit area */
   .drawer-cross-add { min-height: 44px; }
-  .mini-quantity button, .quantity-control button { min-width: 44px; min-height: 44px; }
+  /* same reason as above: sizing the button past its grid cell breaks the box.
+     Hit area comes from ::after, which is already 44px. */
+  .quantity-control button { min-width: 44px; min-height: 44px; }
 }
 
 /* ============================================================================
