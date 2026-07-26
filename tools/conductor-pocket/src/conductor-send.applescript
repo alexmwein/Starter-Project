@@ -261,39 +261,16 @@ if my commitTextAreaValue(textArea, messageText) is false then
 	return "{\"ok\":false,\"code\":\"composer_update_failed\"}"
 end if
 
-set sendButton to missing value
-repeat with waitIndex from 1 to 40
-	tell application "System Events"
-		set composerGroup to my getComposerGroup()
-		if composerGroup is not missing value then
-			set bestX to -1
-			set composerElements to UI elements of composerGroup
-			repeat with candidate in composerElements
-				try
-					if (role of candidate as text) is "AXButton" and (enabled of candidate as boolean) is true then
-						set buttonPosition to position of candidate
-						set buttonX to item 1 of buttonPosition
-						if buttonX is greater than bestX then
-							set bestX to buttonX
-							set sendButton to candidate
-						end if
-					end if
-				end try
-			end repeat
-		end if
-	end tell
-	if sendButton is not missing value then exit repeat
-	delay 0.1
-end repeat
-
-if sendButton is missing value then
-	clearOwnedDraft(messageText)
-	return "{\"ok\":false,\"code\":\"send_unavailable\"}"
-end if
-
 try
 	set pressedAt to ((do shell script "/bin/date +%s") as integer) * 1000
-	tell application "System Events" to perform action "AXPress" of sendButton
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		set focused of textArea to true
+		-- Return is Conductor's documented submit action for both immediate
+		-- and queued messages. The rightmost button becomes Stop while an
+		-- agent is working, so button position is not a safe send signal.
+		key code 36
+	end tell
 on error
 	clearOwnedDraft(messageText)
 	return "{\"ok\":false,\"code\":\"send_failed\"}"

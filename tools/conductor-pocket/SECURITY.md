@@ -99,9 +99,8 @@ A send uses macOS Accessibility to:
 2. select the database-resolved session title and duplicate ordinal;
 3. refuse a differing Mac draft;
 4. set the real composer value;
-5. identify the rightmost enabled Send control inside that composer group;
-6. press it;
-7. report delivery only after the composer clears.
+5. focus that exact composer and invoke Conductor's documented Return submit;
+6. report delivery only after the composer clears.
 
 If any check fails, the phone sees a specific failure code and the message
 remains available for explicit retry. Reconnect never auto-sends a draft.

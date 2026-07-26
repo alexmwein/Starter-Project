@@ -104,3 +104,16 @@ test('session lookup scans every radio button in the Conductor tab group', async
     /return UI elements of item 1 of tabGroupChildren/,
   );
 });
+
+test('message submission uses Conductor input Return instead of guessing a composer button', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /set pressedAt[\s\S]*set focused of textArea to true[\s\S]*key code 36/,
+  );
+  assert.doesNotMatch(source, /set bestX to/);
+  assert.doesNotMatch(source, /set sendButton to/);
+});

@@ -10,7 +10,7 @@ It is deliberately not a second agent client:
   model, permissions, working directory, and branch Conductor assigned to it.
 - Transcript reads use SQLite's read-only mode.
 - Sends go through Conductor's real on-screen composer and are acknowledged
-  only after its Send control clears the draft.
+  only after Conductor accepts the submit action and clears the draft.
 - No transcript, credential, or agent token is uploaded to a hosting service.
 
 ## What “live” means
@@ -22,8 +22,9 @@ after Conductor saves them.
 
 Phone sends are serialized through macOS Accessibility. Selecting the target
 workspace/chat, setting its real draft, and confirming submit typically takes
-1–3 seconds. A draft already present on the Mac produces a conflict sheet;
-Pocket never overwrites or merges it silently.
+1–3 seconds and briefly brings Conductor to the foreground. A draft already
+present on the Mac produces a conflict sheet; Pocket never overwrites or merges
+it silently.
 
 ## Security model
 
