@@ -46,6 +46,11 @@ verified.
   feature branch.
 - Strict branch protection and required checks validate the combined state
   before GitHub squash-merges.
+- Every independent worker wakeup scans recent merged queue items and deletes a
+  feature branch only with an exact SHA lease. This still cleans up when
+  GitHub suppresses a follow-up workflow event, while preserving any branch
+  that another chat reused after the merge. Open pull-request reuse is also
+  preserved, even when the branch still points at the old SHA.
 - A main-branch push advances the next queue item. Pull-request, check, status,
   manual-dispatch, and scheduled events provide redundant wakeups.
 

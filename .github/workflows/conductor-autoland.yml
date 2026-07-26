@@ -452,52 +452,192 @@ jobs:
           echo "Background landing is active for $URL at $live_head_sha."
 
   cleanup:
-    name: Delete merged feature branch
-    if: >-
-      github.event_name == 'pull_request_target' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.head.repo.full_name == github.repository
+    name: Clean exact merged queue branches
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     permissions:
-      contents: write
+      contents: read
+      issues: write
+      pull-requests: read
 
     steps:
-      - name: Delete only the exact merged head
+      - name: Delete only unchanged heads from merged queue items
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEPLOY_KEY: ${{ secrets.CONDUCTOR_AUTOLAND_DEPLOY_KEY }}
         run: |
           set -euo pipefail
 
-          if [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::GitHub returned an invalid merged head SHA."
-            exit 1
-          fi
-          if ! git check-ref-format "refs/heads/$HEAD_REF" >/dev/null; then
-            echo "::error::GitHub returned an invalid merged head ref."
+          owner="${REPOSITORY%%/*}"
+          repository_name="${REPOSITORY#*/}"
+          default_branch="$(gh api "repos/$REPOSITORY" --jq '.default_branch')"
+          if ! git check-ref-format "refs/heads/$default_branch" >/dev/null; then
+            echo "::error::GitHub returned an invalid default branch."
             exit 1
           fi
 
-          live_head_sha="$(
-            gh api \
-              "repos/$REPOSITORY/git/ref/heads/$HEAD_REF" \
-              --jq '.object.sha' 2>/dev/null || true
+          merged_rows="$(
+            gh pr list \
+              --repo "$REPOSITORY" \
+              --state merged \
+              --label "conductor-autoland" \
+              --limit 100 \
+              --json number,baseRefName,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository |
+              jq -r \
+                --arg owner "$owner" \
+                --arg repository_name "$repository_name" \
+                --arg default_branch "$default_branch" \
+                '
+                  .[]
+                  | select(.isCrossRepository == false)
+                  | select(.headRepositoryOwner.login == $owner)
+                  | select(.headRepository.name == $repository_name)
+                  | select(.baseRefName == $default_branch)
+                  | select(.headRefName != $default_branch)
+                  | [.number, .headRefName, .headRefOid]
+                  | @tsv
+                '
           )"
-          if [[ -z "$live_head_sha" ]]; then
-            echo "$HEAD_REF is already deleted."
-            exit 0
-          fi
-          if [[ "$live_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
-            echo "::warning::$HEAD_REF was reused after merge; preserving its new head."
+          if [[ -z "$merged_rows" ]]; then
+            echo "No merged Conductor queue branches need inspection."
             exit 0
           fi
 
-          gh api \
-            --method DELETE \
-            "repos/$REPOSITORY/git/refs/heads/$HEAD_REF" \
-            >/dev/null
-          echo "Deleted merged feature branch $HEAD_REF at $EXPECTED_HEAD_SHA."
+          if [[ -z "$DEPLOY_KEY" ]]; then
+            echo "::error::CONDUCTOR_AUTOLAND_DEPLOY_KEY is not configured; merged branch cleanup cannot continue."
+            exit 1
+          fi
+
+          open_head_refs="$(
+            gh api \
+              --method GET \
+              --paginate \
+              "repos/$REPOSITORY/pulls" \
+              -f state="open" \
+              -f per_page=100 \
+              --jq '.[] | select(.head.repo.full_name == env.REPOSITORY) | .head.ref'
+          )"
+
+          clear_queue_label() {
+            local pr_number="$1"
+            if ! gh api \
+              --method DELETE \
+              "repos/$REPOSITORY/issues/$pr_number/labels/conductor-autoland" \
+              >/dev/null
+            then
+              label_still_present="$(
+                gh api \
+                  "repos/$REPOSITORY/issues/$pr_number/labels" \
+                  --jq 'any(.[]; .name == "conductor-autoland")'
+              )"
+              if [[ "$label_still_present" == "false" ]]; then
+                return 0
+              fi
+              echo "::error::Could not terminalize cleanup for PR #$pr_number."
+              exit 1
+            fi
+          }
+
+          task_tmp="$(mktemp -d)"
+          trap 'rm -rf "$task_tmp"' EXIT
+          key_file="$task_tmp/deploy-key"
+          known_hosts="$task_tmp/known-hosts"
+          bare_repo="$task_tmp/repository.git"
+
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" >"$key_file"
+          chmod 600 "$key_file"
+          if ! ssh-keygen -y -f "$key_file" >/dev/null 2>&1; then
+            echo "::error::CONDUCTOR_AUTOLAND_DEPLOY_KEY is invalid."
+            exit 1
+          fi
+
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' >"$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key_file -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts"
+
+          git init --bare "$bare_repo" >/dev/null
+          git -C "$bare_repo" remote add origin "git@github.com:$REPOSITORY.git"
+
+          while IFS=$'\t' read -r pr_number head_ref expected_head_sha; do
+            if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+              echo "::error::GitHub returned an invalid merged pull request number."
+              exit 1
+            fi
+            if [[ ! "$expected_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::GitHub returned an invalid merged head SHA for PR #$pr_number."
+              exit 1
+            fi
+            if ! git check-ref-format "refs/heads/$head_ref" >/dev/null; then
+              echo "::error::GitHub returned an invalid merged head ref for PR #$pr_number."
+              exit 1
+            fi
+
+            if grep -Fxq "$head_ref" <<<"$open_head_refs"; then
+              echo "::warning::$head_ref from PR #$pr_number is used by an open pull request; preserving it."
+              clear_queue_label "$pr_number"
+              continue
+            fi
+
+            if ! remote_rows="$(
+              git -C "$bare_repo" ls-remote \
+                --heads \
+                origin \
+                "refs/heads/$head_ref"
+            )"
+            then
+              echo "::error::The deploy key could not inspect $head_ref."
+              exit 1
+            fi
+            live_head_sha="$(awk '{print $1}' <<<"$remote_rows")"
+            if [[ -z "$live_head_sha" ]]; then
+              echo "$head_ref from PR #$pr_number is already deleted."
+              clear_queue_label "$pr_number"
+              continue
+            fi
+            if [[ "$live_head_sha" != "$expected_head_sha" ]]; then
+              echo "::warning::$head_ref from PR #$pr_number was reused after merge; preserving its new head."
+              clear_queue_label "$pr_number"
+              continue
+            fi
+
+            if ! git -C "$bare_repo" push \
+              --force-with-lease="refs/heads/$head_ref:$expected_head_sha" \
+              origin \
+              ":refs/heads/$head_ref"
+            then
+              current_head_sha="$(
+                git -C "$bare_repo" ls-remote \
+                  --heads \
+                  origin \
+                  "refs/heads/$head_ref" |
+                  awk '{print $1}'
+              )"
+              if [[ -z "$current_head_sha" ]]; then
+                echo "$head_ref was deleted concurrently."
+                clear_queue_label "$pr_number"
+                continue
+              fi
+              if [[ "$current_head_sha" != "$expected_head_sha" ]]; then
+                echo "::warning::$head_ref moved during cleanup; preserving its new head."
+                clear_queue_label "$pr_number"
+                continue
+              fi
+              echo "::error::Could not delete unchanged merged branch $head_ref."
+              exit 1
+            fi
+
+            remaining_head_sha="$(
+              git -C "$bare_repo" ls-remote \
+                --heads \
+                origin \
+                "refs/heads/$head_ref" |
+                awk '{print $1}'
+            )"
+            if [[ -n "$remaining_head_sha" ]]; then
+              echo "::error::$head_ref still exists after its compare-and-swap delete."
+              exit 1
+            fi
+            echo "Deleted merged branch $head_ref from PR #$pr_number at $expected_head_sha."
+            clear_queue_label "$pr_number"
+          done <<<"$merged_rows"
