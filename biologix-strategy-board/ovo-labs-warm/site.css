@@ -4677,3 +4677,50 @@ strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
   background: transparent;
   border: 1px solid var(--line);
 }
+
+/* ============================================================================
+   Checkout alignment. Measured at 1440 the shell edge is 60, the eyebrow, h1
+   and stepper sat on it, and every piece of form content sat at 85 because the
+   step card's 24px padding plus 1px border pushed it off the axis. The summary
+   panel did the same at 1045 against its own 1020 edge. Nothing lined up down
+   the page.
+
+   The step card was chrome that did no work: it is the only object in that
+   column, so a background and border on it separated nothing. Removing it puts
+   legend, hints, labels, inputs and actions on the same 60px axis as the page
+   heading above them. Steps are separated by rule and rhythm instead.
+   ========================================================================= */
+.checkout-step {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.checkout-step + .checkout-step { margin-top: var(--s-7); }
+
+/* the summary is a genuinely distinct object, so it keeps its panel, but its
+   heading now aligns with the panel's own content edge rather than floating */
+.checkout-aside .order-summary { padding: var(--s-5); }
+
+/* ============================================================================
+   Content insets. Measured across the site there were FIVE different distances
+   from the shell edge to a block of copy: 0 for section headings, 17 inside a
+   product card, 25 inside a bundle card, 32 inside the newsletter band, and 48
+   inside the dark testing band. Nothing shared an axis with anything else, which
+   is what reads as unprofessional even when the typography is right.
+
+   Two insets now, and only two:
+     panels (full-bleed bands)  --s-6  32
+     cards  (interaction units) --s-5  24
+   ========================================================================= */
+.testing-feature-copy { padding: var(--s-6); }
+.newsletter { padding: var(--s-6); }
+.product-card-body,
+.bundle-body,
+.category-tile,
+.education-card,
+.value-card,
+.detail-card,
+.review-block,
+.choice { padding: var(--s-5); }
