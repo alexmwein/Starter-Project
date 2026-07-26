@@ -887,11 +887,6 @@
                  same card so the gap is not something you have to dig for. */
               const record = featuredTesting;
               return `
-            <a class="hero-product-chip" href="${productPath(featured)}">
-              <span>Featured catalog entry</span>
-              <strong>${escapeHtml(featured.name)} · ${escapeHtml(featured.strength)}</strong>
-              <p>${money.format(featured.price)} · View product →</p>
-            </a>
             <a class="hero-coa-card" href="${path("testing.html")}">
               <span>${escapeHtml(featured.name)} · Lot ${escapeHtml(record ? record.lot : "not assigned")}</span>
               <div class="hero-coa-row">

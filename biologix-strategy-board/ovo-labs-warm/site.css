@@ -3582,3 +3582,239 @@ button:disabled {
   .lot-method { grid-template-columns: minmax(0, 1fr); gap: var(--s-1); }
   .lot-index-row { grid-template-columns: minmax(0, 1fr); gap: var(--s-1); }
 }
+
+/* ============================================================================
+   FABLE 5 — first screen, authored revision.
+   Three calls, in order of impact:
+   1. The cobalt headline span was the loudest thing on the page, competing with
+      the primary button for the same signal. Cobalt is contractually
+      interactive-and-status in this system; the headline broke that rule.
+   2. Two cards floating on the photograph turned the strongest asset into a
+      notice board. The featured-product chip is a second message selling an item
+      already first in the catalog one scroll down.
+   3. Column balance and copy rhythm: the stack read as four evenly spaced strata
+      instead of message-then-action.
+   ========================================================================= */
+
+/* cobalt returns to interactive-only; the headline carries weight in ink */
+.hero-copy h1 span { color: var(--ink); }
+
+/* the featured-product chip was removed from homePage() entirely rather than
+   hidden, so no dead markup ships. Its remaining rules below are inert. */
+
+/* message and photograph hold equal weight */
+.hero-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(480px, 1fr);
+  padding-block: var(--s-7);
+}
+
+/* copy rhythm: message group tight (12/16), action separated (32) */
+.hero-copy .eyebrow { margin-bottom: var(--s-3); }
+.hero-copy > p:not(.eyebrow) { margin-top: var(--s-4); }
+
+/* the proof card breathes inside its rounded frame */
+.hero-coa-card { bottom: var(--s-5); left: var(--s-5); padding: var(--s-4); }
+
+/* header rows onto the scale */
+.concept-banner { padding-block: var(--s-2); }
+.header-main { gap: var(--s-5); }
+.category-nav { gap: var(--s-5); }
+
+/* trust strip: padding governs height rather than an arbitrary min-height */
+.trust-strip { min-height: 0; }
+.trust-item { gap: var(--s-3); padding: var(--s-4); }
+
+/* ===========================================================================
+   FABLE 5 — catalog + category bands.
+   Card interiors and grid gutters onto the scale; the category band demoted
+   to a labelled rail since its heading duplicated the nav directly above it.
+   ======================================================================== */
+/* ── 1. Gutters: s-4 → s-5 above the mobile breakpoint.
+       ≤640 keeps --gutter-grid via the existing media block. ── */
+@media (min-width: 641px) {
+  .product-grid,
+  .category-rail {
+    gap: var(--s-5);
+  }
+}
+
+/* ── 2. Card interior: every gap on the scale ── */
+.product-card .product-category {
+  margin-bottom: var(--s-2);        /* was 6px */
+}
+.product-card .stock-badge {
+  margin-left: 0;                   /* flex gap s-2 owns this seam; 6px doubled it to 14 */
+}
+.testing-micro {
+  padding: var(--s-2) 0;            /* was 9px 0 */
+}
+.testing-micro span:first-child {
+  gap: var(--s-2);                  /* was 6px */
+}
+.product-buy-row {
+  margin-top: var(--s-4);           /* was s-3; buy row is the card's terminal zone */
+}
+.add-button {
+  padding: 0 var(--s-3);            /* was 0 10px */
+}
+.text-link {
+  gap: var(--s-2);                  /* was 7px */
+}
+
+/* ── 3. Category band demoted to a labelled nav rail ── */
+.category-section-head {
+  margin-top: var(--s-6);           /* was s-7; now a sub-rail of the catalog section */
+  margin-bottom: var(--s-3);
+}
+.category-section-head .eyebrow {
+  margin: 0;                        /* global eyebrow carries 14px; the wrapper spaces this */
+}
+.category-tile {
+  min-height: 0;                    /* was 96px; content + s-5 padding sets height, no dead air */
+  align-items: center;              /* was end; arrow centers on the two-line block */
+}
+.category-tile span {
+  margin-top: var(--s-1);           /* value was right at 4px; tokenize */
+}
+
+/* ===========================================================================
+   FABLE 5 — the proof band, the site's central claim.
+   The document stretched to fill its column and left ~40% dead white below
+   the last row, so the evidence card read as empty. It now centres as a
+   compact artifact at document density, the CTA sizes to its label instead
+   of spanning 430px, and reported rows sit in ink while unreported recede,
+   making the claim legible at arm's length.
+   ======================================================================== */
+/* 1 — the document is a compact artifact centered on slate, not a stretched panel */
+.testing-document {
+  align-self: center;
+  margin: var(--s-5);
+  padding: clamp(var(--s-5), 4vw, var(--s-6));
+  background: var(--surface);
+  border-radius: var(--r-md); /* was hardcoded 8px */
+}
+
+.document-row {
+  padding: var(--s-3) 0; /* was --s-4; CoA density, not table density */
+}
+
+/* 2 — button sizes to its label */
+.testing-feature-copy .button {
+  align-self: flex-start;
+}
+
+/* 3 — the claim made visible: reported = ink, unreported = recedes */
+.document-row span {
+  color: var(--text-3); /* was --text-2; unreported values go quiet */
+}
+.document-row:not(.is-reported) strong {
+  color: var(--text-2); /* unreported label dims with its value */
+}
+/* .document-row.is-reported span/strong → var(--ink) already exists at 3032-3033; keep */
+
+/* off-scale cleanup in scope */
+.document-tag {
+  padding: var(--s-1) var(--s-2); /* was 6px 8px */
+  border-radius: var(--r-sm);     /* was 4px */
+}
+
+/* ===========================================================================
+   FABLE 5 — bundle rail, guide cards, newsletter band.
+   ======================================================================== */
+/* This button sits on the cobalt panel, so there is no darker step available
+   and no lighter slate in the palette. The rest state inverts: white plate,
+   cobalt label, 6.38:1. Hover steps the label to cobalt-deep on the same
+   plate. Same tokens, no third dark surface above the slate footer. */
+.newsletter-form button {
+  min-width: 120px;
+  color: var(--cobalt);
+  background: var(--on-dark);
+  border: 0;
+  border-radius: var(--r-sm);
+  font-weight: 600;
+  transition: color 120ms ease-out, background 120ms ease-out;
+}
+
+.newsletter-form button:hover {
+  color: var(--cobalt-deep);
+  background: var(--on-dark);
+}
+
+.newsletter {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--s-6);
+  align-items: center;
+  padding: var(--s-7) var(--s-6);
+  color: var(--on-dark);
+  background: var(--cobalt);
+  border-radius: var(--r-lg);
+}
+
+.newsletter p {
+  max-width: var(--measure);
+  margin: var(--s-4) 0 0;
+  color: var(--cobalt-tint);
+}
+
+.newsletter-form input {
+  width: min(340px, 42vw);
+  height: 44px;
+  padding: 0 var(--s-4);
+  color: var(--ink);
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-sm);
+}
+
+.eyebrow {
+  margin: 0 0 var(--s-3);
+  color: var(--cobalt);
+  font: 500 10px/1.3 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-6);
+  align-items: end;
+  margin-bottom: var(--s-5);
+}
+
+.product-category {
+  margin: 0 0 var(--s-2);
+  color: var(--cobalt);
+  font: 500 9px/1.3 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bundle-count {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  padding: var(--s-1) var(--s-2);
+  color: var(--cobalt);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: 500 9px/1 var(--mono);
+  text-transform: uppercase;
+}
+
+.bundle-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-1) 0;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+/* Bundle and education cards sit in adjacent bands at the same tier; their
+   titles were 18px and 19px with nothing deliberate behind the difference. */
+.education-card h3 {
+  font-size: 18px;
+}
