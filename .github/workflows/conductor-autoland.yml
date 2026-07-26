@@ -277,7 +277,11 @@ jobs:
                 -p "$actual_base_sha"
           )"
 
-          if ! git -C "$bare_repo" push origin "$new_head_sha:refs/heads/$HEAD_REF"; then
+          if ! git -C "$bare_repo" push \
+            --force-with-lease="refs/heads/$HEAD_REF:$actual_head_sha" \
+            origin \
+            "$new_head_sha:refs/heads/$HEAD_REF"
+          then
             write_result "race" "$actual_head_sha"
             echo "The head moved before the compare-and-swap push; a fresh run will retry."
             exit 0
