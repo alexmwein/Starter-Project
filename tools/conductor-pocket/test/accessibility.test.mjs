@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
-import { AccessibilityTransport } from '../src/accessibility.mjs';
+import { AccessibilityTransport, parseResult } from '../src/accessibility.mjs';
 
 test('accessibility transport rejects invalid messages before UI automation', async () => {
   const transport = new AccessibilityTransport();
@@ -12,7 +12,7 @@ test('accessibility transport rejects invalid messages before UI automation', as
       sessionOrdinal: 1,
       message: '   ',
     }),
-    { ok: false, code: 'message_empty' },
+    { ok: false, code: 'message_empty', safeToRetry: true },
   );
   assert.deepEqual(
     await transport.send({
@@ -21,7 +21,7 @@ test('accessibility transport rejects invalid messages before UI automation', as
       sessionOrdinal: 1,
       message: 'a'.repeat(17 * 1024),
     }),
-    { ok: false, code: 'message_too_large' },
+    { ok: false, code: 'message_too_large', safeToRetry: true },
   );
   assert.deepEqual(
     await transport.send({
@@ -31,8 +31,27 @@ test('accessibility transport rejects invalid messages before UI automation', as
       message: 'replacement',
       replaceDraft: true,
     }),
-    { ok: false, code: 'draft_recheck_required' },
+    { ok: false, code: 'draft_recheck_required', safeToRetry: true },
   );
+});
+
+test('only structured pre-send automation failures are marked safe to retry', () => {
+  assert.deepEqual(
+    parseResult('{"ok":false,"code":"accessibility_disabled"}'),
+    {
+      ok: false,
+      code: 'accessibility_disabled',
+      safeToRetry: true,
+    },
+  );
+  assert.deepEqual(parseResult('{"ok":false,"code":"send_not_confirmed"}'), {
+    ok: false,
+    code: 'send_not_confirmed',
+  });
+  assert.deepEqual(parseResult('not-json'), {
+    ok: false,
+    code: 'automation_invalid_response',
+  });
 });
 
 test('draft ownership and replacement checks are case-sensitive', async () => {

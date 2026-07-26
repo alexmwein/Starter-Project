@@ -146,6 +146,16 @@ class IdempotencyStore {
       promise,
       expiresAt: Date.now() + 60 * 60 * 1000,
     });
+    void promise.then(
+      (result) => {
+        if (result?.ok !== false || result.safeToRetry !== true) return;
+        const current = this.#entries.get(key);
+        if (current?.promise === promise) this.#entries.delete(key);
+      },
+      () => {
+        // Unknown failures remain cached because the send outcome may be ambiguous.
+      },
+    );
     return promise;
   }
 
