@@ -5525,3 +5525,60 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
     border-radius: 0;
   }
 }
+
+/* ============================================================================
+   Trust marks. Every claim here is bound to data the catalog actually holds:
+   the lot's own purity figure and method, its report date, the stated contract
+   laboratory, the real cold-chain option. Green is used only where it means
+   verified, which is the rule the rest of the system already follows.
+   ========================================================================= */
+
+.pdp-assurances { display: grid; gap: var(--s-3); margin: var(--s-5) 0 0; padding: 0; list-style: none; }
+.pdp-assurances li {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
+  padding: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pdp-assurances li::before { content: none; }
+.pdp-assurances .i-check { margin-top: 2px; color: var(--success); }
+.pdp-assurances strong { color: var(--ink); font-weight: 650; }
+
+/* verified badge on the analytical panel */
+.testing-verified {
+  display: inline-flex;
+  gap: var(--s-2);
+  align-items: center;
+  margin: var(--s-4) 0 0;
+  padding: var(--s-2) var(--s-3);
+  color: var(--success);
+  background: var(--success-tint);
+  border-radius: var(--r-pill);
+  font-size: 12px;
+}
+.testing-verified strong { font-weight: 650; }
+.testing-verified span { color: var(--ink); }
+
+/* checkout assurances, directly under the order total */
+.assurance-row {
+  display: grid;
+  gap: var(--s-3);
+  margin: var(--s-4) 0 0;
+  padding: var(--s-4) 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.assurance-row li {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: center;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.assurance-row svg { color: var(--text-3); }

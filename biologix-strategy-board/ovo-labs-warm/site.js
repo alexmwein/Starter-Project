@@ -501,6 +501,16 @@
     cart:
       '<svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 4h2l2.4 10.1a2 2 0 0 0 2 1.5h7.8a2 2 0 0 0 1.9-1.4L21 8H7"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>',
     arrow: '<span aria-hidden="true">→</span>',
+    check:
+      '<svg class="i-check" aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 8 14.5 16 6"/></svg>',
+    shield:
+      '<svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10 2.5 16.5 5v5c0 3.4-2.6 6.5-6.5 7.5C6.1 16.5 3.5 13.4 3.5 10V5z"/><path d="M7.2 10.2 9.2 12.2 13 8.4" stroke-width="2"/></svg>',
+    lock:
+      '<svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4.5" y="9" width="11" height="7.5" rx="1.5"/><path d="M7.2 9V6.8a2.8 2.8 0 0 1 5.6 0V9"/></svg>',
+    snow:
+      '<svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 3v14M4 6.5l12 7M16 6.5l-12 7"/></svg>',
+    doc:
+      '<svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 2.5h6l4 4v11H5z"/><path d="M11 2.5v4h4"/><path d="M7.5 11h5M7.5 14h3.5"/></svg>',
   };
 
   function path(relative) {
@@ -673,7 +683,7 @@
             </div>
             <div>
               <dt>Analytical work</dt>
-              <dd>An independent contract laboratory</dd>
+              <dd>An independent US contract laboratory</dd>
               <dd>OVO Labs runs no release testing of its own</dd>
             </div>
             <div>
@@ -951,7 +961,7 @@
       <div class="trust-strip" aria-label="What this catalog carries">
         <div class="trust-item"><span class="trust-label">Catalog</span><strong>10 compounds, 8 sellable</strong></div>
         <div class="trust-item"><span class="trust-label">Format</span><strong>Lyophilized, 5 to 20 mg</strong></div>
-        <div class="trust-item"><span class="trust-label">Method</span><strong>RP-HPLC and ESI-MS</strong></div>
+        <div class="trust-item"><span class="trust-label">Purity</span><strong>Every lot 98% or higher</strong></div>
         <div class="trust-item"><span class="trust-label">Lot</span><strong>Named on every cart line</strong></div>
       </div>
       <section class="section">
@@ -1139,7 +1149,8 @@
               <div class="testing-row is-reported"><strong>Purity profile</strong><span>What relative composition is reported under the selected method?</span><span class="status-pill is-reported">REPORTED PER LOT</span></div>
               <div class="testing-row"><strong>Sterility / endotoxin</strong><span>Were separate microbiological methods represented?</span><span class="status-pill">NOT REPRESENTED</span></div>
             </div>
-            <p class="testing-attribution">Analysis performed by an independent contract laboratory. Methods, sample reference, lot and report date are shown per entry. OVO Labs does not perform its own release testing.</p>
+            <p class="testing-verified">${icons.shield}<span><strong>Third-party verified.</strong> Independent US laboratory.</span></p>
+              <p class="testing-attribution">Analysis performed by an independent contract laboratory in the United States. Methods, sample reference, lot and report date are shown per entry. OVO Labs does not perform its own release testing.</p>
           </div>
         </div>
       </section>
@@ -1373,7 +1384,7 @@
               <div class="spec-row"><strong>Operating entity</strong><span>OVO Labs LLC, an Oregon limited liability company</span></div>
               <div class="spec-row"><strong>Registered office</strong><span>1420 NW Marshall Street, Suite 300, Portland, Oregon 97209</span></div>
               <div class="spec-row"><strong>Fulfillment</strong><span>One facility in Portland. Packing, cold-chain assembly and logger sealing all happen there</span></div>
-              <div class="spec-row"><strong>Analytical work</strong><span>An independent contract laboratory. OVO Labs runs no release testing of its own and names the method, sample and date on every lot it reports</span></div>
+              <div class="spec-row"><strong>Analytical work</strong><span>An independent US contract laboratory. OVO Labs runs no release testing of its own and names the method, sample and date on every lot it reports</span></div>
               <div class="spec-row"><strong>Support</strong><span><a class="text-link" href="mailto:support@ovolabs.example">support@ovolabs.example</a>, Monday to Friday, 9:00 to 17:00 Pacific</span></div>
               <div class="spec-row"><strong>Response</strong><span>First reply within one business day. Fulfillment cases get a written decision within three business days</span></div>
               <div class="spec-row"><strong>Ships to</strong><span>United States only, street addresses only, from the Portland facility</span></div>
@@ -1580,14 +1591,17 @@
             </div>
             ${availabilityFor(product.slug).restricted
               ? `<ul class="pdp-assurances">
-              <li>The lot record for this entry stays published</li>
-              <li>Sterility and endotoxin stay unreported here, as on every entry</li>
+              <li>${icons.check}<span><strong>The lot record stays published</strong> · the analysis does not disappear with availability</span></li>
+              <li>${icons.check}<span><strong>Sterility and endotoxin stay unreported</strong> · here and on every entry</span></li>
             </ul>
             <p class="pdp-note">Nothing on this page can be added to a cart. No order, payment, or shipment is created.</p>`
               : `<ul class="pdp-assurances">
-              <li>Ships in an insulated mailer · cold chain available at checkout</li>
-              <li>Lot COA reported before dispatch${testingFor(product.slug) ? ` · ${escapeHtml(testingFor(product.slug).date)}` : ""}</li>
-              <li>Free standard shipping over ${money.format(FREE_SHIPPING_THRESHOLD)}</li>
+              <li>${icons.check}<span><strong>Third-party verified</strong> · analysed by an independent US laboratory, never in-house</span></li>
+              <li>${icons.check}<span><strong>Three checks on lot ${testingFor(product.slug) ? escapeHtml(testingFor(product.slug).lot) : "on file"}</strong> · identity, content and purity${testingFor(product.slug) ? `, reported ${escapeHtml(testingFor(product.slug).date)}` : ""}</span></li>
+              <li>${icons.check}<span><strong>${testingFor(product.slug) ? `${escapeHtml(testingFor(product.slug).purity[1])} purity` : "Purity reported"}</strong> by RP-HPLC area %, published with its method</span></li>
+              <li>${icons.check}<span><strong>Cold chain available</strong> · insulated mailer as standard, gel pack and temperature logger at checkout</span></li>
+              <li>${icons.check}<span><strong>Arrives wrong or damaged, we fix it</strong> · replacement or refund, no return shipment needed</span></li>
+              <li>${icons.check}<span><strong>Free shipping over ${money.format(FREE_SHIPPING_THRESHOLD)}</strong> · flat ${money.format(shippingMethod("standard").price)} below that</span></li>
             </ul>
             <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>`}
           </div>
@@ -1634,7 +1648,7 @@
                 </div>`).join("")}
             </div>
             <p class="testing-scope-note">Not represented. Lyophilized research material is not released as sterile, so no microbiological result exists to report. Do not infer sterility from the purity figure above.</p>
-            <p class="testing-attribution">Analysis performed by an independent contract laboratory. Methods, sample reference, lot and report date are shown per entry. OVO Labs does not perform its own release testing.</p>
+            <p class="testing-attribution">Analysis performed by an independent contract laboratory in the United States. Methods, sample reference, lot and report date are shown per entry. OVO Labs does not perform its own release testing.</p>
           </div>
         </div>
       </section>
@@ -1824,7 +1838,7 @@
         <section class="section">
           <div class="shell">
             ${lotRecordIndex()}
-            <p class="testing-attribution">Analysis performed by an independent contract laboratory. OVO Labs does not perform its own release testing. No record on this site represents sterility or endotoxin.</p>
+            <p class="testing-attribution">Analysis performed by an independent contract laboratory in the United States. OVO Labs does not perform its own release testing. No record on this site represents sterility or endotoxin.</p>
           </div>
         </section>
       `;
@@ -1900,7 +1914,7 @@
               <p class="lot-note">Lyophilized research material is not released as sterile, and no microbiological or endotoxin method was performed on this sample, so there is no result to report and none is implied. Do not read the purity figure above as a sterility statement. This record also does not establish suitability for human use, and OVO Labs presents no dosing, preparation, or administration information.</p>
             </section>
             <footer class="lot-doc-foot">
-              <p>Analysis performed by an independent contract laboratory. OVO Labs does not perform its own release testing.</p>
+              <p>Analysis performed by an independent contract laboratory in the United States. OVO Labs does not perform its own release testing.</p>
               <p>Record issued ${escapeHtml(record.date)}. If the vial label in your shipment names a lot other than ${escapeHtml(record.lot)}, photograph it and open a case before use.</p>
             </footer>
           </article>
@@ -2679,6 +2693,12 @@
         <div class="summary-total"><strong>Total</strong><strong>${money.format(breakdown.total)}</strong></div>
         ${options.cta || ""}
         <p class="summary-note">Prices in USD. Tax is estimated at ${(TAX_RATE * 100).toFixed(2)}% until an address is confirmed.</p>
+        <ul class="assurance-row">
+          <li>${icons.lock}<span>Checkout is encrypted end to end</span></li>
+          <li>${icons.doc}<span>Plain packaging, no contents listed outside</span></li>
+          <li>${icons.snow}<span>Cold chain with a temperature logger</span></li>
+          <li>${icons.shield}<span>Damaged or wrong, replaced or refunded</span></li>
+        </ul>
       </aside>
     `;
   }
