@@ -4727,3 +4727,31 @@ strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
 .detail-card,
 .review-block,
 .choice { padding: var(--s-5); }
+
+/* ============================================================================
+   Touch targets on mobile. The probe found 85 distinct controls under 44px at
+   390, most of them inline links rendering 18px tall in the footer and nav. On
+   a phone those are a miss-tap. Padding is added inside the media query only, so
+   desktop density is untouched, and negative margin keeps the visual rhythm.
+   ========================================================================= */
+@media (max-width: 640px) {
+  .footer-column a,
+  .footer-contact a,
+  .mobile-nav a,
+  .text-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    margin-block: calc(var(--s-3) * -1);
+  }
+  .footer-column li + li { margin-top: var(--s-1); }
+  .remove-item { display: inline-flex; align-items: center; min-height: 44px; margin-block: calc(var(--s-3) * -1); }
+  .search-input { height: 44px; }
+}
+
+@media (max-width: 640px) {
+  /* the drawer cross-sell action and the quantity steppers both sat under the
+     touch floor; the steppers keep their small visual box and gain hit area */
+  .drawer-cross-add { min-height: 44px; }
+  .mini-quantity button, .quantity-control button { min-width: 44px; min-height: 44px; }
+}
