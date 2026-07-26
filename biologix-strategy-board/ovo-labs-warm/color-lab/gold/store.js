@@ -2490,7 +2490,10 @@
               <div class="demo-payment-notice">
                 <strong>DemoPay sandbox · test processor only</strong>
                 <p>This step validates and simulates authorization entirely in this browser. No network request is made, raw card details are never saved, and no charge is possible.</p>
-                <p><strong>Approve:</strong> 4242 4242 4242 4242 · <strong>Decline:</strong> 4000 0000 0000 0002</p>
+                <p class="demo-card-examples">
+                  <span><strong>Approve:</strong> 4242 4242 4242 4242</span>
+                  <span><strong>Decline:</strong> 4000 0000 0000 0002</span>
+                </p>
               </div>
               <div class="field-grid">
                 <div class="field is-half">
@@ -2510,10 +2513,7 @@
                   <p class="field-error" id="cardCvc-error" data-error-for="cardCvc"></p>
                 </div>
               </div>
-              <label class="checkbox-row">
-                <input type="checkbox" name="billingSame" checked disabled>
-                <span>For this demo, the sandbox billing address always mirrors shipping.</span>
-              </label>
+              <p class="step-hint">For this demo, the sandbox billing address always mirrors shipping.</p>
               <p class="field-error" data-payment-error role="alert" aria-live="assertive"></p>
               <p class="step-hint" data-payment-status role="status" aria-live="polite"></p>
               <div class="step-actions">
@@ -3949,11 +3949,10 @@
   }
 
   function bindPromoForm() {
-    /* Two promo forms exist, one on the cart page and one in the checkout order
-       summary. This bailed unless PAGE was "cart" and then bound only the first
-       match, so the checkout Apply button was inert: a control that looks
-       interactive and does nothing. */
-    if (PAGE !== "cart" && PAGE !== "checkout") return;
+    /* The cart form rerenders the full cart page after changing totals.
+       Checkout owns a separate handler inside initCheckout so an approved
+       sandbox authorization can be invalidated when its total changes. */
+    if (PAGE !== "cart") return;
     const form = document.querySelector("[data-promo-form]");
     if (!form) return;
 

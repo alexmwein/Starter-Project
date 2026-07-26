@@ -19,6 +19,7 @@
   --on-dark-3: rgba(255, 255, 255, 0.52);
   --gold: #a9884e;
   --gold-bright: #c9ae78;
+  --gold-text: #7a6136;
   --shadow: 0 22px 60px rgba(24, 20, 12, 0.12);
   --r-sm: 0;
   --r-md: 0;
@@ -227,7 +228,14 @@ body:not([data-page="static-home"]) .section-head h2 {
 }
 
 body:not([data-page="static-home"]) .eyebrow {
-  color: var(--gold);
+  color: var(--gold-text);
+}
+
+body:not([data-page="static-home"]) main#main-content,
+body:not([data-page="static-home"]) main [id],
+body:not([data-page="static-home"]) main h1,
+body:not([data-page="static-home"]) main h2 {
+  scroll-margin-top: 96px;
 }
 
 body:not([data-page="static-home"]) .button-primary,
@@ -302,6 +310,18 @@ body:not([data-page="static-home"]) .summary-total strong:last-child {
   color: var(--ink);
   background: var(--cream);
   border-color: var(--gold-light);
+}
+
+.demo-card-examples {
+  display: flex;
+  gap: 6px 22px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.demo-card-examples span {
+  display: inline-flex;
+  gap: 6px;
 }
 
 .sample-watermark {
@@ -514,7 +534,7 @@ body:not([data-page="static-home"]) .summary-total strong:last-child {
 }
 
 .site-footer .footer-column a:hover {
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 .site-footer .footer-bottom {
