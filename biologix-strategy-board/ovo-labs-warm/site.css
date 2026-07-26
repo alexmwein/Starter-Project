@@ -3617,9 +3617,13 @@ button:disabled {
    hidden, so no dead markup ships. Its remaining rules below are inert. */
 
 /* message and photograph hold equal weight */
-.hero-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(480px, 1fr);
-  padding-block: var(--s-7);
+/* scoped to desktop: this was appended after the responsive blocks and
+   was overriding them at every width, collapsing the mobile layout. */
+@media (min-width: 961px) {
+  .hero-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(480px, 1fr);
+    padding-block: var(--s-7);
+  }
 }
 
 /* copy rhythm: message group tight (12/16), action separated (32) */
@@ -3754,15 +3758,19 @@ button:disabled {
   background: var(--on-dark);
 }
 
-.newsletter {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: var(--s-6);
-  align-items: center;
-  padding: var(--s-7) var(--s-6);
-  color: var(--on-dark);
-  background: var(--cobalt);
-  border-radius: var(--r-lg);
+/* scoped to desktop: this was appended after the responsive blocks and
+   was overriding them at every width, collapsing the mobile layout. */
+@media (min-width: 961px) {
+  .newsletter {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--s-6);
+    align-items: center;
+    padding: var(--s-7) var(--s-6);
+    color: var(--on-dark);
+    background: var(--cobalt);
+    border-radius: var(--r-lg);
+  }
 }
 
 .newsletter p {
@@ -3789,12 +3797,16 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--s-6);
-  align-items: end;
-  margin-bottom: var(--s-5);
+/* scoped to desktop: this was appended after the responsive blocks and
+   was overriding them at every width, collapsing the mobile layout. */
+@media (min-width: 961px) {
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s-6);
+    align-items: end;
+    margin-bottom: var(--s-5);
+  }
 }
 
 .product-category {
