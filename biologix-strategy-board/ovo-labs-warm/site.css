@@ -3379,8 +3379,11 @@ button:disabled {
 }
 
 /* Cart drawer actions: full-width stacked, primary first */
+/* display:block + min-height leaves the label pinned to the top of the box:
+   align-items does nothing on a block. These render as 46px tall buttons with
+   the text 2px from the top and 28px from the bottom. Grid centres it. */
 .cart-checkout,
-.cart-view { display: block; width: 100%; text-align: center; }
+.cart-view { display: grid; place-items: center; width: 100%; text-align: center; }
 .cart-view { margin-top: var(--s-2); }
 
 /* Cross-sell below the cart lines. Deliberately quieter than the catalog grid
@@ -5533,20 +5536,31 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
    verified, which is the rule the rest of the system already follows.
    ========================================================================= */
 
-.pdp-assurances { display: grid; gap: var(--s-3); margin: var(--s-5) 0 0; padding: 0; list-style: none; }
-.pdp-assurances li {
-  display: grid;
-  grid-template-columns: 15px minmax(0, 1fr);
-  gap: var(--s-3);
-  align-items: start;
+/* Trust marks read as badges, not prose. Six sentences at the decision point is
+   a wall the buyer skips; six short pills are scannable in about a second and
+   carry the same facts. The purity figure is still that lot's own number. */
+.pdp-assurances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: var(--s-5) 0 0;
   padding: 0;
-  color: var(--text-2);
-  font-size: 13px;
-  line-height: 1.5;
+  list-style: none;
+}
+.pdp-assurances li {
+  display: inline-flex;
+  gap: var(--s-2);
+  align-items: center;
+  padding: var(--s-2) var(--s-3);
+  color: var(--ink);
+  background: var(--success-tint);
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 .pdp-assurances li::before { content: none; }
-.pdp-assurances .i-check { margin-top: 2px; color: var(--success); }
-.pdp-assurances strong { color: var(--ink); font-weight: 650; }
+.pdp-assurances .i-check { flex: 0 0 auto; color: var(--success); }
 
 /* verified badge on the analytical panel */
 .testing-verified {
@@ -5582,3 +5596,11 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
   line-height: 1.45;
 }
 .assurance-row svg { color: var(--text-3); }
+
+
+/* Same class of defect anywhere a button is block-level and sized by min-height. */
+.button, .checkout-cta, .add-button, .pdp-add, .drawer-cross-add {
+  display: inline-grid;
+  place-items: center;
+}
+.checkout-cta { display: grid; }

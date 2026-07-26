@@ -1591,17 +1591,23 @@
             </div>
             ${availabilityFor(product.slug).restricted
               ? `<ul class="pdp-assurances">
-              <li>${icons.check}<span><strong>The lot record stays published</strong> · the analysis does not disappear with availability</span></li>
-              <li>${icons.check}<span><strong>Sterility and endotoxin stay unreported</strong> · here and on every entry</span></li>
+              ${[
+                testingFor(product.slug) ? `${escapeHtml(testingFor(product.slug).purity[1])} purity` : "Purity reported",
+                "Third-party tested",
+                "Lot record stays published",
+                "Not offered",
+              ].map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
             </ul>
             <p class="pdp-note">Nothing on this page can be added to a cart. No order, payment, or shipment is created.</p>`
               : `<ul class="pdp-assurances">
-              <li>${icons.check}<span><strong>Third-party verified</strong> · analysed by an independent US laboratory, never in-house</span></li>
-              <li>${icons.check}<span><strong>Three checks on lot ${testingFor(product.slug) ? escapeHtml(testingFor(product.slug).lot) : "on file"}</strong> · identity, content and purity${testingFor(product.slug) ? `, reported ${escapeHtml(testingFor(product.slug).date)}` : ""}</span></li>
-              <li>${icons.check}<span><strong>${testingFor(product.slug) ? `${escapeHtml(testingFor(product.slug).purity[1])} purity` : "Purity reported"}</strong> by RP-HPLC area %, published with its method</span></li>
-              <li>${icons.check}<span><strong>Cold chain available</strong> · insulated mailer as standard, gel pack and temperature logger at checkout</span></li>
-              <li>${icons.check}<span><strong>Arrives wrong or damaged, we fix it</strong> · replacement or refund, no return shipment needed</span></li>
-              <li>${icons.check}<span><strong>Free shipping over ${money.format(FREE_SHIPPING_THRESHOLD)}</strong> · flat ${money.format(shippingMethod("standard").price)} below that</span></li>
+              ${[
+                testingFor(product.slug) ? `${escapeHtml(testingFor(product.slug).purity[1])} purity` : "Purity reported",
+                "Third-party tested",
+                "US lab verified",
+                "Cold chain ready",
+                "Free over " + money.format(FREE_SHIPPING_THRESHOLD),
+                "Damage covered",
+              ].map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
             </ul>
             <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>`}
           </div>
