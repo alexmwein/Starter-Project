@@ -24,14 +24,21 @@
       type="image/webp"
       fetchpriority="high"
     >
+    <link rel="stylesheet" href="store-base.css">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="storefront.css">
   </head>
-  <body>
+  <body data-page="static-home" data-base=".">
     <a class="skip-link" href="#main">Skip to content</a>
+
+    <div class="demo-banner" role="note">
+      <strong>Interactive demo</strong>
+      <span>Checkout and payment processing are simulated. No charge or order is created.</span>
+    </div>
 
     <div class="announcement">
       <p>
-        <span>Complimentary priority shipping on orders over $250</span>
+        <span>Complimentary priority shipping on demo orders over $250</span>
         <span class="announcement-divider" aria-hidden="true"></span>
         <strong>For research use only</strong>
       </p>
@@ -40,12 +47,12 @@
     <header class="site-header">
       <div class="header-main shell">
         <nav class="primary-nav primary-nav-left" aria-label="Primary">
-          <a href="#bestsellers">Shop</a>
-          <a href="#testing">Testing</a>
-          <a href="#education">Journal</a>
+          <a href="catalog.html">Shop</a>
+          <a href="testing.html">Testing</a>
+          <a href="notes.html">Journal</a>
         </nav>
 
-        <a class="wordmark" href="../" aria-label="Standard Peptide Labs home">
+        <a class="wordmark" href="index.html" aria-label="Standard Peptide Labs home">
           <span class="wordmark-mark" aria-hidden="true"></span>
           <span class="wordmark-type">
             <strong>STANDARD</strong>
@@ -54,15 +61,17 @@
         </a>
 
         <nav class="primary-nav primary-nav-right" aria-label="Utilities">
-          <a href="#bestsellers" aria-label="Search the catalog">
+          <button class="utility-action" type="button" data-search-open aria-label="Search the catalog">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="6.5"></circle>
               <path d="m16 16 4 4"></path>
             </svg>
             <span>Search</span>
-          </a>
-          <a href="#testing">Account</a>
-          <a href="#bestsellers">Bag <span class="bag-count">0</span></a>
+          </button>
+          <a href="account.html">Account</a>
+          <button class="utility-action" type="button" data-cart-open>
+            Cart <span class="bag-count" data-cart-count hidden>0</span>
+          </button>
         </nav>
 
         <details class="mobile-menu">
@@ -72,24 +81,24 @@
             <span></span>
           </summary>
           <nav aria-label="Mobile">
-            <a href="#bestsellers">Shop all</a>
-            <a href="#bestsellers">Metabolic research</a>
-            <a href="#bestsellers">Recovery research</a>
-            <a href="#testing">Testing &amp; COAs</a>
-            <a href="#education">Research journal</a>
-            <a href="#testing">Our standards</a>
-            <a href="#bestsellers">Bag (0)</a>
+            <a href="catalog.html">Shop all</a>
+            <a href="catalog.html?category=metabolic">Metabolic research</a>
+            <a href="catalog.html?category=research">Recovery research</a>
+            <a href="testing.html">Testing &amp; COAs</a>
+            <a href="notes.html">Research journal</a>
+            <a href="company.html">Our standards</a>
+            <button type="button" data-cart-open>Cart <span data-cart-count hidden>0</span></button>
           </nav>
         </details>
       </div>
 
       <nav class="category-nav shell" aria-label="Shop by category">
-        <a class="is-active" href="#bestsellers">All peptides</a>
-        <a href="#bestsellers">Metabolic</a>
-        <a href="#bestsellers">Recovery</a>
-        <a href="#bestsellers">Growth hormone</a>
-        <a href="#bestsellers">Blends</a>
-        <a href="#bestsellers">Research sets</a>
+        <a class="is-active" href="catalog.html">All peptides</a>
+        <a href="catalog.html?category=metabolic">Metabolic</a>
+        <a href="catalog.html?category=research">Recovery</a>
+        <a href="catalog.html?category=growth">Growth hormone</a>
+        <a href="catalog.html?category=blends">Blends</a>
+        <a href="bundles.html">Research sets</a>
       </nav>
     </header>
 
@@ -104,13 +113,13 @@
               is linked to its identity, purity, content, and testing scope.
             </p>
             <div class="hero-actions">
-              <a class="button button-dark" href="#bestsellers">
+              <a class="button button-dark" href="catalog.html">
                 Shop bestsellers
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M5 12h13M14 7l5 5-5 5"></path>
                 </svg>
               </a>
-              <a class="text-link" href="#testing">Explore our testing standard</a>
+              <a class="text-link" href="testing.html">Explore our testing standard</a>
             </div>
             <dl class="hero-facts">
               <div>
@@ -140,10 +149,10 @@
               <span>THE STANDARD</span>
               <strong>01</strong>
             </div>
-            <a class="hero-record" href="#testing">
+            <a class="hero-record" href="lot-record.html?lot=SPL-RT15">
               <span class="record-topline">
                 <span class="verified-label"><i></i> Current lot verified</span>
-                <span>26.07.2026</span>
+                <span>Sample record · 26.07.2026</span>
               </span>
               <strong>Retatrutide · SPL-RT15</strong>
               <span class="record-result">99.61% purity <b>View COA</b></span>
@@ -189,7 +198,7 @@
               <p class="eyebrow">Most requested</p>
               <h2>Research bestsellers</h2>
             </div>
-            <a class="arrow-link" href="#bestsellers">
+            <a class="arrow-link" href="catalog.html">
               Shop all peptides
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h13M14 7l5 5-5 5"></path>
@@ -199,7 +208,7 @@
 
           <div class="product-grid">
             <article class="product-card">
-              <a class="product-image" href="#bestsellers">
+              <a class="product-image" href="peptides/retatrutide.html">
                 <span class="product-tag">Bestseller</span>
                 <img
                   src="../assets/datum-product-vial.webp"
@@ -217,7 +226,7 @@
                 <div class="product-title-row">
                   <div>
                     <p>Metabolic research</p>
-                    <h3><a href="#bestsellers">Retatrutide</a></h3>
+                    <h3><a href="peptides/retatrutide.html">Retatrutide</a></h3>
                   </div>
                   <span class="price">$189</span>
                 </div>
@@ -225,15 +234,16 @@
                   <span>15 mg</span>
                   <span>99.61% purity</span>
                 </div>
-                <a class="lot-link" href="#testing">
+                <a class="lot-link" href="lot-record.html?lot=SPL-RT15">
                   <span><i></i> Lot SPL-RT15 active</span>
                   <strong>View COA</strong>
                 </a>
+                <button class="product-add" type="button" data-add-product="retatrutide">Add to cart</button>
               </div>
             </article>
 
             <article class="product-card">
-              <a class="product-image" href="#bestsellers">
+              <a class="product-image" href="peptides/bpc-tb-blend.html">
                 <span class="product-tag product-tag-outline">Dual peptide</span>
                 <img
                   src="../assets/datum-product-vial.webp"
@@ -252,7 +262,7 @@
                 <div class="product-title-row">
                   <div>
                     <p>Recovery research</p>
-                    <h3><a href="#bestsellers">BPC-157 + TB-500</a></h3>
+                    <h3><a href="peptides/bpc-tb-blend.html">BPC-157 + TB-500</a></h3>
                   </div>
                   <span class="price">$129</span>
                 </div>
@@ -260,15 +270,16 @@
                   <span>5 mg + 5 mg</span>
                   <span>99.34% purity</span>
                 </div>
-                <a class="lot-link" href="#testing">
+                <a class="lot-link" href="lot-record.html?lot=SPL-BT10">
                   <span><i></i> Lot SPL-BT10 active</span>
                   <strong>View COA</strong>
                 </a>
+                <button class="product-add" type="button" data-add-product="bpc-tb-blend">Add to cart</button>
               </div>
             </article>
 
             <article class="product-card">
-              <a class="product-image" href="#bestsellers">
+              <a class="product-image" href="peptides/cjc-ipamorelin-blend.html">
                 <span class="product-tag product-tag-outline">Research blend</span>
                 <img
                   src="../assets/datum-product-vial.webp"
@@ -287,7 +298,7 @@
                 <div class="product-title-row">
                   <div>
                     <p>Growth hormone research</p>
-                    <h3><a href="#bestsellers">CJC-1295 + Ipamorelin</a></h3>
+                    <h3><a href="peptides/cjc-ipamorelin-blend.html">CJC-1295 + Ipamorelin</a></h3>
                   </div>
                   <span class="price">$114</span>
                 </div>
@@ -295,15 +306,16 @@
                   <span>5 mg + 5 mg</span>
                   <span>99.12% purity</span>
                 </div>
-                <a class="lot-link" href="#testing">
+                <a class="lot-link" href="lot-record.html?lot=SPL-CI10">
                   <span><i></i> Lot SPL-CI10 active</span>
                   <strong>View COA</strong>
                 </a>
+                <button class="product-add" type="button" data-add-product="cjc-ipamorelin-blend">Add to cart</button>
               </div>
             </article>
 
             <article class="product-card">
-              <a class="product-image" href="#bestsellers">
+              <a class="product-image" href="peptides/semaglutide.html">
                 <span class="product-tag product-tag-outline">Essential</span>
                 <img
                   src="../assets/datum-product-vial.webp"
@@ -322,7 +334,7 @@
                 <div class="product-title-row">
                   <div>
                     <p>Metabolic research</p>
-                    <h3><a href="#bestsellers">Semaglutide</a></h3>
+                    <h3><a href="peptides/semaglutide.html">Semaglutide</a></h3>
                   </div>
                   <span class="price">$98</span>
                 </div>
@@ -330,10 +342,11 @@
                   <span>10 mg</span>
                   <span>99.48% purity</span>
                 </div>
-                <a class="lot-link" href="#testing">
+                <a class="lot-link" href="lot-record.html?lot=SPL-SM10">
                   <span><i></i> Lot SPL-SM10 active</span>
                   <strong>View COA</strong>
                 </a>
+                <button class="product-add" type="button" data-add-product="semaglutide">Add to cart</button>
               </div>
             </article>
           </div>
@@ -364,7 +377,7 @@
             <div class="coa-document">
               <div class="coa-head">
                 <div>
-                  <span>Certificate of analysis</span>
+                  <span>Sample / demo certificate of analysis</span>
                   <strong>SPL-RT15 / CURRENT LOT</strong>
                 </div>
                 <span class="coa-status"><i></i> Verified</span>
@@ -393,8 +406,8 @@
             </div>
 
             <div class="testing-actions">
-              <a class="button button-dark" href="#testing">Review testing &amp; COAs</a>
-              <a class="text-link" href="#education">How to read a COA</a>
+              <a class="button button-dark" href="testing.html">Review testing &amp; COAs</a>
+              <a class="text-link" href="notes/coa-boundaries.html">How to read a COA</a>
             </div>
           </div>
         </div>
@@ -412,7 +425,7 @@
           </div>
 
           <div class="finder-grid">
-            <a href="#bestsellers">
+            <a href="catalog.html?category=metabolic">
               <span class="finder-number">01</span>
               <div>
                 <h3>Metabolic pathways</h3>
@@ -422,7 +435,7 @@
                 <path d="M5 12h13M14 7l5 5-5 5"></path>
               </svg>
             </a>
-            <a href="#bestsellers">
+            <a href="catalog.html?category=research">
               <span class="finder-number">02</span>
               <div>
                 <h3>Repair &amp; recovery</h3>
@@ -432,7 +445,7 @@
                 <path d="M5 12h13M14 7l5 5-5 5"></path>
               </svg>
             </a>
-            <a href="#bestsellers">
+            <a href="catalog.html?category=growth">
               <span class="finder-number">03</span>
               <div>
                 <h3>Growth signaling</h3>
@@ -442,7 +455,7 @@
                 <path d="M5 12h13M14 7l5 5-5 5"></path>
               </svg>
             </a>
-            <a href="#bestsellers">
+            <a href="catalog.html">
               <span class="finder-number">04</span>
               <div>
                 <h3>Compare all molecules</h3>
@@ -513,7 +526,7 @@
               <p class="eyebrow">The research journal</p>
               <h2>Read beyond the label.</h2>
             </div>
-            <a class="arrow-link" href="#education">
+            <a class="arrow-link" href="notes.html">
               View all articles
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h13M14 7l5 5-5 5"></path>
@@ -522,7 +535,7 @@
           </div>
 
           <div class="journal-grid">
-            <a class="journal-feature" href="#education">
+            <a class="journal-feature" href="notes/coa-boundaries.html">
               <img
                 src="../assets/hero-ampoule.webp"
                 alt="A laboratory ampoule photographed on a clean cream surface"
@@ -538,13 +551,13 @@
             </a>
 
             <div class="journal-list">
-              <a href="#education">
+              <a href="notes/choosing-by-molecule.html">
                 <span>Catalog guide · 5 min</span>
                 <h3>How to compare research peptides by molecule, not marketing.</h3>
                 <p>Four fields that make side-by-side evaluation faster and more honest.</p>
                 <strong>Read article <b>↗</b></strong>
               </a>
-              <a href="#education">
+              <a href="notes/reading-testing-status.html">
                 <span>Lab notes · 6 min</span>
                 <h3>Reading identity, content, and purity as separate signals.</h3>
                 <p>Why one impressive number cannot answer three different questions.</p>
@@ -561,7 +574,7 @@
             <p class="eyebrow">The current collection</p>
             <h2>Exacting standards. Clearly documented.</h2>
           </div>
-          <a class="button button-dark" href="#bestsellers">
+          <a class="button button-dark" href="catalog.html">
             Explore all peptides
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 12h13M14 7l5 5-5 5"></path>
@@ -574,7 +587,7 @@
     <footer class="site-footer">
       <div class="shell footer-top">
         <div class="footer-brand">
-          <a class="wordmark" href="../" aria-label="Standard Peptide Labs home">
+          <a class="wordmark" href="index.html" aria-label="Standard Peptide Labs home">
             <span class="wordmark-mark" aria-hidden="true"></span>
             <span class="wordmark-type">
               <strong>STANDARD</strong>
@@ -588,34 +601,35 @@
         </div>
         <nav aria-label="Shop">
           <h3>Shop</h3>
-          <a href="#bestsellers">All peptides</a>
-          <a href="#bestsellers">Metabolic</a>
-          <a href="#bestsellers">Recovery</a>
-          <a href="#bestsellers">Research sets</a>
+          <a href="catalog.html">All peptides</a>
+          <a href="catalog.html?category=metabolic">Metabolic</a>
+          <a href="catalog.html?category=research">Recovery</a>
+          <a href="bundles.html">Research sets</a>
         </nav>
         <nav aria-label="Standards">
           <h3>Standards</h3>
-          <a href="#testing">Testing &amp; COAs</a>
-          <a href="#testing">Lot records</a>
-          <a href="#education">COA boundaries</a>
-          <a href="#education">FAQs</a>
+          <a href="testing.html">Testing &amp; COAs</a>
+          <a href="testing.html#lot-records">Lot records</a>
+          <a href="notes/coa-boundaries.html">COA boundaries</a>
+          <a href="faq.html">FAQs</a>
         </nav>
         <nav aria-label="Company">
           <h3>Company</h3>
-          <a href="#testing">Our approach</a>
-          <a href="#testing">Contact</a>
-          <a href="#testing">Shipping &amp; policies</a>
-          <a href="#education">Research journal</a>
+          <a href="company.html">Our approach</a>
+          <a href="company.html#contact">Contact</a>
+          <a href="policies.html">Shipping &amp; policies</a>
+          <a href="notes.html">Research journal</a>
         </nav>
       </div>
       <div class="shell footer-bottom">
         <p>© 2026 Standard Peptide Labs</p>
         <p>For laboratory research use only. Not for human consumption.</p>
         <div>
-          <a href="#testing">Privacy</a>
-          <a href="#testing">Terms</a>
+          <a href="policies.html#privacy">Privacy</a>
+          <a href="policies.html#terms">Terms</a>
         </div>
       </div>
     </footer>
+    <script src="store.js"></script>
   </body>
 </html>
