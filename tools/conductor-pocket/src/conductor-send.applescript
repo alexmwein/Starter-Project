@@ -277,6 +277,7 @@ if sendButton is missing value then
 end if
 
 try
+	set pressedAt to ((do shell script "/bin/date +%s") as integer) * 1000
 	tell application "System Events" to perform action "AXPress" of sendButton
 on error
 	clearOwnedDraft(messageText)
@@ -295,4 +296,18 @@ repeat with waitIndex from 1 to 40
 	end if
 end repeat
 
-return "{\"ok\":false,\"code\":\"send_not_confirmed\"}"
+set composerOwned to false
+set finalTextArea to getTextArea()
+if finalTextArea is not missing value then
+	tell application "System Events"
+		set finalComposerValue to my normalizedDraft(value of finalTextArea as text)
+	end tell
+	considering case
+		if finalComposerValue is messageText then set composerOwned to true
+	end considering
+end if
+
+if composerOwned then
+	return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
+end if
+return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":false}"

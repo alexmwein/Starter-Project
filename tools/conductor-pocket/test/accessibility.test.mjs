@@ -44,10 +44,24 @@ test('only structured pre-send automation failures are marked safe to retry', ()
       safeToRetry: true,
     },
   );
-  assert.deepEqual(parseResult('{"ok":false,"code":"send_not_confirmed"}'), {
-    ok: false,
-    code: 'send_not_confirmed',
-  });
+  assert.deepEqual(
+    parseResult(
+      '{"ok":false,"code":"send_not_confirmed","pressedAt":1785093000000,"composerOwned":true}',
+    ),
+    {
+      ok: false,
+      code: 'send_not_confirmed',
+      pressedAt: 1785093000000,
+      composerOwned: true,
+    },
+  );
+  assert.deepEqual(
+    parseResult('{"ok":false,"code":"send_not_confirmed"}'),
+    {
+      ok: false,
+      code: 'automation_invalid_response',
+    },
+  );
   assert.deepEqual(parseResult('not-json'), {
     ok: false,
     code: 'automation_invalid_response',
@@ -59,7 +73,7 @@ test('draft ownership and replacement checks are case-sensitive', async () => {
     new URL('../src/conductor-send.applescript', import.meta.url),
     'utf8',
   );
-  assert.equal(source.match(/considering case/g)?.length, 3);
+  assert.equal(source.match(/considering case/g)?.length, 4);
   assert.match(source, /if currentValue is expectedMessage/);
   assert.match(source, /existingDraft is not expectedDraft/);
 });
@@ -71,5 +85,5 @@ test('the structural accessibility linefeed is not treated as a Mac draft', asyn
   );
   assert.match(source, /on normalizedDraft\(rawValue\)/);
   assert.match(source, /if \(length of valueText\) is 1 then return ""/);
-  assert.equal(source.match(/my normalizedDraft/g)?.length, 4);
+  assert.equal(source.match(/my normalizedDraft/g)?.length, 5);
 });

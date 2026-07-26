@@ -34,6 +34,15 @@ export function parseResult(stdout) {
     if (!result || typeof result.ok !== 'boolean' || typeof result.code !== 'string') {
       throw new Error('Unexpected result shape');
     }
+    if (
+      !result.ok &&
+      result.code === 'send_not_confirmed' &&
+      (!Number.isSafeInteger(result.pressedAt) ||
+        result.pressedAt <= 0 ||
+        typeof result.composerOwned !== 'boolean')
+    ) {
+      throw new Error('Missing ambiguous-send attribution');
+    }
     if (!result.ok && safeToRetryCodes.has(result.code)) {
       result.safeToRetry = true;
     }
