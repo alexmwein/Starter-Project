@@ -5579,23 +5579,24 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
 
 /* checkout assurances, directly under the order total */
 .assurance-row {
-  display: grid;
-  gap: var(--s-3);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
   margin: var(--s-4) 0 0;
   padding: var(--s-4) 0 0;
   border-top: 1px solid var(--line);
   list-style: none;
 }
 .assurance-row li {
-  display: grid;
-  grid-template-columns: 15px minmax(0, 1fr);
-  gap: var(--s-3);
+  display: inline-flex;
+  gap: var(--s-2);
   align-items: center;
   color: var(--text-2);
   font-size: 12px;
-  line-height: 1.45;
+  font-weight: 500;
+  white-space: nowrap;
 }
-.assurance-row svg { color: var(--text-3); }
+.assurance-row svg { flex: 0 0 auto; color: var(--text-3); }
 
 
 /* Same class of defect anywhere a button is block-level and sized by min-height. */
@@ -5604,3 +5605,40 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
   place-items: center;
 }
 .checkout-cta { display: grid; }
+
+/* ============================================================================
+   Trust marks, final form. They sit directly under the Add to cart button,
+   which is where a buyer's eye already is, rather than below the spec tiles
+   where the previous version lived. Four marks maximum, one short phrase each,
+   scannable without reading. Quiet rather than loud: a check in verified green
+   against muted text, no filled pill, because a row of saturated badges reads
+   as marketing and this catalog's whole argument is that it is not.
+   ========================================================================= */
+.pdp-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin: var(--s-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.pdp-marks li {
+  display: inline-flex;
+  gap: var(--s-2);
+  align-items: center;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pdp-marks li::before { content: none; }
+.pdp-marks .i-check { flex: 0 0 auto; color: var(--success); }
+
+/* the old block is gone from the markup; keep the selector inert */
+.pdp-assurances { display: none; }
+
+/* The card's testing line now leads with the number a buyer scans for. The check
+   is verified-green; the text stays muted so the row does not compete with the
+   product name above it. */
+.testing-micro-lot { display: inline-flex; gap: var(--s-2); align-items: center; }
+.testing-micro-lot .i-check { flex: 0 0 auto; color: var(--success); }

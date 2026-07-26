@@ -769,7 +769,9 @@
           <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</a></h3>
           <p class="product-description">${escapeHtml(product.descriptor)}</p>
           <div class="testing-micro">
-            <span class="testing-micro-lot">${(() => { const record = testingFor(product.slug); return record ? `Lot ${escapeHtml(record.lot)}` : "Testing reported per lot"; })()}</span>
+            <span class="testing-micro-lot">${(() => { const record = testingFor(product.slug); return record
+              ? `${icons.check}${escapeHtml(record.purity[1])} purity`
+              : "Testing reported per lot"; })()}</span>
             <a href="${path(`testing.html?product=${product.code}`)}">View status</a>
           </div>
           <div class="product-buy-row">
@@ -1581,7 +1583,22 @@
             </div>
             ${stock.sellable && ceiling < MAX_QUANTITY
               ? `<p class="pdp-note" data-quantity-cap>Maximum ${ceiling} per order at current stock.</p>`
-              : ""}`;
+              : ""}
+            <ul class="pdp-marks">
+              ${(availabilityFor(product.slug).restricted
+                ? [
+                    testingFor(product.slug) ? `${testingFor(product.slug).purity[1]} purity` : "Purity reported",
+                    "Third-party tested",
+                    "Lot record published",
+                  ]
+                : [
+                    testingFor(product.slug) ? `${testingFor(product.slug).purity[1]} purity` : "Purity reported",
+                    "Third-party tested",
+                    "Cold chain ready",
+                    "Free over " + money.format(FREE_SHIPPING_THRESHOLD),
+                  ]
+              ).map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
+            </ul>`;
             })()}
             <div class="buybox-cues">
               <div class="buybox-cue"><strong>${escapeHtml(product.code)}</strong><span>Product code</span></div>
@@ -1589,27 +1606,9 @@
               <div class="buybox-cue"><strong>${testingFor(product.slug) ? "Identity, content, purity" : "No result"}</strong><span>${testingFor(product.slug) ? `Reported for lot ${escapeHtml(testingFor(product.slug).lot)}` : "Fields reported"}</span></div>
               <div class="buybox-cue"><strong>${escapeHtml(availabilityFor(product.slug).label)}</strong><span>Availability</span></div>
             </div>
-            ${availabilityFor(product.slug).restricted
-              ? `<ul class="pdp-assurances">
-              ${[
-                testingFor(product.slug) ? `${escapeHtml(testingFor(product.slug).purity[1])} purity` : "Purity reported",
-                "Third-party tested",
-                "Lot record stays published",
-                "Not offered",
-              ].map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
-            </ul>
-            <p class="pdp-note">Nothing on this page can be added to a cart. No order, payment, or shipment is created.</p>`
-              : `<ul class="pdp-assurances">
-              ${[
-                testingFor(product.slug) ? `${escapeHtml(testingFor(product.slug).purity[1])} purity` : "Purity reported",
-                "Third-party tested",
-                "US lab verified",
-                "Cold chain ready",
-                "Free over " + money.format(FREE_SHIPPING_THRESHOLD),
-                "Damage covered",
-              ].map((label) => `<li>${icons.check}${escapeHtml(label)}</li>`).join("")}
-            </ul>
-            <p class="pdp-note">Adds this item to a browser-only cart. No order, payment, or shipment is created.</p>`}
+            <p class="pdp-note">${availabilityFor(product.slug).restricted
+              ? "Nothing on this page can be added to a cart."
+              : "Adds this item to a browser-only cart. No order, payment, or shipment is created."}</p>
           </div>
         </section>
       </div>
@@ -2700,10 +2699,10 @@
         ${options.cta || ""}
         <p class="summary-note">Prices in USD. Tax is estimated at ${(TAX_RATE * 100).toFixed(2)}% until an address is confirmed.</p>
         <ul class="assurance-row">
-          <li>${icons.lock}<span>Checkout is encrypted end to end</span></li>
-          <li>${icons.doc}<span>Plain packaging, no contents listed outside</span></li>
-          <li>${icons.snow}<span>Cold chain with a temperature logger</span></li>
-          <li>${icons.shield}<span>Damaged or wrong, replaced or refunded</span></li>
+          <li>${icons.lock}Encrypted</li>
+          <li>${icons.doc}Plain packaging</li>
+          <li>${icons.snow}Cold chain</li>
+          <li>${icons.shield}Damage covered</li>
         </ul>
       </aside>
     `;
