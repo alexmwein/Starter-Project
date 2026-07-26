@@ -30,3 +30,19 @@ rendered white-on-white at 1.00:1 and the grep-based passes called it fixed. A d
 reported clean.
 
 Measure the rendered page. Do not trust a name, a flag, or a previous claim.
+
+## Added after the QA pass
+
+| file | what it does |
+|---|---|
+| `route-sweep.mjs` | loads all 26 routes, watching for JS exceptions, console errors, failed requests, broken images, unlabeled controls, placeholder hrefs, weak titles, and h1 count |
+| `flows.mjs` | empty states, promo codes valid and invalid, quantity decrement to removal, draft persistence across reload, back button, drawer, testing lookup no-match, 404 |
+| `drawer.mjs` | the cart drawer end to end: open, line render, shipping progress, cross-sell, checkout link, focus movement, Escape, quantity, cross-sell add |
+
+### A lesson worth keeping
+
+The drawer checks in this session were passing while clicking nothing. They used
+`.cart-button`, which has never existed in this codebase; the real trigger is
+`[data-cart-open]`. A missing element produced no error, so the check reported
+success. Assert the element exists before acting on it, and fail loudly when a
+selector disappears. A green check that tested nothing is worse than a red one.
