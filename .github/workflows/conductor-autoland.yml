@@ -450,3 +450,54 @@ jobs:
           fi
 
           echo "Background landing is active for $URL at $live_head_sha."
+
+  cleanup:
+    name: Delete merged feature branch
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: write
+
+    steps:
+      - name: Delete only the exact merged head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub returned an invalid merged head SHA."
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/$HEAD_REF" >/dev/null; then
+            echo "::error::GitHub returned an invalid merged head ref."
+            exit 1
+          fi
+
+          live_head_sha="$(
+            gh api \
+              "repos/$REPOSITORY/git/ref/heads/$HEAD_REF" \
+              --jq '.object.sha' 2>/dev/null || true
+          )"
+          if [[ -z "$live_head_sha" ]]; then
+            echo "$HEAD_REF is already deleted."
+            exit 0
+          fi
+          if [[ "$live_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "::warning::$HEAD_REF was reused after merge; preserving its new head."
+            exit 0
+          fi
+
+          gh api \
+            --method DELETE \
+            "repos/$REPOSITORY/git/refs/heads/$HEAD_REF" \
+            >/dev/null
+          echo "Deleted merged feature branch $HEAD_REF at $EXPECTED_HEAD_SHA."
