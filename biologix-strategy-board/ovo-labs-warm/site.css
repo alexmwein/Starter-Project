@@ -4650,3 +4650,30 @@ button:disabled {
    the system's emphasis weight, so normalise the UA defaults to it rather than
    leaving two competing bolds on the page. */
 strong, b, h1, h2, h3, h4, h5, h6, th { font-weight: 650; }
+
+/* ============================================================================
+   Accent discipline. --cobalt is defined as interactive-and-status, but it was
+   also painting every section eyebrow, every card category label and the trust
+   strip's decorative dots. When the accent marks four non-interactive things per
+   screen it stops meaning "you can act here", and the real controls lose their
+   signal. Non-interactive labels move to muted text; cobalt is reserved for
+   links, buttons, focus and genuine status.
+   ========================================================================= */
+.eyebrow { color: var(--text-3); }
+.product-category { color: var(--text-3); }
+.trust-item .status-dot,
+.trust-item span[aria-hidden="true"] { background: var(--text-3); }
+
+/* the dark bands keep a warm eyebrow, which is brand material rather than accent */
+.testing-feature-copy .eyebrow,
+.site-footer .eyebrow { color: var(--gold); }
+
+/* --success means "reported and verified". It was also being spent on inventory
+   badges, so by the time the eye reached the analytical panel green had already
+   been used for something unrelated. Stock state is now neutral everywhere, not
+   just on product cards. */
+.stock-badge.is-in {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line);
+}
