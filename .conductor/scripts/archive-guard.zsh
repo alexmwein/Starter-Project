@@ -45,7 +45,8 @@ fi
 origin_url="$(git remote get-url origin)"
 github_slug="$(print -r -- "$origin_url" | sed -E 's#^https://github\.com/##; s#^git@github\.com:##; s#\.git$##')"
 if [[ ( "$origin_url" == https://github.com/* || "$origin_url" == git@github.com:* ) && -x "$(command -v gh 2>/dev/null)" ]]; then
-  merged_pr="$(gh pr list --repo "$github_slug" --state merged --base "$default_branch" --head "$branch" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null || true)"
+  head_sha="$(git rev-parse HEAD)"
+  merged_pr="$(gh pr list --repo "$github_slug" --state merged --base "$default_branch" --head "$branch" --limit 20 --json url,headRefOid --jq ".[] | select(.headRefOid == \"$head_sha\") | .url" 2>/dev/null | head -1 || true)"
   if [[ -n "$merged_pr" ]]; then
     print "Archive guard: merged pull request verified: $merged_pr"
     exit 0

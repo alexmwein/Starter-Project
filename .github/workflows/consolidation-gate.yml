@@ -1,0 +1,44 @@
+name: Consolidation gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consolidation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify combined branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out pull request merge
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test gateway
+        run: npm run test:gateway
+
+      - name: Test intelligence collector
+        run: npm run test:intel
+
+      - name: Test affiliate passport
+        run: npm run test:passport
+
+      - name: Build
+        run: npm run build
