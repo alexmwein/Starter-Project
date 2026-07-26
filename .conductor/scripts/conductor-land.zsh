@@ -68,6 +68,7 @@ fi
 
 github_slug="$(print -r -- "$origin_url" | sed -E 's#^https://github\.com/##; s#^git@github\.com:##; s#\.git$##')"
 github_owner="${github_slug%%/*}"
+github_repository="${github_slug#*/}"
 default_branch="${CONDUCTOR_DEFAULT_BRANCH:-$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')}"
 if [[ -z "$default_branch" ]]; then
   default_branch="$(gh repo view "$github_slug" --json defaultBranchRef --jq .defaultBranchRef.name)"
@@ -172,7 +173,7 @@ fi
 pr_json="$(
   gh pr view "$pr_url" \
     --repo "$github_slug" \
-    --json number,url,state,isDraft,baseRefName,headRefName,headRefOid,headRepository
+    --json number,url,state,isDraft,baseRefName,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository
 )"
 pr_number="$(jq -r '.number' <<<"$pr_json")"
 verified_url="$(jq -r '.url' <<<"$pr_json")"
@@ -181,13 +182,20 @@ pr_draft="$(jq -r '.isDraft' <<<"$pr_json")"
 pr_base="$(jq -r '.baseRefName' <<<"$pr_json")"
 pr_head="$(jq -r '.headRefName' <<<"$pr_json")"
 pr_head_sha="$(jq -r '.headRefOid' <<<"$pr_json")"
-pr_head_repo="$(jq -r '.headRepository.nameWithOwner // empty' <<<"$pr_json")"
+pr_head_repository="$(jq -r '.headRepository.name // empty' <<<"$pr_json")"
+pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
+pr_cross_repository="$(jq -r '.isCrossRepository' <<<"$pr_json")"
 
 if [[ "$pr_state" != "OPEN" || "$pr_draft" != "false" ]]; then
   print -u2 "conductor-land: pull request is not an open, ready pull request: $verified_url"
   exit 3
 fi
-if [[ "$pr_base" != "$default_branch" || "$pr_head" != "$branch" || "$pr_head_repo" != "$github_slug" ]]; then
+if [[ "$pr_base" != "$default_branch" ||
+  "$pr_head" != "$branch" ||
+  "$pr_head_owner" != "$github_owner" ||
+  "$pr_head_repository" != "$github_repository" ||
+  "$pr_cross_repository" != "false" ]]
+then
   print -u2 "conductor-land: pull request refs do not match this same-repository branch"
   exit 3
 fi

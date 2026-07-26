@@ -36,7 +36,7 @@ case "${1:-} ${2:-}" in
     elif [[ "$*" == *"state,mergeCommit,labels"* ]]; then
       print -r -- "{\"state\":\"${FAKE_PR_STATE:-MERGED}\",\"mergeCommit\":{\"oid\":\"${FAKE_MERGE_SHA:?}\"},\"labels\":[]}"
     else
-      print -r -- "{\"number\":1,\"url\":\"https://github.com/example/repo/pull/1\",\"state\":\"OPEN\",\"isDraft\":false,\"baseRefName\":\"main\",\"headRefName\":\"feature\",\"headRefOid\":\"${FAKE_HEAD_SHA:?}\",\"headRepository\":{\"nameWithOwner\":\"example/repo\"}}"
+      print -r -- "{\"number\":1,\"url\":\"https://github.com/example/repo/pull/1\",\"state\":\"OPEN\",\"isDraft\":false,\"baseRefName\":\"main\",\"headRefName\":\"feature\",\"headRefOid\":\"${FAKE_HEAD_SHA:?}\",\"headRepository\":{\"name\":\"repo\",\"nameWithOwner\":\"\"},\"headRepositoryOwner\":{\"login\":\"example\"},\"isCrossRepository\":false}"
     fi
     ;;
   "label create")
