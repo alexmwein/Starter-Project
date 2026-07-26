@@ -1,5 +1,40 @@
 "$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
 
 [scripts]
-setup = "true"
+archive = ".conductor/scripts/archive-guard.zsh"
+setup = ".conductor/scripts/sync-from-github.zsh"
 run = "open index.html"
+
+[git]
+archive_on_merge = true
+branch_prefix_type = "github_username"
+delete_branch_on_archive = true
+worktree_push_auto_setup_remote = true
+
+[prompts]
+general = """
+GitHub source-of-truth policy:
+- Treat origin's default branch on GitHub as canonical. Fetch origin before editing and reconcile the task branch with the latest origin default branch.
+- Work on a unique feature branch. Do not push directly to main or master unless Alex explicitly requests it.
+- Never leave completed work only on a Mac or only on a divergent branch. Commit task-owned changes, push the exact feature-branch HEAD to origin, create or update a pull request, incorporate the latest default branch, rerun relevant checks, and squash-merge.
+- Serialize parallel merges with GitHub auto-merge when available. If another change lands first, update and revalidate instead of overwriting it.
+- After merging, verify GitHub's default branch contains the work, report the pull request URL, and delete the merged remote branch.
+- Preserve unrelated work. Never reset, stash, delete, overwrite, or force-push work owned by another person or workspace.
+- If conflicts, CI, permissions, review, or an unapproved production release block merging, leave a merge-ready pull request and report the exact blocker.
+- Explicit read-only, draft, review-only, or no-merge requests override automatic landing.
+- After tests pass, use `.conductor/scripts/conductor-land.zsh` to push, open or update the pull request, squash-merge, and verify GitHub main.
+
+Frontend and UI design policy:
+- Claude Fable 5 (`claude-fable-5`) is the sole design authority for outward-facing frontend and UI work.
+- Fable must author or explicitly review layout, hierarchy, navigation, components, typography, color, spacing, responsive behavior, interactions, and UI states before shipment.
+- Codex and non-Fable models may preserve behavior, implement Fable's specification, refactor, test, secure, and deploy, but must not invent outward-facing visual direction.
+- Never sacrifice functionality, permissions, security, or legal invariants for visual cleanup, and never ship no-op controls as if they work.
+"""
+
+create_pr = """
+Fetch origin and ensure the feature branch contains the latest origin default branch before publishing. Preserve both sides of overlapping changes and rerun the relevant tests after reconciliation. Push the exact HEAD, create or update the pull request, wait for checks, squash-merge, then verify the pull request merge commit is present on the remote default branch. Use `.conductor/scripts/conductor-land.zsh` after tests pass. Do not stop at an open divergent pull request unless merging is genuinely blocked or the user requested no merge.
+"""
+
+resolve_merge_conflicts = """
+Resolve conflicts semantically. Inspect the merge base, the feature-branch diff, and the newest default-branch diff. Preserve compatible intent from both Alex and Lucas. Never resolve an entire file or tree wholesale with ours or theirs. After resolving, rerun the relevant tests before pushing or merging.
+"""
