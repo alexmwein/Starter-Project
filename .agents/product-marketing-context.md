@@ -14,7 +14,7 @@
 
 **Current reality:** OVO Labs is a concept website. It has no company operations, inventory, material, customers, testing, laboratory relationship, fulfillment, payment, checkout, or commerce. A thin notice at the top of every page states that nothing shown is real, stocked, or for sale.
 
-**What the website demonstrates:** Two Fable-authorized presentations of the same complete ecommerce information architecture: persistent predictive search, four catalog categories, ten product pages, three catalog sets, testing-status lookup, product comparison fields, educational guides, responsive navigation, a browser-local cart, explicit empty/error/success states, and event instrumentation.
+**What the website demonstrates:** Two design presentations of the same complete ecommerce information architecture: persistent predictive search, four catalog categories, ten product pages, three catalog sets, testing-status lookup, product comparison fields, educational guides, responsive navigation, a browser-local cart, explicit empty/error/success states, and event instrumentation.
 
 **Concept category:** Peptide research-product ecommerce
 
@@ -136,9 +136,7 @@ Legacy routes redirect:
 
 **Avoid:** dossier, archive, institutional access, eligibility gate, release, protocol, dose, transformation, medical-grade, pharmacy-grade, guaranteed, best seller.
 
-## Visual authority
-
-Claude Fable 5 is the sole outward-facing design authority.
+## Visual system
 
 The warm-apothecary-modernism route at `/ovo-labs/` is the brand-led comparison control. Its binding system uses:
 
@@ -158,7 +156,7 @@ The warm-apothecary-modernism route at `/ovo-labs/` is the brand-led comparison 
 
 The superseded cool-white/cobalt “Bench Light” direction remains prohibited.
 
-The Fable-authorized Porcelain candidate at `/ovo-labs-porcelain/` is a separate product-first system, not a return to Bench Light. It uses:
+The Porcelain candidate at `/ovo-labs-porcelain/` is a separate product-first system, not a return to Bench Light. It uses:
 
 - a pure-white `#FFFFFF` canvas with warm near-white `#FBF9F6` cards and `#F3EEE6` image wells;
 - the same amber imagery, espresso controls, terracotta emphasis, and three self-hosted type families;
@@ -225,6 +223,6 @@ These events measure usability only. No prototype event is a purchase or commerc
 - every visible control works;
 - no broken internal links or orphan pages;
 - keyboard completion for search, navigation, accordions, product quantity, and cart;
-- rendered Fable approval at desktop and narrow width;
+- rendered desktop and narrow-width design QA;
 - no fabricated product, quality, customer, shipping, or operational claim;
 - exact pushed commit saved through the connected Sites project, with public deployment only when explicitly authorized.

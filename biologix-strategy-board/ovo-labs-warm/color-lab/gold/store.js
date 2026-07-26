@@ -502,11 +502,11 @@
   ];
 
   const CATEGORIES = [
-    { key: "all", name: "Shop All", note: `${PRODUCTS.length} catalog entries` },
-    { key: "metabolic", name: "GLP-1 & Metabolic", note: "4 individual compounds" },
-    { key: "research", name: "Research Peptides", note: "2 individual compounds" },
-    { key: "growth", name: "Growth Hormone Research", note: "2 individual compounds" },
-    { key: "blends", name: "Peptide Blends", note: "2 defined blends" },
+    { key: "all", name: "Shop All", navName: "All peptides", note: `${PRODUCTS.length} catalog entries` },
+    { key: "metabolic", name: "GLP-1 & Metabolic", navName: "Metabolic", note: "4 individual compounds" },
+    { key: "research", name: "Research Peptides", navName: "Recovery", note: "2 individual compounds" },
+    { key: "growth", name: "Growth Hormone Research", navName: "Growth hormone", note: "2 individual compounds" },
+    { key: "blends", name: "Peptide Blends", navName: "Blends", note: "2 defined blends" },
   ];
 
   const ARTICLES = [
@@ -537,6 +537,8 @@
       '<svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
     cart:
       '<svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 4h2l2.4 10.1a2 2 0 0 0 2 1.5h7.8a2 2 0 0 0 1.9-1.4L21 8H7"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>',
+    search:
+      '<svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/></svg>',
     arrow: '<span aria-hidden="true">→</span>',
     check:
       '<svg class="i-check" aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 8 14.5 16 6"/></svg>',
@@ -587,12 +589,25 @@
   };
 
   function activePage(name) {
-    if (name === "shop" && ["collection", "product"].includes(PAGE)) return true;
+    if (name === "shop" && ["static-home", "home", "collection", "product", "bundles"].includes(PAGE)) return true;
     if (name === "testing" && ["testing", "lot-record"].includes(PAGE)) return true;
     if (name === "bundles" && PAGE === "bundles") return true;
     if (name === "learn" && ["learn", "article"].includes(PAGE)) return true;
     if (name === "about" && ["about", "policy"].includes(PAGE)) return true;
     return false;
+  }
+
+  function activeCategory() {
+    if (PAGE === "static-home" || PAGE === "home") return "all";
+    if (PAGE === "collection") {
+      const requested = new URLSearchParams(window.location.search).get("category");
+      return CATEGORIES.some((category) => category.key === requested) ? requested : "all";
+    }
+    if (PAGE === "product") {
+      return PRODUCTS.find((product) => product.slug === PRODUCT_SLUG)?.categoryKey || "";
+    }
+    if (PAGE === "bundles") return "sets";
+    return "";
   }
 
   function header() {
@@ -601,10 +616,11 @@
       ["testing", "Testing", "testing.html"],
       ["learn", "Journal", "notes.html"],
     ];
+    const selectedCategory = activeCategory();
     const categoryLinks = CATEGORIES.map(
       (category) =>
-        `<a href="${path(`catalog.html${category.key === "all" ? "" : `?category=${category.key}`}`)}">${category.name}</a>`,
-    ).join("");
+        `<a href="${path(`catalog.html${category.key === "all" ? "" : `?category=${category.key}`}`)}" data-nav-category="${category.key}"${selectedCategory === category.key ? ' class="is-active" aria-current="page"' : ""}>${category.navName}</a>`,
+    ).join("") + `<a href="${path("bundles.html")}" data-nav-category="sets"${selectedCategory === "sets" ? ' class="is-active" aria-current="page"' : ""}>Research sets</a>`;
 
     return `
       <a class="skip-link" href="#main-content">Skip to content</a>
@@ -621,14 +637,7 @@
       </div>
       <header class="site-header">
         <div class="shell header-main">
-          <a class="wordmark" href="${path("index.html")}" aria-label="Standard Peptide Labs home">
-            <span class="wordmark-mark" aria-hidden="true"></span>
-            <span class="wordmark-type">
-              <strong>STANDARD</strong>
-              <span>PEPTIDE LABS</span>
-            </span>
-          </a>
-          <nav class="primary-nav" aria-label="Primary navigation">
+          <nav class="primary-nav primary-nav-left" aria-label="Primary navigation">
             ${nav
               .map(
                 ([key, label, href]) =>
@@ -636,32 +645,35 @@
               )
               .join("")}
           </nav>
-          <div class="search-wrap">
-            <span class="search-icon" aria-hidden="true"></span>
-            <label class="sr-only" for="site-search">Search products and product codes</label>
-            <input
-              class="search-input"
-              id="site-search"
-              type="search"
-              role="combobox"
-              placeholder="Search molecule or code"
-              autocomplete="off"
-              aria-haspopup="listbox"
-              aria-autocomplete="list"
-              aria-controls="search-results"
-              aria-expanded="false"
-            >
-            <span class="search-shortcut" aria-hidden="true">⌘K</span>
-            <div class="search-results" id="search-results" role="listbox" hidden></div>
-          </div>
-          <div class="header-actions">
-            <a class="header-account" href="${path("account.html")}">Account</a>
-            <button class="icon-button mobile-menu-button" type="button" data-menu-open aria-label="Open menu">
-              ${icons.menu}
+          <a class="wordmark" href="${path("index.html")}" aria-label="Standard Peptide Labs home">
+            <span class="wordmark-mark" aria-hidden="true"></span>
+            <span class="wordmark-type">
+              <strong>STANDARD</strong>
+              <span>PEPTIDE LABS</span>
+            </span>
+          </a>
+          <nav class="primary-nav primary-nav-right" aria-label="Store utilities">
+            <button class="utility-action" type="button" data-search-open aria-label="Search the catalog">
+              ${icons.search}
+              <span>Search</span>
+            </button>
+            <a href="${path("account.html")}">Account</a>
+            <button class="utility-action utility-cart" type="button" data-cart-open aria-label="Open cart">
+              ${icons.cart}
+              <span>Cart</span>
+              <span class="cart-count" data-cart-count hidden>0</span>
+            </button>
+          </nav>
+          <div class="mobile-header-actions" aria-label="Store utilities">
+            <button class="icon-button" type="button" data-search-open aria-label="Search the catalog">
+              ${icons.search}
             </button>
             <button class="icon-button" type="button" data-cart-open aria-label="Open cart">
               ${icons.cart}
               <span class="cart-count" data-cart-count hidden>0</span>
+            </button>
+            <button class="icon-button mobile-menu-button" type="button" data-menu-open aria-label="Open menu">
+              ${icons.menu}
             </button>
           </div>
         </div>
@@ -736,10 +748,14 @@
           <button class="drawer-close" type="button" data-menu-close aria-label="Close menu">×</button>
         </div>
         <nav class="mobile-nav" aria-label="Mobile navigation">
-          <a href="${path("catalog.html")}">Shop all</a>
-          <a href="${path("bundles.html")}">Bundles</a>
+          <a href="${path("catalog.html")}">All peptides</a>
+          <a href="${path("catalog.html?category=metabolic")}">Metabolic</a>
+          <a href="${path("catalog.html?category=research")}">Recovery</a>
+          <a href="${path("catalog.html?category=growth")}">Growth hormone</a>
+          <a href="${path("catalog.html?category=blends")}">Blends</a>
+          <a href="${path("bundles.html")}">Research sets</a>
           <a href="${path("testing.html")}">Testing & COAs</a>
-          <a href="${path("notes.html")}">Learn</a>
+          <a href="${path("notes.html")}">Journal</a>
           <a href="${path("account.html")}">Demo account</a>
           <a href="${path("faq.html")}">FAQ</a>
           <a href="${path("company.html")}">About Standard Peptide Labs</a>
@@ -785,7 +801,7 @@
   }
 
   function layout(main) {
-    root.innerHTML = `${header()}<main id="main-content">${main}</main>${footer()}${drawers()}`;
+    root.innerHTML = `${header()}<main id="main-content">${main}</main>${footer()}${drawers()}${staticSearchDialog()}`;
   }
 
   function productImage(product, eager = false) {
@@ -806,28 +822,29 @@
 
   function productCard(product, options = {}) {
     const { eager = false } = options;
+    const record = testingFor(product.slug);
+    const stock = availabilityFor(product.slug);
     return `
       <article class="product-card" data-product-card="${product.slug}">
         <a class="product-image-wrap" href="${productPath(product)}" data-product-link="${product.slug}">
           ${productImage(product, eager)}
         </a>
         <div class="product-card-body">
-          <p class="product-category">${escapeHtml(product.category)} ${stockBadge(product.slug)}</p>
-          <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</a></h3>
+          <p class="product-category"><span>${escapeHtml(product.category)}</span>${stockBadge(product.slug)}</p>
+          <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)}</a></h3>
+          <p class="product-strength">${escapeHtml(product.strength)} · ${escapeHtml(product.format)}</p>
           <p class="product-description">${escapeHtml(product.descriptor)}</p>
           <div class="testing-micro">
-            <span class="testing-micro-lot">${(() => { const record = testingFor(product.slug); return record
-              ? `${icons.check}${escapeHtml(record.purity[1])} purity`
-              : "Testing reported per lot"; })()}</span>
-            <a href="${path(`testing.html?product=${product.code}`)}">View status</a>
+            <span class="testing-micro-lot">${record
+              ? `${icons.check}<span>Lot ${escapeHtml(record.lot)} · ${escapeHtml(record.purity[1])} purity</span>`
+              : "Testing reported per lot"}</span>
+            <a href="${record ? lotPath(record.lot) : path(`testing.html?product=${product.code}`)}">${record ? "View COA" : "View status"}</a>
           </div>
           <div class="product-buy-row">
-            <div>
-              <span class="price">${money.format(product.price)}</span>
-            </div>
-            ${(() => { const a = availabilityFor(product.slug); return a.sellable
-              ? `<button class="add-button" type="button" data-add-product="${product.slug}">Add to cart</button>`
-              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`; })()}
+            <span class="price">${money.format(product.price)}</span>
+            ${stock.sellable
+              ? `<button class="add-button" type="button" data-add-product="${product.slug}" aria-label="Add ${escapeHtml(product.name)} to cart">Add to cart</button>`
+              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(stock.label)}</button>`}
           </div>
         </div>
       </article>
@@ -3176,6 +3193,24 @@
     `;
   }
 
+  function paintAddFeedback(slug) {
+    document.querySelectorAll(`[data-add-product="${CSS.escape(slug)}"]`).forEach((button) => {
+      const defaultLabel = button.dataset.defaultLabel || button.textContent.trim();
+      button.dataset.defaultLabel = defaultLabel;
+      button.classList.add("is-added");
+      button.textContent = defaultLabel.toLowerCase().includes("set") ? "Set added ✓" : "Added ✓";
+      if (button.dataset.feedbackTimer) window.clearTimeout(Number(button.dataset.feedbackTimer));
+      button.dataset.feedbackTimer = String(
+        window.setTimeout(() => {
+          if (!button.isConnected) return;
+          button.classList.remove("is-added");
+          button.textContent = button.dataset.defaultLabel || "Add to cart";
+          delete button.dataset.feedbackTimer;
+        }, 1400),
+      );
+    });
+  }
+
   function addToCart(slug, quantity = 1) {
     const item = cartItemData(slug);
     if (!item) return;
@@ -3205,6 +3240,7 @@
       cart.push({ slug, quantity: safeQuantity });
     }
     saveCart();
+    paintAddFeedback(slug);
     openDrawer("cart");
     track("add_to_cart", {
       item_id: item.code,
@@ -3455,6 +3491,7 @@
       });
       document.addEventListener("keydown", (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+          if (document.querySelector("[data-static-search]")) return;
           event.preventDefault();
           document.querySelector("#site-search")?.focus();
         }
@@ -3532,6 +3569,12 @@
         `;
       summary.textContent = `${filtered.length} ${filtered.length === 1 ? "catalog entry" : "catalog entries"}${category === "all" ? "" : ` in ${CATEGORIES.find((item) => item.key === category).name}`}${onlySellable ? " available to order" : ""}`;
       buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.filter === category)));
+      document.querySelectorAll("[data-nav-category]").forEach((link) => {
+        const active = link.dataset.navCategory === category;
+        link.classList.toggle("is-active", active);
+        if (active) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
+      });
       if (availabilityToggle) availabilityToggle.setAttribute("aria-pressed", String(onlySellable));
       updateUrl();
     };
@@ -3835,32 +3878,32 @@
     });
   }
 
-  function initStaticHome() {
-    if (PAGE !== "static-home") return;
+  let searchDialogBound = false;
+  let searchDialogTrigger = null;
 
-    body.insertAdjacentHTML("beforeend", `${drawers()}${staticSearchDialog()}`);
-    const dialog = document.querySelector("[data-static-search]");
-    const searchInput = dialog?.querySelector("#site-search");
-    let searchTrigger = null;
+  function initSearchDialog() {
+    if (!document.querySelector("[data-static-search]") || searchDialogBound) return;
+    searchDialogBound = true;
 
     const openSearch = (trigger) => {
+      const dialog = document.querySelector("[data-static-search]");
       if (!dialog) return;
-      searchTrigger = trigger instanceof HTMLElement ? trigger : document.activeElement;
+      searchDialogTrigger = trigger instanceof HTMLElement ? trigger : document.activeElement;
       if (!dialog.open) dialog.showModal();
-      window.requestAnimationFrame(() => searchInput?.focus());
-      track("search_opened", { source: "homepage" });
+      window.requestAnimationFrame(() => dialog.querySelector("#site-search")?.focus());
+      track("search_opened", { source: PAGE === "static-home" ? "homepage" : PAGE });
     };
 
     const closeSearch = () => {
-      if (!dialog?.open) return;
-      dialog.close();
+      const dialog = document.querySelector("[data-static-search]");
+      if (dialog?.open) dialog.close();
     };
 
     document.addEventListener("click", (event) => {
       const open = event.target.closest("[data-search-open]");
       const close = event.target.closest("[data-static-search-close]");
       if (open) openSearch(open);
-      if (close) closeSearch();
+      if (close || event.target.matches("[data-static-search]")) closeSearch();
     });
 
     document.addEventListener("keydown", (event) => {
@@ -3870,33 +3913,39 @@
       }
     });
 
-    if (dialog) {
-      dialog.addEventListener("click", (event) => {
-        if (event.target === dialog) closeSearch();
-      });
-      dialog.addEventListener("close", () => {
-        if (searchTrigger instanceof HTMLElement) searchTrigger.focus();
-      });
-    }
+    document.addEventListener(
+      "close",
+      (event) => {
+        if (!event.target.matches("[data-static-search]")) return;
+        if (searchDialogTrigger instanceof HTMLElement) searchDialogTrigger.focus();
+      },
+      true,
+    );
+  }
 
-    const mobileMenu = document.querySelector(".mobile-menu");
-    if (mobileMenu) {
-      mobileMenu.addEventListener("click", (event) => {
-        if (event.target.closest("a, button")) mobileMenu.open = false;
-      });
-      document.addEventListener("click", (event) => {
-        if (mobileMenu.open && !mobileMenu.contains(event.target)) mobileMenu.open = false;
-      });
-      document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && mobileMenu.open) {
-          mobileMenu.open = false;
-          mobileMenu.querySelector("summary")?.focus();
-        }
-      });
-    }
+  function initStaticHome() {
+    if (PAGE !== "static-home") return;
 
+    const chrome = document.querySelector("[data-site-chrome]");
+    const featuredGrid = document.querySelector("[data-featured-products]");
+    const bundleGrid = document.querySelector("[data-featured-bundles]");
+    const featuredSlugs = ["retatrutide", "bpc-tb-blend", "cjc-ipamorelin-blend", "semaglutide"];
+
+    if (chrome) chrome.innerHTML = header();
+    if (featuredGrid) {
+      featuredGrid.innerHTML = featuredSlugs
+        .map((slug) => PRODUCTS.find((product) => product.slug === slug))
+        .filter(Boolean)
+        .map((product, index) => productCard(product, { eager: index === 0 }))
+        .join("");
+    }
+    if (bundleGrid) bundleGrid.innerHTML = BUNDLES.map(bundleCard).join("");
+
+    body.insertAdjacentHTML("beforeend", `${drawers()}${staticSearchDialog()}`);
+    initSearchDialog();
     initDrawersAndCart();
     initSearch();
+    initNewsletter();
     initLinkTracking();
   }
 
@@ -4554,6 +4603,7 @@
     initCartPage();
     initCheckout();
     initDrawersAndCart();
+    initSearchDialog();
     initSearch();
     initCollection();
     initProduct();
