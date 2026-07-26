@@ -1,0 +1,53 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+if [[ -n "${FAKE_GH_LOG:-}" ]]; then
+  print -r -- "$*" >>"$FAKE_GH_LOG"
+fi
+
+case "${1:-} ${2:-}" in
+  "repo view")
+    if [[ "$*" == *viewerPermission* ]]; then
+      print "WRITE"
+    else
+      print "main"
+    fi
+    ;;
+  "pr list")
+    if [[ "${FAKE_GH_MODE:-land}" == "archive" ]]; then
+      print -r -- "42"$'\t'"https://github.com/example/repo/pull/42"$'\t'"${FAKE_PR_HEAD_SHA:?}"
+    else
+      if [[ "$*" != *"--head feature"* || "$*" == *"--head example:feature"* ]]; then
+        print -u2 "invalid gh pr list head filter: $*"
+        exit 65
+      fi
+      if [[ "${FAKE_EXISTING_PR:-false}" == "true" ]]; then
+        print "https://github.com/example/repo/pull/1"
+      fi
+    fi
+    ;;
+  "pr create")
+    print "https://github.com/example/repo/pull/1"
+    ;;
+  "pr view")
+    if [[ "$*" == *"--json labels"* ]]; then
+      print "true"
+    elif [[ "$*" == *"state,mergeCommit,labels"* ]]; then
+      print -r -- "{\"state\":\"${FAKE_PR_STATE:-MERGED}\",\"mergeCommit\":{\"oid\":\"${FAKE_MERGE_SHA:?}\"},\"labels\":[]}"
+    else
+      print -r -- "{\"number\":1,\"url\":\"https://github.com/example/repo/pull/1\",\"state\":\"OPEN\",\"isDraft\":false,\"baseRefName\":\"main\",\"headRefName\":\"feature\",\"headRefOid\":\"${FAKE_HEAD_SHA:?}\",\"headRepository\":{\"nameWithOwner\":\"example/repo\"}}"
+    fi
+    ;;
+  "label create")
+    ;;
+  "api "*)
+    if [[ "$*" == *"actions/workflows/conductor-autoland.yml"* ]]; then
+      print "active"
+    fi
+    ;;
+  *)
+    print -u2 "unexpected fake gh invocation: $*"
+    exit 64
+    ;;
+esac
