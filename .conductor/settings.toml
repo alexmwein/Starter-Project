@@ -40,10 +40,8 @@ GitHub source-of-truth policy:
 - Installed publishing commands and hooks must resolve to one immutable commit-versioned installation, never directly to mutable files in a checkout. Existing hooks require explicit replacement consent and timestamped backups.
 - After tests pass, use the PATH-level `conductor-land` command so every chat uses the verified global installation. Its visible target and final receipt must name the same worktree binding and exact source/landing SHAs.
 
-Frontend and UI design policy:
-- Claude Fable 5 (`claude-fable-5`) is the sole design authority for outward-facing frontend and UI work.
-- Fable must author or explicitly review layout, hierarchy, navigation, components, typography, color, spacing, responsive behavior, interactions, and UI states before shipment.
-- Codex and non-Fable models may preserve behavior, implement Fable's specification, refactor, test, secure, and deploy, but must not invent outward-facing visual direction.
+Frontend and UI implementation policy:
+- Do not require any specific model or external design authority for frontend and UI work.
 - Never sacrifice functionality, permissions, security, or legal invariants for visual cleanup, and never ship no-op controls as if they work.
 """
 

@@ -3710,7 +3710,7 @@ button:disabled {
 }
 
 /* ============================================================================
-   FABLE 5 — first screen, authored revision.
+   FIRST SCREEN — authored revision.
    Three calls, in order of impact:
    1. The cobalt headline span was the loudest thing on the page, competing with
       the primary button for the same signal. Cobalt is contractually
@@ -3755,7 +3755,7 @@ button:disabled {
 .trust-item { gap: var(--s-3); padding: var(--s-4); }
 
 /* ===========================================================================
-   FABLE 5 — catalog + category bands.
+   CATALOG + CATEGORY BANDS.
    Card interiors and grid gutters onto the scale; the category band demoted
    to a labelled rail since its heading duplicated the nav directly above it.
    ======================================================================== */
@@ -3808,7 +3808,7 @@ button:disabled {
 }
 
 /* ===========================================================================
-   FABLE 5 — the proof band, the site's central claim.
+   PROOF BAND — the site's central claim.
    The document stretched to fill its column and left ~40% dead white below
    the last row, so the evidence card read as empty. It now centres as a
    compact artifact at document density, the CTA sizes to its label instead
@@ -3849,7 +3849,7 @@ button:disabled {
 }
 
 /* ===========================================================================
-   FABLE 5 — bundle rail, guide cards, newsletter band.
+   BUNDLE RAIL, GUIDE CARDS, NEWSLETTER BAND.
    ======================================================================== */
 /* This button sits on the cobalt panel, so there is no darker step available
    and no lighter slate in the palette. The rest state inverts: white plate,
@@ -4332,7 +4332,7 @@ button:disabled {
 
 
 /* ===========================================================================
-   FABLE 5 — homepage, 1440 and 390.
+   HOMEPAGE — 1440 and 390.
    Three unscoped rules at the tail of this file (.hero-grid, .newsletter,
    .section-head) were declared after the responsive blocks, so they won at
    every width and the phone got the desktop layout squeezed. .hero-grid
@@ -4534,7 +4534,7 @@ button:disabled {
    ======================================================================== */
 
 /* 1. The cobalt CTA band never collapsed on a phone. `.newsletter` and
-   `.newsletter-form input` are re-declared in the FABLE 5 block above, which
+   `.newsletter-form input` are re-declared in the homepage block above, which
    sits after the 960 and 640 media blocks and therefore wins on source order
    at equal specificity. Measured at 390: the grid stayed two columns of 106px
    and 164px, "Get the catalog brief." and "Ready to browse?" broke over three
@@ -5071,7 +5071,7 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
 
 
 /* ===========================================================================
-   FABLE 5 - the first screen, measured at 1440 and 390.
+   FIRST SCREEN — measured at 1440 and 390.
 
    The proof card is no longer a sticker on the photograph. It is a record in
    the copy column, so it needs the absolute positioning, the 200px width, the
