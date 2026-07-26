@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
+import json
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 AS_OF = "2026-07-26"
 OUTPUT = Path(__file__).with_name("Peptide-Founder-Media-Intelligence.xlsx")
+WEB_OUTPUT = Path(__file__).with_name("peptide-founder-media-intelligence-data.js")
 
 INK = "26211D"
 ESPRESSO = "382E28"
@@ -1214,6 +1216,39 @@ FAST_QUEUE = [
 ]
 
 
+def build_web_dataset() -> Path:
+    """Emit the browser-ready dataset from the same records as the workbook."""
+    payload = {
+        "asOf": AS_OF,
+        "stats": {
+            "sources": len(SOURCES),
+            "notes": len(NOTES),
+            "claims": len(CLAIMS),
+            "currentContext": len(CURRENT_CONTEXT),
+            "lessons": len(LESSONS),
+            "antiLessons": len(ANTI_LESSONS),
+            "actions": len(ACTION_PLAN),
+            "watchlist": len(WATCHLIST),
+        },
+        "sources": SOURCES,
+        "notes": NOTES,
+        "claims": CLAIMS,
+        "currentContext": CURRENT_CONTEXT,
+        "lessons": LESSONS,
+        "antiLessons": ANTI_LESSONS,
+        "actions": ACTION_PLAN,
+        "watchlist": WATCHLIST,
+        "executiveDecisions": EXECUTIVE_DECISIONS,
+        "fastQueue": FAST_QUEUE,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    WEB_OUTPUT.write_text(
+        "window.PEPTIDE_MEDIA_INTELLIGENCE = " + encoded + ";\n",
+        encoding="utf-8",
+    )
+    return WEB_OUTPUT
+
+
 def valid_url(value: str) -> bool:
     if not value:
         return True
@@ -1809,5 +1844,7 @@ def validate_workbook(path: Path) -> None:
 
 
 if __name__ == "__main__":
+    web_output_path = build_web_dataset()
     output_path = build_workbook()
     validate_workbook(output_path)
+    print(f"Built {web_output_path}")
