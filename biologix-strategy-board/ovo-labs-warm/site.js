@@ -475,16 +475,19 @@
   const ARTICLES = [
     {
       slug: "reading-testing-status",
+      kind: "Testing guide · 4 minutes",
       title: "How to read a testing status",
       summary: "A result, a specification, and an unreported field are three different things.",
     },
     {
       slug: "choosing-by-molecule",
+      kind: "Catalog guide · 4 minutes",
       title: "Shop by molecule, not by hype",
       summary: "A practical catalog framework for comparing identity, strength, format, and evidence state.",
     },
     {
       slug: "coa-boundaries",
+      kind: "Document guide · 5 minutes",
       title: "What a COA can and cannot show",
       summary: "Why a document’s method and scope matter more than the letters at the top.",
     },
@@ -628,12 +631,6 @@
                 </span>
               </a>
               <p>Clear product data, focused categories, and visible testing status at the point of choice.</p>
-              <div class="footer-column footer-contact">
-                <h2>Contact</h2>
-                <a href="mailto:support@ovolabs.example">support@ovolabs.example</a>
-                <p>Monday to Friday, 9:00 to 17:00 Pacific</p>
-                <p>First response within one business day</p>
-              </div>
             </div>
             <div class="footer-column">
               <h2>Shop</h2>
@@ -641,34 +638,57 @@
               <a href="${path("catalog.html?category=metabolic")}">GLP-1 & metabolic</a>
               <a href="${path("catalog.html?category=research")}">Research peptides</a>
               <a href="${path("catalog.html?category=blends")}">Peptide blends</a>
+              <a href="${path("bundles.html")}">Reference sets</a>
             </div>
             <div class="footer-column">
-              <h2>Information</h2>
+              <h2>Documents</h2>
               <a href="${path("testing.html")}">Testing & COAs</a>
               <a href="${path("lot-record.html")}">Lot records</a>
-              <a href="${path("notes.html")}">Learn</a>
-              <a href="${path("faq.html")}">FAQ</a>
-              <a href="${path("company.html")}">About OVO Labs</a>
-              <a href="${path("policies.html")}">Site policies</a>
               <a href="${path("eligibility.html")}">Research use eligibility</a>
+              <a href="${path("policies.html")}">Site policies</a>
             </div>
             <div class="footer-column">
-              <h2>Catalog entries</h2>
-              <!-- Four hardcoded indices, led by OVO-001, the one entry the store
-                   will not sell. Built from data now and ordered sellable first,
-                   so the footer cannot drift from the catalog and cannot spend
-                   its first link on a dead end. -->
-              ${sellableFirst(PRODUCTS)
-                .slice(0, 4)
-                .map(
-                  (product) =>
-                    `<a href="${productPath(product)}">${escapeHtml(product.name)} ${escapeHtml(product.strength)}</a>`,
-                )
-                .join("")}
+              <h2>Company</h2>
+              <a href="${path("company.html")}">About OVO Labs</a>
+              <a href="${path("notes.html")}">Learn</a>
+              <a href="${path("faq.html")}">FAQ</a>
             </div>
           </div>
+          <!-- The operator record. Contact used to be a fourth sub-list buried in the
+               brand cell, set at the same 12px/on-dark-2 as every navigation link, so
+               the support address read as one more menu item. The only statement of
+               who runs this store and from where was the 9px mono copyright line, the
+               smallest and faintest text in the document. On a catalog whose whole
+               pitch is that claims are checkable, that is the wrong thing to whisper.
+               It is now a labelled record sitting on the same four columns as the
+               navigation above it (60, 482, 797, 1113 at 1440), and it carries the
+               fact that actually backs the testing pitch: OVO Labs does not run its
+               own release testing. Every line here is already stated on the company
+               page, so nothing is invented. -->
+          <dl class="footer-record">
+            <div>
+              <dt>Operator</dt>
+              <dd>OVO Labs LLC</dd>
+              <dd>One facility, Portland, Oregon</dd>
+            </div>
+            <div>
+              <dt>Analytical work</dt>
+              <dd>An independent contract laboratory</dd>
+              <dd>OVO Labs runs no release testing of its own</dd>
+            </div>
+            <div>
+              <dt>Support</dt>
+              <dd><a href="mailto:support@ovolabs.example">support@ovolabs.example</a></dd>
+              <dd>Monday to Friday, 9:00 to 17:00 Pacific</dd>
+            </div>
+            <div>
+              <dt>Response</dt>
+              <dd>First reply within one business day</dd>
+              <dd>Written decision on fulfillment cases within three business days</dd>
+            </div>
+          </dl>
           <div class="footer-bottom">
-            <div>© 2026 OVO Labs LLC · Portland, Oregon.</div>
+            <div>© 2026 OVO Labs LLC</div>
             <span>This catalog does not provide medical advice or human-use instructions.</span>
           </div>
         </div>
@@ -739,7 +759,7 @@
           <h3 class="product-name"><a href="${productPath(product)}" data-product-link="${product.slug}">${escapeHtml(product.name)} · ${escapeHtml(product.strength)}</a></h3>
           <p class="product-description">${escapeHtml(product.descriptor)}</p>
           <div class="testing-micro">
-            <span><span class="testing-micro-dot" aria-hidden="true"></span>Testing reported per lot</span>
+            <span class="testing-micro-lot">${(() => { const record = testingFor(product.slug); return record ? `Lot ${escapeHtml(record.lot)}` : "Testing reported per lot"; })()}</span>
             <a href="${path(`testing.html?product=${product.code}`)}">View status</a>
           </div>
           <div class="product-buy-row">
@@ -762,11 +782,11 @@
           .map(
             (category) => `
               <a class="category-tile" href="${path(`catalog.html?category=${category.key}`)}">
-                <span>
+                <span class="category-tile-head">
                   <strong>${category.name}</strong>
-                  <span>${category.note}</span>
+                  <span class="category-arrow" aria-hidden="true">→</span>
                 </span>
-                <span class="category-arrow" aria-hidden="true">→</span>
+                <span class="category-tile-members">${PRODUCTS.filter((entry) => entry.categoryKey === category.key).map((entry) => escapeHtml(entry.name)).join(", ")}</span>
               </a>
             `,
           )
@@ -779,16 +799,14 @@
     const items = bundle.productSlugs.map((slug) => PRODUCTS.find((product) => product.slug === slug));
     return `
       <article class="bundle-card">
-        <div class="bundle-image">
-          <img src="${path("assets/ovo-set-pair.webp")}" alt="Two OVO Labs amber peptide vials for ${escapeHtml(bundle.name)}" width="1536" height="1024" loading="lazy">
-          <span class="bundle-plate" aria-hidden="true">
-            <span class="bundle-plate__format">${escapeHtml(bundle.format)}</span>
-            <span class="bundle-plate__code">${escapeHtml(bundle.code)}</span>
-          </span>
-        </div>
         <div class="bundle-body">
-          <p class="product-category">Catalog set</p>
-          <h3>${escapeHtml(bundle.name)}</h3>
+          <div class="bundle-head">
+            <span class="bundle-thumb" aria-hidden="true"><img src="${path("assets/ovo-set-pair.webp")}" alt="" width="1536" height="1024" loading="lazy"></span>
+            <div>
+              <p class="product-category bundle-eyebrow"><span>Catalog set</span><span class="bundle-code">${escapeHtml(bundle.code)}</span></p>
+              <h3>${escapeHtml(bundle.name)}</h3>
+            </div>
+          </div>
           <p>${escapeHtml(bundle.descriptor)}</p>
           <ul class="bundle-items">
             ${items
@@ -800,18 +818,11 @@
           </ul>
           ${(() => {
             const a = availabilityFor(bundle.slug);
-            /* A set held back on position is not a sold-out set. The product page
-               already refuses the grey disabled button here and states the reason
-               where the buy control sits; the card now says the same thing instead
-               of a full-weight price above a dead slab. */
-            if (a.restricted) {
-              const held = items.filter((product) => restrictionFor(product.slug)).map((product) => product.name);
-              return `
-          <div class="restricted-notice bundle-restricted" role="note">
-            <span class="restricted-notice__pill">Not offered</span>
-            <p>${escapeHtml(held.join(" and "))} cannot be ordered, so this set cannot be either. It stays listed at ${money.format(bundle.price)} so the position is on the record.</p>
-          </div>`;
-            }
+            /* A set held back on position is not a sold-out set, but it is still a
+               catalog position: the price stays on the record and the terminal row
+               keeps the same shape as the two sellable cards, so all three sets
+               align on one baseline instead of one card carrying a paragraph. */
+            const held = items.filter((product) => restrictionFor(product.slug)).map((product) => product.name);
             return `
           <div class="bundle-footer">
             <div>
@@ -820,7 +831,9 @@
             </div>
             ${a.sellable
               ? `<button class="add-button" type="button" data-add-product="${bundle.slug}">Add set to cart</button>`
-              : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`}
+              : a.restricted
+                ? `<p class="bundle-unavailable" role="note"><span class="bundle-unavailable__label">Not offered</span><span>${escapeHtml(held.join(" and "))} cannot be ordered.</span></p>`
+                : `<button class="add-button is-unavailable" type="button" disabled aria-disabled="true">${escapeHtml(a.label)}</button>`}
           </div>`;
           })()}
         </div>
@@ -889,47 +902,57 @@
           <div class="hero-copy">
             <p class="eyebrow">Peptide research catalog</p>
             <h1>Peptides, <span>without the mystery.</span></h1>
-            <p>A focused catalog with clear formats, testing status beside every product, and a fast path from search to cart.</p>
+            <p>A focused catalog with clear formats and a fast path from search to cart. Every entry names what was tested and what was not.</p>
             <div class="hero-actions">
               <a class="button button-primary" href="${path("catalog.html")}">Shop peptides ${icons.arrow}</a>
               <a class="button button-secondary" href="${path("testing.html")}">View testing & COAs</a>
             </div>
-          </div>
-          <div class="hero-visual">
-            <img src="${path("assets/ovo-hero-still.webp")}" alt="An OVO Labs amber peptide vial with a gold cap resting on a travertine ledge in warm window light" width="1536" height="1024" fetchpriority="high">
             ${(() => {
-              /* Both hero cards read from data, and now from the SAME featured
-                 entry, so the card cannot print the lot of one product beside a
-                 chip for another. "Reported result: identity, content, purity"
-                 was an assertion; the measured purity and mass off the actual
-                 lot are the claim itself, and the unreported row sits in the
-                 same card so the gap is not something you have to dig for. */
+              /* The proof card floated on the photograph at 200px wide, and the
+                 phone breakpoint set it to display:none, so the one contrast
+                 this catalog is built on was a sticker at 1440 and did not
+                 exist at 390. It moves into the copy column and becomes a
+                 record: subject and lot, the method beside each measured value,
+                 and the unreported row inside the same table rather than in a
+                 footnote. Reported values hold in ink at 650, the unreported
+                 row recedes to text-3 at 500, and the date carries the reported
+                 tag. That is the grammar the dark testing band already uses. */
               const record = featuredTesting;
+              if (!record) return "";
               return `
             <a class="hero-coa-card" href="${path("testing.html")}">
-              <span>${escapeHtml(featured.name)} · Lot ${escapeHtml(record ? record.lot : "not assigned")}</span>
-              <div class="hero-coa-row">
+              <span class="hero-coa-head">
+                <span class="hero-coa-subject">${escapeHtml(featured.name)} · Lot ${escapeHtml(record.lot)}</span>
+                <span class="hero-coa-tag">Reported ${escapeHtml(record.date)}</span>
+              </span>
+              <div class="hero-coa-row is-reported">
                 <span>Purity</span>
-                <strong>${escapeHtml(record ? record.purity[1] : "Not reported")}</strong>
+                <span class="hero-coa-method">${escapeHtml(record.purity[0])}</span>
+                <strong>${escapeHtml(record.purity[1])}</strong>
               </div>
-              <div class="hero-coa-row">
+              <div class="hero-coa-row is-reported">
                 <span>Content</span>
-                <strong>${escapeHtml(record ? record.content[1] : "Not reported")}</strong>
+                <span class="hero-coa-method">${escapeHtml(record.content[0])}</span>
+                <strong>${escapeHtml(record.content[1])}</strong>
               </div>
               <div class="hero-coa-row is-unreported">
                 <span>Sterility</span>
+                <span class="hero-coa-method">Not represented</span>
                 <strong>Not reported</strong>
               </div>
             </a>`;
             })()}
           </div>
+          <div class="hero-visual">
+            <img src="${path("assets/ovo-hero-still.webp")}" alt="An OVO Labs amber peptide vial with a gold cap resting on a travertine ledge in warm window light" width="1536" height="1024" fetchpriority="high">
+          </div>
         </div>
       </section>
-      <div class="trust-strip" aria-label="Store principles">
-        <div class="trust-item"><span class="trust-dot" aria-hidden="true"></span><strong>10 focused products</strong></div>
-        <div class="trust-item"><span class="trust-dot" aria-hidden="true"></span><strong>4 clear categories</strong></div>
-        <div class="trust-item"><span class="trust-dot" aria-hidden="true"></span><strong>Search by name or code</strong></div>
-        <div class="trust-item"><span class="trust-dot" aria-hidden="true"></span><strong>Testing status on every item</strong></div>
+      <div class="trust-strip" aria-label="What this catalog carries">
+        <div class="trust-item"><span class="trust-label">Catalog</span><strong>10 compounds, 8 sellable</strong></div>
+        <div class="trust-item"><span class="trust-label">Format</span><strong>Lyophilized, 5 to 20 mg</strong></div>
+        <div class="trust-item"><span class="trust-label">Method</span><strong>RP-HPLC and ESI-MS</strong></div>
+        <div class="trust-item"><span class="trust-label">Lot</span><strong>Named on every cart line</strong></div>
       </div>
       <section class="section">
         <div class="shell">
@@ -1006,7 +1029,7 @@
               (article) => `
                 <article class="education-card">
                   <div>
-                    <p class="product-category">4 minute guide</p>
+                    <p class="product-category">${escapeHtml(article.kind)}</p>
                     <h3>${escapeHtml(article.title)}</h3>
                     <p>${escapeHtml(article.summary)}</p>
                   </div>
@@ -1017,7 +1040,6 @@
           </div>
         </div>
       </section>
-      ${newsletter()}
     `;
   }
 
@@ -1206,7 +1228,6 @@
           </div>
         </div>
       </section>
-      ${newsletter()}
     `;
   }
 
@@ -1226,7 +1247,7 @@
               (article, index) => `
                 <article class="education-card">
                   <div>
-                    <p class="product-category">Guide 0${index + 1}</p>
+                    <p class="product-category">${escapeHtml(article.kind)}</p>
                     <h3>${escapeHtml(article.title)}</h3>
                     <p>${escapeHtml(article.summary)}</p>
                   </div>
@@ -1253,7 +1274,6 @@
           </div>
         </div>
       </section>
-      ${newsletter()}
     `;
   }
 

@@ -4769,3 +4769,744 @@ p:last-child, ul:last-child, ol:last-child { margin-block-end: 0; }
 /* button interiors were 14px and 6px, both off the scale */
 .button { padding-inline: var(--s-4); }
 .icon-button, .drawer-close { padding-inline: var(--s-2); }
+
+
+
+/* ============================================================================
+   FOOTER — the operator record.
+
+   Measured before: the footer's only contact block was a fourth sub-list inside
+   the brand cell at 12px/on-dark-2, identical to every navigation link beside
+   it, and the store's legal identity and location lived in the 9px mono
+   copyright line at the very bottom, the smallest and faintest text on the
+   page. A catalog that sells verifiability was hiding the two facts that make
+   it verifiable: who runs it and who tests it.
+
+   The record is a labelled band under its own rule, on the same grid template
+   as .footer-grid so its four cells land on the identical x-axes as the
+   navigation above (60, 482, 797, 1113 at 1440). No new type: dt reuses the
+   9px mono column-heading treatment, dd reuses the 12px link body size. The
+   first dd of each cell is --on-dark (the fact), the second is --on-dark-2
+   (the qualifier), which gives each cell a two-level read without a new size.
+   Contrast on --slate: 9px mono on-dark-3 5.87:1, 12px on-dark-2 9.42:1.
+
+   Narrow widths are restated inside this block, after the base rule, so this
+   append cannot leak a desktop grid onto a phone.
+   ========================================================================= */
+.footer-record {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(3, 1fr);
+  gap: var(--s-7);
+  margin: var(--s-7) 0 0;
+  padding-top: var(--s-5);
+  border-top: 1px solid rgba(243, 234, 218, 0.18);
+}
+
+.footer-record > div {
+  min-width: 0;
+}
+
+.footer-record dt {
+  margin: 0 0 var(--s-3);
+  color: var(--on-dark-3);
+  font: 500 9px/1.3 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.footer-record dd {
+  margin: 0;
+  color: var(--on-dark-2);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.footer-record > div > dd:first-of-type {
+  color: var(--on-dark);
+}
+
+.footer-record dd a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 960px) {
+  .footer-record {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--s-6) var(--s-4);
+  }
+}
+
+/* the support address is the one control in the record, so it takes the same
+   44px hit area the rest of the footer links were given at this width */
+@media (max-width: 640px) {
+  .footer-record dd a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    margin-block: calc(var(--s-3) * -1);
+  }
+}
+
+
+
+/* The terminal line was flex justify-content: space-between across the full
+   1320px shell, which put 724px of empty slate between "© 2026 OVO Labs LLC"
+   and the medical-advice disclaimer. At 9px mono the two fragments were too far
+   apart to read as one statement, and right-aligning the disclaimer at the far
+   edge is the pattern that says "boilerplate, ignore me" about the single most
+   consequential sentence in the document. Grouped left on the shell axis like
+   every other line of type on the page. Scoped above 640 because the mobile
+   rule already sets this row to display: block and must keep winning. */
+@media (min-width: 641px) {
+  .footer-bottom {
+    justify-content: flex-start;
+    gap: var(--s-6);
+  }
+}
+
+
+
+/* The 44px touch-target block above sets .footer-column a to display:
+   inline-flex, which makes the footer links inline-level. Measured at 390 they
+   stopped stacking: "Testing & COAs Lot records" shared a line, "Learn FAQ
+   About OVO Labs" shared a line, and because the template joins the anchors
+   with no whitespace between them two product links rendered as the single
+   string "BPC-157 10 mgTB-500 10 mg" with no space at all. display: flex is
+   still block-level, so each link takes its own line again while keeping the
+   align-items and min-height from that rule: measured back to one link per row
+   at a 44px hit height. */
+@media (max-width: 640px) {
+  .footer-column a,
+  .footer-contact a {
+    display: flex;
+  }
+}
+
+
+
+/* ============================================================================
+   Card testing strip. Measured at 1440 every card in the band printed the same
+   sentence, so ten cards each spent a bordered 42px strip on a line that could
+   not be compared against anything. The strip now names the lot, so it carries
+   the one value in the block that differs card to card.
+   ========================================================================= */
+.product-card .testing-micro-lot {
+  color: var(--text-2);
+  font: 400 10px/1.4 var(--mono);
+}
+
+/* One hairline, not two. The seam that matters is description to record, and
+   the s-4 gap under the strip already separates the record from the buy row,
+   so the lower rule was fencing a 42px band inside a 262px card. Scoped at
+   both widths because the base rule sets border-block, and an unscoped rule
+   appended here would land after the responsive blocks.
+   Measured: strip 42px to 33px at 1440, 60px to 50px at 390. */
+@media (min-width: 641px) {
+  .product-card .testing-micro {
+    padding: var(--s-2) 0 0;
+    border-bottom: 0;
+  }
+}
+@media (max-width: 640px) {
+  .product-card .testing-micro {
+    padding: var(--s-2) 0 0;
+    border-bottom: 0;
+  }
+}
+
+
+
+/* ============================================================================
+   The card's category line. Eight of the ten catalog cards carried an "In
+   stock" chip, so the one card that says "Only 4 left" and the two that say
+   "Not offered" had to compete with a chip that appears almost everywhere and
+   rules nothing out. In stock is the default state, so it stops printing on
+   the card and the exceptions read as exceptions. Nothing else changes:
+   stockBadge() is only ever called from the product card, the product page
+   states availability in its own buy box, and the two unsellable entries keep
+   their chip and their disabled control.
+
+   The line then reserves s-4h, the chip's own height, so titles land on one
+   baseline across a row whether a chip is present or not. Measured at 1440:
+   boxes of 12px and 18px in the same row, now 20 and 20.
+   ========================================================================= */
+.product-card .stock-badge.is-in {
+  display: none;
+}
+
+@media (min-width: 641px) {
+  .product-card .product-category {
+    min-height: var(--s-4h);
+  }
+}
+@media (max-width: 640px) {
+  .product-card .product-category {
+    min-height: var(--s-5);
+  }
+}
+
+
+
+/* ============================================================================
+   Price. It is the value a buyer compares across a row, and at 16px it was the
+   same size as the product name directly above it and the name printed on the
+   vial label above that, so it was the third instance of identical weight in
+   one card. It takes --t-sub, one step up, and the four prices now read as a
+   column down the left of the band before the eye reaches the buttons.
+   Measured at 1440: $100 ink 85..131 at 20px against a button starting at 234.
+   Mobile stops at 16 because the 2-up card has 125px of content width.
+   ========================================================================= */
+@media (min-width: 641px) {
+  .product-card .price {
+    font-size: 20px;
+    letter-spacing: -0.02em;
+  }
+}
+@media (max-width: 640px) {
+  .product-card .price {
+    font-size: 16px;
+  }
+}
+
+
+
+/* ============================================================================
+   Category tiles. Measured at 1440: label ink ended at x=220 and the arrow sat
+   at x=337, so 117px of empty tile sat between them in every one of the four,
+   and 157px in the last. The tile is now a two-line block, name and arrow on
+   the first line, the molecules in that category on the second, so the width
+   is filled by content rather than by a gap. Tile 1 fills 214px of its 262px
+   content width where it filled 135px.
+
+   Safe to leave unscoped: no media block sets display or flex-direction on
+   .category-tile. The 640 block only sets min-width and scroll snapping for
+   the horizontal rail, and the 404 recovery rail only sets min-width, so both
+   were rendered and measured at 390 with no horizontal overflow.
+   ========================================================================= */
+.category-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--s-2);
+}
+
+.category-tile .category-tile-head {
+  display: flex;
+  gap: var(--s-2);
+  align-items: baseline;
+  justify-content: flex-start;
+  margin-top: 0;
+  font-size: 13px;
+}
+
+.category-tile .category-tile-members {
+  margin-top: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+
+
+/* ===========================================================================
+   FABLE 5 - the first screen, measured at 1440 and 390.
+
+   The proof card is no longer a sticker on the photograph. It is a record in
+   the copy column, so it needs the absolute positioning, the 200px width, the
+   translucent plate and the drop shadow taken back off it. --measure resolves
+   against a 16px context here exactly as it does on the hero paragraph, so the
+   card's right edge lands on 604 at 1440, which is the paragraph's right edge.
+   Scoped to .hero-copy so it also outranks the @media (max-width: 640px)
+   display:none that used to delete the page's central claim on a phone.
+   ======================================================================== */
+.hero-copy .hero-coa-card {
+  position: static;
+  display: block;
+  width: 100%;
+  max-width: var(--measure);
+  margin-top: var(--s-6);
+  padding: var(--s-5);
+  font-size: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: none;
+  text-decoration: none;
+}
+
+/* it is a link to the testing records, so it says so on hover */
+.hero-copy .hero-coa-card:hover {
+  border-color: var(--cobalt);
+}
+
+.hero-copy .hero-coa-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  align-items: baseline;
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+/* --success means reported and verified analytical status, which is precisely
+   what this tag states. Same treatment as .document-tag.is-reported in the dark
+   band 1000px below, so the hero and the band make one claim in one language.
+   #147453 on #e9f6f1 is 5.1:1. */
+.hero-copy .hero-coa-tag {
+  flex: 0 0 auto;
+  padding: var(--s-1) var(--s-2);
+  color: var(--success);
+  background: var(--success-tint);
+  border-radius: var(--r-sm);
+}
+
+
+
+/* A measured number means nothing without the method that produced it, and the
+   card had room for neither at 200px. Three columns: the field, the method, and
+   the value flush right, which is the same left-label right-result reading the
+   .document-row grid in the dark band uses. The label column is --s-9 so the
+   three rows share one axis instead of each row sizing to its own label. */
+.hero-copy .hero-coa-row {
+  display: grid;
+  grid-template-columns: var(--s-9) minmax(0, 1fr) auto;
+  gap: var(--s-4);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--s-3) 0;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.hero-copy .hero-coa-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* The measured figures were 10px cobalt inside a card that is itself a link, so
+   the numbers read as link text and the unreported row read as the same kind of
+   fact. At 13px the values are legible; reported holds in ink at 650, the
+   unreported row recedes to text-3 at 500 with its method, which is what
+   .document-row does 1000px below. text-3 on --surface is 5.2:1. */
+.hero-copy .hero-coa-row strong {
+  font-size: 13px;
+  text-align: right;
+}
+
+.hero-copy .hero-coa-row.is-reported strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.hero-copy .hero-coa-row.is-unreported strong,
+.hero-copy .hero-coa-row.is-unreported span {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+/* Below 375 the three columns cost the method its line. It drops under the
+   field rather than being dropped from the page. Measured at 320: rows 60px,
+   card 296x270, no horizontal overflow. */
+@media (max-width: 374px) {
+  .hero-copy .hero-coa-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--s-1) var(--s-4);
+  }
+  .hero-copy .hero-coa-method {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}
+
+
+
+/* The two hero columns were centred against each other, so at 1440 the copy
+   block started 71px below the photograph's top edge and finished 71px above
+   its bottom: two rectangles floating in one band with no shared line anywhere.
+   Stretched, they open and close together, 186 to 705. The photograph keeps
+   object-fit: cover, so the extra height crops rather than distorts.
+
+   Scoped to the two-column widths on purpose. Below 961 the hero is a single
+   column and an unscoped alignment rule appended here would reach it. */
+@media (min-width: 961px) {
+  .home-hero .hero-grid {
+    align-items: stretch;
+  }
+}
+
+
+
+/* The strip now carries four checkable facts rather than four slogans, so it
+   reads as a spec block: mono term above the value, the way the CoA head and
+   the document rows are set. Term is text-3 at 9px (5.2:1 on --surface), value
+   is ink at 12px 500 rather than 650, because four bold lines across the shell
+   competed with the buttons directly above them. The band keeps the shell
+   alignment it was given, so its four terms sit on 60, 396, 732 and 1068 at
+   1440, which are the four product-card edges below. */
+.trust-strip .trust-item {
+  display: grid;
+  gap: var(--s-1);
+  align-content: center;
+}
+
+.trust-strip .trust-label {
+  color: var(--text-3);
+  font: 500 9px/1.3 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.trust-strip .trust-item strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+
+
+/* ===========================================================================
+   SET CARD: the rail stops leading with a photograph it cannot vary.
+   ======================================================================== */
+/* Measured at 1440: every set card was 596px tall to carry four lines, and the
+   210px frame at the top of all three was the same file, the same crop and the
+   same shadow, three times across the row and three times down the phone. The
+   catalog grid already solves the one-photograph problem by labelling the vial
+   inside the frame; a set has no vial of its own to label, so it stops
+   competing. The photograph becomes a 96px reference square and the contents
+   list, which is the only part that differs set to set, becomes the widest
+   block on the card. */
+.bundle-head {
+  display: flex;
+  gap: var(--s-4);
+  align-items: center;
+}
+
+.bundle-thumb {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.bundle-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* One photograph, three framings. Cover-fitting a 1536x1024 source into a
+   square leaves only 48px of horizontal slack, so object-position alone moved
+   nothing; the scale step is what separates the crops. Wide with the light
+   bars, the pair centred, then tight on a single labelled vial. */
+.bundle-grid > .bundle-card:nth-child(3n+1) .bundle-thumb img { object-position: 24% 50%; transform: scale(1.15); }
+.bundle-grid > .bundle-card:nth-child(3n+2) .bundle-thumb img { object-position: 66% 50%; transform: scale(1.3); }
+.bundle-grid > .bundle-card:nth-child(3n+3) .bundle-thumb img { object-position: 50% 50%; transform: scale(1.55); }
+
+/* The set code was carried on a plate over the photograph, where it sat beside
+   a format string that duplicated the contents list underneath it. The code
+   belongs on the label line, at the size the rest of the catalog labels use. */
+.bundle-body .bundle-eyebrow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-1);
+}
+
+.bundle-code {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* The out-of-stock state, given the same shape as the in-stock one.
+   It was a 114px prose slab, which stretched the row to the tallest card and
+   left 92px of white between the contents list and the buy row on the two sets
+   that can be bought. Same terminal row, same price anchor, same left edge: the
+   solid cobalt control is answered by an outlined plate, not by an absence.
+   Neutral grey, because this is a position, not a shortage and not a status,
+   and the same grey the disabled catalog control already uses. Measured 5.33:1
+   for the sentence and 16.6:1 for the label on surface-soft. */
+.bundle-unavailable {
+  display: flex;
+  gap: var(--s-3);
+  align-items: center;
+  min-height: 38px;
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  color: var(--text-2);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.bundle-unavailable__label {
+  flex: none;
+  color: var(--ink);
+  font: 500 10px/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 640px) {
+  .bundle-unavailable {
+    min-height: 44px;
+  }
+}
+
+
+/* ===========================================================================
+   GUIDE CARDS: the card becomes the interaction it is drawn as.
+   ======================================================================== */
+/* Three bordered boxes whose only action was a link on the last line, in 210px
+   of card carrying 147px of content. The 63px left over was also the only thing
+   separating the summary from the link, because `.education-card p` has its
+   bottom margin zeroed further down the sheet: the gap was a byproduct of the
+   min-height rather than a decision. The border is a promise of a target, so the
+   whole card becomes the target; the gap is authored; the card sizes to its
+   content. Grid items still stretch, so the row stays level and the three links
+   keep one baseline. Measured 221px to 197px at 1440. */
+.education-card {
+  position: relative;
+  min-height: 0;
+  transition: border-color 0.12s ease;
+}
+
+.education-card:hover {
+  border-color: var(--line-strong);
+}
+
+.education-card .text-link {
+  margin-top: var(--s-5);
+}
+
+.education-card .text-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+/* The guide eyebrow was inheriting `.education-card p` at 13px, so the same
+   .product-category component rendered 9px on a product card and 13px here,
+   with 24px under it. Same component, same size, sitting on the title it
+   belongs to. */
+.education-card .product-category {
+  margin-bottom: var(--s-2);
+  color: var(--text-3);
+  font-size: 9px;
+}
+
+
+/* ===========================================================================
+   MOBILE, 390. 1. The two header rows were never 12 apart.
+   `.header-main { gap: var(--s-3) }` is declared in the 640 block, and
+   `.header-main { gap: var(--s-5) }` is declared unscoped after it, so the
+   phone header shipped with the desktop gap. Measured sticky height 129 on an
+   844 viewport. The mobile intent, restated after the rule that beat it.
+   ======================================================================== */
+@media (max-width: 640px) {
+  .header-main {
+    gap: var(--s-3);
+  }
+}
+
+
+
+/* ===========================================================================
+   MOBILE, 390. 2. The hero pair was stacked for no measured reason.
+   Two full-width buttons cost 104px of the band that separates the headline
+   from the first product. Side by side each column is 177 at 390 and the
+   longest label on the site, "View testing & COAs", measures 175: no wrap, no
+   clip, checked down to 320. One 46px row instead of two.
+   ======================================================================== */
+@media (max-width: 640px) {
+  .hero-actions {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-3);
+  }
+
+  .hero-actions .button {
+    width: 100%;
+    padding-inline: var(--s-3);
+  }
+}
+
+
+
+/* ===========================================================================
+   MOBILE, 390. 3. The catalog band changes treatment rather than stacking.
+
+   Two columns at 390 is a 175px card, and the card inset is locked at --s-5,
+   so 48 of those 175 are padding and the text column is 125. Measured on every
+   card in the grid: the description clipped to 2 of 4 lines (70 into 35), the
+   category label and the stock badge could not share a line so the eyebrow ran
+   40px tall, the testing block stacked to 60, and the buy row stacked a 23px
+   price above a 125px cobalt slab. 519px of card for 175px of width: a phone
+   screen held 1.63 of them.
+
+   On its side the same content needs no truncation. The photograph becomes a
+   96px marker, which is all it was doing at 173 (every card carries the same
+   vial in the same light and only the plate differs), and the body gets 220px.
+   Description whole, category and badge on one line, testing status on one
+   line. 255px per card, 3.31 per screen, and the band is the same height it
+   was: catalog 2683 to 2692.
+   ======================================================================== */
+@media (max-width: 640px) {
+  .product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-grid > .product-card {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .product-grid > .product-card > .product-image-wrap {
+    flex: 0 0 var(--s-9);
+    aspect-ratio: auto;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .product-grid > .product-card > .product-card-body {
+    min-width: 0;
+  }
+
+  .product-grid > .product-card .product-image-label {
+    width: 96%;
+  }
+
+  /* the badge is the label's status, not a second row */
+  .product-grid > .product-card .product-category {
+    display: flex;
+    gap: var(--s-2);
+    align-items: center;
+    min-height: 0;
+    margin-bottom: var(--s-3);
+  }
+
+  .product-grid > .product-card .product-description {
+    min-height: 0;
+    -webkit-line-clamp: 3;
+  }
+
+  .product-grid > .product-card .testing-micro {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .product-grid > .product-card .testing-micro a {
+    margin-top: 0;
+  }
+}
+
+
+
+/* ===========================================================================
+   MOBILE, 390. 4. The row card's buy row, with a floor under it.
+   Price and button need 156 on one line. The row card gives the body 220 at
+   390 and 190 at 360, so both fit and the button sizes to its label instead of
+   painting a full-width bar. At 320 the body is 150 and the price column was
+   measured crushing to 9px, so anything under 360 keeps the stacked row. Both
+   bounds are on this query: it cannot reach desktop.
+   ======================================================================== */
+@media (min-width: 360px) and (max-width: 640px) {
+  .product-grid > .product-card .product-buy-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .product-grid > .product-card .add-button {
+    width: auto;
+    padding-inline: var(--s-5);
+  }
+}
+
+
+
+/* ===========================================================================
+   MOBILE, 390. 5. The category band, all four destinations on screen.
+   The rail is 940px of tiles inside a 378px frame: measured, 3 of the 4
+   research areas were cut at the viewport edge or past it, and the only cue
+   was a scroll gesture nested inside the page scroll. This file already made
+   this call for the same four-tile rail on the 404. Same tiles, same count,
+   same answer, and a 2x2 block is the one band on this page that is not
+   another full-width stack.
+   ======================================================================== */
+@media (max-width: 640px) {
+  .category-rail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    margin-right: 0;
+    padding-right: 0;
+  }
+
+  .category-tile {
+    min-width: 0;
+  }
+}
+
+
+
+/* ===========================================================================
+   MOBILE, 390. 6. The learning band is a list, not three boxes.
+   The card is not the interaction here: the article is inert markup and the
+   only control is the text link inside it. At 390 the treatment cost 48px of
+   the measure (316 instead of 366) and a 210px floor per card, three times in
+   a row, to separate items that a full-width stack already separates. Rule and
+   rhythm instead, the same trade the checkout step made.
+   ======================================================================== */
+@media (max-width: 640px) {
+  .education-grid {
+    gap: 0;
+  }
+
+  .education-grid > .education-card {
+    min-height: 0;
+    padding: var(--s-5) 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  /* the card floor used to hold the link off the paragraph; the gap does now */
+  .education-grid > .education-card > div {
+    margin-bottom: var(--s-3);
+  }
+
+  .education-grid > .education-card + .education-card {
+    border-top: 1px solid var(--line);
+  }
+}
+
+
+
+/* ===========================================================================
+   MOBILE, 390. 7. The catalog toolbar was a border around two fields.
+   Measured at 390: the page heading, the filter chips and every product card
+   sit on the shell edge at 12, and the collection search sat at 25, because
+   the toolbar's own 12px inset and 1px border pushed it off that axis. Two
+   insets only is the rule this file already set, and a panel around controls
+   that carry their own field chrome separates nothing. 118 to 92, and the
+   search returns to the axis every other object on the page uses.
+   ======================================================================== */
+@media (max-width: 640px) {
+  .collection-toolbar {
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+  }
+}
