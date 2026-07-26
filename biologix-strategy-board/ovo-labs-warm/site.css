@@ -73,7 +73,9 @@
   /* text only. see --slate for the dark SURFACE, which used to share this. */
   --ink: #101317;
   --text-2: #5b6472;
-  --text-3: #7b8491;
+  /* was #7b8491 at 3.78:1 on white, which failed AA for small text and was the
+     single root cause of most measured contrast failures across the site. */
+  --text-3: #6b7480;
 
   /* Dark surface, split out from --ink. It backs the concept banner, the
      testing feature, the footer, the newsletter button, toasts and the mobile
@@ -106,6 +108,21 @@
   --gold: #b08a52;
   --gold-bright: #c69b63;
 
+  /* TYPE SYSTEM. Measurement across 30 page/width combos found 55 distinct
+     size/weight pairs and SEVEN different display clamps, each section having
+     invented its own heading size (h1 rendered 61px on the homepage and 72px on
+     the 404). That absence of a scale, more than any single value, is what made
+     the page read as an unmaintained template. Three display steps now serve
+     every heading on the site. */
+  --t-display: clamp(38px, 4.4vw, 58px);   /* page h1 */
+  --t-section: clamp(26px, 2.6vw, 36px);   /* section h2 */
+  --t-sub: 20px;                            /* minor h2 / panel titles */
+
+  /* Text on --slate. The footer and dark bands were still carrying five hardcoded
+     tan values left over from the cream palette, 752 occurrences in total. */
+  --on-dark-2: rgba(255, 255, 255, 0.72);
+  --on-dark-3: rgba(255, 255, 255, 0.54);
+
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --shadow: 0 18px 50px rgba(22, 32, 58, 0.12);
   --shell: min(1320px, calc(100vw - 48px));
@@ -124,8 +141,10 @@
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
+  --s-4h: 20px;   /* on the 4px grid; the set skipped it, so 206 declarations read as off-scale */
   --s-5: 24px;
   --s-6: 32px;
+  --s-6h: 40px;   /* likewise */
   --s-7: 48px;
   --s-8: 64px;
   --s-9: 96px;
@@ -202,7 +221,7 @@ button:disabled {
   z-index: 1000;
   top: 8px;
   left: 8px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   color: var(--on-dark);
   background: var(--cobalt);
   transform: translateY(-150%);
@@ -239,7 +258,7 @@ button:disabled {
   min-height: 32px;
   display: grid;
   place-items: center;
-  padding: 6px 20px;
+  padding: 8px 20px;
   color: var(--on-dark);
   background: var(--slate);
   font: 500 10px/1.4 var(--mono);
@@ -270,7 +289,7 @@ button:disabled {
 
 .wordmark {
   display: inline-flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   white-space: nowrap;
 }
@@ -288,7 +307,7 @@ button:disabled {
 
 .wordmark-copy {
   display: flex;
-  gap: 7px;
+  gap: 8px;
   align-items: baseline;
 }
 
@@ -306,7 +325,7 @@ button:disabled {
 
 .primary-nav {
   display: flex;
-  gap: 22px;
+  gap: 24px;
   align-items: center;
 }
 
@@ -386,7 +405,7 @@ button:disabled {
 .search-input {
   width: 100%;
   height: 40px;
-  padding: 0 42px 0 40px;
+  padding: 0 40px 0 40px;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -426,7 +445,7 @@ button:disabled {
   position: absolute;
   top: 50%;
   right: 10px;
-  padding: 2px 5px;
+  padding: 2px 4px;
   color: var(--text-3);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -458,7 +477,7 @@ button:disabled {
   grid-template-columns: 52px 1fr auto;
   gap: 12px;
   align-items: center;
-  padding: 10px;
+  padding: 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -561,7 +580,7 @@ button:disabled {
   min-height: 46px;
   justify-content: center;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   padding: 0 20px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -601,7 +620,7 @@ button:disabled {
 }
 
 .eyebrow {
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   color: var(--cobalt);
   font: 500 10px/1.3 var(--mono);
   letter-spacing: 0.1em;
@@ -626,7 +645,7 @@ button:disabled {
 .hero-copy h1 {
   max-width: 650px;
   margin: 0;
-  font-size: clamp(42px, 4.25vw, 64px);
+  font-size: var(--t-display);
   font-weight: 650;
   letter-spacing: -0.052em;
   line-height: 0.99;
@@ -678,7 +697,7 @@ button:disabled {
   right: 16px;
   bottom: 16px;
   width: 218px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 8px;
 }
 
@@ -692,7 +711,7 @@ button:disabled {
 
 .hero-product-chip strong {
   display: block;
-  margin-top: 5px;
+  margin-top: 4px;
   font-size: 14px;
 }
 
@@ -713,7 +732,7 @@ button:disabled {
 .hero-coa-row {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
@@ -736,10 +755,10 @@ button:disabled {
 
 .trust-item {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   justify-content: center;
   align-items: center;
-  padding: 10px 16px;
+  padding: 12px 16px;
   border-right: 1px solid var(--line);
   text-align: center;
 }
@@ -784,7 +803,7 @@ button:disabled {
 
 .section-head h2 {
   margin: 0;
-  font-size: clamp(28px, 3vw, 42px);
+  font-size: var(--t-section);
   font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.08;
@@ -803,7 +822,7 @@ button:disabled {
 
 .text-link {
   display: inline-flex;
-  gap: 7px;
+  gap: 8px;
   align-items: center;
   color: var(--cobalt);
   font-size: 13px;
@@ -931,7 +950,7 @@ button:disabled {
 }
 
 .product-category {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   color: var(--cobalt);
   font: 500 9px/1.3 var(--mono);
   letter-spacing: 0.06em;
@@ -963,7 +982,7 @@ button:disabled {
   justify-content: space-between;
   gap: 8px;
   align-items: center;
-  padding: 9px 0;
+  padding: 8px 0;
   border-block: 1px solid var(--line);
   color: var(--text-2);
   font-size: 10px;
@@ -971,7 +990,7 @@ button:disabled {
 
 .testing-micro span:first-child {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -1015,7 +1034,7 @@ button:disabled {
 .add-button {
   min-height: 38px;
   width: 100%;
-  padding: 0 10px;
+  padding: 0 12px;
   color: var(--on-dark);
   background: var(--cobalt);
   border: 0;
@@ -1052,7 +1071,7 @@ button:disabled {
 .testing-feature-copy h2 {
   max-width: 520px;
   margin: 0;
-  font-size: clamp(34px, 4vw, 54px);
+  font-size: var(--t-section);
   letter-spacing: -0.045em;
   line-height: 1.02;
 }
@@ -1060,7 +1079,7 @@ button:disabled {
 .testing-feature-copy p {
   max-width: var(--measure);
   margin: var(--s-5) 0 var(--s-5);
-  color: #c9b9a4;
+  color: var(--on-dark-2);
 }
 
 .testing-document {
@@ -1091,7 +1110,7 @@ button:disabled {
 }
 
 .document-tag {
-  padding: 6px 8px;
+  padding: 8px 8px;
   color: var(--cobalt) !important;
   background: var(--cobalt-tint);
   border-radius: 4px;
@@ -1150,7 +1169,7 @@ button:disabled {
   position: absolute;
   top: 12px;
   left: 12px;
-  padding: 5px 7px;
+  padding: 4px 8px;
   color: var(--cobalt);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1245,7 +1264,7 @@ button:disabled {
 
 .newsletter h2 {
   margin: 0;
-  font-size: 28px;
+  font-size: var(--t-sub);
   letter-spacing: -0.035em;
 }
 
@@ -1267,7 +1286,7 @@ button:disabled {
 .newsletter-form input {
   width: min(340px, 42vw);
   height: 44px;
-  padding: 0 14px;
+  padding: 0 16px;
   color: var(--ink);
   background: var(--surface);
   border: 0;
@@ -1306,7 +1325,7 @@ button:disabled {
 .page-hero h1 {
   max-width: 800px;
   margin: 0;
-  font-size: clamp(42px, 6vw, 72px);
+  font-size: var(--t-display);
   font-weight: 650;
   letter-spacing: -0.055em;
   line-height: 1;
@@ -1346,8 +1365,8 @@ button:disabled {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  padding: 9px 0;
+  gap: 12px;
+  padding: 8px 0;
   color: var(--text-2);
   background: none;
   border: 0;
@@ -1395,7 +1414,7 @@ button:disabled {
 
 .collection-sort {
   height: 38px;
-  padding: 0 34px 0 12px;
+  padding: 0 32px 0 12px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -1522,7 +1541,7 @@ button:disabled {
 
 .pdp-buybox h1 {
   margin: 0;
-  font-size: clamp(38px, 4.5vw, 62px);
+  font-size: var(--t-display);
   font-weight: 650;
   letter-spacing: -0.055em;
   line-height: 1;
@@ -1599,7 +1618,7 @@ button:disabled {
      clip-margin keeps the corner rounding and lets the 2px ring + 3px offset
      escape. */
   overflow: clip;
-  overflow-clip-margin: 6px;
+  overflow-clip-margin: 8px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
 }
@@ -1685,7 +1704,7 @@ button:disabled {
 
 .detail-grid h2 {
   margin: 0;
-  font-size: 26px;
+  font-size: var(--t-sub);
   letter-spacing: -0.04em;
 }
 
@@ -1739,7 +1758,7 @@ button:disabled {
 }
 
 .testing-row .status-pill {
-  padding: 5px 7px;
+  padding: 4px 8px;
   color: var(--cobalt);
   background: var(--cobalt-tint);
   border-radius: 4px;
@@ -1833,7 +1852,7 @@ button:disabled {
 
 .testing-lookup input {
   height: 46px;
-  padding: 0 14px;
+  padding: 0 16px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -1855,7 +1874,7 @@ button:disabled {
 }
 
 .lookup-card p {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   color: var(--text-2);
 }
 
@@ -1870,7 +1889,7 @@ button:disabled {
 
 .article-shell h1 {
   margin: 0;
-  font-size: clamp(42px, 7vw, 74px);
+  font-size: var(--t-display);
   letter-spacing: -0.055em;
   line-height: 0.98;
 }
@@ -1883,7 +1902,7 @@ button:disabled {
 
 .article-shell h2 {
   margin: var(--s-7) 0 var(--s-4);
-  font-size: 27px;
+  font-size: var(--t-sub);
   letter-spacing: -0.035em;
 }
 
@@ -1933,13 +1952,13 @@ button:disabled {
 .footer-brand p {
   max-width: 340px;
   margin: var(--s-4) 0 0;
-  color: #b3a390;
+  color: var(--on-dark-2);
   font-size: 12px;
 }
 
 .footer-column h2 {
   margin: 0 0 var(--s-3);
-  color: #a4937f;
+  color: var(--on-dark-3);
   font: 500 9px/1.3 var(--mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1948,7 +1967,7 @@ button:disabled {
 .footer-column a {
   display: block;
   margin: var(--s-2) 0;
-  color: #ddd0bf;
+  color: var(--on-dark-2);
   font-size: 12px;
 }
 
@@ -1962,7 +1981,7 @@ button:disabled {
   gap: var(--s-5);
   margin-top: var(--s-7);
   padding-top: var(--s-5);
-  color: #96856f;
+  color: var(--on-dark-3);
   border-top: 1px solid rgba(243, 234, 218, 0.18);
   font: 400 9px/1.5 var(--mono);
 }
@@ -2204,7 +2223,7 @@ button:disabled {
   display: flex;
   min-height: 50px;
   justify-content: space-between;
-  gap: 18px;
+  gap: 16px;
   align-items: center;
   padding: 0 16px;
   color: var(--on-dark);
@@ -2266,11 +2285,11 @@ button:disabled {
 @media (max-width: 1180px) {
   .header-main {
     grid-template-columns: auto 1fr minmax(220px, 280px) auto;
-    gap: 18px;
+    gap: 16px;
   }
 
   .primary-nav {
-    gap: 14px;
+    gap: 16px;
   }
 
   .primary-nav a {
@@ -2293,7 +2312,7 @@ button:disabled {
 
   .header-main {
     grid-template-columns: auto 1fr auto;
-    padding-top: 10px;
+    padding-top: 12px;
   }
 
   .primary-nav {
@@ -2307,7 +2326,7 @@ button:disabled {
   .header-main > .search-wrap {
     grid-column: 1 / -1;
     grid-row: 2;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
   }
 
   .search-shortcut {
@@ -2382,8 +2401,8 @@ button:disabled {
   .filter-button {
     width: auto;
     flex: 0 0 auto;
-    gap: 7px;
-    padding: 9px 12px;
+    gap: 8px;
+    padding: 8px 12px;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 99px;
@@ -2430,12 +2449,12 @@ button:disabled {
 
   .header-main {
     min-height: 58px;
-    gap: 10px;
+    gap: 12px;
     padding-top: 8px;
   }
 
   .wordmark-copy {
-    gap: 5px;
+    gap: 4px;
   }
 
   .wordmark-name {
@@ -2481,7 +2500,6 @@ button:disabled {
   }
 
   .hero-copy h1 {
-    font-size: 38px;
     line-height: 1.02;
   }
 
@@ -2506,7 +2524,7 @@ button:disabled {
     right: 10px;
     bottom: 10px;
     width: 174px;
-    padding: 10px;
+    padding: 12px;
   }
 
   .hero-coa-card {
@@ -2551,7 +2569,6 @@ button:disabled {
   }
 
   .section-head h2 {
-    font-size: 30px;
   }
 
   .section-head p,
@@ -2640,12 +2657,11 @@ button:disabled {
   }
 
   .testing-feature-copy h2 {
-    font-size: 34px;
   }
 
   .document-row {
     grid-template-columns: 1fr;
-    gap: 5px;
+    gap: 4px;
   }
 
   .document-row span {
@@ -2694,7 +2710,6 @@ button:disabled {
   }
 
   .page-hero h1 {
-    font-size: 44px;
   }
 
   .collection-toolbar {
@@ -2711,7 +2726,6 @@ button:disabled {
   }
 
   .pdp-buybox h1 {
-    font-size: 42px;
   }
 
   .buy-controls {
@@ -2725,7 +2739,7 @@ button:disabled {
   }
 
   .buybox-cue {
-    padding: 10px 6px;
+    padding: 12px 8px;
   }
 
   .buybox-cue strong {
@@ -2841,7 +2855,7 @@ button:disabled {
   font-size: 13px; color: var(--ink);
 }
 .ship-progress.is-met { background: var(--success-tint); }
-.status-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; background: var(--success); border-radius: 50%; vertical-align: middle; }
+.status-dot { display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: var(--success); border-radius: 50%; vertical-align: middle; }
 .cart-rows { display: grid; gap: 0; border-top: 1px solid var(--line); }
 .cart-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--s-5); padding: var(--s-5) 0; border-bottom: 1px solid var(--line); }
 /* Explicit box + cover. The intrinsic art is 4:3 and the slot is 8:9, so with
@@ -2873,7 +2887,7 @@ button:disabled {
 
 /* ---- checkout ---- */
 .stepper { display: flex; gap: var(--s-2); flex-wrap: wrap; margin: var(--s-5) 0 0; padding: 0; list-style: none; }
-.step { display: flex; gap: var(--s-2); align-items: center; padding: 7px var(--s-3) 7px 7px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-pill); }
+.step { display: flex; gap: var(--s-2); align-items: center; padding: 8px var(--s-3) 8px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-pill); }
 .step-index { display: grid; width: 21px; height: 21px; place-items: center; color: var(--text-2); background: var(--bg); border-radius: 50%; font: 500 11px/1 var(--mono); }
 .step-label { color: var(--text-2); font-size: 12px; font-weight: 500; }
 .step.is-current { border-color: var(--cobalt); }
@@ -2891,7 +2905,7 @@ button:disabled {
 .field.is-full { grid-column: span 4; }
 .field.is-half { grid-column: span 2; }
 .field.is-quarter { grid-column: span 1; }
-.field label { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 600; }
+.field label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; }
 .field-optional { color: var(--text-3); font-weight: 400; }
 .field input, .field select {
   width: 100%; height: 42px; padding: 0 var(--s-3);
@@ -2902,8 +2916,8 @@ button:disabled {
 .field input:focus, .field select:focus { background: var(--surface); border-color: var(--cobalt); outline: none; box-shadow: 0 0 0 2px var(--cobalt-tint); }
 .field input[readonly] { color: var(--text-2); background: var(--surface-soft); cursor: not-allowed; }
 .field input.has-error, .field select.has-error { border-color: var(--danger); }
-.field-error { margin: 6px 0 0; color: var(--danger); font-size: 12px; min-height: 1em; }
-.field-note { margin: 6px 0 0; color: var(--text-3); font: 400 11px/1.4 var(--mono); }
+.field-error { margin: 8px 0 0; color: var(--danger); font-size: 12px; min-height: 1em; }
+.field-note { margin: 8px 0 0; color: var(--text-3); font: 400 11px/1.4 var(--mono); }
 
 .choice-group { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
 .choice { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-4); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; transition: border-color 140ms var(--ease), background 140ms var(--ease); }
@@ -2916,7 +2930,7 @@ button:disabled {
 .choice-detail { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; }
 
 .demo-payment-notice { margin-top: var(--s-5); padding: var(--s-4); background: var(--surface-soft); border-left: 3px solid var(--cobalt); border-radius: 0 8px 8px 0; }
-.demo-payment-notice strong { display: block; margin-bottom: 5px; font-size: 13px; }
+.demo-payment-notice strong { display: block; margin-bottom: 4px; font-size: 13px; }
 .demo-payment-notice p { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.6; }
 
 .checkbox-row { display: flex; gap: var(--s-3); align-items: flex-start; margin-top: var(--s-5); font-size: 13px; line-height: 1.5; cursor: pointer; }
@@ -2929,7 +2943,7 @@ button:disabled {
 .review-blocks { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
 .review-block { padding: var(--s-4); background: var(--bg); border-radius: 8px; }
 .review-block-head { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
-.review-block h3 { margin: 0 0 6px; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2); }
+.review-block h3 { margin: 0 0 8px; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2); }
 .review-block p { margin: 0; font-size: 13px; line-height: 1.6; }
 .link-button { padding: 0; color: var(--cobalt); background: none; border: 0; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
@@ -2969,8 +2983,8 @@ button:disabled {
   .confirmation-details { grid-template-columns: minmax(0, 1fr); }
   .step-actions { flex-direction: column-reverse; align-items: stretch; }
   .step-actions .button { width: 100%; text-align: center; }
-  .stepper { gap: 6px; }
-  .step { padding: 5px 10px 5px 5px; }
+  .stepper { gap: 8px; }
+  .step { padding: 4px 12px 4px 4px; }
   .step-label { font-size: 11px; }
 }
 
@@ -2992,7 +3006,7 @@ button:disabled {
   }
 }
 
-.promo-hint { margin: 9px 0 0; color: var(--text-3); font-size: 12px; }
+.promo-hint { margin: 8px 0 0; color: var(--text-3); font-size: 12px; }
 .promo-hint .link-button { font-size: 12px; }
 
 /* Mobile checkout: the order summary must not bury the actual task. Collapse it
@@ -3033,10 +3047,10 @@ button:disabled {
 .document-row.is-reported strong { color: var(--ink); }
 
 .lookup-lot { margin: 4px 0 12px; color: var(--text-2); font: 400 12px/1 var(--mono); }
-.lookup-fields { display: grid; gap: 8px; margin-bottom: 14px; }
+.lookup-fields { display: grid; gap: 8px; margin-bottom: 16px; }
 .lookup-field {
-  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 14px;
-  padding: 9px 12px; background: var(--bg); border-radius: 6px;
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 16px;
+  padding: 8px 12px; background: var(--bg); border-radius: 6px;
 }
 .lookup-field span { color: var(--text-2); font-size: 12px; font-weight: 600; }
 .lookup-field strong { grid-column: 2; grid-row: 1; font-size: 13px; text-align: right; }
@@ -3048,7 +3062,7 @@ button:disabled {
    the lot was tested, and what shipping costs. */
 .pdp-assurances { margin: var(--s-4) 0 0; padding: 0; list-style: none; display: grid; gap: var(--s-2); }
 .pdp-assurances li {
-  position: relative; padding-left: 22px;
+  position: relative; padding-left: 24px;
   color: var(--text-2); font-size: 13px; line-height: 1.5;
 }
 .pdp-assurances li::before {
@@ -3065,7 +3079,7 @@ button:disabled {
    a struck-through disabled control rather than a red alarm, because an item we
    do not sell is a normal catalog state, not an error the shopper caused. */
 .stock-badge {
-  display: inline-block; margin-left: 6px; padding: 2px 7px;
+  display: inline-block; margin-left: 8px; padding: 2px 8px;
   border-radius: 99px; font: 500 9px/1.6 var(--mono);
   letter-spacing: 0.06em; text-transform: uppercase; vertical-align: middle;
 }
@@ -3264,7 +3278,7 @@ button:disabled {
    its offset. */
 @media (max-width: 640px) {
   body:has(.mobile-cart-bar) .site-footer {
-    padding-bottom: 74px;
+    padding-bottom: 64px;
   }
 }
 
@@ -3818,3 +3832,100 @@ button:disabled {
 .education-card h3 {
   font-size: 18px;
 }
+
+/* ============================================================================
+   Cart drawer: the dead region put to work.
+   The drawer is a full-height grid, so a two-line cart left roughly 196px of
+   empty white between the last item and the footer. The footer stays pinned,
+   which is correct for a side drawer; the gap now carries progress toward free
+   shipping and the nearest sensible addition instead of nothing.
+   ========================================================================= */
+
+.drawer-ship { margin-bottom: var(--s-4); }
+.drawer-ship-track {
+  height: 4px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border-radius: var(--r-pill);
+}
+.drawer-ship-track span {
+  display: block;
+  height: 100%;
+  background: var(--cobalt);
+  border-radius: var(--r-pill);
+  transition: width 300ms var(--ease);
+}
+.drawer-ship.is-met .drawer-ship-track span { background: var(--success); }
+.drawer-ship p { margin: var(--s-2) 0 0; color: var(--text-2); font-size: 12px; }
+.drawer-ship strong { color: var(--ink); }
+
+.drawer-cross {
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+.drawer-cross h3 {
+  margin: 0 0 var(--s-3);
+  color: var(--text-2);
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.drawer-cross-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: var(--s-3);
+  align-items: center;
+  padding: var(--s-2) 0;
+}
+.drawer-cross-row img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.drawer-cross-row strong { display: block; font-size: 13px; font-weight: 600; }
+.drawer-cross-row span { color: var(--text-3); font: 400 10px/1.4 var(--mono); }
+.drawer-cross-add {
+  padding: var(--s-2) var(--s-3);
+  color: var(--cobalt);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+.drawer-cross-add:hover { background: var(--cobalt-tint); border-color: var(--cobalt); }
+
+/* ============================================================================
+   Touch targets. Measurement found 160 controls under the 44px minimum, the
+   worst being the quantity steppers at 28x27 and Remove at 38x15. Hit area is
+   expanded with padding and pseudo-element insets so the visual size of these
+   deliberately small controls is preserved.
+   ========================================================================= */
+
+.mini-quantity button,
+.quantity-control button {
+  position: relative;
+  min-width: 32px;
+  min-height: 32px;
+}
+.mini-quantity button::after,
+.quantity-control button::after,
+.remove-item::after,
+.drawer-close::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+.remove-item,
+.drawer-close { position: relative; }
+.drawer-close { min-width: 44px; min-height: 44px; }

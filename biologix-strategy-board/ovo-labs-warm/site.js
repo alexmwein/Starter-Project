@@ -2642,6 +2642,47 @@
     `;
   }
 
+  /* The drawer is a full-height grid (auto 1fr auto), so a short cart left ~196px
+     of dead white between the last line and the footer. Rather than collapse the
+     drawer, that region now carries the two things a cart is actually for:
+     progress toward free shipping, and the nearest sensible addition. */
+  function shippingProgress(breakdown) {
+    const pct = Math.min(100, Math.round((breakdown.subtotal / FREE_SHIPPING_THRESHOLD) * 100));
+    return breakdown.freeShippingRemaining > 0
+      ? `<div class="drawer-ship">
+           <div class="drawer-ship-track"><span style="width:${pct}%"></span></div>
+           <p>Add <strong>${money.format(breakdown.freeShippingRemaining)}</strong> for free standard shipping.</p>
+         </div>`
+      : `<div class="drawer-ship is-met">
+           <div class="drawer-ship-track"><span style="width:100%"></span></div>
+           <p>Standard shipping is free on this order.</p>
+         </div>`;
+  }
+
+  function drawerCrossSell() {
+    const inCart = new Set(cart.map((line) => line.slug));
+    const picks = PRODUCTS
+      .filter((p) => !inCart.has(p.slug) && availabilityFor(p.slug).sellable)
+      .slice(0, 2);
+    if (!picks.length) return "";
+    return `
+      <section class="drawer-cross" aria-labelledby="drawer-cross-title">
+        <h3 id="drawer-cross-title">Pairs with your cart</h3>
+        ${picks.map((p) => `
+          <div class="drawer-cross-row">
+            <img src="${path("assets/ovo-vial-front.webp")}" alt="" width="44" height="44">
+            <div>
+              <strong>${escapeHtml(p.name)}</strong>
+              <span>${escapeHtml(p.code)} · ${escapeHtml(p.strength)}</span>
+            </div>
+            <button class="drawer-cross-add" type="button" data-add-product="${p.slug}">
+              Add · ${money.format(p.price)}
+            </button>
+          </div>`).join("")}
+      </section>
+    `;
+  }
+
   function renderCart() {
     const count = cart.reduce((total, item) => total + item.quantity, 0);
     document.querySelectorAll("[data-cart-count]").forEach((element) => {
@@ -2694,9 +2735,11 @@
           </article>
         `;
       })
-      .join("");
+      .join("") + drawerCrossSell();
 
+    const breakdown = priceBreakdown(readCheckoutDraft());
     footerRoot.innerHTML = `
+      ${shippingProgress(breakdown)}
       <div class="cart-subtotal"><strong>Subtotal</strong><strong>${money.format(cartTotal())}</strong></div>
       <a class="button button-primary cart-checkout" href="${path("checkout.html")}">Checkout</a>
       <a class="button button-secondary cart-view" href="${path("cart.html")}">View cart</a>
