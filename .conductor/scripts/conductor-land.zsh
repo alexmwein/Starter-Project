@@ -635,13 +635,27 @@ if [[ -z "$pr_url" ]]; then
       "conductor-land: live immutable repository identity changed before pull-request creation"
     exit 3
   fi
-  pr_url="$(
+  pr_title="$(git log -1 --format=%s "$source_sha")"
+  [[ -n "$pr_title" ]] || pr_title="Conductor landing $source_sha"
+  pr_body="$(
+    print -r -- \
+      "Immutable Conductor landing for \`$source_branch@$source_sha\`."
+    print
+    print -r -- \
+      "The mutable source backup is separate from this SHA-addressed pull-request head."
+  )"
+  if ! pr_url="$(
     gh pr create \
       --repo "$github_slug" \
       --base "$default_branch" \
       --head "$github_owner:$landing_branch" \
-      --fill
-  )"
+      --title "$pr_title" \
+      --body "$pr_body"
+  )"; then
+    print -u2 \
+      "conductor-land: GitHub did not create the immutable landing pull request"
+    exit 3
+  fi
 fi
 
 read_pr_snapshot() {

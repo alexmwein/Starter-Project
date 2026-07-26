@@ -96,6 +96,12 @@ case "${1:-} ${2:-}" in
       print -u2 "invalid gh pr create head: $*"
       exit 65
     fi
+    if [[ "$*" == *"--fill"* || "$*" != *"--title "* ||
+      "$*" != *"--body "* ]]
+    then
+      print -u2 "landing PR must use explicit title/body, not local-ref inference: $*"
+      exit 65
+    fi
     print "https://github.com/example/repo/pull/1"
     ;;
   "pr view")
