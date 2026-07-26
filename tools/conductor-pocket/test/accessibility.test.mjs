@@ -44,3 +44,13 @@ test('draft ownership and replacement checks are case-sensitive', async () => {
   assert.match(source, /if currentValue is expectedMessage/);
   assert.match(source, /existingDraft is not expectedDraft/);
 });
+
+test('the structural accessibility linefeed is not treated as a Mac draft', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /on normalizedDraft\(rawValue\)/);
+  assert.match(source, /if \(length of valueText\) is 1 then return ""/);
+  assert.equal(source.match(/my normalizedDraft/g)?.length, 4);
+});

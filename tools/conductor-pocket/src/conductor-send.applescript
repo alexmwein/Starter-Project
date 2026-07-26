@@ -9,6 +9,15 @@ on draftConflict(existingDraft)
 	return "{\"ok\":false,\"code\":\"draft_conflict\",\"draftBase64\":\"" & encodedDraft & "\"}"
 end draftConflict
 
+on normalizedDraft(rawValue)
+	set valueText to rawValue as text
+	if valueText ends with linefeed then
+		if (length of valueText) is 1 then return ""
+		return text 1 thru -2 of valueText
+	end if
+	return valueText
+end normalizedDraft
+
 on getWebArea()
 	tell application "System Events"
 		tell process "Conductor"
@@ -124,8 +133,9 @@ on commitTextAreaValue(textArea, requestedValue)
 		key code 51
 	end tell
 	delay 0.1
+	set committedValue to my normalizedDraft(value of textArea as text)
 	considering case
-		return (value of textArea as text) is requestedValue
+		return committedValue is requestedValue
 	end considering
 end commitTextAreaValue
 
@@ -134,7 +144,7 @@ on clearOwnedDraft(expectedMessage)
 		set textArea to getTextArea()
 		if textArea is not missing value then
 			tell application "System Events"
-				set currentValue to value of textArea as text
+				set currentValue to my normalizedDraft(value of textArea as text)
 			end tell
 			considering case
 				if currentValue is expectedMessage then my commitTextAreaValue(textArea, "")
@@ -222,7 +232,7 @@ end repeat
 if textArea is missing value then return "{\"ok\":false,\"code\":\"composer_unavailable\"}"
 
 tell application "System Events"
-	set existingDraft to value of textArea as text
+	set existingDraft to my normalizedDraft(value of textArea as text)
 	considering case
 		if existingDraft is not messageText then
 			if replaceDraft is false and existingDraft is not "" then return my draftConflict(existingDraft)
@@ -278,7 +288,7 @@ repeat with waitIndex from 1 to 40
 	set currentTextArea to getTextArea()
 	if currentTextArea is not missing value then
 		tell application "System Events"
-			if (value of currentTextArea as text) is "" then
+			if my normalizedDraft(value of currentTextArea as text) is "" then
 				return "{\"ok\":true,\"code\":\"sent\"}"
 			end if
 		end tell
