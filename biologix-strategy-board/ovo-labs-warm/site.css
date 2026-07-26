@@ -177,6 +177,9 @@
 }
 
 html {
+  /* the font stack lived only on body, so <html> resolved to the UA default and
+     anything escaping body inheritance rendered in Times */
+  font-family: var(--sans);
   scroll-behavior: smooth;
 }
 
