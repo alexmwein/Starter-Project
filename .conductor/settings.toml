@@ -16,13 +16,14 @@ general = """
 GitHub source-of-truth policy:
 - Treat origin's default branch on GitHub as canonical. Fetch origin before editing and reconcile the task branch with the latest origin default branch.
 - Work on a unique feature branch. Do not push directly to main or master unless Alex explicitly requests it.
-- Never leave completed work only on a Mac or only on a divergent branch. Commit task-owned changes, push the exact feature-branch HEAD to origin, create or update a pull request, incorporate the latest default branch, rerun relevant checks, and squash-merge.
-- Serialize parallel merges with GitHub auto-merge when available. If another change lands first, update and revalidate instead of overwriting it.
-- After merging, verify GitHub's default branch contains the work, report the pull request URL, and delete the merged remote branch.
+- Never leave completed work only on a Mac or only on a divergent branch. Commit task-owned changes, push the exact feature-branch HEAD to origin, and enqueue its pull request with `conductor-land`.
+- `conductor-land` returns `QUEUED` after GitHub owns the exact branch SHA. This is successful asynchronous handoff, so report the pull request URL and end the chat without waiting for CI or deployment unless Alex explicitly requests synchronous waiting.
+- The repository's Conductor worker serializes queued pull requests, merges the newest default branch into each one, reruns required checks on the combined state, enables squash auto-merge, and advances the next item. Never run a competing local merge loop.
+- Do not claim `MERGED` or `LANDED` unless GitHub actually reports the pull request merged and the remote default branch contains its merge commit. Use `conductor-land --wait` only when synchronous verification was explicitly requested.
 - Preserve unrelated work. Never reset, stash, delete, overwrite, or force-push work owned by another person or workspace.
-- If conflicts, CI, permissions, review, or an unapproved production release block merging, leave a merge-ready pull request and report the exact blocker.
+- If background landing later finds a conflict, failed required check, permission problem, trusted-workflow change, or unapproved production release, it labels the pull request `conductor-blocked` and leaves a single explanatory comment. Resolve that pull request and rerun `conductor-land`; never silently discard it.
 - Explicit read-only, draft, review-only, or no-merge requests override automatic landing.
-- After tests pass, use `.conductor/scripts/conductor-land.zsh` to push, open or update the pull request, squash-merge, and verify GitHub main.
+- After tests pass, use the PATH-level `conductor-land` command so every chat uses the current global implementation.
 
 Frontend and UI design policy:
 - Claude Fable 5 (`claude-fable-5`) is the sole design authority for outward-facing frontend and UI work.
@@ -32,7 +33,7 @@ Frontend and UI design policy:
 """
 
 create_pr = """
-Fetch origin and ensure the feature branch contains the latest origin default branch before publishing. Preserve both sides of overlapping changes and rerun the relevant tests after reconciliation. Push the exact HEAD, create or update the pull request, wait for checks, squash-merge, then verify the pull request merge commit is present on the remote default branch. Use `.conductor/scripts/conductor-land.zsh` after tests pass. Do not stop at an open divergent pull request unless merging is genuinely blocked or the user requested no merge.
+Fetch origin before editing and preserve both sides of overlapping changes. After relevant local tests pass, run the PATH-level `conductor-land` command. It must push and verify the exact HEAD, create or update a same-repository pull request, and enqueue it for the repository's serialized background worker. A `QUEUED` result is the intended asynchronous handoff; report the pull request URL without waiting. Use `conductor-land --wait` only if Alex explicitly requests synchronous merge verification. Do not claim `MERGED` or `LANDED` until GitHub confirms it.
 """
 
 resolve_merge_conflicts = """
