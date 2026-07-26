@@ -9,6 +9,7 @@ import {
   LOOPBACK_HOST,
   PAIRING_TTL_MS,
 } from './constants.mjs';
+import { withOperationLock } from './operation-lock.mjs';
 
 function assertObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -29,6 +30,40 @@ function parsePublicOrigin(value, allowInsecureLocalhost = false) {
     throw new Error('publicOrigin must not include a path, query, or fragment');
   }
   return url.origin;
+}
+
+function validateOriginRetirement(raw, publicOrigin) {
+  if (raw == null) return null;
+  assertObject(raw, 'originRetirement');
+  const sourceOrigin = parsePublicOrigin(raw.sourceOrigin);
+  if (sourceOrigin !== publicOrigin) {
+    throw new Error('originRetirement must belong to the current publicOrigin');
+  }
+  if (!Array.isArray(raw.requiredDeviceIds) || !Array.isArray(raw.retiredDeviceIds)) {
+    throw new Error('originRetirement device lists are invalid');
+  }
+  const requiredDeviceIds = [...new Set(raw.requiredDeviceIds)];
+  const retiredDeviceIds = [...new Set(raw.retiredDeviceIds)];
+  if (
+    requiredDeviceIds.some((id) => typeof id !== 'string' || !id) ||
+    retiredDeviceIds.some(
+      (id) => typeof id !== 'string' || !requiredDeviceIds.includes(id),
+    )
+  ) {
+    throw new Error('originRetirement contains an invalid device id');
+  }
+  if (
+    typeof raw.startedAt !== 'string' ||
+    !Number.isFinite(Date.parse(raw.startedAt))
+  ) {
+    throw new Error('originRetirement.startedAt is invalid');
+  }
+  return {
+    sourceOrigin,
+    requiredDeviceIds,
+    retiredDeviceIds,
+    startedAt: new Date(raw.startedAt).toISOString(),
+  };
 }
 
 export function validateConfig(raw) {
@@ -55,12 +90,17 @@ export function validateConfig(raw) {
   if (typeof raw.requireTailscaleIdentity !== 'boolean') {
     throw new Error('requireTailscaleIdentity must be boolean');
   }
+  const originRetirement = validateOriginRetirement(
+    raw.originRetirement,
+    publicOrigin,
+  );
   return {
     ...raw,
     publicOrigin,
     devices: raw.devices,
     allowedTailscaleLogin: raw.allowedTailscaleLogin || null,
     pairing: raw.pairing || null,
+    originRetirement,
   };
 }
 
@@ -108,6 +148,7 @@ export function createConfig({
     requireTailscaleIdentity,
     allowedTailscaleLogin: null,
     csrfSecret: randomToken(32),
+    originRetirement: null,
     pairing: {
       codeHash: sha256(pairingCode),
       expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
@@ -118,15 +159,75 @@ export function createConfig({
 }
 
 export function rotatePairing(config, now = Date.now()) {
+  const validated = validateConfig(config);
+  if (validated.originRetirement) {
+    throw new Error(
+      'Pairing stays disabled until the old-origin retirement is complete',
+    );
+  }
+  const pairingCode = randomToken(24);
+  return {
+    pairingCode,
+    config: validateConfig({
+      ...validated,
+      pairing: {
+        codeHash: sha256(pairingCode),
+        expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
+      },
+    }),
+  };
+}
+
+export function beginOriginRetirement(config, now = Date.now()) {
+  const validated = validateConfig(config);
+  if (validated.originRetirement) return validated;
+  return validateConfig({
+    ...validated,
+    pairing: null,
+    originRetirement: {
+      sourceOrigin: validated.publicOrigin,
+      requiredDeviceIds: validated.devices.map((device) => device.id),
+      retiredDeviceIds: [],
+      startedAt: new Date(now).toISOString(),
+    },
+  });
+}
+
+export function originRetirementComplete(config) {
+  const validated = validateConfig(config);
+  const retirement = validated.originRetirement;
+  if (!retirement) return false;
+  const retired = new Set(retirement.retiredDeviceIds);
+  return (
+    validated.devices.length === 0 &&
+    retirement.requiredDeviceIds.every((id) => retired.has(id))
+  );
+}
+
+export function migrateToDedicatedOrigin(config, publicOrigin, now = Date.now()) {
+  if (!originRetirementComplete(config)) {
+    throw new Error(
+      'Every old-origin device must complete the local retirement purge before migration',
+    );
+  }
+  const origin = parsePublicOrigin(publicOrigin);
   const pairingCode = randomToken(24);
   return {
     pairingCode,
     config: validateConfig({
       ...config,
+      publicOrigin: origin,
+      rpId: new URL(origin).hostname,
+      developmentMode: false,
+      requireTailscaleIdentity: true,
+      allowedTailscaleLogin: null,
+      csrfSecret: randomToken(32),
+      originRetirement: null,
       pairing: {
         codeHash: sha256(pairingCode),
         expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
       },
+      devices: [],
     }),
   };
 }
@@ -137,6 +238,47 @@ export function getVerificationCode(config) {
     .replace(/[^A-Za-z0-9]/g, '')
     .slice(0, 6)
     .toUpperCase();
+}
+
+export function configRevision(config) {
+  const validated = validateConfig(config);
+  const devices = validated.devices
+    .map((device) => ({
+      id: device.id,
+      sessionHash: device.sessionHash,
+      tailscaleLogin: device.tailscaleLogin,
+      passkeyId: device.passkey?.id,
+      passkeyCounter: device.passkey?.counter,
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  const retirement = validated.originRetirement
+    ? {
+        sourceOrigin: validated.originRetirement.sourceOrigin,
+        requiredDeviceIds: [
+          ...validated.originRetirement.requiredDeviceIds,
+        ].sort(),
+        retiredDeviceIds: [
+          ...validated.originRetirement.retiredDeviceIds,
+        ].sort(),
+        startedAt: validated.originRetirement.startedAt,
+      }
+    : null;
+  return sha256(
+    JSON.stringify({
+      version: validated.version,
+      bindHost: validated.bindHost,
+      port: validated.port,
+      publicOrigin: validated.publicOrigin,
+      rpId: validated.rpId,
+      developmentMode: validated.developmentMode,
+      requireTailscaleIdentity: validated.requireTailscaleIdentity,
+      allowedTailscaleLogin: validated.allowedTailscaleLogin,
+      csrfSecret: validated.csrfSecret,
+      pairing: validated.pairing,
+      devices,
+      retirement,
+    }),
+  );
 }
 
 export class ConfigStore {
@@ -155,12 +297,23 @@ export class ConfigStore {
 
   async update(mutator) {
     const run = async () => {
-      const draft = structuredClone(this.#config);
-      const next = (await mutator(draft)) || draft;
-      const validated = validateConfig(next);
-      await saveConfig(this.#configPath, validated);
-      this.#config = validated;
-      return this.#config;
+      const lockPath = path.join(
+        path.dirname(this.#configPath),
+        'operation.lock',
+      );
+      return withOperationLock(
+        'relay configuration update',
+        async () => {
+          const latest = await loadConfig(this.#configPath);
+          const draft = structuredClone(latest);
+          const next = (await mutator(draft)) || draft;
+          const validated = validateConfig(next);
+          await saveConfig(this.#configPath, validated);
+          this.#config = validated;
+          return this.#config;
+        },
+        lockPath,
+      );
     };
     this.#writeQueue = this.#writeQueue.then(run, run);
     return this.#writeQueue;

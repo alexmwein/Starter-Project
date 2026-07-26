@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 export const APP_NAME = 'Conductor Pocket';
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.2.0';
 export const DEFAULT_PORT = 4317;
 export const LOOPBACK_HOST = '127.0.0.1';
 export const MAX_MESSAGE_BYTES = 16 * 1024;
