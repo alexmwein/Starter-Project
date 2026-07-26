@@ -7,6 +7,7 @@ script_dir="${0:A:h}"
 repo_root="${script_dir:h:h}"
 land_script="$repo_root/.conductor/scripts/conductor-land.zsh"
 archive_script="$repo_root/.conductor/scripts/archive-guard.zsh"
+workflow_file="$repo_root/.github/workflows/conductor-autoland.yml"
 fake_bin="$script_dir/fixtures"
 real_path="$PATH"
 task_tmp="$(mktemp -d)"
@@ -235,5 +236,50 @@ if (
 ); then
   fail "archive guard accepted a local post-enqueue commit"
 fi
+
+grep -Fq -- '--state merged' "$workflow_file" ||
+  fail "background cleanup does not scan merged queue items"
+grep -Fq -- '--label "conductor-autoland"' "$workflow_file" ||
+  fail "background cleanup is not limited to Conductor queue items"
+grep -Fq -- '.isCrossRepository == false' "$workflow_file" ||
+  fail "background cleanup does not reject fork pull requests"
+grep -Fq -- '.baseRefName == $default_branch' "$workflow_file" ||
+  fail "background cleanup is not limited to the default branch"
+grep -Fq -- 'grep -Fxq "$head_ref" <<<"$open_head_refs"' "$workflow_file" ||
+  fail "background cleanup does not preserve open pull-request reuse"
+grep -Fq -- '--force-with-lease="refs/heads/$head_ref:$expected_head_sha"' "$workflow_file" ||
+  fail "background cleanup does not compare-and-swap the exact merged head"
+grep -Fq -- 'clear_queue_label "$pr_number"' "$workflow_file" ||
+  fail "background cleanup does not terminalize completed queue labels"
+grep -Fq -- 'CONDUCTOR_AUTOLAND_DEPLOY_KEY is not configured; merged branch cleanup cannot continue' "$workflow_file" ||
+  fail "background cleanup hides a missing credential"
+
+cleanup_expected_sha="$(git -C "$worker_repo" rev-parse HEAD)"
+git -C "$worker_repo" push -q \
+  --force-with-lease="refs/heads/feature:$cleanup_expected_sha" \
+  origin \
+  :refs/heads/feature
+if git -C "$worker_repo" ls-remote --exit-code --heads origin refs/heads/feature >/dev/null 2>&1; then
+  fail "exact cleanup lease did not delete an unchanged merged branch"
+fi
+
+print "reused branch" >"$worker_repo/reused.txt"
+git -C "$worker_repo" add reused.txt
+git -C "$worker_repo" commit -q -m "reuse branch after merge"
+reused_head_sha="$(git -C "$worker_repo" rev-parse HEAD)"
+git -C "$worker_repo" push -q origin HEAD:feature
+if git -C "$worker_repo" push \
+  --force-with-lease="refs/heads/feature:$cleanup_expected_sha" \
+  origin \
+  :refs/heads/feature >/dev/null 2>&1
+then
+  fail "stale cleanup lease deleted a reused branch"
+fi
+remote_reused_sha="$(
+  git -C "$worker_repo" ls-remote origin refs/heads/feature |
+    awk '{print $1}'
+)"
+[[ "$remote_reused_sha" == "$reused_head_sha" ]] ||
+  fail "stale cleanup lease changed the reused branch"
 
 print "PASS: Conductor publishing scripts"
