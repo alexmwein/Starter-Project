@@ -28,6 +28,14 @@ fail() {
   exit 1
 }
 
+file_mode() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
 configure_git_identity() {
   git -C "$1" config user.name "Conductor Test"
   git -C "$1" config user.email "conductor-test@example.com"
@@ -232,9 +240,9 @@ jq -e \
     .reason == "verified_exact"
   )' "$event_file" >/dev/null ||
   fail "feature success receipt was not truthful"
-[[ "$(stat -f '%Lp' "$state_dir" 2>/dev/null || stat -c '%a' "$state_dir")" == "700" ]] ||
+[[ "$(file_mode "$state_dir")" == "700" ]] ||
   fail "audit directory is not mode 0700"
-[[ "$(stat -f '%Lp' "$event_file" 2>/dev/null || stat -c '%a' "$event_file")" == "600" ]] ||
+[[ "$(file_mode "$event_file")" == "600" ]] ||
   fail "events.jsonl is not mode 0600"
 
 # A symlinked audit directory fails closed before any network push.

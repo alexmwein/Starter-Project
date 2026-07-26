@@ -84,6 +84,22 @@ assert_not_contains() {
   [[ "$haystack" != *"$needle"* ]] || fail "expected output not to contain: $needle"
 }
 
+file_mode() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
+file_uid() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stat -f '%u' "$1"
+  else
+    stat -c '%u' "$1"
+  fi
+}
+
 configure_identity() {
   git -C "$1" config user.name "Conductor Test"
   git -C "$1" config user.email "conductor-test@example.com"
@@ -305,12 +321,12 @@ grep -Fq -- "api --method POST repos/example/repo/git/refs" "$land_log" ||
 
 events_file="$test_home/.local/state/conductor-publish/events.jsonl"
 events_state_dir="${events_file:h}"
-[[ "$(stat -f '%Lp' "$events_state_dir")" == "700" ]] ||
+[[ "$(file_mode "$events_state_dir")" == "700" ]] ||
   fail "publish state directory is not mode 0700"
-[[ "$(stat -f '%Lp' "$events_file")" == "600" ]] ||
+[[ "$(file_mode "$events_file")" == "600" ]] ||
   fail "publish event log is not mode 0600"
-[[ "$(stat -f '%u' "$events_state_dir")" == "$(id -u)" &&
-  "$(stat -f '%u' "$events_file")" == "$(id -u)" ]] ||
+[[ "$(file_uid "$events_state_dir")" == "$(id -u)" &&
+  "$(file_uid "$events_file")" == "$(id -u)" ]] ||
   fail "publish audit paths are not owned by the current user"
 [[ ! -e "$events_state_dir/events.lock" ]] ||
   fail "publish event lock was not released"

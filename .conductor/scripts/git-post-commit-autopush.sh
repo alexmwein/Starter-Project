@@ -58,7 +58,11 @@ event_lock="$state_dir/events.lock"
 push_lock=""
 
 path_mode() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+  if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    stat -f '%Lp' "$1" 2>/dev/null
+  else
+    stat -c '%a' "$1" 2>/dev/null
+  fi
 }
 
 initialize_audit() {
