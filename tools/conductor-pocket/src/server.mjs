@@ -594,6 +594,8 @@ export function createPocketServer({
           {
             authenticated: true,
             unlocked: true,
+            unlockedUntil: result.unlockedUntil,
+            reauthenticationMode: result.reauthenticationMode,
             device: result.device,
             csrfToken: result.csrfToken,
           },
@@ -623,12 +625,25 @@ export function createPocketServer({
         requestUrl.pathname === '/api/auth/verify'
       ) {
         const body = await readJson(request);
-        const result = await security.verifyAuthentication(request, body.response);
-        return sendJson(response, 200, result, config);
+        const authentication = await security.verifyAuthentication(
+          request,
+          body.response,
+        );
+        const { setCookie, ...result } = authentication;
+        return sendJson(
+          response,
+          200,
+          result,
+          config,
+          setCookie ? { 'Set-Cookie': setCookie } : {},
+        );
       }
 
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/lock') {
-        const result = security.lock(request);
+        const body = await readJson(request);
+        const result = await security.lock(request, {
+          explicit: body.explicit === true,
+        });
         return sendJson(response, 200, result, config);
       }
 
@@ -638,7 +653,22 @@ export function createPocketServer({
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/events') {
-        security.session(request, { requireUnlocked: true });
+        try {
+          security.session(request, { requireUnlocked: true });
+        } catch (error) {
+          response.writeHead(200, {
+            ...securityHeaders(config, { api: true }),
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            Connection: 'close',
+            'X-Accel-Buffering': 'no',
+          });
+          response.end(
+            `event: locked\ndata: ${JSON.stringify({
+              code: asHttpError(error).code,
+            })}\n\n`,
+          );
+          return;
+        }
         response.writeHead(200, {
           ...securityHeaders(config, { api: true }),
           'Content-Type': 'text/event-stream; charset=utf-8',
@@ -790,6 +820,15 @@ export function createPocketServer({
           fingerprint,
           () =>
             serializeSend(async () => {
+              security.assertOrigin(request);
+              const currentAuth = security.session(request, {
+                requireUnlocked: true,
+                requireCsrf: true,
+                touch: false,
+              });
+              if (currentAuth.device.id !== auth.device.id) {
+                throw new HttpError(401, 'device_revoked');
+              }
               const beforeRowId = database.getSessionMessageCursor(route.id);
               const sendResult = await transport.send({
                 workspaceName: route.workspaceName,

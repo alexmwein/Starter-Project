@@ -55,10 +55,12 @@ The production setup is defense in depth:
    proof. Sends additionally require an idempotency key.
 8. The app uses a restrictive CSP, has no CDN/fonts/analytics, and never
    caches `/api/` responses in its service worker.
-9. A server-side five-minute idle deadline requires Face ID again even if iOS
-   kills the PWA; a one-hour absolute deadline caps continuously active use.
+9. Strict mode uses a server-side five-minute idle deadline and one-hour
+   absolute Face ID deadline. Optional trusted-device mode replaces routine
+   reauthentication with the paired cookie plus the exact pinned Tailscale
+   identity, backed by a server-enforced expiry and persistent manual lock.
 10. Cached transcript snapshots stay in the PWA's device-local IndexedDB,
-   render only after Face ID unlock, retain at most 50 events per visited
+   render only after Pocket authorization, retain at most 50 events per visited
    chat, and can be cleared from Security & Devices.
 
 See [SECURITY.md](./SECURITY.md) for trust boundaries and failure behavior.
@@ -116,6 +118,36 @@ different tailnet, a reused Mac node identity, or an origin mismatch.
 
 Open the pairing URL on the iPhone while Tailscale is connected, compare the
 code, enroll Face ID, then use Safari's Share → Add to Home Screen.
+
+### Remember this iPhone
+
+Strict Face ID reauthentication is the default. After Pocket owns the audited
+dedicated Tailscale origin, trusted-device mode can remember an enrolled
+iPhone across routine closes and relay restarts:
+
+```sh
+npm run auth-mode -- tailscale-session
+```
+
+The command refuses shared or mismatched browser origins, extra Serve
+handlers, Funnel, unsafe sidecar preferences, a different tailnet, or a
+missing pinned Tailscale login. Enabling it locks existing devices once.
+Unlock once with Face ID to begin the remembered window.
+
+Trusted-device mode still requires both the random enrolled-device cookie and
+the exact Tailscale login on every request. It has a 30-day server-side device
+session and remembers an unlock for up to 29 days. Security & Devices includes
+an explicit **Lock now** control that survives relay restarts. Initial pairing,
+manual lock, server-session expiry, revocation, cookie loss, and identity
+mismatch still fail closed. A successful Face ID check rotates the device
+token and renews both deadlines. The prior token remains usable for only five
+minutes and only to repeat Face ID if the cookie-update response was lost.
+
+Return to strict reauthentication with:
+
+```sh
+npm run auth-mode -- face-id
+```
 
 To pair another phone later:
 

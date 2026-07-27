@@ -24,5 +24,10 @@ export const PAIR_SESSION_TTL_MS = 5 * 60 * 1000;
 export const UNLOCK_TTL_MS = 60 * 60 * 1000;
 export const UNLOCK_IDLE_TTL_MS = 5 * 60 * 1000;
 export const DEVICE_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const TRUSTED_DEVICE_TTL_MS = 29 * 24 * 60 * 60 * 1000;
+export const SESSION_ROTATION_GRACE_MS = 5 * 60 * 1000;
+export const REAUTHENTICATION_MODE_FACE_ID = 'face-id';
+export const REAUTHENTICATION_MODE_TAILSCALE_SESSION =
+  'tailscale-session';
 export const SSE_HEARTBEAT_MS = 5 * 1000;
 export const DB_POLL_MS = 2 * 1000;

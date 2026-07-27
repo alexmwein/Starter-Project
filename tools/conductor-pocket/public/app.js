@@ -1,7 +1,7 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-performance-3';
+} from './delivery-receipts.js?v=0.2.0-trusted-device-1';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -16,6 +16,7 @@ const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
 const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
+const TAILSCALE_SESSION_MODE = 'tailscale-session';
 
 const state = {
   auth: null,
@@ -37,6 +38,7 @@ const state = {
   searchQuery: '',
   shell: null,
   hiddenAt: null,
+  visibilityEpoch: 0,
   seenMessageIds: new Set(),
 };
 
@@ -430,15 +432,52 @@ function renderLock({ errorMessage = '' } = {}) {
           const credential = await navigator.credentials.get({
             publicKey: authenticationOptions(options),
           });
-          const auth = await request('/api/auth/verify', {
-            method: 'POST',
-            body: { response: authenticationResponse(credential) },
-            csrf: true,
-          });
+          let verificationError = null;
+          try {
+            await request('/api/auth/verify', {
+              method: 'POST',
+              body: { response: authenticationResponse(credential) },
+              csrf: true,
+            });
+          } catch (error) {
+            verificationError = error;
+          }
+          let auth;
+          try {
+            auth = await request('/api/auth/bootstrap');
+          } catch (error) {
+            throw verificationError || error;
+          }
           state.auth = { ...state.auth, ...auth };
           state.csrfToken = auth.csrfToken;
+          if (!auth.unlocked) {
+            renderLock({
+              errorMessage:
+                verificationError || auth.sessionRotationRequired
+                ? 'Face ID did not finish syncing. Use it once more.'
+                : '',
+            });
+            return;
+          }
           await startApplication();
         } catch (error) {
+          if (
+            error.code === 'device_session_expired' ||
+            error.code === 'device_revoked' ||
+            error.code === 'authentication_required'
+          ) {
+            await purgeThenRenderSignedOut();
+            return;
+          }
+          if (
+            error.code === 'tailscale_identity_required' ||
+            error.code === 'tailscale_identity_denied' ||
+            error.code === 'tailscale_identity_unpaired' ||
+            error.code === 'device_identity_mismatch'
+          ) {
+            renderConnectionGate(error.code);
+            return;
+          }
           renderLock({
             errorMessage:
               error.name === 'NotAllowedError'
@@ -517,14 +556,19 @@ async function purgeThenRenderSignedOut() {
 
 function renderConnectionGate(code) {
   const upgradeRequired = code === 'retirement_client_upgrade_required';
+  const identityProblem =
+    code === 'tailscale_identity_required' ||
+    code === 'tailscale_identity_denied' ||
+    code === 'tailscale_identity_unpaired' ||
+    code === 'device_identity_mismatch';
   gateView({
     mark: upgradeRequired ? 'refresh' : 'wifiOff',
     title: upgradeRequired ? 'Pocket must refresh' : 'Mac unreachable',
     body:
       upgradeRequired
         ? 'Fully close Pocket, reopen it while online, then sign out again. The old app cannot retire this phone.'
-        : code === 'tailscale_identity_required'
-        ? 'Connect this phone to your private Tailscale network, then try again.'
+        : identityProblem
+        ? 'Connect this phone with the paired Tailscale account, then try again.'
         : 'Conductor Pocket could not reach the relay on your Mac.',
     action: node('button', {
       className: 'primary-button',
@@ -2149,8 +2193,19 @@ function startEvents() {
     } catch {
       // Keep the locked fallback.
     }
-    if (code === 'device_revoked' || code === 'authentication_required') {
+    if (
+      code === 'device_revoked' ||
+      code === 'authentication_required' ||
+      code === 'device_session_expired'
+    ) {
       await purgeThenRenderSignedOut();
+    } else if (
+      code === 'tailscale_identity_required' ||
+      code === 'tailscale_identity_denied' ||
+      code === 'tailscale_identity_unpaired' ||
+      code === 'device_identity_mismatch'
+    ) {
+      renderConnectionGate(code);
     } else {
       renderLock();
     }
@@ -2340,17 +2395,25 @@ async function openSecurity() {
       request('/api/connection'),
     ]);
     content.replaceChildren();
+    const trustedSession =
+      state.auth?.reauthenticationMode === TAILSCALE_SESSION_MODE;
     const thisPhoneSection = settingsSection('This phone');
     thisPhoneSection.card.append(
       settingsRow({
         iconName: 'phone',
         title: state.auth?.device?.name || 'This iPhone',
-        subtitle: `Paired ${formatRelative(state.auth?.device?.createdAt)} · Face ID on`,
+        subtitle: trustedSession
+          ? `Paired ${formatRelative(state.auth?.device?.createdAt)} · Trusted on your Tailnet`
+          : `Paired ${formatRelative(state.auth?.device?.createdAt)} · Face ID on`,
       }),
       settingsRow({
         iconName: 'lock',
-        title: 'Auto-lock',
-        subtitle: 'After 5 minutes away',
+        title: trustedSession ? 'Remembered access' : 'Auto-lock',
+        subtitle: trustedSession
+          ? 'Face ID after Lock now or remembered access expires'
+          : 'After 5 minutes away',
+        actionLabel: trustedSession ? 'Lock now' : null,
+        onAction: trustedSession ? lockPocketNow : null,
       }),
       settingsRow({
         iconName: 'warn',
@@ -2368,7 +2431,7 @@ async function openSecurity() {
         settingsRow({
           iconName: 'phone',
           title: device.name,
-          subtitle: `Last seen ${formatRelative(device.lastSeenAt)} · ${device.tailscaleLogin}`,
+          subtitle: `Last verified ${formatRelative(device.lastSeenAt)} · ${device.tailscaleLogin}`,
           actionLabel:
             device.id === state.auth?.device?.id ? 'Sign out' : 'Revoke',
           destructive: true,
@@ -2415,6 +2478,22 @@ async function openSecurity() {
       }),
     );
     content.append(appSection.root);
+  } catch (error) {
+    handleRuntimeError(error);
+  }
+}
+
+async function lockPocketNow() {
+  try {
+    const result = await request('/api/auth/lock', {
+      method: 'POST',
+      body: { explicit: true },
+      csrf: true,
+    });
+    if (result.locked) {
+      closeOverlay();
+      renderLock();
+    }
   } catch (error) {
     handleRuntimeError(error);
   }
@@ -2573,6 +2652,7 @@ window.addEventListener('popstate', (event) => {
 
 function shieldApplication() {
   const hiddenAt = Date.now();
+  state.visibilityEpoch += 1;
   state.hiddenAt = hiddenAt;
   localStorage.setItem(HIDDEN_AT_KEY, String(hiddenAt));
   stopEvents();
@@ -2589,6 +2669,7 @@ function shieldApplication() {
 }
 
 async function revealApplication() {
+  const revealEpoch = state.visibilityEpoch;
   const persistedHiddenAt = Number(localStorage.getItem(HIDDEN_AT_KEY) || 0);
   const hiddenAt = Math.max(state.hiddenAt || 0, persistedHiddenAt);
   const awayTooLong = hiddenAt > 0 && Date.now() - hiddenAt >= AWAY_LOCK_MS;
@@ -2596,7 +2677,9 @@ async function revealApplication() {
   state.hiddenAt = null;
 
   if (state.auth && state.shell) {
-    if (awayTooLong) {
+    const trustedSession =
+      state.auth.reauthenticationMode === TAILSCALE_SESSION_MODE;
+    if (awayTooLong && !trustedSession) {
       await request('/api/auth/lock', {
         method: 'POST',
         body: {},
@@ -2610,6 +2693,12 @@ async function revealApplication() {
           body: {},
           csrf: true,
         });
+        if (
+          document.hidden ||
+          revealEpoch !== state.visibilityEpoch
+        ) {
+          return;
+        }
         startEvents();
       } catch (error) {
         if (
@@ -2625,6 +2714,12 @@ async function revealApplication() {
     }
   }
 
+  if (
+    document.hidden ||
+    revealEpoch !== state.visibilityEpoch
+  ) {
+    return;
+  }
   document.querySelector('#privacy-shield')?.remove();
   app.removeAttribute('aria-hidden');
 }

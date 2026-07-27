@@ -118,6 +118,69 @@ test('relay install gives cold startup and rollback a thirty-second health windo
   );
 });
 
+test('trusted sessions fail closed unless Pocket owns the audited sidecar origin', async () => {
+  const source = await fs.readFile(
+    new URL('../src/cli.mjs', import.meta.url),
+    'utf8',
+  );
+  const gateStart = source.indexOf(
+    'async function assertTrustedSessionIngress',
+  );
+  const nextFunction = source.indexOf(
+    'async function macName',
+    gateStart,
+  );
+  const gate = source.slice(gateStart, nextFunction);
+  assert.ok(gateStart >= 0);
+  assert.ok(nextFunction > gateStart);
+  assert.match(
+    gate,
+    /config\.publicOrigin !== tailscale\.publicOrigin/,
+  );
+  assert.match(gate, /config\.rpId !== tailscale\.dnsName/);
+  assert.match(gate, /assertDoctorLaunchProfile/);
+  assert.match(gate, /assertLockedSidecarPrefs/);
+  assert.match(gate, /assertPrivateServeStatus/);
+  assert.match(gate, /assertNoFunnel/);
+  assert.match(gate, /assertSameTailnet/);
+  assert.match(gate, /sidecar_identity_not_isolated/);
+  assert.match(gate, /old_shared_root_still_configured/);
+
+  const prewriteGate = source.indexOf(
+    'await assertTrustedSessionIngress(proposed)',
+  );
+  const modeWrite = source.indexOf(
+    'await saveConfig(configPath, proposed)',
+    prewriteGate,
+  );
+  const serveGate = source.indexOf(
+    'await assertTrustedSessionIngress(config)',
+    source.indexOf('async function serve'),
+  );
+  const serverCreation = source.indexOf(
+    'const server = createPocketServer',
+    serveGate,
+  );
+  assert.ok(prewriteGate >= 0);
+  assert.ok(modeWrite > prewriteGate);
+  assert.ok(serveGate >= 0);
+  assert.ok(serverCreation > serveGate);
+  assert.match(source, /const RELAY_START_ATTEMPTS = 150/);
+  assert.match(
+    source,
+    /withOperationLock\([\s\S]*change Pocket authentication mode/,
+  );
+  assert.match(
+    source,
+    /await assertTrustedSessionIngress\(proposed\)[\s\S]*await fs\.access\(relayLaunchAgentPath\)[\s\S]*if \(isDeepStrictEqual\(prior, proposed\)\)[\s\S]*await ensureInstalledRelay\(prior\)/,
+  );
+  assert.match(
+    source,
+    /await saveConfig\(configPath, prior\)[\s\S]*await restartInstalledRelay\(prior\)/,
+  );
+  assert.match(source, /await stopInstalledRelay\(\)/);
+});
+
 test('the sidecar refuses Tailscale builds older than the security floor', () => {
   assert.equal(versionAtLeast('1.98.9', '1.98.9'), true);
   assert.equal(versionAtLeast('1.100.0', '1.98.9'), true);
