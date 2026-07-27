@@ -3,119 +3,141 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Concise operating blueprint for Noli's peptide-company opportunity, current through July 26, 2026.">
-  <title>Noli Operating Blueprint</title>
+  <meta name="description" content="Noli peptide-company operating intelligence, current through July 26, 2026.">
+  <title>Noli Operating Intelligence</title>
   <style>
     :root {
       color-scheme: light;
       --paper: #f4f1e9;
       --ink: #171915;
-      --muted: #64675f;
+      --muted: #60645c;
       --line: #d7d3c9;
       --card: #fcfaf4;
       --accent: #d65a31;
       --good: #267052;
       --warn: #9a5c11;
-      --max: 1120px;
+      --bad: #9c3f31;
+      --blue: #265f82;
+      --max: 1180px;
     }
 
     * { box-sizing: border-box; }
-
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; scroll-padding-top: 82px; }
 
     body {
       margin: 0;
       color: var(--ink);
       background:
-        radial-gradient(circle at 75% -10%, rgba(214, 90, 49, .12), transparent 28rem),
+        radial-gradient(circle at 78% -8%, rgba(214, 90, 49, .12), transparent 30rem),
         var(--paper);
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.55;
     }
 
-    a { color: inherit; }
+    a { color: inherit; text-underline-offset: 3px; }
     a:hover { color: var(--accent); }
+    p { margin: 0 0 14px; }
+    ul, ol { margin: 12px 0 0; padding-left: 21px; }
+    li { margin: 7px 0; }
+    code {
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: #ebe7dd;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .88em;
+    }
 
     .shell {
       width: min(calc(100% - 40px), var(--max));
       margin: 0 auto;
     }
 
+    .topbar-wrap {
+      position: sticky;
+      z-index: 10;
+      top: 0;
+      border-bottom: 1px solid rgba(215, 211, 201, .9);
+      background: rgba(244, 241, 233, .94);
+      backdrop-filter: blur(14px);
+    }
+
     .topbar {
       display: flex;
       justify-content: space-between;
-      gap: 24px;
+      gap: 22px;
       align-items: center;
-      padding: 22px 0;
-      border-bottom: 1px solid var(--line);
+      min-height: 64px;
     }
 
     .brand {
-      font-weight: 800;
-      letter-spacing: -.02em;
+      flex: 0 0 auto;
+      font-weight: 850;
+      letter-spacing: -.025em;
       text-decoration: none;
     }
 
     .topbar nav {
       display: flex;
-      gap: 18px;
-      flex-wrap: wrap;
-      font-size: .86rem;
+      gap: 16px;
+      align-items: center;
+      overflow-x: auto;
+      scrollbar-width: none;
+      font-size: .79rem;
+      white-space: nowrap;
     }
 
-    .topbar nav a {
-      color: var(--muted);
-      text-decoration: none;
-    }
+    .topbar nav::-webkit-scrollbar { display: none; }
+    .topbar nav a { color: var(--muted); text-decoration: none; }
 
     .hero {
       display: grid;
-      grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr);
-      gap: 56px;
-      padding: 84px 0 68px;
-      border-bottom: 1px solid var(--line);
+      grid-template-columns: minmax(0, 1.35fr) minmax(290px, .65fr);
+      gap: 52px;
+      padding: 76px 0 58px;
     }
 
     .eyebrow,
-    .kicker {
+    .kicker,
+    .label {
       color: var(--accent);
-      font-size: .74rem;
-      font-weight: 800;
+      font-size: .73rem;
+      font-weight: 850;
       letter-spacing: .11em;
       text-transform: uppercase;
     }
 
     h1 {
-      max-width: 820px;
+      max-width: 900px;
       margin: 12px 0 20px;
-      font-size: clamp(3rem, 7vw, 6.6rem);
-      line-height: .93;
-      letter-spacing: -.065em;
+      font-size: clamp(3.3rem, 7vw, 6.8rem);
+      line-height: .92;
+      letter-spacing: -.066em;
     }
 
     .lead {
-      max-width: 760px;
-      margin: 0;
-      color: #393c36;
-      font-size: clamp(1.15rem, 2.2vw, 1.55rem);
+      max-width: 780px;
+      color: #373a34;
+      font-size: clamp(1.15rem, 2vw, 1.52rem);
     }
 
-    .actions {
+    .actions,
+    .source-links {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
-      margin-top: 30px;
+      margin-top: 24px;
     }
 
-    .button {
+    .button,
+    .source-link {
       display: inline-flex;
       align-items: center;
-      min-height: 44px;
-      padding: 10px 16px;
+      min-height: 42px;
+      padding: 9px 15px;
       border: 1px solid var(--ink);
       border-radius: 999px;
-      font-size: .88rem;
-      font-weight: 750;
+      font-size: .83rem;
+      font-weight: 760;
       text-decoration: none;
     }
 
@@ -124,308 +146,168 @@
       background: var(--ink);
     }
 
-    .decision {
+    .source-link {
+      min-height: 34px;
+      padding: 6px 11px;
+      border-color: var(--line);
+      color: var(--muted);
+      background: var(--card);
+      font-size: .75rem;
+    }
+
+    .hero-card {
       align-self: end;
-      padding: 22px;
+      padding: 24px;
       border: 1px solid var(--line);
       border-radius: 18px;
-      background: rgba(252, 250, 244, .8);
+      background: rgba(252, 250, 244, .82);
     }
 
-    .decision strong {
+    .hero-card strong {
       display: block;
-      margin: 7px 0 12px;
-      font-size: 1.35rem;
-      line-height: 1.2;
+      margin: 8px 0 12px;
+      font-size: 1.48rem;
+      line-height: 1.18;
     }
 
-    .decision p {
-      margin: 0;
-      color: var(--muted);
-    }
-
-    .section {
-      padding: 64px 0;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .section-head {
-      display: grid;
-      grid-template-columns: minmax(220px, .55fr) minmax(0, 1.45fr);
-      gap: 32px;
-      margin-bottom: 30px;
-    }
-
-    .section h2 {
-      margin: 7px 0 0;
-      font-size: clamp(2rem, 4vw, 3.6rem);
-      line-height: 1;
-      letter-spacing: -.045em;
-    }
-
-    .section-head p {
-      max-width: 690px;
-      margin: 0;
-      color: var(--muted);
-      font-size: 1.05rem;
-    }
+    .hero-card p { color: var(--muted); }
 
     .quick-facts {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 1px;
-      margin-top: 18px;
       overflow: hidden;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 13px;
       background: var(--line);
     }
 
     .quick-facts article {
-      padding: 16px 18px;
+      min-height: 102px;
+      padding: 16px;
       background: var(--card);
     }
 
     .quick-facts small {
       display: block;
       color: var(--accent);
-      font-weight: 800;
+      font-size: .68rem;
+      font-weight: 850;
       text-transform: uppercase;
     }
 
     .quick-facts strong {
       display: block;
-      margin-top: 5px;
-      font-size: .95rem;
-      line-height: 1.3;
-    }
-
-    .update-section {
-      padding: 38px 0 64px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .update-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 28px;
-      align-items: end;
-      margin-bottom: 18px;
-    }
-
-    .update-head h2 {
-      margin: 6px 0 0;
-      font-size: clamp(1.8rem, 3vw, 2.7rem);
-      line-height: 1;
-      letter-spacing: -.045em;
-    }
-
-    .update-head p {
-      max-width: 570px;
-      margin: 0;
-      color: var(--muted);
-    }
-
-    .update-grid {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-    }
-
-    .update-card {
-      min-height: 134px;
-      padding: 17px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--card);
-      text-decoration: none;
-    }
-
-    .update-card strong {
-      display: block;
-      font-size: 1.9rem;
-      line-height: 1;
-    }
-
-    .update-card b {
-      display: block;
-      margin: 13px 0 4px;
-      line-height: 1.2;
-    }
-
-    .update-card span {
-      display: block;
-      color: var(--muted);
-      font-size: .8rem;
-      line-height: 1.35;
-    }
-
-    .truths {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      border-top: 1px solid var(--line);
-      border-left: 1px solid var(--line);
-    }
-
-    .truth {
-      min-height: 190px;
-      padding: 22px;
-      border-right: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      background: rgba(252, 250, 244, .45);
-    }
-
-    .truth span {
-      color: var(--accent);
-      font-size: .75rem;
-      font-weight: 800;
-    }
-
-    .truth h3 {
-      margin: 25px 0 8px;
-      font-size: 1.15rem;
-      line-height: 1.2;
-    }
-
-    .truth p {
-      margin: 0;
-      color: var(--muted);
+      margin-top: 7px;
       font-size: .92rem;
+      line-height: 1.28;
     }
 
-    .truth.featured {
-      color: white;
-      background: var(--ink);
+    .section {
+      padding: 66px 0;
+      border-bottom: 1px solid var(--line);
     }
 
-    .truth.featured p { color: #c9cdc3; }
-
-    .system {
+    .section-head {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
+      grid-template-columns: minmax(230px, .55fr) minmax(0, 1.45fr);
+      gap: 36px;
+      margin-bottom: 30px;
     }
 
-    .system article {
-      padding: 22px;
+    .section h2 {
+      margin: 7px 0 0;
+      font-size: clamp(2.15rem, 4vw, 4rem);
+      line-height: .98;
+      letter-spacing: -.05em;
+    }
+
+    .section-head > div:last-child > p,
+    .section-head > p {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 1.04rem;
+    }
+
+    .summary {
+      margin-bottom: 18px;
+      padding: 19px 21px;
+      border-left: 4px solid var(--accent);
+      background: rgba(214, 90, 49, .065);
+      font-weight: 680;
+    }
+
+    .summary.good {
+      border-left-color: var(--good);
+      background: rgba(38, 112, 82, .07);
+    }
+
+    .summary.warn {
+      border-left-color: var(--warn);
+      background: rgba(154, 92, 17, .07);
+    }
+
+    .card-grid,
+    .metric-grid,
+    .media-grid,
+    .role-grid,
+    .verdict-grid {
+      display: grid;
+      gap: 13px;
+    }
+
+    .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .role-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .verdict-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card,
+    .metric,
+    .media-card,
+    .role,
+    .verdict-card {
+      padding: 21px;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: var(--card);
     }
 
-    .system b {
-      display: block;
-      margin-bottom: 8px;
-      font-size: 1.05rem;
+    .card h3,
+    .media-card h3,
+    .verdict-card h3 {
+      margin: 6px 0 9px;
+      font-size: 1.2rem;
+      line-height: 1.2;
     }
 
-    .system span {
+    .card p,
+    .metric p,
+    .media-card p,
+    .role p,
+    .verdict-card p {
+      margin: 0;
       color: var(--muted);
       font-size: .9rem;
     }
 
-    .hard-line {
-      margin-top: 14px;
-      padding: 18px 20px;
-      border-left: 4px solid var(--accent);
-      background: rgba(214, 90, 49, .07);
-      font-weight: 650;
-    }
-
-    .timeline {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .timeline article {
-      padding: 24px;
-      border-top: 3px solid var(--ink);
-      background: var(--card);
-    }
-
-    .timeline span {
-      color: var(--accent);
-      font-size: .76rem;
-      font-weight: 800;
-      text-transform: uppercase;
-    }
-
-    .timeline h3 {
-      margin: 22px 0 8px;
-      font-size: 1.35rem;
-    }
-
-    .timeline p {
-      margin: 0;
-      color: var(--muted);
-      font-size: .93rem;
-    }
-
-    .gates {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 1px;
-      margin-top: 18px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--line);
-    }
-
-    .gate {
-      padding: 17px;
-      background: var(--card);
-    }
-
-    .gate small {
+    .metric strong {
       display: block;
+      margin: 5px 0 9px;
+      font-size: clamp(1.7rem, 3vw, 2.55rem);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+
+    .metric small {
       color: var(--muted);
+      font-size: .72rem;
     }
 
-    .gate strong {
-      display: block;
-      margin-top: 5px;
-      font-size: 1.15rem;
-    }
-
-    .stop {
-      margin: 18px 0 0;
-      color: #703b0e;
-      font-size: .92rem;
-    }
-
-    .details-stack {
-      display: grid;
-      gap: 12px;
-    }
-
-    details {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: rgba(252, 250, 244, .65);
-    }
-
-    summary {
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      padding: 20px 22px;
-      cursor: pointer;
-      font-weight: 780;
-      list-style: none;
-    }
-
-    summary::-webkit-details-marker { display: none; }
-    summary::after { content: "+"; color: var(--accent); font-size: 1.25rem; }
-    details[open] summary::after { content: "−"; }
-
-    .detail-body {
-      padding: 0 22px 24px;
-      border-top: 1px solid var(--line);
-    }
-
-    .detail-body > p { color: var(--muted); }
+    .verdict-card:nth-child(1) { border-top: 4px solid var(--good); }
+    .verdict-card:nth-child(2) { border-top: 4px solid var(--warn); }
+    .verdict-card:nth-child(3) { color: white; background: var(--ink); }
+    .verdict-card:nth-child(3) p { color: #c7cbc1; }
 
     .split {
       display: grid;
@@ -433,421 +315,1297 @@
       gap: 24px;
     }
 
-    .compact-list {
-      margin: 12px 0 0;
-      padding-left: 20px;
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      margin-top: 17px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--line);
     }
 
-    .compact-list li { margin: 8px 0; }
+    .flow span {
+      padding: 13px 8px;
+      background: var(--card);
+      text-align: center;
+      font-size: .75rem;
+      font-weight: 730;
+    }
+
+    .steps {
+      display: grid;
+      counter-reset: step;
+      gap: 8px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 13px;
+      align-items: start;
+      padding: 15px 17px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--card);
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: var(--ink);
+      font-size: .78rem;
+      font-weight: 850;
+    }
+
+    .step b { display: block; margin-bottom: 3px; }
+    .step span { color: var(--muted); font-size: .88rem; }
+
+    details {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(252, 250, 244, .72);
+    }
+
+    summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
+      padding: 19px 21px;
+      cursor: pointer;
+      font-weight: 790;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+    summary::after {
+      content: "+";
+      color: var(--accent);
+      font-size: 1.25rem;
+      line-height: 1;
+    }
+    details[open] summary::after { content: "x"; }
+
+    .summary-note {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .82rem;
+      font-weight: 500;
+    }
+
+    .detail-body {
+      padding: 21px;
+      border-top: 1px solid var(--line);
+    }
+
+    .detail-body > :last-child { margin-bottom: 0; }
 
     .table-wrap {
       overflow-x: auto;
-      margin-top: 18px;
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--card);
     }
 
     table {
       width: 100%;
       min-width: 760px;
       border-collapse: collapse;
-      font-size: .88rem;
+      font-size: .84rem;
     }
 
     th,
     td {
-      padding: 13px 12px;
+      padding: 12px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
     }
 
+    tr:last-child td { border-bottom: 0; }
+
     th {
       color: var(--muted);
-      font-size: .72rem;
+      background: #f0ede5;
+      font-size: .69rem;
       letter-spacing: .06em;
       text-transform: uppercase;
     }
 
-    .source-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 18px;
+    td strong { display: block; margin-bottom: 3px; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .good-text { color: var(--good); }
+    .warn-text { color: var(--warn); }
+    .bad-text { color: var(--bad); }
+
+    .tag {
+      display: inline-flex;
+      margin: 0 5px 5px 0;
+      padding: 3px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: #f3f0e8;
+      font-size: .66rem;
+      font-weight: 780;
+      letter-spacing: .035em;
+      text-transform: uppercase;
     }
 
-    .source-card {
-      display: block;
-      padding: 15px;
+    .media-card .meta {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 9px;
+    }
+
+    .media-card a {
+      display: inline-block;
+      margin-top: 12px;
+      font-size: .81rem;
+      font-weight: 780;
+    }
+
+    .role b { display: block; margin-bottom: 7px; }
+
+    .coverage {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 18px 0;
+    }
+
+    .coverage span {
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      font-size: .78rem;
+    }
+
+    .raw-library {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .raw-library a {
+      padding: 13px;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--card);
+      font-size: .8rem;
+      font-weight: 720;
       text-decoration: none;
     }
 
-    .source-card b {
-      display: block;
-      margin-bottom: 4px;
-    }
-
-    .source-card span {
+    .note {
+      margin-top: 16px;
       color: var(--muted);
-      font-size: .83rem;
+      font-size: .79rem;
     }
-
-    .verdict {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .verdict article {
-      padding: 22px;
-      border-radius: 14px;
-      background: var(--card);
-    }
-
-    .verdict article:nth-child(1) { border-top: 4px solid var(--warn); }
-    .verdict article:nth-child(2) { border-top: 4px solid var(--good); }
-    .verdict article:nth-child(3) { color: white; background: var(--ink); }
-    .verdict p { margin: 8px 0 0; color: var(--muted); }
-    .verdict article:nth-child(3) p { color: #c9cdc3; }
 
     footer {
       display: flex;
       justify-content: space-between;
       gap: 24px;
-      padding: 34px 0 50px;
+      padding: 34px 0 48px;
       color: var(--muted);
-      font-size: .82rem;
+      font-size: .78rem;
     }
 
-    @media (max-width: 860px) {
+    @media (max-width: 960px) {
+      .quick-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .raw-library { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 760px) {
       .hero,
-      .section-head { grid-template-columns: 1fr; }
-      .hero { gap: 34px; padding-top: 58px; }
-      .quick-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .truths,
-      .system { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .update-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .timeline,
-      .verdict { grid-template-columns: 1fr; }
-      .gates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .section-head,
+      .card-grid,
+      .media-grid,
+      .verdict-grid,
+      .split { grid-template-columns: 1fr; }
+      .hero { gap: 30px; padding-top: 50px; }
+      .section { padding: 50px 0; }
+      .topbar { align-items: flex-start; padding: 14px 0 10px; }
+      .topbar nav { padding-bottom: 5px; }
+      .hero-card { align-self: auto; }
     }
 
-    @media (max-width: 600px) {
+    @media (max-width: 520px) {
       .shell { width: min(calc(100% - 24px), var(--max)); }
-      .topbar { align-items: flex-start; }
-      .topbar nav { justify-content: flex-end; gap: 10px; }
-      h1 { font-size: 3.2rem; }
-      .section { padding: 46px 0; }
-      .update-head { align-items: flex-start; flex-direction: column; }
-      .truths,
-      .system,
-      .split,
-      .source-grid { grid-template-columns: 1fr; }
-      .update-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .update-card:last-child { grid-column: 1 / -1; }
-      .gates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .gate:last-child { grid-column: 1 / -1; }
-      summary { padding: 17px; }
-      .detail-body { padding: 0 17px 19px; }
+      .topbar-wrap { position: static; }
+      .topbar { display: block; }
+      .topbar nav {
+        gap: 6px 12px;
+        flex-wrap: wrap;
+        overflow: visible;
+        margin-top: 8px;
+        white-space: normal;
+      }
+      h1 { font-size: 3.25rem; }
+      .quick-facts,
+      .metric-grid,
+      .role-grid,
+      .flow,
+      .raw-library { grid-template-columns: 1fr; }
+      .quick-facts article { min-height: 0; }
+      summary, .detail-body { padding: 16px; }
       footer { flex-direction: column; }
     }
   </style>
 </head>
 <body>
-  <header class="shell topbar">
-    <a class="brand" href="#top">Noli / Blueprint</a>
-    <nav aria-label="Page sections">
-      <a href="#added">Added</a>
-      <a href="#proof">30 days</a>
-      <a href="#library">Library</a>
-      <a href="#decision">Decision</a>
-    </nav>
-  </header>
+  <div class="topbar-wrap">
+    <header class="shell topbar">
+      <a class="brand" href="#top">Noli / Intelligence</a>
+      <nav aria-label="Page sections">
+        <a href="#decision">Decision</a>
+        <a href="#biologix">Braden case</a>
+        <a href="#customer">Customer</a>
+        <a href="#growth">Growth</a>
+        <a href="#money">Money</a>
+        <a href="#operations">Operations</a>
+        <a href="#gray">Gray map</a>
+        <a href="#media">Media</a>
+        <a href="#plan">90 days</a>
+        <a href="#library">Sources</a>
+      </nav>
+    </header>
+  </div>
 
   <main id="top">
     <section class="shell hero">
       <div>
-        <div class="eyebrow">Noli · Conditional go · Current July 26, 2026</div>
-        <h1>Build the trust engine, not the catalog.</h1>
-        <p class="lead"><strong>Simple scales. Complex fails.</strong> Peptide supply is abundant. Trust, creator distribution, repeat purchasing, and operational continuity are scarce.</p>
+        <div class="eyebrow">Noli / Conditional go / Current July 26, 2026</div>
+        <h1>The Noli decision system.</h1>
+        <p class="lead"><strong>Simple scales. Complex fails.</strong> The opportunity is real. The company is not the vial. It is trusted demand, exact-lot proof, reliable checkout, delivery, support, and repeat purchase.</p>
         <div class="actions">
-          <a class="button primary" href="#proof">Run the 30-day proof</a>
-          <a class="button" href="./peptide-company-source-matrix.csv">Open the source sheet</a>
+          <a class="button primary" href="#decision">Read the decision</a>
+          <a class="button" href="#plan">Run the proof</a>
         </div>
       </div>
-      <aside class="decision">
-        <div class="kicker">The bet</div>
-        <strong>Five Noli launch creators. One approved offer. 50 to 75 delivered orders.</strong>
-        <p>Scale only from settled contribution, repeat behavior, and operations that hold under real demand.</p>
+      <aside class="hero-card">
+        <div class="kicker">Working thesis</div>
+        <strong>Noli is female-first, not female-only, with retatrutide as the presumed hero acquisition product.</strong>
+        <p>That is a commercial hypothesis, not a verified product-sales fact and not permission to sell through an uncleared lane. Prove one eligible offer with five creators and 50 to 75 delivered orders.</p>
       </aside>
     </section>
 
-    <section class="shell quick-facts" aria-label="Decision facts">
-      <article><small>Product</small><strong>Commodity. Not the moat.</strong></article>
-      <article><small>Moat</small><strong>Trust, creators, repeat, service.</strong></article>
-      <article><small>Margin</small><strong>80% gross is not 80% profit.</strong></article>
-      <article><small>Sequence</small><strong>Legal lane before offer and creators.</strong></article>
-    </section>
-
-    <section class="shell update-section" id="added">
-      <div class="update-head">
-        <div>
-          <div class="kicker">New research loaded</div>
-          <h2>Everything added.</h2>
-        </div>
-        <p>Current through July 26, 2026. Every source is dated and graded. Forum repetition proves pressure, not truth.</p>
-      </div>
-      <div class="update-grid">
-        <a class="update-card" href="./peptide-company-source-matrix.csv"><strong>290</strong><b>Source links</b><span>Dates, evidence grades, and extracted lessons</span></a>
-        <a class="update-card" href="./operator-growth-playbook.md"><strong>15</strong><b>Gray areas</b><span>BHW, Reddit, specialist forums, and durable lessons</span></a>
-        <a class="update-card" href="./company-models-founder-media.md"><strong>30</strong><b>Company models</b><span>Offers, growth, retention, founders, and caveats</span></a>
-        <a class="update-card" href="#field-notes"><strong>2025-26</strong><b>Founder media</b><span>Podcasts, interviews, and operator case studies</span></a>
-        <a class="update-card" href="./viability-economics-exit.md"><strong>3</strong><b>Economic cases</b><span>Bear, base, bull, cash buffers, and $15M math</span></a>
-      </div>
-    </section>
-
-    <section class="shell section" id="proof">
-      <div class="section-head">
-        <div>
-          <div class="kicker">01 / Proof</div>
-          <h2>Thirty days.</h2>
-        </div>
-        <p>A legally cleared, genuinely qualified audience first. The pilot is an evidence test, not permission to imply one use publicly and sell another privately.</p>
-      </div>
-
-      <div class="timeline">
-        <article>
-          <span>Days 1 to 10</span>
-          <h3>Make one offer real.</h3>
-          <p>Choose the lane and offer. Release one verified lot. Obtain written processor acceptance. Lock fulfillment, support, current proof, policies, and portable lifecycle email.</p>
-        </article>
-        <article>
-          <span>Days 11 to 20</span>
-          <h3>Prepare five.</h3>
-          <p>Five opt-in creators. One contract, claims library, landing narrative, link system, payout rule, and manual settlement ledger.</p>
-        </article>
-        <article>
-          <span>Days 21 to 30</span>
-          <h3>Cap the launch.</h3>
-          <p>Release one creator at a time. Stop at 50 to 75 delivered orders. Judge economics, service, quality, claims, and repeat signal before adding anything.</p>
-        </article>
-      </div>
-
-      <div class="gates" role="group" aria-label="Continue gates">
-        <div class="gate"><small>Settled CM2</small><strong>35%+</strong></div>
-        <div class="gate"><small>Payback</small><strong>60 days or less</strong></div>
-        <div class="gate"><small>On-time ship</small><strong>95%+</strong></div>
-        <div class="gate"><small>Disputes</small><strong>Below 0.30%</strong></div>
-        <div class="gate"><small>Critical claims</small><strong>Zero</strong></div>
-      </div>
-      <p class="stop"><strong>Pause or migrate:</strong> if conversion requires human-outcome insinuation, the exact business cannot receive written counterparty acceptance, lot records fail, two cohorts miss economics, or Alex becomes the routine operator.</p>
-    </section>
-
-    <section class="shell section" id="field-notes">
-      <div class="section-head">
-        <div>
-          <div class="kicker">02 / Evidence</div>
-          <h2>Open only what you need.</h2>
-        </div>
-        <p>The full research is preserved without turning the main page into a wall of text. Forum anecdotes are labeled. Repetition proves pressure, not performance.</p>
-      </div>
-
-      <div class="details-stack">
-        <details>
-          <summary>Noli company and support boundaries</summary>
-          <div class="detail-body">
-            <p>Noli is the peptide company. OVO Talent, Academy, and Labs are supporting capabilities. Keep health-category risk ring-fenced so neither Noli nor OVO becomes the clinic, pharmacy, prescriber, or quality department.</p>
-            <div class="system">
-              <article><b>Noli</b><span>Brand, offer, merchant agreements, experience, and support</span></article>
-              <article><b>Clinical partners</b><span>Eligibility, prescribing, pharmacy, patient data, and safety</span></article>
-              <article><b>OVO Talent · support</b><span>Creator selection, contracts, creative, and partner care</span></article>
-              <article><b>OVO Labs · support</b><span>Only after proof: attribution, CM2, payouts, and learning</span></article>
-              <article><b>OVO Academy · support</b><span>Only after proof: supervised operating bench, never medical advice</span></article>
-            </div>
-            <div class="hard-line">One lane. One offer. One proof system. One ledger. Noli does not make clinical decisions or store patient health data.</div>
-          </div>
-        </details>
-
-        <details>
-          <summary>What operators say is working and failing</summary>
-          <div class="detail-body split">
-            <div>
-              <h3>Working</h3>
-              <ul class="compact-list">
-                <li>High-intent search after credible product and evidence pages</li>
-                <li>Founder education with a measurable landing path</li>
-                <li>Lot-matched proof buyers can verify</li>
-                <li>Simple affiliate economics with transparent incentives</li>
-                <li>Owned category media, comparison, and calculators</li>
-                <li>Fast fulfillment and visible refund or reship recovery</li>
-                <li>Replenishment, post-purchase, and quantity ladders</li>
-              </ul>
-            </div>
-            <div>
-              <h3>Failing</h3>
-              <ul class="compact-list">
-                <li>Using mainstream processors while searching for approval later</li>
-                <li>Treating a gateway name or MCC as permission</li>
-                <li>Supplier COAs without lot custody</li>
-                <li>A giant catalog before support and inventory work</li>
-                <li>Creator claims that contradict the stated research purpose</li>
-                <li>One processor, ad account, ESP, supplier, or molecule</li>
-                <li>GMV and screenshots presented as cash or company value</li>
-              </ul>
-            </div>
-          </div>
-        </details>
-
-        <details>
-          <summary>Gray-market field map</summary>
-          <div class="detail-body">
-            <p>This records current public evidence. It is not an implementation guide.</p>
-            <p><strong>$15M correction:</strong> the direct 2019 BlackHatWorld post does not show BlackHatWorld offering $15 million for a peptide company. The author said he had $15 million of hard-money brokerage deals to place that week while separately mentioning peptide payment processing. Treat an acquisition interpretation as unsupported unless an actual buyer, target, terms, and proof exist.</p>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Pressure</th><th>Forum pattern</th><th>What the record shows</th></tr>
-                </thead>
-                <tbody>
-                  <tr><td>Card acceptance</td><td>Storefront masking, account rotation, intermediaries, alternate entities, generic merchant categories</td><td>Scrutiny often arrives after volume or review. Funds, reserves, and continuity become the real risk.</td></tr>
-                  <tr><td>Ad access</td><td>Different review pages, rented accounts, coded names, and affiliate bridges</td><td>Short revenue windows are possible. Durable channel access and transferable data are not created.</td></tr>
-                  <tr><td>Intended use</td><td>RUO labels, age gates, questionnaires, account walls, codes, and creator separation</td><td>Regulators examine the complete funnel. A disclaimer does not outweigh copy, supplies, support, and promotion.</td></tr>
-                  <tr><td>Community trust</td><td>Aged accounts, seeded rankings, affiliate review pages, DMs, WhatsApp, and Telegram</td><td>Peer discovery matters. Paid references can be difficult to distinguish from independent evidence.</td></tr>
-                  <tr><td>Supply and tests</td><td>Domestic relabeling, supplier COAs, selective testing, and private sourcing</td><td>A label does not prove chain of custody. Lot identity, content, purity, applicable safety tests, and release records do.</td></tr>
-                  <tr><td>Telehealth</td><td>Creator, marketer, clinic, provider, pharmacy, and referral layers</td><td>Separation is legitimate only when clinical judgment, licensing, compensation, claims, and pharmacy governance are real.</td></tr>
-                  <tr><td>Revenue and exit</td><td>Screenshots, ad attribution, processor anecdotes, high gross margin, and large offers</td><td>Reconcile orders to refunds, reserves, settlements, bank cash, taxes, add-backs, and actual buyer terms.</td></tr>
-                  <tr><td>Continuity</td><td>Rebrands, mirrors, new domains, alternate email and private channels</td><td>Continuity planning is necessary. Concealed continuity can erase identity, accountability, and recourse.</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="source-grid">
-              <a class="source-card" href="./gray-market-operator-evidence.md"><b>Gray-market evidence ledger</b><span>Sixteen pressure categories with direct links and grades</span></a>
-              <a class="source-card" href="./gray-marketing-platform-evidence.md"><b>Marketing and platform evidence</b><span>Codes, creators, fake UGC, seeding, ads, email, payments, mirrors, and WhatsApp</span></a>
-              <a class="source-card" href="./operator-growth-playbook.md"><b>Forum operator playbook</b><span>What operators report across BHW, Reddit, GLP1Forum, and specialist communities</span></a>
-              <a class="source-card" href="./source-audit.md"><b>Source audit</b><span>Keep, qualify, or remove ledger for the highest-impact claims</span></a>
-            </div>
-          </div>
-        </details>
-
-        <details>
-          <summary>Founder media and company patterns</summary>
-          <div class="detail-body">
-            <p><strong>Listen for mechanics, not screenshots.</strong> The strongest current queue covers Peptira and Peptide Price, Offline Peptides, three Budai Media operator episodes, Vita Bella, and Transcend. Agency revenue stories remain self-reported unless orders reconcile to settlements and bank cash.</p>
-            <div class="source-grid">
-              <a class="source-card" href="https://open.spotify.com/episode/2Mb1NZieQQmU5HXKvhb3q7"><b>Beyond the Vial</b><span>Peptira and Peptide Price, November 1, 2025</span></a>
-              <a class="source-card" href="https://podcasts.apple.com/us/podcast/inside-the-peptide-industry-quality-testing/id1879947678?i=1000772725458"><b>Offline Peptides</b><span>Quality and testing, June 15, 2026</span></a>
-              <a class="source-card" href="https://shows.acast.com/theecomshow/episodes/320-budai-media-specials-how-we-scaled-a-us-peptide-brand-fr"><b>Budai episode 320</b><span>High-intent launch mechanics, May 12, 2026</span></a>
-              <a class="source-card" href="https://thebudaimedia.com/podcasts/324-budai-media-specials-how-to-scale-your-peptide-brand-so-fast-it-feels-illegal/"><b>Budai episode 324</b><span>Feeds, lifecycle, and subscriptions, July 7, 2026</span></a>
-              <a class="source-card" href="https://shows.acast.com/theecomshow/episodes/325-budai-media-specials-if-i-had-to-scale-a-peptide-brand-t"><b>Budai episode 325</b><span>Current scale order, July 21, 2026</span></a>
-              <a class="source-card" href="https://open.spotify.com/episode/3jJRSHZDOeucGjjWYh54us"><b>Vita Bella on Mind Pump</b><span>Founder plus audience trust, February 26, 2026</span></a>
-            </div>
-            <p><strong>Five composites:</strong> Peptira for affiliate and community distribution; Chameleon for proof and service; APEX for retention; Feel, Valhalla, and Joi + Blokes for guided care; Peptide Price and Peptide Compare for category media.</p>
-            <div class="source-grid">
-              <a class="source-card" href="./company-models-founder-media.md"><b>30-company library</b><span>Model, offer, growth, retention, scale signal, caveat, and direct links</span></a>
-              <a class="source-card" href="./brand-offer-teardown.md"><b>Brand and offer teardown</b><span>Current positioning, pricing, proof, creators, checkout, and retention</span></a>
-            </div>
-          </div>
-        </details>
-
-        <details>
-          <summary>Customer voice and current regulatory change</summary>
-          <div class="detail-body">
-            <p><strong>Customer truth:</strong> the buyer is paying to reduce uncertainty. The five-promise product is canonical identity, exact-lot proof, real carrier movement, competent support, and dependable remedy.</p>
-            <p><strong>Current change:</strong> on July 23 and 24, 2026, an FDA advisory committee recommended six of seven reviewed peptide families for possible inclusion on the Section 503A bulk substances list. This is a strategic signal for clinician-partnered models. It is not final FDA action, FDA approval, or blanket permission to market the compounds. Retatrutide was not included, and the FDA currently says it cannot be used in compounding under federal law.</p>
-            <div class="source-grid">
-              <a class="source-card" href="./customer-voice-trust.md"><b>Customer voice report</b><span>44 coded sources, buyer journey, objections, trust, remedy, and gray-claim reality matrix</span></a>
-              <a class="source-card" href="https://www.fda.gov/advisory-committees/advisory-committee-calendar/july-23-24-2026-meeting-pharmacy-compounding-advisory-committee-07232026"><b>FDA meeting record</b><span>July 23 and 24, 2026 briefing materials</span></a>
-              <a class="source-card" href="https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/warning-letters/gram-peptides-721806-03312026"><b>Gram Peptides warning</b><span>Codes and RUO language did not outweigh intended-use evidence</span></a>
-              <a class="source-card" href="https://www.fda.gov/drugs/human-drug-compounding/fda-telehealth-companies-what-know-when-promoting-compounded-drugs"><b>FDA telehealth guidance</b><span>Current compounded-drug promotion boundaries</span></a>
-              <a class="source-card" href="https://www.fda.gov/drugs/drug-alerts-and-statements/fdas-concerns-unapproved-glp-1-drugs-used-weight-loss"><b>FDA unapproved GLP-1 page</b><span>Current retatrutide and compounding status</span></a>
-            </div>
-          </div>
-        </details>
-
-        <details>
-          <summary>Weekly scorecard and scale gates</summary>
-          <div class="detail-body">
-            <p><strong>Base-case reality:</strong> the current sensitivity model produces about $55 CM2 per $150 order before fixed overhead. That is roughly $2,800 at 50 monthly orders, $27,600 at 500, and $276,000 at 5,000. The modeled cash buffer rises from about $51,000 to $206,000 to $1.36 million as reserves, inventory, quality, and contingency scale.</p>
-            <div class="split">
-              <div>
-                <h3>Only measure</h3>
-                <ul class="compact-list">
-                  <li>Settled revenue and CM2 by creator, SKU, and cohort</li>
-                  <li>New versus returning, AOV, and 30, 60, 90-day reorder</li>
-                  <li>Authorization, capture, reserve, settlement, and bank cash</li>
-                  <li>Refund, reship, dispute, support, and on-time shipping</li>
-                  <li>Lot complaints, release status, and creator violations</li>
-                </ul>
-              </div>
-              <div>
-                <h3>Add next</h3>
-                <ul class="compact-list">
-                  <li>$0 to $20K: five creators and the truth cohort</li>
-                  <li>$20K to $100K: lifecycle and one controlled acquisition test</li>
-                  <li>$100K to $500K: redundancy and operating automation</li>
-                  <li>Above $500K: diversified demand, formal quality, and audited economics</li>
-                </ul>
-              </div>
-            </div>
-            <div class="source-grid">
-              <a class="source-card" href="./viability-economics-exit.md"><b>Viability, economics, and exit</b><span>Bear, base, and bull CM2, cash buffers, valuation reality, and stage gates</span></a>
-              <a class="source-card" href="./peptide-company-master-dossier.md"><b>Full operating dossier</b><span>Supply, testing, payments, fulfillment, growth, retention, and Noli scale architecture</span></a>
-            </div>
-          </div>
-        </details>
-
-        <details id="library">
-          <summary>Complete research library · every file</summary>
-          <div class="detail-body">
-            <p>Every research artifact used by this blueprint is hosted here. Open only the layer you need.</p>
-            <div class="source-grid">
-              <a class="source-card" href="./peptide-company-source-matrix.csv"><b>290-source sheet</b><span>Every URL, date, evidence grade, and extracted lesson</span></a>
-              <a class="source-card" href="./operator-growth-playbook.md"><b>Forum operator playbook</b><span>Fifteen gray-area categories across BHW, Reddit, and specialist forums</span></a>
-              <a class="source-card" href="./gray-market-operator-evidence.md"><b>Gray-market evidence ledger</b><span>Payments, ads, sourcing, testing, imports, continuity, and credibility</span></a>
-              <a class="source-card" href="./gray-marketing-platform-evidence.md"><b>Gray marketing and platforms</b><span>Codes, gates, creators, fake UGC, community seeding, email, and WhatsApp</span></a>
-              <a class="source-card" href="./company-models-founder-media.md"><b>30-company and founder library</b><span>Models, offers, growth, retention, listening queue, and caveats</span></a>
-              <a class="source-card" href="./Peptide-Founder-Media-Intelligence.xlsx"><b>Founder-media workbook</b><span>Downloadable spreadsheet of founder interviews and company intelligence</span></a>
-              <a class="source-card" href="./budai-peptide-growth-case-study.md"><b>Budai growth case study</b><span>Three current episodes, useful mechanics, and claim audit</span></a>
-              <a class="source-card" href="./brand-offer-teardown.md"><b>Brand and offer teardown</b><span>Ten brands, positioning, pricing, proof, checkout, and retention</span></a>
-              <a class="source-card" href="./customer-voice-trust.md"><b>Customer voice and trust</b><span>Buyer journey, objections, trust stack, remedy, and current primary reality</span></a>
-              <a class="source-card" href="./viability-economics-exit.md"><b>Viability, economics, and exit</b><span>Bear, base, and bull CM2, cash buffers, valuation math, and stage gates</span></a>
-              <a class="source-card" href="./peptide-company-master-dossier.md"><b>Noli operating dossier</b><span>Supply, quality, payments, fulfillment, growth, retention, and architecture</span></a>
-              <a class="source-card" href="./source-audit.md"><b>Source and claim audit</b><span>Keep, qualify, or remove decisions for the highest-impact claims</span></a>
-            </div>
-          </div>
-        </details>
-      </div>
+    <section class="shell quick-facts" aria-label="Noli decision facts">
+      <article><small>Company</small><strong>Noli, separate from OVO.</strong></article>
+      <article><small>Position</small><strong>Female-leading. Neutral name.</strong></article>
+      <article><small>Hero</small><strong>Reta hypothesis. Broader catalog later.</strong></article>
+      <article><small>Moat</small><strong>Creators, proof, service, repeat.</strong></article>
+      <article><small>Pilot</small><strong>5 creators. 50 to 75 orders.</strong></article>
+      <article><small>Rule</small><strong>Settled cash before scale.</strong></article>
     </section>
 
     <section class="shell section" id="decision">
       <div class="section-head">
         <div>
-          <div class="kicker">03 / Decision</div>
-          <h2>Where to place the bet.</h2>
+          <div class="kicker">01 / Decision</div>
+          <h2>Is this worth doing?</h2>
         </div>
-        <p>The category can produce fast cash. The durable value sits in trust, recurring demand, governed creator distribution, and a lane that counterparties can approve in writing.</p>
+        <div>
+          <p><strong>Yes, conditionally.</strong> Demand, margin potential, category growth, and OVO's creator access make Noli unusually viable. The same market is fragile because payments, intended-use evidence, lot quality, cash reserves, support, and private-channel trust can break before demand does.</p>
+          <div class="source-links">
+            <a class="source-link" href="https://www.fda.gov/drugs/postmarket-drug-safety-information-patients-and-providers/fdas-concerns-unapproved-glp-1-drugs-used-weight-loss">FDA GLP-1 status</a>
+            <a class="source-link" href="https://support.stripe.com/questions/prohibited-and-restricted-businesses-list-faqs">Stripe peptide policy</a>
+            <a class="source-link" href="https://www.bizbuysell.com/learning-center/valuation-benchmarks/websites-ecommerce/">Ecommerce sale multiples</a>
+          </div>
+        </div>
       </div>
-      <div class="verdict">
-        <article>
-          <strong>Fastest cash</strong>
-          <p>A direct RUO catalog can produce revenue, but it is brittle and conflicts with lifestyle-creator distribution when content implies human use.</p>
+
+      <div class="verdict-grid">
+        <article class="verdict-card">
+          <div class="label">The opportunity</div>
+          <h3>Real demand, weak product moat.</h3>
+          <p>Product access is abundant. A seller with trusted distribution, inspectable proof, dependable service, and owned repeat demand can still build a valuable company.</p>
         </article>
-        <article>
-          <strong>Most durable company</strong>
-          <p>A guided, clinician-partnered trust and membership layer is harder to establish but has stronger brand, retention, and exit potential.</p>
+        <article class="verdict-card">
+          <div class="label">The constraint</div>
+          <h3>The lane comes first.</h3>
+          <p>A genuine qualified-research business and a consumer health business are different models. A lifestyle creator funnel cannot imply human outcomes while the store claims a different intended use.</p>
         </article>
-        <article>
-          <strong>Best first move</strong>
-          <p>If the audience is discussing personal outcomes, prove one provider-led creator trust engine inside a licensed and clearly permitted lane.</p>
+        <article class="verdict-card">
+          <div class="label">The move</div>
+          <h3>Prove the smallest complete engine.</h3>
+          <p>One cleared lane. One eligible offer. One released lot. Five creators. One ledger. Stop at 50 to 75 delivered orders and judge settled contribution plus operating truth.</p>
         </article>
       </div>
+
+      <details open>
+        <summary>
+          <span>What Noli is, and what it is not<span class="summary-note">The intended business stays intact. The unresolved issue is the operating lane, not the company name or ambition.</span></span>
+        </summary>
+        <div class="detail-body split">
+          <div>
+            <h3>Noli is</h3>
+            <ul>
+              <li>A neutral master brand with female-leading acquisition and a technical, gender-neutral product and proof layer.</li>
+              <li>Reta-led at launch only if the exact offer is eligible, underwritten, released, and supported by the chosen lane.</li>
+              <li>A trust and distribution company with a broader catalog only after the hero proves clean demand and repeat behavior.</li>
+              <li>A system designed to make the first order feel low-risk and the second order feel obvious.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Noli is not</h3>
+            <ul>
+              <li>OVO, OVO Talent, OVO Academy, or OVO Labs.</li>
+              <li>A giant catalog launched before quality, payments, service, and lifecycle work.</li>
+              <li>A disclaimer wrapped around a contradictory consumer funnel.</li>
+              <li>A bet that a $3 vial, a sales screen, or an asking price equals normalized company profit.</li>
+            </ul>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>Why Noli has an unfair advantage<span class="summary-note">OVO gives Noli warm distribution and an operating bench, but only if the company protects OVO from health-category risk.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="role-grid">
+            <article class="role"><b>Noli owns</b><p>Brand, offer, customer, merchant relationships, support, inventory economics, and all category risk.</p></article>
+            <article class="role"><b>OVO Talent supports</b><p>Opt-in creator selection, contracts, approved creative operations, partner care, and feedback.</p></article>
+            <article class="role"><b>OVO Academy supports</b><p>After proof: supervised evidence checks, CRM hygiene, support QA, and reporting. Never medical advice or free labor.</p></article>
+            <article class="role"><b>OVO Labs supports</b><p>Start with spreadsheets. Build attribution and payout software only after repeated manual pain proves what is needed.</p></article>
+          </div>
+          <div class="summary warn">Measure incremental CM2 per creator, operator hour, and Alex hour against the same capacity used by existing OVO businesses. If Alex is still chief support, processor, fulfillment, and claims operator at 500 monthly orders, Noli has not earned scale.</div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="biologix">
+      <div class="section-head">
+        <div>
+          <div class="kicker">02 / Braden case</div>
+          <h2>What Braden actually proves.</h2>
+        </div>
+        <div>
+          <p>Believing Braden and diligencing the business are compatible. Alex has repeatedly watched live screens near $50,000 a day. That is a serious private demand signal. It is not yet a reconciled statement of settled revenue, contribution margin, cash, or enterprise value.</p>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric">
+          <div class="label">Private signal</div>
+          <strong>~$50K/day</strong>
+          <p>Repeated live screens make the demand claim worth serious diligence.</p>
+        </article>
+        <article class="metric">
+          <div class="label">Source quote</div>
+          <strong>$3 to $4</strong>
+          <p>Potential Reta vial cost before strength, release, freight, failures, and working capital.</p>
+        </article>
+        <article class="metric">
+          <div class="label">Margin claim</div>
+          <strong>~80%</strong>
+          <p>Plausible product gross margin. Unverified normalized company margin.</p>
+        </article>
+        <article class="metric">
+          <div class="label">Value story</div>
+          <strong>$15M</strong>
+          <p>Plausible at the claimed scale, but no reviewed buyer document proves the offer.</p>
+        </article>
+      </div>
+
+      <div class="summary good">The most important Biologix lesson is that the storefront is not the engine. The public site is basic. The likely engine is accumulated trust, repeat buyers, affiliates, private referrals, direct contact, payment continuity, inventory, and customer recovery.</div>
+
+      <div class="card-grid">
+        <article class="card">
+          <div class="label">What the site audit supports</div>
+          <h3>Reta is a strong hero hypothesis.</h3>
+          <p>Retatrutide ranked first and bacteriostatic water second in the public WooCommerce popularity ordering. That supports a launch hypothesis, not exact product revenue share.</p>
+        </article>
+        <article class="card">
+          <div class="label">What stock cannot prove</div>
+          <h3>Public inventory is not a revenue ledger.</h3>
+          <p>Backorders, disabled stock management, bundles, manual edits, and private orders can all break the relationship between displayed stock movement and WooCommerce sales.</p>
+        </article>
+        <article class="card">
+          <div class="label">What Noli should copy</div>
+          <h3>The invisible distribution network.</h3>
+          <p>Copy the trust, repeat, referral, payment, fulfillment, and remedy system. Do not mistake a simple site for a simple business.</p>
+        </article>
+      </div>
+
+      <details open>
+        <summary>
+          <span>The first offer: one decision, not a catalog<span class="summary-note">The hero earns the right to expand. Complexity does not create demand.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="role-grid">
+            <article class="role"><b>One eligible hero</b><p>Retatrutide remains the acquisition hypothesis only if the chosen lane, payment terms, release record, and claims permit the exact offer.</p></article>
+            <article class="role"><b>One visible total price</b><p>No hidden membership, mandatory wallet, or fee maze. The buyer should understand the full commercial commitment before checkout.</p></article>
+            <article class="role"><b>One quantity ladder</b><p>Test single-unit and simple same-SKU quantity economics. Do not use bundles to hide an unproven hero or inflate AOV at the expense of CM2.</p></article>
+            <article class="role"><b>Proof beside purchase</b><p>Put the current lot passport, policy, shipping promise, support path, and remedy on the same decision path as the offer.</p></article>
+          </div>
+          <div class="summary warn">No subscription until a natural reorder interval exists. No adjacent SKU until two clean hero lots and real second-order contribution. No giant catalog at launch.</div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>How people find an unpublished WhatsApp number<span class="summary-note">Dark social compounds invisibly. No public Google result or mysterious leak is required.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="split">
+            <div>
+              <h3>Most plausible paths</h3>
+              <ul>
+                <li>Forwarded contact cards and customer introductions.</li>
+                <li>Creators, affiliates, suppliers, processors, service providers, or partners sharing it.</li>
+                <li>Private WhatsApp, Telegram, Discord, and forum groups.</li>
+                <li>Old pages, PDFs, invoices, COAs, catalogs, support widgets, cached pages, and business records.</li>
+                <li>Uploaded address books, contact syncing, WhatsApp Business discovery where supported, and commercial enrichment databases.</li>
+                <li>Scam-warning or vendor-verification threads reposting the canonical contact.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Noli action</h3>
+              <ul>
+                <li>Ask every inbound one fixed question: "Where did you get this number?"</li>
+                <li>Use a unique click-to-chat link for each creator, community, and partner.</li>
+                <li>Preserve first-touch source, consent, order, and repeat attribution.</li>
+                <li>Publish one canonical verification page for the official domain and contact points.</li>
+                <li>Never make a private phone number the only proof of seller identity.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="source-links">
+            <a class="source-link" href="https://www.reddit.com/r/Business_China/comments/1tmuj8n/how_did_you_actually_find_a_trustworthy_peptide/">Private supplier discovery discussion</a>
+            <a class="source-link" href="https://glp1forum.com/threads/vendor-research.16774/post-168955">Private community trust discussion</a>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>The Braden diligence packet<span class="summary-note">Do not ask for another screenshot. Ask for the bridge from order to settled cash to normalized owner earnings.</span></span>
+        </summary>
+        <div class="detail-body">
+          <ol>
+            <li>Product and order export by SKU, date, customer, channel, status, discount, refund, and reship.</li>
+            <li>Processor statements showing authorizations, captures, reserves, holds, chargebacks, fees, and settlements.</li>
+            <li>Bank statements matching processor settlement and non-card payment flows.</li>
+            <li>Supplier invoices, strength and quantity details, freight, customs, failures, and payment records.</li>
+            <li>Independent test reports, lot release decisions, retained samples, and failed-lot history.</li>
+            <li>Inventory roll-forward by lot, shrink, write-offs, backorders, and unfulfilled orders.</li>
+            <li>Affiliate payouts, paid media, payroll, support, reships, software, legal, insurance, and tax.</li>
+            <li>Customer concentration, channel concentration, repeat behavior, and shutdown or account-loss history.</li>
+            <li>Any claimed offer or LOI: buyer, legal entity, price, cash versus earnout, working-capital adjustment, escrow, exclusivity, and proof of funds.</li>
+          </ol>
+          <p class="note">Private evidence is strong enough to justify this diligence. It is not yet enough to publish $50,000 a day, 80% normalized margin, or a $15 million buyer offer as verified fact.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="customer">
+      <div class="section-head">
+        <div>
+          <div class="kicker">03 / Customer</div>
+          <h2>Female-first. Measured, not assumed.</h2>
+        </div>
+        <div>
+          <p>The strongest launch hypothesis is women roughly 38 to 58 who already understand the category, have plateaued or lapsed, and care about body composition, strength, hair, skin, energy, shape, privacy, and identity. The direct Reta buyer sex split is unknown.</p>
+          <div class="source-links">
+            <a class="source-link" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12711338/">2025 US age and sex survey</a>
+            <a class="source-link" href="https://www.kff.org/public-opinion/kff-health-tracking-poll-prescription-drug-costs-views-on-trump-administration-actions-and-glp-1-use/">KFF November 2025</a>
+            <a class="source-link" href="https://www.pwc.com/us/en/industries/consumer-markets/library/glp-1-consumer-trends.html">PwC May 2026 consumer data</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary">The evidence is directional, not unanimous. A 2025 national survey found women 30 to 49 more than twice as likely as male peers to report GLP-1 use, and women 50 to 64 had the highest reported use at 20%. A May 2026 PwC and Numerator view says adoption is now nearly equal by sex. That makes female-first a differentiated brand thesis to test, not a market fact to assume.</div>
+
+      <div class="card-grid">
+        <article class="card">
+          <div class="label">Acquisition front</div>
+          <h3>Female-leading story and creators.</h3>
+          <p>Homepage, editorial, creator selection, and customer stories should speak to the primary cohort's identity and frustration without making claims the operating lane cannot support.</p>
+        </article>
+        <article class="card">
+          <div class="label">Commerce core</div>
+          <h3>Technical, inspectable proof.</h3>
+          <p>The product, lot, evidence, shipping, and policy experience stays precise and gender-neutral so high-intent male and technical buyers are not pushed away.</p>
+        </article>
+        <article class="card">
+          <div class="label">Architecture</div>
+          <h3>Neutral Noli master brand.</h3>
+          <p>Do not create a male sibling at launch. After 300 to 500 customers, use cohort economics to deepen the female front or justify a separate male expression.</p>
+        </article>
+      </div>
+
+      <details open>
+        <summary>
+          <span>The customer is buying lower uncertainty<span class="summary-note">Across 44 coded customer and community sources, service and proof outrank glossy branding.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="metric-grid">
+            <article class="metric"><strong>23/44</strong><p>Support and communication</p></article>
+            <article class="metric"><strong>20/44</strong><p>Testing and lot proof</p></article>
+            <article class="metric"><strong>20/44</strong><p>Refund, reship, or remedy</p></article>
+            <article class="metric"><strong>18/44</strong><p>Community recommendation</p></article>
+            <article class="metric"><strong>14/44</strong><p>Shipping visibility</p></article>
+            <article class="metric"><strong>14/44</strong><p>Price and value</p></article>
+            <article class="metric"><strong>13/44</strong><p>Consistency</p></article>
+            <article class="metric"><strong>13/44</strong><p>Identity and scam defense</p></article>
+          </div>
+          <h3>The five-promise product</h3>
+          <ol>
+            <li>A real seller with one canonical identity.</li>
+            <li>Proof tied to the exact released lot.</li>
+            <li>Real carrier movement, not just a label.</li>
+            <li>A competent human who answers quickly.</li>
+            <li>A predictable remedy when something goes wrong.</li>
+          </ol>
+          <div class="flow" role="group" aria-label="Customer trust journey">
+            <span>Search</span><span>Referral</span><span>Private check</span><span>Official domain</span><span>Small order</span><span>Lot + delivery</span><span>Remedy</span><span>Repeat</span>
+          </div>
+          <p class="note">The first order is a risk test. "Label created" is not shipped. A good recovery can become the retention event.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>How to prove the female-first thesis<span class="summary-note">Do not settle a positioning debate with taste. Settle it with matched cohort economics.</span></span>
+        </summary>
+        <div class="detail-body">
+          <p>After the five-creator truth cohort passes, run a matched 25-creator test: female-leading narrative versus technical and general narrative. Hold the offer, price, creator quality, attribution window, landing friction, and release timing as constant as possible.</p>
+          <div class="split">
+            <div>
+              <h3>Judge demand</h3>
+              <ul>
+                <li>Landing conversion</li>
+                <li>New-customer AOV</li>
+                <li>Settled CM2</li>
+                <li>Creator activation and content yield</li>
+                <li>Customer referral rate</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Judge quality</h3>
+              <ul>
+                <li>30, 60, and 90-day repeat</li>
+                <li>Support contacts per order</li>
+                <li>Refund and reship behavior</li>
+                <li>Claim violations</li>
+                <li>Contribution after reversals and payouts</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="growth">
+      <div class="section-head">
+        <div>
+          <div class="kicker">04 / Growth</div>
+          <h2>The fastest safe scale order.</h2>
+        </div>
+        <div>
+          <p>OVO Talent is the unfair distribution advantage. Use it as a controlled release system, not a blast list. Warm creator demand comes first, lifecycle starts on day one, and high-intent search begins only after clean delivery and settled economics.</p>
+        </div>
+      </div>
+
+      <div class="steps">
+        <div class="step"><div><b>Female-leading warm creator cohort</b><span>Five opt-in creators, one eligible offer, one brief, one claims library, one landing path, and one ledger.</span></div></div>
+        <div class="step"><div><b>One Reta offer and same-SKU quantity ladder</b><span>Do not add a large catalog. Test whether the hero earns a second lot and natural reorder.</span></div></div>
+        <div class="step"><div><b>Seven portable lifecycle flows</b><span>Welcome, browse abandonment, checkout abandonment, post-purchase, delivery and support, replenishment, and winback.</span></div></div>
+        <div class="step"><div><b>High-intent product search after proof</b><span>Test Search and Shopping only after the feed, evidence page, payments, fulfillment, and support are stable.</span></div></div>
+        <div class="step"><div><b>Change one variable at a time</b><span>Use small budget steps, clean cohort labels, and settled contribution rather than platform ROAS.</span></div></div>
+        <div class="step"><div><b>Founder and category media</b><span>Own the explanation layer, point every episode to one measurable destination, and build brand search.</span></div></div>
+        <div class="step"><div><b>Comparison, proof, and calculator content</b><span>Own discovery before the buyer chooses a vendor. Disclose any commercial relationship.</span></div></div>
+        <div class="step"><div><b>Subscription only after natural repeat</b><span>Do not use continuity to hide weak reorder behavior or stack discounts before margin is known.</span></div></div>
+        <div class="step"><div><b>One adjacent SKU after two clean hero lots</b><span>Add one lever at a time: search, more creators, or an adjacent product. Never all three together.</span></div></div>
+      </div>
+
+      <details open>
+        <summary>
+          <span>The creator machine<span class="summary-note">Track creator to cash to repeat. Pay for settled, compliant performance.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="flow" role="group" aria-label="Creator economics flow">
+            <span>Creator</span><span>Content</span><span>Click</span><span>Order</span><span>Settlement</span><span>Delivery</span><span>Support</span><span>Repeat + payout</span>
+          </div>
+          <div class="split">
+            <div>
+              <h3>Pilot structure</h3>
+              <ul>
+                <li>Five creators who explicitly opt in to the exact lane and content rules.</li>
+                <li>One memorable code plus link, 30 to 90-day attribution, and monthly payout after reversals.</li>
+                <li>Honest seeding with no posting obligation. Deepen relationships only where authentic pull appears.</li>
+                <li>Assign each creator one job: awareness, trust, conversion, or community research.</li>
+                <li>Pay against settled contribution and compliant content, not gross baskets.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Rollout capacity gates</h3>
+              <ul>
+                <li><strong>5:</strong> manual truth cohort.</li>
+                <li><strong>25:</strong> matched positioning test after the first cohort passes.</li>
+                <li><strong>50:</strong> only when support, payouts, inventory, and processing work without Alex.</li>
+                <li><strong>250:</strong> available network, not launch volume. Release only after the company can absorb success.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="summary warn">Never stack a large buyer discount, large creator commission, and paid acquisition on one order. Transcend is the cautionary pattern: creator demand can outrun staffing, support, partner capacity, and inventory.</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Public benchmark</th><th>Creator economics</th><th>Buyer economics</th><th>Noli lesson</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Offline Peptides</strong></td><td>20% first order, 10% later orders, 30-day initial cookie</td><td>Current site also uses referral and first-order incentives</td><td>Clear and simple, but lifetime payouts still need cohort margin controls.</td></tr>
+                <tr><td><strong>APEX Peptides</strong></td><td>10% sale, 15% subscription referral</td><td>10% referral discount and 10% subscribe-and-save can stack</td><td>Good plumbing. Dangerous leakage if every incentive lands on one order.</td></tr>
+                <tr><td><strong>Noli test</strong></td><td>For a cleared nonclinical offer, test 15% to 20% only after counsel and unit-economics review</td><td>Keep any buyer incentive small and explicit</td><td>Pay after settlement and reversals. Do not compensate clinical prescriptions, labs, or referrals without specialist clearance.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="source-links">
+            <a class="source-link" href="https://offlinepeptides.com/affiliate-program/">Offline public affiliate terms</a>
+            <a class="source-link" href="https://apexpepts.com/">APEX public merchandising</a>
+            <a class="source-link" href="https://www.ftc.gov/business-guidance/resources/disclosures-101-social-media-influencers">FTC creator disclosures</a>
+            <a class="source-link" href="https://joiandblokes.com/advocates-home/">Joi + Blokes advocate split</a>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>What the current Budai case teaches<span class="summary-note">Useful mechanics from one agency source family. Revenue is claimed, not independently audited.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="metric-grid">
+            <article class="metric"><strong>~$170K</strong><p>Claimed month-three revenue</p></article>
+            <article class="metric"><strong>$500K+</strong><p>Claimed monthly revenue after about five months</p></article>
+            <article class="metric"><strong>$151K</strong><p>Claimed Google spend for about $300K attributed revenue</p></article>
+            <article class="metric"><strong>~$150K</strong><p>Later claimed spend for about $450K attributed revenue</p></article>
+          </div>
+          <p><strong>Transferable:</strong> high-intent search, clean product feeds, 10% to 15% budget steps, one variable at a time, quantity ladders, seven lifecycle flows, and operations before scale.</p>
+          <p><strong>Not proven:</strong> settled revenue, refunds, reserves, durable account access, normalized profit, or whether the unnamed client and figures are consistent across episodes.</p>
+          <div class="source-links">
+            <a class="source-link" href="https://shows.acast.com/theecomshow/episodes/320-budai-media-specials-how-we-scaled-a-us-peptide-brand-fr">Episode 320 / May 12, 2026</a>
+            <a class="source-link" href="https://thebudaimedia.com/podcasts/324-budai-media-specials-how-to-scale-your-peptide-brand-so-fast-it-feels-illegal/">Episode 324 / July 7, 2026</a>
+            <a class="source-link" href="https://shows.acast.com/theecomshow/episodes/325-budai-media-specials-if-i-had-to-scale-a-peptide-brand-t">Episode 325 / July 21, 2026</a>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="money">
+      <div class="section-head">
+        <div>
+          <div class="kicker">05 / Money</div>
+          <h2>High gross. Real cash constraints.</h2>
+        </div>
+        <div>
+          <p>A $3 to $4 vial can create spectacular product markup. The business is valued on normalized owner earnings and durability after discounts, creators, tests, failures, fulfillment, processing, reserves, refunds, support, inventory, payroll, and legal cost.</p>
+        </div>
+      </div>
+
+      <div class="summary good">Base case: $150 net AOV, $55.25 CM2 per order, and 36.8% CM2 before fixed overhead. The hard continuation floor is 30%; the target is 35% or better.</div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Order waterfall</th><th class="num">Base assumption</th><th>What it includes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Net AOV</td><td class="num">$150.00</td><td>After customer discounts</td></tr>
+            <tr><td>Product, packaging, release</td><td class="num">-$30.00</td><td>20% modeled COGS including allocated testing</td></tr>
+            <tr><td>Fulfillment</td><td class="num">-$12.00</td><td>Pick, pack, materials, and shipping allowance</td></tr>
+            <tr><td>Processing</td><td class="num">-$9.75</td><td>6.5% modeled until written terms exist</td></tr>
+            <tr><td>Refund and recovery provision</td><td class="num">-$6.00</td><td>4% for refunds, reships, and disputes</td></tr>
+            <tr><td>Creator or acquisition</td><td class="num">-$33.00</td><td>22% blended demand cost</td></tr>
+            <tr><td>Support and technology</td><td class="num">-$4.00</td><td>Variable operating allowance</td></tr>
+            <tr><td><strong>CM2</strong></td><td class="num"><strong>$55.25</strong></td><td><strong>36.8% before fixed overhead and tax</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Case</th><th class="num">Net AOV</th><th class="num">CM2/order</th><th class="num">CM2 margin</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Bear</td><td class="num">$110</td><td class="num bad-text">-$1.10</td><td class="num bad-text">-1.0%</td><td>Discount, demand cost, processing, and recovery erase the vial markup.</td></tr>
+            <tr><td>Base</td><td class="num">$150</td><td class="num good-text">$55.25</td><td class="num good-text">36.8%</td><td>Attractive if service, quality, and repeat behavior remain clean.</td></tr>
+            <tr><td>Bull</td><td class="num">$200</td><td class="num good-text">$125.50</td><td class="num good-text">62.8%</td><td>Possible with high AOV, low demand cost, and strong operational control.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Monthly orders</th><th class="num">Base CM2</th><th class="num">Modeled cash buffer</th><th>Primary constraint</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>50</td><td class="num">$2,763</td><td class="num">$50,550</td><td>Truth, payment acceptance, first-lot quality, and support</td></tr>
+            <tr><td>500</td><td class="num">$27,625</td><td class="num">$205,500</td><td>Inventory, reserves, support coverage, and repeat</td></tr>
+            <tr><td>5,000</td><td class="num">$276,250</td><td class="num">$1,355,000</td><td>Working capital, redundancy, governance, and concentration</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details open>
+        <summary>
+          <span>The $15 million math<span class="summary-note">A large value is plausible at the claimed scale. The reviewed public evidence still does not prove a completed peptide-company transaction.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="metric-grid">
+            <article class="metric"><strong>$18.25M</strong><p>$50,000 a day annualized</p></article>
+            <article class="metric"><strong>0.82x</strong><p>$15 million as a multiple of that revenue</p></article>
+            <article class="metric"><strong>$3.76M</strong><p>Owner earnings needed at a 3.99x multiple</p></article>
+            <article class="metric"><strong>$4.57M</strong><p>Owner earnings needed at a 3.28x multiple</p></article>
+          </div>
+          <p>That is roughly 20.6% to 25.1% normalized owner earnings on $18.25 million revenue. If owner earnings were truly 30%, a $15 million value would be about 2.74x earnings. The math can work. The documents still matter.</p>
+          <ul>
+            <li>The exact 2019 BlackHatWorld post found does not show BlackHatWorld offering $15 million for a peptide company. It discusses unrelated hard-money deal flow while separately mentioning peptide processing.</li>
+            <li>A current BizBuySell listing asks $14.5 million and reports $12.33 million revenue plus $3.69 million seller-supplied cash flow. It is an asking price, not a sale.</li>
+            <li>A live July 2026 Flippa listing asks $100 million, excluding $5 million inventory, for a one-year-old four-brand RUO portfolio. It claims $21.3 million trailing revenue, 78% profit margin, 41% repeat, and $1.376 million monthly profit. The title says "$44M/yr," which does not equal its stated trailing revenue. It is a high-signal listing, not transaction proof.</li>
+          </ul>
+          <div class="source-links">
+            <a class="source-link" href="https://www.blackhatworld.com/seo/my-broker-iso-journey-work-from-home.1165620/">Actual 2019 BHW post</a>
+            <a class="source-link" href="https://www.bizbuysell.com/business-opportunity/biotech-research-compound-firm-proprietary-u-s-domestic-lab/2495415/">$14.5M broker listing</a>
+            <a class="source-link" href="https://flippa.com/12943929-44m-yr-research-use-only-peptide-portfolio-4-brands-with-explosive-word-of-mouth-growth-dominant-market-positioning-and-exceptional-repeat-customer-rate">$100M Flippa listing</a>
+            <a class="source-link" href="https://www.bizbuysell.com/learning-center/valuation-benchmarks/websites-ecommerce/">1,661 ecommerce sales</a>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>Testing and reserve math<span class="summary-note">Testing amortizes beautifully. Reserves trap cash even when the P&amp;L looks strong.</span></span>
+        </summary>
+        <div class="detail-body split">
+          <div>
+            <h3>Current testing reference</h3>
+            <ul>
+              <li>Purity and identity: $200</li>
+              <li>Net peptide content: $25</li>
+              <li>Endotoxin: $175</li>
+              <li>PCR sterility screen: $150</li>
+              <li><strong>Total: $550 per molecule and lot</strong>, before freight, retest, failed lots, and extra samples</li>
+              <li>$5.50 per vial at 100 units, $0.55 at 1,000 units</li>
+            </ul>
+            <a class="source-link" href="https://freedomdiagnosticstesting.com/wp-content/uploads/2026/05/INTAKEV4.pdf">Freedom Diagnostics May 2026 price sheet</a>
+          </div>
+          <div>
+            <h3>Cash planning</h3>
+            <ul>
+              <li>Model 4.5% bull, 6.5% base, and 10% bear processing until a real term sheet replaces the model.</li>
+              <li>Plan for 5% to 15% rolling reserve held 90 to 180 days.</li>
+              <li>A 10% reserve on a $170 settled order traps $17 even if the order is profitable.</li>
+              <li>Reserve is not automatically an expense. It is unavailable cash and can become loss if disputes or termination consume it.</li>
+            </ul>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="operations">
+      <div class="section-head">
+        <div>
+          <div class="kicker">06 / Operations</div>
+          <h2>One released lot. One clean path to cash.</h2>
+        </div>
+        <div>
+          <p>The fastest growth plan is operational: written payment acceptance, real chain of custody, a 3PL that can block unreleased inventory, one accountable support queue, and owned customer data.</p>
+        </div>
+      </div>
+
+      <div class="summary">The operating stack is four linked systems: supply, quality, payment, and service. Any one of them can turn strong demand into refunds, reserves, chargebacks, and lost trust.</div>
+
+      <details open>
+        <summary>
+          <span>Sourcing: pilot domestic, qualify upstream in parallel<span class="summary-note">Do not finance source uncertainty with customer preorders.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="card-grid">
+            <article class="card"><div class="label">1 / Domestic stock</div><h3>Best pilot speed.</h3><p>Higher unit cost, easier sampling and inspection. Use one small lot for the truth cohort.</p></article>
+            <article class="card"><div class="label">2 / Turnkey white label</div><h3>Fast storefront, weak moat.</h3><p>Easy entry, but margin and source identity can disappear after discounts, creator payouts, and service.</p></article>
+            <article class="card"><div class="label">3 / Direct overseas</div><h3>Lowest quote, highest uncertainty.</h3><p>Requires source qualification, chain of custody, import review, testing, fill, packaging, and working capital.</p></article>
+            <article class="card"><div class="label">4 / Qualified manufacture</div><h3>Best long-term control.</h3><p>Slower and more capital intensive, but strongest path to documented quality and true redundancy.</p></article>
+          </div>
+          <ol>
+            <li>Pilot with one small domestic lot that Noli can independently sample.</li>
+            <li>Map manufacturer, broker, filler, labeler, shipper, and warehouse. Two brokers using the same upstream stock are not redundancy.</li>
+            <li>Qualify two upstream sources in parallel.</li>
+            <li>Move volume only after two clean lots and repeat demand.</li>
+            <li>Never claim domestic manufacture merely because inventory ships from a US warehouse.</li>
+          </ol>
+          <div class="source-links">
+            <a class="source-link" href="https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/warning-letters/harbin-jixianglong-biotech-co-ltd-723330-05012026">FDA May 2026 API quality warning</a>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>Quality: the lot passport is the product<span class="summary-note">A supplier COA or generic "99% pure" badge is not chain of custody.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="split">
+            <div>
+              <h3>Required lot chain</h3>
+              <ol>
+                <li>Receive and quarantine inventory by lot.</li>
+                <li>Record upstream source and custody transfer.</li>
+                <li>Pull and retain a representative sample.</li>
+                <li>Send the sample to an independent lab.</li>
+                <li>Check identity, net content, purity, and the applicable safety panel.</li>
+                <li>Document release, rejection, retest, and failed-lot disposition.</li>
+                <li>Trace every shipment to the released lot.</li>
+              </ol>
+            </div>
+            <div>
+              <h3>Public lot passport</h3>
+              <ul>
+                <li>Product and exact lot</li>
+                <li>Date sampled, sent, and tested</li>
+                <li>Sample owner and acquisition method</li>
+                <li>Lab name and original verification link</li>
+                <li>Identity, content, purity, and applicable safety results</li>
+                <li>Current, retired, failed, or recalled status</li>
+                <li>Release owner and retest policy</li>
+              </ul>
+            </div>
+          </div>
+          <p class="note">A COA describes one submitted sample. It does not by itself prove legality, sterility, clinical safety, every vial, or the rest of the inventory.</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>Payments: approval means the acquiring bank approved the exact business<span class="summary-note">Checkout, gateway, merchant account, and settlement bank are different layers.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="flow" role="group" aria-label="Payment money flow">
+            <span>Checkout</span><span>Gateway</span><span>Authorization</span><span>Capture</span><span>Acquirer</span><span>Reserve</span><span>Settlement</span><span>Bank cash</span>
+          </div>
+          <ul>
+            <li>Authorize.net, NMI, Stripe, an ISO, or an MCC is not the same as written acquiring-bank underwriting.</li>
+            <li>Require approval for the exact entity, SKU list, audience, claims, descriptor, recurring model, geography, volume cap, and maximum ticket.</li>
+            <li>Model 4.5% to 10% processing and a 5% to 15% reserve held 90 to 180 days until the term sheet proves better.</li>
+            <li>Track authorization, capture, processor balance, reserve, settlement, and bank cash separately.</li>
+            <li>Notify the processor before creator-driven volume spikes.</li>
+            <li>Maintain one fully approved primary and one fully approved backup. An unreviewed account is not a backup.</li>
+          </ul>
+          <div class="source-links">
+            <a class="source-link" href="https://support.stripe.com/questions/prohibited-and-restricted-businesses-list-faqs">Stripe restricted-business FAQ</a>
+            <a class="source-link" href="https://www.reddit.com/r/PaymentProcessing/comments/1tirl9t/peptide_payment_processor_correct_mcc/">Current processor and MCC discussion</a>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>Fulfillment and service: recovery is retention<span class="summary-note">Stop founder packing after the truth cohort.</span></span>
+        </summary>
+        <div class="detail-body split">
+          <div>
+            <h3>3PL requirements</h3>
+            <ul>
+              <li>Scan lot on receipt and shipment.</li>
+              <li>Block unreleased and quarantined inventory.</li>
+              <li>Reconcile units by lot and status.</li>
+              <li>Produce a recall report by lot and customer.</li>
+              <li>Separate order-to-carrier acceptance from carrier-to-delivery.</li>
+              <li>Plan $9 to $16 per order until actual quotes replace the model.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Support SLA</h3>
+            <ul>
+              <li>First human response within one business day.</li>
+              <li>Shipping issue triage within one business day.</li>
+              <li>Reship or refund decision within two business days.</li>
+              <li>Immediate escalation for a lot or quality complaint.</li>
+              <li>Support never improvises medical, dosing, or product-use guidance.</li>
+            </ul>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="gray">
+      <div class="section-head">
+        <div>
+          <div class="kicker">07 / Gray market</div>
+          <h2>The loopholes reveal the constraints.</h2>
+        </div>
+        <div>
+          <p>This is a descriptive field map, not an evasion manual. Operators repeatedly trade durability for a short revenue window. Noli should learn what pressure each tactic reveals, then build the compliant asset that survives.</p>
+          <div class="source-links">
+            <a class="source-link" href="https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/warning-letters/gram-peptides-721806-03312026">Gram Peptides warning</a>
+            <a class="source-link" href="https://www.ftc.gov/business-guidance/advertising-marketing/endorsements-influencers-reviews">FTC endorsements and reviews</a>
+            <a class="source-link" href="https://www.reddit.com/r/Biohackers/comments/1toaxp9/official_policy_update_on_peptide_hrt_content/">Biohackers manipulation policy</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary warn">Private distribution works. Manufactured trust can create demand. Loopholes rent time. The assets that survive are canonical identity, exact-lot proof, owned consent and data, real creator relationships, dependable remedy, repeat purchase, and written counterparty acceptance.</div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Pressure</th><th>Observed gray behavior</th><th>Why it seems to work</th><th>Durable Noli lesson</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>1. Payments</strong></td><td>Merchant masking, account rotation, intermediaries, alternate entities, and miscoding.</td><td>Cards convert better and scrutiny may arrive after volume.</td><td>Underwrite the exact business in writing. Track settled bank cash and keep an approved backup.</td></tr>
+            <tr><td><strong>2. Ads</strong></td><td>Review pages, bridges, coded names, rented accounts, and account rotation.</td><td>Can create a short acquisition window.</td><td>Own creators, email, brand search, and high-intent demand. Rented access is not an asset.</td></tr>
+            <tr><td><strong>3. Community</strong></td><td>Aged accounts, planted consensus, rankings, fake peer reviews, and answer-engine seeding.</td><td>Buyers trust peers and AI systems ingest forum language.</td><td>Use disclosed sponsorship, real participation, verifiable proof, and earned references.</td></tr>
+            <tr><td><strong>4. RUO framing</strong></td><td>Disclaimers, age gates, questionnaires, account walls, and research-subject language.</td><td>Creates a record of stated research purpose.</td><td>A real gate verifies and rejects. It cannot outweigh the rest of a contradictory funnel.</td></tr>
+            <tr><td><strong>5. Product codes</strong></td><td>Abbreviations, receptor codes, house names, and hidden catalogs.</td><td>Reduces public visibility while informed buyers decode it.</td><td>Codes harm clarity, analytics, test matching, and support. They do not create a safe harbor.</td></tr>
+            <tr><td><strong>6. Creator separation</strong></td><td>Sterile store copy paired with outcome-led creators, consultations, or affiliate pages.</td><td>Trusted people explain what the merchant does not.</td><td>Treat store, creator, email, support, and consultation as one evidence system.</td></tr>
+            <tr><td><strong>7. Sourcing</strong></td><td>Private brokers, white label, dropshipping, and undisclosed upstream overlap.</td><td>Low quotes and fast storefront launch.</td><td>Map the full chain. Two resellers of the same inventory are not redundancy.</td></tr>
+            <tr><td><strong>8. COAs</strong></td><td>Supplier reports, selective testing, hot samples, generic badges, and reused reports.</td><td>A professional PDF reduces buyer anxiety.</td><td>Build lot custody, independent sampling, original lab verification, and release records.</td></tr>
+            <tr><td><strong>9. Imports and 3PL</strong></td><td>Domestic relabeling, split shipments, informal warehouses, and reship guarantees.</td><td>US shipping feels safer and faster.</td><td>Domestic warehouse is not domestic manufacture or lawful entry. Plan refund and cash exposure.</td></tr>
+            <tr><td><strong>10. Portability</strong></td><td>Alternate email, hosting, domains, and exported lists.</td><td>Providers can terminate abruptly.</td><td>Own DNS, consent, order history, suppression data, backups, and lifecycle logic.</td></tr>
+            <tr><td><strong>11. Dark social</strong></td><td>WhatsApp, Telegram, Discord, DMs, and private vendor lists.</td><td>Private referrals compound outside public search.</td><td>Treat it as a channel and an impersonation risk. Attribute it and preserve one canonical identity.</td></tr>
+            <tr><td><strong>12. Rebrands</strong></td><td>Successor domains, mirrors, new entities, and copied storefronts.</td><td>Demand and operations can survive a domain loss.</td><td>Portable brand relationships matter. Concealed continuity erases recourse and trust.</td></tr>
+            <tr><td><strong>13. Telehealth layers</strong></td><td>Marketing, clinic, provider, pharmacy, and referral entities presented as separate.</td><td>Can be a legitimate governed health model.</td><td>Separation works only when clinical judgment, licensing, compensation, data, and claims are truly independent.</td></tr>
+            <tr><td><strong>14. Revenue stories</strong></td><td>Sales screens, platform ROAS, vial markup, and large asking prices presented as value.</td><td>Persuasive for recruiting, agencies, and sellers.</td><td>Reconcile order to refund, reserve, settlement, bank cash, owner earnings, and buyer terms.</td></tr>
+            <tr><td><strong>15. Remedy and credibility</strong></td><td>Private reships, hidden disputes, sponsor claims, affiliate rankings, and agency case studies.</td><td>Quiet recovery protects public reputation.</td><td>Publish clear remedy rules and put the speaker's financial incentive beside every claim.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>
+          <span>Representative forum evidence, linked directly<span class="summary-note">The artifact proves that people discuss or sell the tactic. It does not prove the tactic works, is lawful, or is durable.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Pressure</th><th>Direct artifact</th><th>What it establishes</th><th>Grade</th></tr></thead>
+              <tbody>
+                <tr><td>Payments</td><td><a href="https://www.blackhatworld.com/seo/pharma-payment-processor.1797960/">BHW pharma processor thread, March 2026</a></td><td>Operators report termination and sellers promote account workarounds. It does not prove durable approval or profit.</td><td>C/D</td></tr>
+                <tr><td>Payment masking</td><td><a href="https://www.blackhatworld.com/seo/launching-peptide-website-and-wondering-if-i-should-cloak-for-cc-processor.1765876/">BHW launch and processor thread, 2025 to 2026</a></td><td>Cloaking and high-risk processing are openly discussed, along with frozen-fund risk.</td><td>C/D</td></tr>
+                <tr><td>Merchant coding</td><td><a href="https://www.reddit.com/r/PaymentProcessing/comments/1tirl9t/peptide_payment_processor_correct_mcc/">Reddit MCC discussion, May 2026</a></td><td>Processor sellers disagree on coding, revealing incentive conflicts and underwriting uncertainty.</td><td>C</td></tr>
+                <tr><td>Ad workarounds</td><td><a href="https://www.blackhatworld.com/seo/reddit-targeted-ads-for-peptides.1797725/">BHW peptide ad thread, March 2026</a></td><td>Bridge pages and restricted-account services are sold. Performance claims remain unverified.</td><td>D</td></tr>
+                <tr><td>Community seeding</td><td><a href="https://www.blackhatworld.com/seo/campaign-for-peptides.1789177/">BHW peptide campaign thread, January 2026</a></td><td>Discussion seeding, awareness threads, and established accounts are offered commercially.</td><td>D</td></tr>
+                <tr><td>AI search manipulation</td><td><a href="https://www.reddit.com/r/Biohackers/comments/1toaxp9/official_policy_update_on_peptide_hrt_content/">r/Biohackers policy, May 2026</a></td><td>Moderators report peptide content flooding and attempted answer-engine optimization.</td><td>B</td></tr>
+                <tr><td>Private discovery</td><td><a href="https://www.reddit.com/r/Business_China/comments/1tmuj8n/how_did_you_actually_find_a_trustworthy_peptide/">Supplier discovery discussion, May 2026</a></td><td>Buyers describe referrals, shared chats, Telegram, Discord, and private messages.</td><td>C</td></tr>
+                <tr><td>COA trust</td><td><a href="https://www.reddit.com/r/Peptidesource/comments/1skkntd/how_much_do_you_trust_posted_coas_from_peptide/">COA verification discussion, April 2026</a></td><td>Buyers look for lab-domain records, dates, and exact lot matches rather than a seller PDF alone.</td><td>C</td></tr>
+                <tr><td>Creator conflict</td><td><a href="https://www.reddit.com/r/gymsnark/comments/1u99mm3/sick_of_peptide_fitfluencers_with_affiliate_links/">Fitfluencer discussion, June 2026</a></td><td>Audiences identify affiliate links, paid consultations, and nonmedical outcome guidance as trust problems.</td><td>C</td></tr>
+                <tr><td>Revenue and $15M</td><td><a href="https://www.blackhatworld.com/seo/my-broker-iso-journey-work-from-home.1165620/">Actual BHW post, September 2019</a></td><td>The $15 million line concerns hard-money deals to place, not a documented peptide-company acquisition offer.</td><td>A for text, D for acquisition interpretation</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>Current regulatory reality, July 26, 2026<span class="summary-note">The market moved this week. The vote is a signal, not permission.</span></span>
+        </summary>
+        <div class="detail-body">
+          <ul>
+            <li>On July 23 and 24, 2026, the FDA Pharmacy Compounding Advisory Committee recommended six of seven reviewed peptide families for possible Section 503A listing: BPC-157, KPV, TB-500, MOTS-c, Semax, and Epitalon. Emideltide was not recommended.</li>
+            <li>The committee recommendation is nonbinding. It is not final FDA action, FDA approval, or blanket permission to compound or market the substances.</li>
+            <li>Retatrutide was not part of that review. FDA currently says retatrutide cannot be used in compounding under federal law and has not been found safe and effective for any condition.</li>
+            <li>The March 31, 2026 Gram Peptides letter says RUO text and coded names did not outweigh the site's full-funnel evidence of human intended use.</li>
+            <li>On March 3, 2026, FDA announced warnings to 30 telehealth companies over false or misleading compounded GLP-1 marketing.</li>
+            <li>Telehealth is a separately governed clinical model, not a questionnaire added to ecommerce.</li>
+          </ul>
+          <div class="source-links">
+            <a class="source-link" href="https://www.fda.gov/advisory-committees/advisory-committee-calendar/july-23-24-2026-meeting-pharmacy-compounding-advisory-committee-07232026">FDA July meeting record</a>
+            <a class="source-link" href="https://apnews.com/article/7267d0fad0110e7c2ed301d03cf5f0c2">AP vote report</a>
+            <a class="source-link" href="https://www.fda.gov/drugs/postmarket-drug-safety-information-patients-and-providers/fdas-concerns-unapproved-glp-1-drugs-used-weight-loss">FDA retatrutide status</a>
+            <a class="source-link" href="https://www.fda.gov/news-events/press-announcements/fda-warns-30-telehealth-companies-against-illegal-marketing-compounded-glp-1s">FDA 30-company action</a>
+            <a class="source-link" href="https://www.fda.gov/drugs/human-drug-compounding/fda-telehealth-companies-what-know-when-promoting-compounded-drugs">FDA telehealth promotion guidance</a>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="media">
+      <div class="section-head">
+        <div>
+          <div class="kicker">08 / Founder media</div>
+          <h2>Listen for mechanics, not flexes.</h2>
+        </div>
+        <div>
+          <p>The founder-media workbook covers 15 sources, 169 timestamped notes, 36 claim checks, and 12 current-status updates. These eight are the fastest useful queue. Each lesson is summarized here so the spreadsheet is optional.</p>
+        </div>
+      </div>
+
+      <div class="media-grid">
+        <article class="media-card">
+          <div class="meta"><span class="tag">July 21, 2026</span><span class="tag">Agency / C</span><span class="tag">15:15 total</span></div>
+          <h3>1. Budai Ecom Show #325</h3>
+          <p><strong>Listen for:</strong> Google-first demand, lifecycle, payment instability, and the warning that a near-term window is not a durable channel. Revenue remains agency-supplied.</p>
+          <a href="https://shows.acast.com/theecomshow/episodes/325-budai-media-specials-if-i-had-to-scale-a-peptide-brand-t">Open episode</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">May 14, 2026</span><span class="tag">Founder / B</span><span class="tag">34:06 to 37:51</span></div>
+          <h3>2. Joi + Blokes</h3>
+          <p><strong>Listen for:</strong> female flagship, male sibling, shared backend, education moat, and separating commissionable supplements from prescriptions and labs.</p>
+          <a href="https://www.youtube.com/watch?v=aigF8IfN4Is&amp;t=2046s">Open at 34:06</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">Nov 1, 2025</span><span class="tag">Young founder / B</span><span class="tag">14:38 to 31:38</span></div>
+          <h3>3. Peptira + Peptide Price</h3>
+          <p><strong>Listen for:</strong> six-week launch order, lot labels, searchable COAs, quantity ladders, test-before-sale, community, and inventory. Current remedy policy is stricter than the early interview promise.</p>
+          <a href="https://www.youtube.com/watch?v=Be58yiS6Vs4&amp;t=878s">Open at 14:38</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">Jan 4, 2026</span><span class="tag">Founder / B</span><span class="tag">11:27 to 20:30</span></div>
+          <h3>4. Perelel</h3>
+          <p><strong>Listen for:</strong> identity brand, female journey architecture, creator cohorts, no-obligation seeding, long relationship arcs, and building trust before performance spend.</p>
+          <a href="https://podcasts.apple.com/us/podcast/success-almost-broke-her-this-recovering-girlboss-built/id1593458926?i=1000743844412">Open episode</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">Apr 24, 2025</span><span class="tag">Clinical founder / B</span><span class="tag">09:34 to 28:48</span></div>
+          <h3>5. SheMed</h3>
+          <p><strong>Listen for:</strong> women 35 to 55, female-front and shared-backend precedent, tone testing, and patient journey design. Clinical claims do not transfer into an RUO model.</p>
+          <a href="https://www.buzzsprout.com/850540/episodes/17034792-the-weightloss-wonders">Open episode</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">Historical</span><span class="tag">Founder / B-C</span><span class="tag">17:30 and 35:45</span></div>
+          <h3>6. Redline Biolabs</h3>
+          <p><strong>Listen for:</strong> payment failure, supplier loss, oversell recovery, founder trust, support burden, and attribution. The useful story is recovery, not a clean scale narrative.</p>
+          <a href="https://www.youtube.com/watch?v=JQSJYACbOCU&amp;t=1050s">Open at 17:30</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">May 2, 2023</span><span class="tag">Adjacent brand / B</span><span class="tag">15:45 to 29:35</span></div>
+          <h3>7. Arrae</h3>
+          <p><strong>Listen for:</strong> soft launch, no-obligation seeding, turning organic advocates into long-term partners, and customer-as-creator. Transfer the relationship mechanics, not category economics.</p>
+          <a href="https://podcasts.apple.com/us/podcast/siffat-haider-co-founder-co-ceo-of-arrae-what-makes/id1432195522?i=1000611429597">Open episode</a>
+        </article>
+        <article class="media-card">
+          <div class="meta"><span class="tag">Historical</span><span class="tag">Stale ownership</span><span class="tag">35:07 to 40:14</span></div>
+          <h3>8. Transcend</h3>
+          <p><strong>Listen for:</strong> creator demand outrunning staffing, service, inventory, and partner capacity. The founder interview no longer describes current control after the 2026 ownership change.</p>
+          <a href="https://www.youtube.com/watch?v=c6jUD2kyyDA&amp;t=2107s">Open at 35:07</a>
+        </article>
+      </div>
+
+      <details>
+        <summary>
+          <span>Company patterns worth copying<span class="summary-note">Thirty companies collapse into a few useful systems.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Pattern</th><th>What to copy</th><th>What to refuse</th><th>Direct page</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Peptira</strong></td><td>Partner community, founder media, searchable proof, quantity logic</td><td>Promotion noise and treating affiliate volume as profit</td><td><a href="https://peptira.com/">Peptira</a></td></tr>
+                <tr><td><strong>Chameleon</strong></td><td>Verification, packaging, human service, visible recovery</td><td>Generic purity badges without full lot context</td><td><a href="https://chameleonpeptides.com/">Chameleon</a></td></tr>
+                <tr><td><strong>APEX</strong></td><td>Quiz, same-SKU stacks, replenishment plumbing</td><td>Stacking subscription, buyer, and affiliate discounts</td><td><a href="https://apexpepts.com/">APEX</a></td></tr>
+                <tr><td><strong>Joi + Blokes</strong></td><td>Female and male fronts, shared backend, compensation boundary</td><td>Complexity before cohort economics justify it</td><td><a href="https://joiandblokes.com/">Joi + Blokes</a></td></tr>
+                <tr><td><strong>Perelel</strong></td><td>Female identity architecture and long creator arcs</td><td>Copying clinical journey claims into another lane</td><td><a href="https://perelelhealth.com/">Perelel</a></td></tr>
+                <tr><td><strong>Peptide Price + Compare</strong></td><td>Own discovery, education, comparison, email, and brand search</td><td>Undisclosed affiliate ranking conflicts</td><td><a href="https://www.peptide-compare.com/how-we-rank">Ranking method</a></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="plan">
+      <div class="section-head">
+        <div>
+          <div class="kicker">09 / Execution</div>
+          <h2>The 90-day proof.</h2>
+        </div>
+        <div>
+          <p>Thirty days proves launch mechanics. Sixty and ninety days reveal repeat, reserves, creator profitability, founder dependence, and whether the positioning thesis is economically real.</p>
+        </div>
+      </div>
+
+      <div class="card-grid">
+        <article class="card">
+          <div class="label">Days 1 to 14</div>
+          <h3>Make one offer real.</h3>
+          <ul>
+            <li>Clear one lane, audience, and offer.</li>
+            <li>Release one lot and build its proof page.</li>
+            <li>Obtain exact written processor and counterparty terms.</li>
+            <li>Test checkout, fulfillment, support, and lifecycle.</li>
+            <li>Recruit five creators only after approval.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="label">Days 15 to 30</div>
+          <h3>Cap the truth cohort.</h3>
+          <ul>
+            <li>Release creators one at a time.</li>
+            <li>Stop at 50 to 75 delivered orders.</li>
+            <li>Solve every support issue manually.</li>
+            <li>Reconcile order to settlement to bank cash.</li>
+            <li>Pay creators accurately after reversals.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="label">Days 31 to 60</div>
+          <h3>Prove repeatability.</h3>
+          <ul>
+            <li>Run the same cohort again.</li>
+            <li>Improve from objections and tickets.</li>
+            <li>Test one quantity ladder.</li>
+            <li>Measure actual second-order behavior.</li>
+            <li>Add support coverage and confirm supply.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="label">Days 61 to 90</div>
+          <h3>Add exactly one lever.</h3>
+          <ul>
+            <li>High-intent Google, or</li>
+            <li>Ten more creators, or</li>
+            <li>One adjacent SKU.</li>
+            <li>Never add all three together.</li>
+            <li>Run the matched positioning read.</li>
+          </ul>
+        </article>
+      </div>
+
+      <details open>
+        <summary>
+          <span>The stage gates<span class="summary-note">Do not project LTV. Do not count money that has not settled.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Moment</th><th>Must be true</th><th>Do next</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Before first order</strong></td><td>One exact offer and audience, released lot, written payment terms, tested checkout and 3PL, support owner, remedy rules, portable lifecycle, five creator agreements, daily scorecard</td><td>Release one creator</td></tr>
+                <tr><td><strong>50 to 75 delivered</strong></td><td>Orders reconcile to bank cash, CM2 floor 30% and target 35%, on-time at least 95%, recovery provision at most 5%, disputes below 0.30%, full lot traceability, zero unresolved critical quality or creator violations</td><td>Repeat the cohort</td></tr>
+                <tr><td><strong>60 and 90 days</strong></td><td>Real second-order contribution, creator profit after reversals, measured female versus technical economics, support load understood, reserve and inventory funding visible, no projected-LTV credit</td><td>Add one lever</td></tr>
+                <tr><td><strong>500 monthly</strong></td><td>Three clean months, demand cost at most 25%, concentration falling, support and payouts work without Alex, approved backup payment path, qualified second upstream source</td><td>Consider one adjacent SKU</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>Pause and kill conditions<span class="summary-note">Growth does not cure a broken lane, lot, ledger, or support system.</span></span>
+        </summary>
+        <div class="detail-body split">
+          <div>
+            <h3>Pause immediately</h3>
+            <ul>
+              <li>No written acceptance for the exact entity, catalog, claims, and volume.</li>
+              <li>Settlements do not reconcile to the order ledger and bank.</li>
+              <li>The lot fails, mismatches, or cannot be traced.</li>
+              <li>The 3PL cannot block unreleased inventory.</li>
+              <li>Support backlog breaks the one-day response promise.</li>
+              <li>Refunds, reships, disputes, or reserves erase contribution.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Do not scale</h3>
+            <ul>
+              <li>Creators need unapproved or contradictory claims to convert.</li>
+              <li>Platform ROAS is positive but settled CM2 is negative.</li>
+              <li>Two cohorts miss the 30% hard floor.</li>
+              <li>Repeat exists only in projections.</li>
+              <li>Alex remains the daily operating system.</li>
+              <li>Core OVO delivery deteriorates because Noli consumes the team.</li>
+            </ul>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>The only weekly scorecard<span class="summary-note">If a metric does not change a decision, do not add it.</span></span>
+        </summary>
+        <div class="detail-body">
+          <ul>
+            <li>Authorized revenue, captured revenue, settled revenue, reserve, and bank cash</li>
+            <li>CM2 by order, SKU, creator, and cohort</li>
+            <li>New versus returning, AOV, and 30, 60, and 90-day reorder</li>
+            <li>Refund, reship, dispute, and support-contact rate</li>
+            <li>On-time shipment, pick accuracy, tracking latency, and inventory days</li>
+            <li>Lot complaints, release status, and release lead time</li>
+            <li>Creator activation, content output, landing conversion, violations, and payout</li>
+            <li>Incremental CM2 per operator hour and Alex hour</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <section class="shell section" id="library">
+      <div class="section-head">
+        <div>
+          <div class="kicker">10 / Evidence</div>
+          <h2>Everything important is above.</h2>
+        </div>
+        <div>
+          <p>You do not need to download anything to understand the plan. The raw research remains here only for source-level audit, exact quotes, formulas, and the full company-by-company record.</p>
+        </div>
+      </div>
+
+      <div class="coverage" role="group" aria-label="Research coverage">
+        <span>290 unique source rows</span>
+        <span>55 Reddit URLs</span>
+        <span>18 BlackHatWorld URLs</span>
+        <span>15 GLP1Forum URLs</span>
+        <span>12 FDA URLs</span>
+        <span>11 BBB URLs</span>
+        <span>9 MESO-Rx URLs</span>
+        <span>30 companies</span>
+        <span>44 customer sources</span>
+        <span>15 media sources</span>
+        <span>169 timestamped notes</span>
+        <span>36 media claim checks</span>
+      </div>
+
+      <div class="summary good">Evidence rule: primary policy and inspectable facts outrank operator claims. Named founders outrank anonymous screenshots. Repetition proves a market pressure exists, not that a tactic is lawful, durable, or profitable.</div>
+
+      <details>
+        <summary>
+          <span>Optional raw research archive<span class="summary-note">Only open these when you want the full source trail or calculation detail.</span></span>
+        </summary>
+        <div class="detail-body">
+          <div class="raw-library">
+            <a href="./peptide-company-source-matrix.csv">290-row source matrix</a>
+            <a href="./peptide-company-master-dossier.md">Noli master dossier</a>
+            <a href="./viability-economics-exit.md">Economics and exit model</a>
+            <a href="./company-models-founder-media.md">30-company landscape</a>
+            <a href="./Peptide-Founder-Media-Intelligence.xlsx">Founder-media workbook</a>
+            <a href="./budai-peptide-growth-case-study.md">Budai claim audit</a>
+            <a href="./customer-voice-trust.md">Customer voice coding</a>
+            <a href="./brand-offer-teardown.md">Brand and offer teardown</a>
+            <a href="./operator-growth-playbook.md">Forum operator synthesis</a>
+            <a href="./gray-market-operator-evidence.md">Gray-market evidence ledger</a>
+            <a href="./gray-marketing-platform-evidence.md">Gray marketing and platforms</a>
+            <a href="./source-audit.md">Keep, qualify, remove audit</a>
+          </div>
+        </div>
+      </details>
+
+      <p class="note">This is internal commercial intelligence, not legal, regulatory, medical, tax, quality, or underwriting advice. Time-sensitive claims are dated. Forum and marketplace claims are labeled as claims, not verified performance.</p>
     </section>
   </main>
 
   <footer class="shell">
-    <span>Noli operating blueprint · Current through July 26, 2026</span>
-    <span>Forum evidence is descriptive, graded, and non-operational.</span>
+    <span>Noli operating intelligence / Current through July 26, 2026</span>
+    <span>Simple scales. Complex fails.</span>
   </footer>
 </body>
 </html>
