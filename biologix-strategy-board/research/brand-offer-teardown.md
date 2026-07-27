@@ -29,7 +29,7 @@ It is a provider-led consumer offer with:
 9. Creators who explain the journey and disclose the relationship, but never diagnose, prescribe, or promise outcomes.
 10. One dashboard showing eligibility, order status, support, and refill timing.
 
-For OVO, the durable lane is licensed telehealth if the audience is discussing personal outcomes. A RUO store makes sense only as a genuinely research-only business. A consumer creator funnel and an RUO checkout should not be treated as one offer merely because the pages use different domains.
+For Noli, the durable lane is licensed telehealth if the audience is discussing personal outcomes. A RUO store makes sense only as a genuinely research-only business. A consumer creator funnel and an RUO checkout should not be treated as one offer merely because the pages use different domains.
 
 ## The 10-brand offer table
 
@@ -48,7 +48,7 @@ For OVO, the durable lane is licensed telehealth if the audience is discussing p
 
 ## Trust, distribution, friction, and visual teardown
 
-| Brand | Trust and support facts | Creator or retention mechanic | Checkout friction | Visual archetype | OVO should copy | OVO should refuse |
+| Brand | Trust and support facts | Creator or retention mechanic | Checkout friction | Visual archetype | Noli should copy | Noli should refuse |
 | --- | --- | --- | --- | --- | --- | --- |
 | Peptira | Batch library, measured quantity, Freedom Diagnostics testing, same-day shipping, contact support. | Affiliate tiers, a partner community, founder podcast, promotions, and account history. | Current product detail and purchase access requires registration; the form asks for DOB, researcher type, phone, and company. | Performance retail in saturated blue, with large promotional overlays and laboratory proof below. | Proof-first headline, batch search, founder media, and partner education. | Constant promo stacking, broad catalog before hero demand is proven, or treating affiliate volume as net margin. |
 | Offline | Downloadable COAs, US shipment, public phone and address, chat, internal order review, and a defined shipping-issue window. | 20% new and 10% lifetime affiliate economics, referral credit, VIP, first-order capture, email, and SMS. | A 21+ research gate appears before browsing. All sales are final after shipment except verified fulfillment issues. | Clean navy and white institutional commerce, with high whitespace and a conventional product grid. | The clearest current affiliate terms, manual partner review, and explicit content restrictions. | Lifetime commission without cohort margin controls, or creator content that contradicts the RUO buyer definition. |
@@ -75,7 +75,7 @@ Peptira, Chameleon, ResearchChemHQ, and RxPepsDirect all move quality evidence n
 - Valhalla: am I trapped in a membership?
 - Offline: is this a real and responsible supplier?
 
-OVO should choose one fear to eliminate. "Everything you need to know about peptides" is not an offer.
+Noli should choose one fear to eliminate. "Everything you need to know about peptides" is not an offer.
 
 ### 3. Goal architecture converts better than catalog architecture
 
@@ -100,7 +100,7 @@ The lesson is not "offer the highest commission." It is to define:
 
 Compensation tied to medical services needs specialist review for federal and state referral, fee-splitting, and advertising rules.
 
-## The simplest winning composite for OVO
+## The simplest winning composite for Noli
 
 ### Position
 
@@ -177,7 +177,7 @@ That means:
 
 No promo wheel, countdown stack, five chat widgets, or giant navigation menu.
 
-## What OVO should copy first
+## What Noli should copy first
 
 1. Chameleon: laboratory-domain verification next to the hero.
 2. RxPepsDirect: named pharmacy and exact price before intake.
@@ -185,7 +185,7 @@ No promo wheel, countdown stack, five chat widgets, or giant navigation menu.
 4. Offline: written creator eligibility and content restrictions.
 5. NOHO: real human guidance and premium trust.
 
-## What OVO should refuse
+## What Noli should refuse
 
 1. Mixed RUO and human-outcome positioning.
 2. Paying before clinical eligibility is known.
@@ -202,7 +202,7 @@ No promo wheel, countdown stack, five chat widgets, or giant navigation menu.
 
 The fastest scalable version is not the grayest one. It is the easiest legitimate one to understand.
 
-OVO already has the scarce asset: creator distribution across 250 creators. The operating challenge is concentrating that distribution behind one approved offer, not giving every creator a catalog and a code. Pilot with a small controlled group, prove settled contribution and retained customers, then widen the network.
+Noli can access the scarce asset through OVO Talent's relationships across 250 creators. The operating challenge is concentrating that distribution behind one approved offer, not giving every creator a catalog and a code. Pilot with a small controlled group, prove settled contribution and retained customers, then widen the network.
 
 Simple scales here:
 

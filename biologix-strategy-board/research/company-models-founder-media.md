@@ -20,7 +20,7 @@ This is business research, not medical or legal advice. Research-use-only vendor
 ## Executive answer
 
 1. **The opportunity is real, but the molecule is not the moat.** The visible winning moats are distribution, trusted batch evidence, payments, inventory, delivery, support, and retention.
-2. **OVO has a real unfair advantage in distribution.** The 250 creators are useful only if one centralized system controls claims, links, attribution, payouts, and compliance. Two hundred fifty uncontrolled spokespeople would be a liability.
+2. **Noli can access a real distribution advantage through OVO Talent.** The 250 creator relationships are useful only if one centralized system controls claims, links, attribution, payouts, and compliance. Two hundred fifty uncontrolled spokespeople would be a liability.
 3. **The best young RUO pattern is Peptira plus Chameleon plus APEX:** a clear affiliate offer, public batch verification, human customer service, bundles, and repeat-order mechanics.
 4. **The best durable medical pattern is Feel plus Valhalla plus Joi + Blokes:** visible consumer packaging, licensed-provider review, transparent pricing or pharmacy logic, and a strict wall between creators and clinical decisions.
 5. **The best media pattern is Peptide Price plus Peptide Compare:** own the education or comparison layer before the customer chooses a vendor. This creates SEO, email, community, and affiliate optionality.
@@ -359,7 +359,7 @@ The public record does show repeated fragility:
 - The [Guardian](https://www.theguardian.com/science/2026/apr/06/labs-testing-thousands-of-unregulated-substances-amid-peptide-craze) documents the rapid growth and oversight concerns around RUO peptides.
 - A 2026 [Associated Press report](https://apnews.com/article/4d48e78a5d65658b4d6eac87818352e3) describes the conflict between RUO labels and public human-use promotion.
 
-**Inference:** A merchant that survives only by rotating accounts is not a durable business. OVO should require written processor approval, truthful product categorization, a documented reserve plan, and a second compliant continuity option. No bypass, cloaking, shell-account, or policy-evasion tactic belongs in the plan.
+**Inference:** A merchant that survives only by rotating accounts is not a durable business. Noli should require written processor approval, truthful product categorization, a documented reserve plan, and a second compliant continuity option. No bypass, cloaking, shell-account, or policy-evasion tactic belongs in the plan.
 
 ## What the 30-company map says is working
 
@@ -373,7 +373,7 @@ Best examples: Chameleon, Skye, Verified, Janoshik.
 - Sterility and endotoxin are shown where relevant.
 - Failed lots and testing cadence are disclosed.
 
-**OVO lesson:** The creative should point to evidence, not merely say "trusted" or "99%."
+**Noli lesson:** The creative should point to evidence, not merely say "trusted" or "99%."
 
 ### 2. One obvious acquisition wedge
 
@@ -386,7 +386,7 @@ Best examples:
 - Peptide Compare: daily comparison data.
 - Budai's claimed client: high-intent Google demand.
 
-**OVO lesson:** Do not launch every channel. Start where OVO already has leverage: ten aligned creators and one owned evidence page.
+**Noli lesson:** Do not launch every channel. Start with five aligned creators recruited through OVO Talent and one owned evidence page.
 
 ### 3. Repeat-purchase plumbing
 
@@ -401,19 +401,19 @@ The minimum lifecycle:
 5. Replenishment or clinician-approved refill
 6. Win-back
 
-**OVO lesson:** Retention should be live before traffic, not added after launch.
+**Noli lesson:** Retention should be live before traffic, not added after launch.
 
 ### 4. Human service
 
 Best examples: Chameleon, NOHO, The Protocole.
 
-**OVO lesson:** Trust-sensitive products need fast answers and visible humans. A creator cannot substitute for trained support or a clinician.
+**Noli lesson:** Trust-sensitive products need fast answers and visible humans. A creator cannot substitute for trained support or a clinician.
 
 ### 5. A ladder beyond one vial
 
 Best examples: BioLongevity supplements, Joi + Blokes labs and supplements, Peptide Price media and community, Direct Peptides wholesale.
 
-**OVO lesson:** The highest-quality expansion comes after the hero offer works. Starting with 50 SKUs makes testing, education, inventory, and support harder.
+**Noli lesson:** The highest-quality expansion comes after the hero offer works. Starting with 50 SKUs makes testing, education, inventory, and support harder.
 
 ## What is not working
 
@@ -428,7 +428,7 @@ Best examples: BioLongevity supplements, Joi + Blokes labs and supplements, Pept
 9. **A medical affiliate system that pays for prescriptions without specialist review.**
 10. **Revenue screenshots without processor settlement, refund, COGS, and contribution data.**
 
-## Viability for OVO
+## Viability for Noli
 
 ### Overall judgment
 
@@ -439,7 +439,7 @@ The ratings below are strategic judgments about relative demand, fit, risk, and 
 | Dimension | Rating | Reason |
 | --- | ---: | --- |
 | Demand | 8/10 | Rapid vendor, testing, media, and telehealth expansion |
-| OVO distribution fit | 9/10 | Existing external relationships with 250 creators |
+| Noli distribution fit | 9/10 | Access to OVO Talent's external relationships with 250 creators |
 | Product defensibility | 3/10 | Most catalogs are easy to copy |
 | Trust defensibility | 8/10 | Batch proof, service, and transparency compound |
 | RUO regulatory and platform risk | 9/10 | Human-use promotion can collapse the stated model |
@@ -449,11 +449,11 @@ The ratings below are strategic judgments about relative demand, fit, risk, and 
 
 ### Recommended lane
 
-The best brand-safe route for OVO is a licensed telehealth or clinician-partnered offer, with creator compensation and clinical decisions designed by specialist counsel. Creators should educate, tell their own truthful stories where allowed, and direct prospects into a provider-controlled intake. They should never diagnose, prescribe, promise outcomes, or provide dosing.
+The best brand-safe route for Noli is a licensed telehealth or clinician-partnered offer, with creator compensation and clinical decisions designed by specialist counsel. Creators should educate, tell their own truthful stories where allowed, and direct prospects into a provider-controlled intake. They should never diagnose, prescribe, promise outcomes, or provide dosing.
 
-The RUO route may show higher gross product margin, but it is a poor match for a lifestyle creator network if creator content implies human use. If OVO explores it, the pilot must be genuinely research-only with qualified purchaser gating and no human-use creator campaign.
+The RUO route may show higher gross product margin, but it is a poor match for a lifestyle creator network if creator content implies human use. If Noli explores it, the pilot must be genuinely research-only with qualified purchaser gating and no human-use creator campaign.
 
-## The simple OVO scaling model
+## The simple Noli scaling model
 
 ### Stage 1: Pilot
 
@@ -509,7 +509,7 @@ Move from 25 to 50 creators, then in controlled waves toward 250, only when:
 
 OVO Academy apprentices can support research verification, creator onboarding, asset organization, CRM hygiene, content QA, and weekly reporting. They are apprentices doing supervised operating work, not a course and not medical spokespeople.
 
-## What OVO should copy
+## What Noli should copy
 
 - Peptira's simple partner economics and affiliate community
 - Chameleon's batch proof, packaging, and human service
@@ -521,7 +521,7 @@ OVO Academy apprentices can support research verification, creator onboarding, a
 - Peptide Price's owned community
 - Peptide Compare's structured comparison data
 
-## What OVO should refuse
+## What Noli should refuse
 
 - All 250 creators on day one
 - Human-use marketing attached to an RUO storefront
@@ -538,6 +538,6 @@ OVO Academy apprentices can support research verification, creator onboarding, a
 
 The business can become large because demand, markup, and repeat purchase are all present. It can also disappear quickly because the core risks sit outside the product: regulation, creator claims, lab credibility, payment access, ad policy, fulfillment, and trust.
 
-OVO's edge is not that it can find peptides more cheaply. Its edge is that it can turn trustworthy evidence into creator-led distribution. The correct sequence is:
+Noli's edge is not that it can find peptides more cheaply. Its edge is access to OVO Talent's creator operations plus the ability to turn trustworthy evidence into controlled distribution. The correct sequence is:
 
 **one lane, one eligible offer, five creators, one dashboard, prove contribution, then scale in waves.**

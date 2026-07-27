@@ -161,7 +161,7 @@ What this reveals about the business:
 
 - The opportunity can be economically attractive.
 - Public numbers are best used to generate hypotheses, not valuations.
-- OVO should track settled CM2 by creator, SKU, cohort, and order before believing any margin story.
+- Noli should track settled CM2 by creator, SKU, cohort, and order before believing any margin story.
 
 ## 6. Research-use framing and intended-use separation
 
@@ -254,7 +254,7 @@ What this reveals about the business:
 - Affiliate and customer discounts can consume 20% to 50% of revenue before product, processor, support, or fulfillment cost.
 - An off-site creator claim can become part of how a merchant is perceived, even if the PDP is sterile.
 - Disclosure, approved content, product evidence, commission truth, and consultation boundaries must be controlled as one system.
-- OVO's creator network is an advantage only if it is managed centrally. Uncontrolled creator claims are concentrated exposure.
+- Noli's access to OVO Talent's creator network is an advantage only if it is managed centrally. Uncontrolled creator claims are concentrated exposure.
 
 ## 9. Private discovery, direct messages, and phone-number spread
 
@@ -318,7 +318,7 @@ What this reveals about the business:
 
 - Owned consent records, exports, backups, and brand search are durable assets.
 - A category-media property can be a legitimate trust and SEO asset.
-- Cold outreach, undisclosed sender identities, or misleading bridge pages are not part of OVO's operating recommendation.
+- Cold outreach, undisclosed sender identities, or misleading bridge pages are not part of Noli's operating recommendation.
 - Domain and brand continuity needs an official status page and verified successor policy so customers can identify impersonators.
 
 ## 11. Import, customs, domestic-warehouse, and relabeling gray areas
@@ -387,7 +387,7 @@ What this reveals about the business:
 - "Telehealth" is not one business. It can include a marketing company, medical group, clinician network, pharmacy, lab, and fulfillment partner.
 - Each party's money flow, ownership, decision rights, and customer promises must be mapped.
 - The medical lane can be more defensible, but it is not a shortcut around product, referral, or advertising rules.
-- The clean OVO role is creator and operating partner outside clinical decisions, with compensation designed by specialist counsel.
+- The clean Noli role is brand, demand, and operating partner outside clinical decisions, with compensation designed by specialist counsel.
 
 ## 13. Testing, ranking, and review conflicts
 
@@ -412,7 +412,7 @@ What this reveals about the business:
 
 - The trust layer has its own monetization conflicts.
 - The strongest policy is to publish the sampling method, financial relationship, all results, date, exact lot, and lab verification path.
-- OVO should earn independent citations and never own a "neutral" ranking site that secretly routes to its own economics.
+- Noli should earn independent citations and never own a "neutral" ranking site that secretly routes to its own economics.
 
 ## 14. Shutdown, rebrand, successor, and mirror behavior
 

@@ -1,14 +1,14 @@
 # Peptide viability, economics, and exit reality
 
 **Decision date:** July 26, 2026  
-**Use:** OVO investment and operating decision, not a forecast or valuation opinion.
+**Use:** Noli investment and operating decision, not a forecast or valuation opinion.
 
 ## Decision in 30 seconds
 
-**Conditional go, not an OVO-wide commitment.**
+**Conditional go, not a company-wide commitment.**
 
 - The opportunity can be economically large. The molecule is not the moat.
-- A consumer RUO creator funnel is a poor fit for OVO. The viable lanes are a counsel-cleared qualified-research B2B model, a separately governed licensed clinical model, or a media and data layer.
+- A consumer RUO creator funnel is a poor fit for Noli. The viable lanes are a counsel-cleared qualified-research B2B model, a separately governed licensed clinical model, or a media and data layer.
 - A 50-order cohort is a learning asset, not a business. In the base model it produces only about **$2,800 monthly CM2 before fixed overhead**.
 - At 500 monthly orders, base CM2 is about **$27,600 before fixed overhead**. That may still be breakeven or worse after legal, quality, management, insurance, and compliance cost.
 - At 5,000 monthly orders, base CM2 is about **$276,000 before fixed overhead**, but the base cash buffer is roughly **$1.35 million**.
@@ -149,16 +149,18 @@ A buyer discounts:
 
 The 10.7x supplement-sector figure is a north star for mature compliant brands, not a peptide-store comp. The Eucalyptus structure is more instructive: strategic value can be large, but sophisticated buyers defer and condition much of the consideration on future performance.
 
-## OVO leverage and opportunity cost
+## Noli leverage and opportunity cost
 
-| OVO asset | Real leverage | Risk or cost | Rule |
+Noli is the peptide company. The OVO entities below are optional support layers, not alternate names for Noli.
+
+| Noli asset or support layer | Real leverage | Risk or cost | Rule |
 |---|---|---|---|
 | **OVO Talent** | Existing creator trust, partner operations, contracts, briefing, attribution, and payout communication can reduce time to a clean acquisition test | Commission can consume 10% to 20% or more; uncontrolled health content can create legal and payment evidence | Five opt-in partners, one approved brief, one offer. Talent is not merchant of record and does not influence clinical decisions |
 | **OVO Academy** | A supervised bench can handle evidence verification, creator onboarding, CRM hygiene, support QA, and weekly reporting | Training and supervision consume capacity that could serve core clients; apprentices cannot provide medical advice or invent claims | Use only after the manual workflow works and only on approved materials |
 | **OVO Labs** | Attribution, settlement reconciliation, cohort intelligence, content learning, and payout QA can become transferable operating IP | Premature software consumes focus before the business truth is known | Spreadsheet first. Build only when the same manual pain repeats |
-| **Alex and OVO brand** | Faster trust, recruiting, and partner access | The reputational downside is larger than the pilot revenue | Ring-fenced NewCo and Alex does not make product or outcome claims |
+| **Alex and Noli brand** | Faster trust, recruiting, and partner access | The reputational downside is larger than the pilot revenue | Ring-fenced Noli and Alex does not make product or outcome claims |
 
-The opportunity cost is decisive. Base CM2 at 500 orders is only $27,625 before fixed overhead. OVO should not degrade Talent, Academy, or existing delivery for that result.
+The opportunity cost is decisive. Base CM2 at 500 orders is only $27,625 before fixed overhead. Noli should not degrade OVO Talent, OVO Academy, or existing OVO delivery for that result.
 
 The internal hurdle is:
 
@@ -173,7 +175,7 @@ If the peptide project still requires Alex as chief support agent, compliance re
 - Specialist counsel clears one lane, one entity structure, one eligible offer, audience, claims, compensation, and data flow.
 - The acquiring bank approves the exact business and catalog in writing.
 - Supplier, independent lab, lot-release specification, 3PL, insurance, support, recall, and refund processes are contracted and tested.
-- Braden's numbers remain diligence inputs, not OVO forecasts.
+- Braden's numbers remain diligence inputs, not Noli forecasts.
 
 ### At 50 delivered orders
 
@@ -212,7 +214,7 @@ Require:
 Run two tracks for 30 days:
 
 1. **Diligence Braden:** obtain read-only order exports, processor statements, bank settlements, supplier invoices, lot tests, inventory roll-forward, refunds, affiliate payouts, taxes, and any actual LOI.
-2. **Clear the OVO lane:** specialist counsel and prospective counterparties define one lawful offer and exactly what creators, Academy operators, and OVO systems may do.
+2. **Clear the Noli lane:** specialist counsel and prospective counterparties define one lawful offer and exactly what creators, Academy operators, and Noli systems may do.
 
 If both pass, run five partners to 50 delivered orders. If either fails, do not rationalize it with margin screenshots.
 

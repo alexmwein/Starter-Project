@@ -1,8 +1,8 @@
-# Peptide company master dossier
+# Noli peptide company master dossier
 
 Updated: 2026-07-26
 
-Scope: current peptide-company business models, operator forums, payment processing, sourcing, testing, fulfillment, support, brand positioning, creator growth, paid acquisition, retention, and OVO-specific scale architecture.
+Scope: current peptide-company business models, operator forums, payment processing, sourcing, testing, fulfillment, support, brand positioning, creator growth, paid acquisition, retention, and Noli-specific scale architecture.
 
 ## Executive verdict
 
@@ -15,13 +15,13 @@ The opportunity exists because four scarce assets sit above the product:
 3. Reliable transaction and fulfillment operations
 4. Repeat customer relationships
 
-OVO already has an unfair advantage in the first asset through Talent, Alex's distribution, creator operations, and the Academy operator bench. It does not yet have a proven advantage in quality systems, payment underwriting, fulfillment, or customer support. Those are the systems the pilot must earn.
+Noli is the peptide company. It can access an unfair distribution advantage through OVO Talent, Alex's relationships, creator operations, and the OVO Academy operator bench. Noli does not yet have a proven advantage in quality systems, payment underwriting, fulfillment, or customer support. Those are the systems the pilot must earn.
 
 The recommended decision is a conditional go:
 
 - Build one creator-distributed trust engine, not a giant catalog.
 - Prove 50 to 75 clean, settled, fulfilled orders before adding software, paid scale, or more SKUs.
-- Do not use OVO's consumer creator network to prove a human-use RUO funnel. Prove either a counsel-cleared qualified-research B2B model or a separate licensed clinical offer.
+- Do not use OVO Talent's consumer creator network to prove a human-use RUO funnel for Noli. Prove either a counsel-cleared qualified-research B2B model or a separate licensed clinical offer.
 - Build the brand and owned customer relationship so it can migrate toward a more guided, defensible model as the category professionalizes.
 
 ## The market changed in 2026
@@ -59,12 +59,12 @@ Implication: preserve the option to migrate qualified demand into a clinician-gu
 
 ## Six business models
 
-The scores below are strategic judgments about relative speed, risk, durability, and OVO fit. They are not market statistics.
+The scores below are strategic judgments about relative speed, risk, durability, and Noli fit. They are not market statistics.
 
-| Model | Speed | Gross-margin potential | Durability | OVO fit | Judgment |
+| Model | Speed | Gross-margin potential | Durability | Noli fit | Judgment |
 |---|---:|---:|---:|---:|---|
 | Generic RUO ecommerce store | 5/5 | 5/5 | 1/5 | 3/5 | Fastest launch, weakest moat |
-| Creator-distributed trust brand | 4/5 | 4/5 | 4/5 | 5/5 | Best OVO wedge |
+| Creator-distributed trust brand | 4/5 | 4/5 | 4/5 | 5/5 | Best Noli wedge |
 | Clinician-guided membership | 2/5 | 4/5 | 5/5 | 3/5 | Strongest long-term destination |
 | B2B private label / wholesale | 3/5 | 3/5 | 3/5 | 2/5 | Real demand, operationally heavy |
 | Testing and vendor-trust layer | 2/5 | 3/5 | 4/5 | 4/5 | Trust infrastructure can become a moat |
@@ -135,7 +135,7 @@ Current public examples:
 - [EDGE PEP](https://edgepep.com/pages/third-party-test-results) publishes a multi-lab report library and offers credit for customer testing.
 - Current forum discussions most often mention Janoshik, TrustPointe, MZ Biolabs, and Freedom Diagnostics, but community reputation is not a substitute for lab diligence.
 
-The trust object OVO should build is a lot passport:
+The trust object Noli should build is a lot passport:
 
 - Product
 - Lot
@@ -289,7 +289,7 @@ Support staff must not improvise health or product-use advice.
 
 [Feel Peptides](https://feelpeptides.com/about/) is the clearest current example of the third archetype. It uses goal-led language such as energy, balance, performance, and youth, plans a category podcast, and intends to use influencer and celebrity affiliates. [Noho Labs](https://noholabs.com/) emphasizes personalization and concierge support. Both move the product from "vial" to "guided identity."
 
-### OVO's positioning
+### Noli's positioning
 
 Recommended: calm precision.
 
@@ -336,7 +336,7 @@ For a qualified-research B2B lane, replace the care path with purchaser qualific
 
 ### Channel ranking
 
-| Channel | Current signal | OVO judgment |
+| Channel | Current signal | Noli judgment |
 |---|---|---|
 | Warm creator and referral | Repeated in company programs and forums | Start here |
 | High-intent Google search and Shopping | Strongest current detailed operator case study | Test after proof |
@@ -345,7 +345,7 @@ For a qualified-research B2B lane, replace the care path with purchaser qualific
 | Podcast and category media | Used by funded premium entrants | Strategic moat |
 | Community participation | Major trust and discovery layer | Earn, disclose, do not seed fake consensus |
 | Meta and TikTok paid | Unstable, policy-heavy, many unverified claims | Never the foundation |
-| Mass cold DM | Current owners complain about activation and spam | OVO should outperform it |
+| Mass cold DM | Current owners complain about activation and spam | Noli should outperform it |
 
 ### Current paid-growth case study
 
@@ -362,7 +362,7 @@ Current public programs show:
 - [ResearchPeptides.io](https://researchpeptides.io/affiliates): 25% target, first-order customer discount, monthly payout, and explicit claim restrictions.
 - Current recruitment posts commonly offer 15% to 30%, with some unverified offers reaching 40%.
 
-The program mechanics are commodity. OVO's advantage must be:
+The program mechanics are commodity. Noli's advantage must be:
 
 - Better creator selection
 - Fast activation
@@ -540,9 +540,11 @@ Actions:
 - Proprietary media and customer insight
 - Selective software only around repeated manual pain
 
-## OVO architecture
+## Noli architecture
 
-### NewCo
+Noli is the operating company. OVO Talent, OVO Academy, and OVO Labs remain separate support layers with explicit contracts, data boundaries, and responsibilities.
+
+### Noli
 
 Owns:
 
@@ -553,7 +555,7 @@ Owns:
 - Attribution and consented marketing data
 - Refund and dispute coordination
 
-In a genuine qualified-research B2B lane, NewCo can also own the product, supplier, lot release, fulfillment, and merchant account after specialist clearance and counterparty approval.
+In a genuine qualified-research B2B lane, Noli can also own the product, supplier, lot release, fulfillment, and merchant account after specialist clearance and counterparty approval.
 
 ### Clinical partners
 
@@ -566,7 +568,7 @@ For a human-use offer, independent licensed counterparts own:
 - Patient safety and adverse-event handling
 - State coverage and clinical records
 
-OVO does not influence those decisions or store patient health data.
+Noli does not influence those decisions or store patient health data.
 
 ### OVO Talent
 
@@ -627,7 +629,7 @@ Do not build a dashboard before the spreadsheet hurts.
 - Resolve every support issue manually.
 - Reconcile authorization to bank.
 - Publish the applicable lot, pharmacy, or quality proof.
-- Keep patient health data out of OVO systems.
+- Keep patient health data out of Noli systems.
 - Pay creators accurately.
 
 ### Days 31 to 60: earn repeatability
@@ -704,7 +706,7 @@ Pause scale when:
 - Refunds, reships, or disputes erase contribution.
 - Creators need claims outside the approved brief to convert.
 - Paid acquisition is positive in-platform but negative after settlement and all variable costs.
-- OVO Talent or Academy core delivery deteriorates.
+- OVO Talent or OVO Academy core delivery deteriorates.
 
 ## What to steal, avoid, and test
 
@@ -742,4 +744,4 @@ Test:
 
 The fast-money version is viable but brittle. The valuable version is a trust, distribution, customer, and operating system that can survive a supplier, processor, platform, or molecule change.
 
-OVO should not try to win by finding the cheapest vial. It should win by being the company that can repeatedly turn trusted creators into settled contribution while making every lot, order, payout, and customer recovery auditable.
+Noli should not try to win by finding the cheapest vial. It should win by being the company that can repeatedly turn trusted creators into settled contribution while making every lot, order, payout, and customer recovery auditable.

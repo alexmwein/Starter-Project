@@ -22,7 +22,7 @@ The direct [BlackHatWorld post](https://www.blackhatworld.com/seo/my-broker-iso-
 - Evidence grade: A for what the post says, D for treating the amount as verified business value
 - Contradiction flag: yes. The public text does not support "BlackHatWorld offered $15 million for the peptide business."
 - Additional credibility signal: in the same thread, the author jokes that public journaling is a way to manipulate people into trusting him, then later reports making only $100 that week from his first two processing sales.
-- OVO implication: do not use the $15 million line in valuation, investor, recruiting, or strategy work unless there is separate documentary evidence of an actual offer, buyer, target, terms, and proof of funds.
+- Noli implication: do not use the $15 million line in valuation, investor, recruiting, or strategy work unless there is separate documentary evidence of an actual offer, buyer, target, terms, and proof of funds.
 
 ## Evidence grading
 
@@ -52,7 +52,7 @@ Exact molecule names improve search discovery and customer comprehension but can
 
 The FDA evaluates the full body of intended-use evidence, including social posts, testimonials, accessories, instructions, and off-site claims. A code or footer is not a legal shield. Reddit also prohibits transactions involving pharmaceutical drugs and implicit attempts to move prohibited transactions into private messages under its [Illegal or Prohibited Transactions policy](https://support.reddithelp.com/hc/en-us/articles/360043513471-Illegal-or-Prohibited-Transactions), updated May 19, 2026. Grade: A.
 
-### OVO implication
+### Noli implication
 
 Product education, creator scripts, support, email, metadata, and store copy must be treated as one evidence system. Separating pages can improve clarity, but it cannot be used to present one intended use publicly and another through creators or communities.
 
@@ -73,7 +73,7 @@ Gates reduce casual browsing, create a qualification record, and may help a proc
 
 Self-attestation is not the same as verifying an institutional purchaser, research purpose, or licensed professional. A detailed questionnaire can still conflict with the audience and claims that drove the visitor there. No public source establishes that an age gate or EIN field alone satisfies Stripe, FDA, or state requirements.
 
-### OVO implication
+### Noli implication
 
 Treat the gate as a real qualification control only if answers are verified and ineligible purchasers are rejected. Do not count a checkbox as evidence that consumer demand has become laboratory demand.
 
@@ -99,7 +99,7 @@ A store can still face intended-use and endorsement risk from paid creator claim
 
 TikTok treats affiliate links and discount codes as branded content under its current [Branded Content Policy](https://www.tiktok.com/legal/page/global/bc-policy/en). Pharmaceutical and healthcare promotion is restricted or prohibited depending on category and market. Grade: A.
 
-### OVO implication
+### Noli implication
 
 Creator distribution is a genuine advantage only with central approval, explicit disclosure, claim monitoring, documented enforcement, and clear consultation boundaries. Creator-store separation is useful for audience design, not liability isolation.
 
@@ -121,7 +121,7 @@ High creative volume helps paid and organic testing. Synthetic production is che
 
 AI-assisted production is not automatically deceptive. Fake identities, fake doctors, invented experiences, undisclosed paid endorsements, and false reviews are. A brand can still be exposed when an affiliate runs the ad, especially if the brand supplies claims or assets, benefits from the campaign, ignores obvious misconduct, or cannot identify the responsible partner.
 
-### OVO implication
+### Noli implication
 
 Use real, permissioned creators and substantiated scripts. Synthetic content should be clearly presented as synthetic where required and must not fabricate a medical professional, customer, or firsthand outcome.
 
@@ -144,7 +144,7 @@ Buyers distrust generic storefront claims and search forums for vendor validatio
 
 Purchased praise, false customer personas, undisclosed incentives, suppression of negative reviews, and fake testimonials can violate the FTC review rule and platform rules. Sponsor labels are useful but do not prove that surrounding discussion is independent.
 
-### OVO implication
+### Noli implication
 
 Earned participation, transparent sponsorship, published testing, and real customer support can build community trust. Covert seeding creates a short-term search asset that can become permanent evidence of deception.
 
@@ -164,9 +164,9 @@ An educational or comparison layer captures exact-molecule and "best vendor" sea
 
 ### Current contradiction
 
-The page is not independent merely because it uses editorial formatting. Affiliate compensation, vendor sponsorship, methodology, data freshness, and test verification must be visible. Unsupported traffic, revenue, safety, or purity claims should not be imported into OVO planning as fact.
+The page is not independent merely because it uses editorial formatting. Affiliate compensation, vendor sponsorship, methodology, data freshness, and test verification must be visible. Unsupported traffic, revenue, safety, or purity claims should not be imported into Noli planning as fact.
 
-### OVO implication
+### Noli implication
 
 A legitimate research library can be a durable discovery asset if it publishes authorship, review dates, source links, methodology, conflicts, and corrections. Do not disguise a commissioned sales page as neutral research.
 
@@ -194,7 +194,7 @@ Paid media creates immediate scale, but a restricted catalog can lose the accoun
 
 The same forums that advertise huge returns contain frequent reports of shutdowns, frozen assets, and repeated rebuilds. A reported platform ROAS is not settled contribution profit. The primary policies explain why delivery can disappear even when a seller says its storefront is RUO.
 
-### OVO implication
+### Noli implication
 
 Treat paid social as conditional, not foundational. Durable assets are compliant search demand, permissioned creator audiences, customer consent, brand search, repeat purchase, and portable first-party data. Do not model rented or repeatedly replaced platform access as a moat.
 
@@ -217,7 +217,7 @@ Email and customer records reduce dependence on paid traffic. Sellers often disc
 
 Moving the same prohibited conduct between platforms does not make the business eligible. Klaviyo explicitly prohibits waterfalling and other attempts to evade controls. Hosting and payment acceptance are also distinct: a commerce platform may continue to host a store while its affiliated payment service declines the catalog.
 
-### OVO implication
+### Noli implication
 
 Resilience means written eligibility, accurate catalog disclosure, regular portable exports, consent evidence, and recovery plans. It does not mean hiding the business category or rotating providers after termination.
 
@@ -241,7 +241,7 @@ Cards convert better than manual transfer or crypto. High-risk fees and rolling 
 
 "Approved at signup" is not the same as fully underwritten. RUO language and a gate did not prevent the reported closures. Salespeople in these threads have a direct incentive to portray their underwriting checklist as authoritative.
 
-### OVO implication
+### Noli implication
 
 Model cash from settled funds after fees, reserves, refunds, disputes, and delay. Require written approval for the exact legal entity, catalog, claims, fulfillment model, geographies, and merchant category before treating a payment path as durable.
 
@@ -262,7 +262,7 @@ A new domain can preserve branded search and customer demand after host, process
 
 A similar logo, catalog, or "we moved" statement does not prove entity continuity. Mirror-domain behavior is as much a fraud signal as a resilience tactic.
 
-### OVO implication
+### Noli implication
 
 Never infer continuity without a signed notice from a previously verified channel, matching legal entity, domain history, lab records, and processor or fulfillment continuity. Do not send creator audiences to a replacement domain based only on visual resemblance.
 
@@ -285,9 +285,9 @@ Telehealth can lawfully serve human-use demand and may support insurance, prescr
 
 Telehealth is not a marketing wrapper. It is a different regulated business with real licensed care, patient-specific prescribing, pharmacy accountability, state coverage, privacy, adverse-event, quality, and truthful-marketing obligations. The 2026 FDA action shows that a clinician page and intake form do not make every compounded-drug claim permissible.
 
-### OVO implication
+### Noli implication
 
-If OVO participates in a clinical lane, diligence the provider entity, pharmacy, licenses, prescribing flow, state coverage, quality systems, claims, and unit economics as a healthcare business. Do not treat it as the same store with a questionnaire added.
+If Noli participates in a clinical lane, diligence the provider entity, pharmacy, licenses, prescribing flow, state coverage, quality systems, claims, and unit economics as a healthcare business. Do not treat it as the same store with a questionnaire added.
 
 ## 12. WhatsApp, Telegram, and discovery of an "unpublished" number
 
@@ -325,7 +325,7 @@ The public evidence does not establish a mysterious platform leak. Private forwa
 
 This is attribution and privacy hygiene, not a growth workaround.
 
-### OVO implication
+### Noli implication
 
 Private messaging is a measurable referral channel. It is also vulnerable to impersonation, uncontrolled claims, missing disclosure, lost lead provenance, and support promises that are not recorded. Centralize approved public contact points and track first-touch source without collecting unnecessary sensitive health information.
 
@@ -354,9 +354,9 @@ Private messaging is a measurable referral channel. It is also vulnerable to imp
 - Rebrands and mirror domains with no verifiable entity continuity
 - Platform ROAS screenshots with no settlement, reserve, refund, commission, or legal-cost reconciliation
 
-## Decision boundary for OVO
+## Decision boundary for Noli
 
-OVO's edge is distribution and operating discipline, not regulatory ambiguity. The company works with 250 creators, which can create meaningful demand quickly. That same network can amplify one bad script, undisclosed relationship, fake claim, or unqualified consultation just as quickly.
+Noli's edge is access to OVO Talent's distribution and operating discipline, not regulatory ambiguity. OVO Talent works with 250 creators, which can create meaningful demand quickly. That same network can amplify one bad script, undisclosed relationship, fake claim, or unqualified consultation just as quickly.
 
 The clean opportunity is:
 
