@@ -102,6 +102,22 @@ test('LaunchAgent XML values are escaped', () => {
   assert.equal(xml('a&<b>"\''), 'a&amp;&lt;b&gt;&quot;&apos;');
 });
 
+test('relay install gives cold startup and rollback a thirty-second health window', async () => {
+  const source = await fs.readFile(
+    new URL('../scripts/install-relay.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /const RELAY_START_ATTEMPTS = 150/);
+  assert.match(
+    source,
+    /attempt < RELAY_START_ATTEMPTS/,
+  );
+  assert.match(
+    source,
+    /error instanceof AggregateError[\s\S]*error\.errors\.map/,
+  );
+});
+
 test('the sidecar refuses Tailscale builds older than the security floor', () => {
   assert.equal(versionAtLeast('1.98.9', '1.98.9'), true);
   assert.equal(versionAtLeast('1.100.0', '1.98.9'), true);
