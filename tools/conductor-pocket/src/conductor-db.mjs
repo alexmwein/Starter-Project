@@ -6,6 +6,7 @@ import { DB_POLL_MS } from './constants.mjs';
 function workspaceDisplayName(row) {
   return (
     row.workspace_name ||
+    row.secondary_directory_name?.replaceAll('-', ' ') ||
     row.placeholder_branch_name ||
     row.branch ||
     row.directory_name ||
@@ -129,6 +130,7 @@ export class ConductorDatabase {
         SELECT
           w.id,
           w.workspace_name,
+          w.secondary_directory_name,
           w.placeholder_branch_name,
           w.branch,
           w.directory_name,
@@ -191,6 +193,7 @@ export class ConductorDatabase {
           s.updated_at,
           s.last_user_message_at,
           w.workspace_name,
+          w.secondary_directory_name,
           w.placeholder_branch_name,
           w.branch,
           w.directory_name
@@ -211,6 +214,7 @@ export class ConductorDatabase {
             s.agent_type,
             s.model,
             w.workspace_name,
+            w.secondary_directory_name,
             w.placeholder_branch_name,
             w.branch,
             w.directory_name,
@@ -260,6 +264,45 @@ export class ConductorDatabase {
         SELECT COALESCE(MAX(rowid), 0) AS row_id
         FROM session_messages
         WHERE session_id = ?
+      `),
+      exactUserMessageAfter: this.#db.prepare(`
+        SELECT
+          rowid AS row_id,
+          id,
+          role,
+          content,
+          created_at,
+          sent_at,
+          cancelled_at,
+          model,
+          turn_id
+        FROM session_messages
+        WHERE session_id = ?
+          AND rowid > ?
+          AND role = 'user'
+          AND content COLLATE BINARY = ?
+          AND cancelled_at IS NULL
+        ORDER BY rowid
+        LIMIT 1
+      `),
+      userMessagesAfter: this.#db.prepare(`
+        SELECT
+          rowid AS row_id,
+          id,
+          role,
+          content,
+          created_at,
+          sent_at,
+          cancelled_at,
+          model,
+          turn_id
+        FROM session_messages
+        WHERE session_id = ?
+          AND rowid > ?
+          AND role = 'user'
+          AND cancelled_at IS NULL
+        ORDER BY rowid
+        LIMIT 100
       `),
     };
   }
@@ -334,6 +377,28 @@ export class ConductorDatabase {
     };
   }
 
+  getSessionMessageCursor(sessionId) {
+    return Number(this.#statements.maxRowId.get(sessionId).row_id);
+  }
+
+  findExactUserMessageAfter(sessionId, afterRowId, exactContent) {
+    const safeAfter = Math.max(0, Number(afterRowId) || 0);
+    if (typeof exactContent !== 'string') return null;
+    const row = this.#statements.exactUserMessageAfter.get(
+      sessionId,
+      safeAfter,
+      exactContent,
+    );
+    return row ? parseAssistantRow(row)[0] : null;
+  }
+
+  listUserMessagesAfter(sessionId, afterRowId) {
+    const safeAfter = Math.max(0, Number(afterRowId) || 0);
+    return this.#statements.userMessagesAfter
+      .all(sessionId, safeAfter)
+      .flatMap(parseAssistantRow);
+  }
+
   listMessages(sessionId, { after = 0, limit = 500 } = {}) {
     if (!this.getSessionRoute(sessionId)) return null;
     const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 1000));
@@ -348,7 +413,7 @@ export class ConductorDatabase {
     const cursor =
       rows.length > 0
         ? Number(rows.at(-1).row_id)
-        : Number(this.#statements.maxRowId.get(sessionId).row_id);
+        : this.getSessionMessageCursor(sessionId);
     return { cursor, messages };
   }
 }
