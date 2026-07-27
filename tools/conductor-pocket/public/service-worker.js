@@ -1,10 +1,10 @@
-const CACHE = 'conductor-pocket-shell-v5';
+const CACHE = 'conductor-pocket-shell-v8';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css',
-  '/app.js?v=0.2.0-unconfirmed-cleanup-1',
-  '/delivery-receipts.js?v=0.2.0-unconfirmed-cleanup-1',
+  '/app.css?v=0.2.0-performance-3',
+  '/app.js?v=0.2.0-performance-3',
+  '/delivery-receipts.js?v=0.2.0-performance-3',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -17,6 +17,21 @@ const SHELL_PATHS = new Set([
   '/icon.svg',
   '/manifest.webmanifest',
 ]);
+const VERSIONED_SHELL_PATHS = new Set([
+  '/app.css',
+  '/app.js',
+  '/delivery-receipts.js',
+]);
+
+function fetchAndCache(request) {
+  return fetch(request).then((response) => {
+    if (response.ok) {
+      const clone = response.clone();
+      void caches.open(CACHE).then((cache) => cache.put(request, clone));
+    }
+    return response;
+  });
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
@@ -70,15 +85,20 @@ self.addEventListener('fetch', (event) => {
   ) {
     return;
   }
+  const versionedAsset =
+    VERSIONED_SHELL_PATHS.has(requestUrl.pathname) &&
+    requestUrl.searchParams.has('v');
+  if (versionedAsset) {
+    event.respondWith(
+      caches
+        .match(event.request)
+        .then((response) => response || fetchAndCache(event.request))
+        .catch(() => caches.match('/')),
+    );
+    return;
+  }
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      })
+    fetchAndCache(event.request)
       .catch(() => caches.match(event.request).then((response) => response || caches.match('/'))),
   );
 });

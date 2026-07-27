@@ -213,6 +213,26 @@ test('message submission posts Return only to Conductor after exact revalidation
   assert.match(source, /commitResult starts with "ambiguous:"/);
   assert.match(source, /commitResult starts with "interrupted:"/);
   assert.match(source, /send_interrupted/);
+  assert.match(
+    source,
+    /set routeAlreadySelected to my sessionIsSelected\(sessionTitle, sessionOrdinal\)/,
+  );
+  assert.match(
+    source,
+    /set sessionFound to routeAlreadySelected[\s\S]*if sessionFound is false then[\s\S]*repeat with waitIndex from 1 to 50/,
+  );
+  assert.match(
+    source,
+    /set stableRouteChecks to 0[\s\S]*repeat with waitIndex from 1 to 50[\s\S]*set stableRouteChecks to stableRouteChecks \+ 1[\s\S]*if stableRouteChecks is 3 then exit repeat/,
+  );
+  assert.match(
+    source,
+    /commitResult starts with "pressed:"[\s\S]*return "\{\\"ok\\":true,\\"code\\":\\"sent\\"/,
+  );
+  const postCommit = source.slice(
+    source.indexOf('set commitResult to my commitAndPressMessage'),
+  );
+  assert.doesNotMatch(postCommit, /repeat with waitIndex from 1 to 40/);
   assert.doesNotMatch(source, /set bestX to/);
   assert.doesNotMatch(source, /\/bin\/date \+%s/);
 });

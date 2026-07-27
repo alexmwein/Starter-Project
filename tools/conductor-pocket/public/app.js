@@ -1,7 +1,7 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-unconfirmed-cleanup-1';
+} from './delivery-receipts.js?v=0.2.0-performance-3';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -948,13 +948,21 @@ async function startApplication() {
   await restorePendingDeliveries();
   ensureShell();
   updateRoutePanels();
-  const cachedWorkspaces = await cacheGet('workspaces');
+  const [cachedWorkspaces, cachedRecentSessions] = await Promise.all([
+    cacheGet('workspaces'),
+    cacheGet('recent-sessions'),
+  ]);
   if (Array.isArray(cachedWorkspaces)) {
     state.workspaces = cachedWorkspaces;
     renderWorkspacePanel();
   }
-  await refreshWorkspaces();
-  await loadRecentSessions();
+  if (Array.isArray(cachedRecentSessions)) {
+    state.recentSessions = cachedRecentSessions;
+  }
+  await Promise.all([
+    refreshWorkspaces(),
+    loadRecentSessions(),
+  ]);
   await restoreRoute();
   startEvents();
   void recoverPendingDeliveries();
@@ -1367,9 +1375,9 @@ function workspaceRow(workspace) {
     type: 'button',
     'aria-current': state.route.workspaceId === workspace.id ? 'true' : 'false',
     on: {
-      click: async () => {
-        await loadSessions(workspace.id);
+      click: () => {
         navigate({ view: 'sessions', workspaceId: workspace.id, sessionId: null });
+        void loadSessions(workspace.id);
       },
     },
   }, [
@@ -1439,7 +1447,7 @@ function sessionRow(session, { crossWorkspace = false } = {}) {
     on: {
       click: async () => {
         if (crossWorkspace && session.workspaceId !== state.route.workspaceId) {
-          await loadSessions(session.workspaceId);
+          void loadSessions(session.workspaceId);
         }
         closeOverlay();
         await openSession(session.id, {
@@ -1801,9 +1809,11 @@ async function sendCurrentMessage() {
   if (!sessionId || !field) return;
   const text = field.value.replace(/\r\n?/g, '\n');
   if (!text.trim() || state.connection === 'offline') return;
+  const idempotencyKey = randomIdempotencyKey();
   const optimistic = {
     id: `optimistic:${randomIdempotencyKey()}`,
-    idempotencyKey: randomIdempotencyKey(),
+    idempotencyKey,
+    activeDeliveryKey: idempotencyKey,
     kind: 'optimistic',
     sessionId,
     text,
@@ -1824,13 +1834,19 @@ async function sendCurrentMessage() {
   saveDraft(sessionId, '');
   state.shell.composer.resize();
   renderTranscript();
-  await deliverOptimistic(optimistic);
+  await deliverOptimistic(optimistic, { deliveryIdentityPersisted: true });
 }
 
 async function deliverOptimistic(
   optimistic,
-  { replaceDraft = false, expectedMacDraft = optimistic.macDraft } = {},
+  {
+    replaceDraft = false,
+    expectedMacDraft = optimistic.macDraft,
+    deliveryIdentityPersisted = false,
+  } = {},
 ) {
+  const previousDeliveryKey = optimistic.activeDeliveryKey;
+  const previousReplaceDraft = optimistic.replaceDraft === true;
   optimistic.replaceDraft = replaceDraft;
   if (replaceDraft && !optimistic.replaceIdempotencyKey) {
     optimistic.replaceIdempotencyKey = randomIdempotencyKey();
@@ -1839,14 +1855,19 @@ async function deliverOptimistic(
     ? optimistic.replaceIdempotencyKey
     : optimistic.idempotencyKey;
   optimistic.activeDeliveryKey = deliveryKey;
-  try {
-    await persistPendingDeliveries({ required: true });
-  } catch {
-    optimistic.delivery = 'failed';
-    optimistic.errorCode = 'secure_delivery_storage_unavailable';
-    optimistic.retrySafe = true;
-    renderTranscript();
-    return;
+  const deliveryIdentityChanged =
+    previousDeliveryKey !== deliveryKey ||
+    previousReplaceDraft !== replaceDraft;
+  if (!deliveryIdentityPersisted || deliveryIdentityChanged) {
+    try {
+      await persistPendingDeliveries({ required: true });
+    } catch {
+      optimistic.delivery = 'failed';
+      optimistic.errorCode = 'secure_delivery_storage_unavailable';
+      optimistic.retrySafe = true;
+      renderTranscript();
+      return;
+    }
   }
   try {
     const result = await fetch(
@@ -1878,14 +1899,15 @@ async function deliverOptimistic(
       throw error;
     }
     applyDeliveryReceipt(optimistic, payload);
-    await persistPendingDeliveries();
+    const persistence = persistPendingDeliveries();
     state.connectionProbe = {
       sendPath: true,
       capabilities: { send: true },
     };
     renderTranscript();
     announce('Message delivered');
-    setTimeout(() => refreshMessages(optimistic.sessionId, { full: true }), 120);
+    void refreshMessages(optimistic.sessionId, { full: true });
+    await persistence;
   } catch (error) {
     optimistic.errorCode = error.code;
     if (error.code === 'draft_conflict') {
@@ -2229,7 +2251,6 @@ function closeOverlay(onClose) {
 }
 
 async function openSwitcher() {
-  await loadRecentSessions();
   const search = node('input', {
     className: 'search-input',
     type: 'search',
@@ -2263,6 +2284,7 @@ async function openSwitcher() {
     ]),
     { className: 'switcher' },
   );
+  void loadRecentSessions().then(render);
 }
 
 async function openConnectionSheet() {

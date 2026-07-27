@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
+import { brotliDecompressSync } from 'node:zlib';
 import { createConfig } from '../src/config.mjs';
 import { sha256 } from '../src/encoding.mjs';
 import {
@@ -58,7 +59,15 @@ async function close(server) {
   });
 }
 
-function get(port, { pathname = '/', host = '127.0.0.1:4317', method = 'GET' } = {}) {
+function get(
+  port,
+  {
+    pathname = '/',
+    host = '127.0.0.1:4317',
+    method = 'GET',
+    headers = {},
+  } = {},
+) {
   return new Promise((resolve, reject) => {
     const request = http.request(
       {
@@ -66,18 +75,20 @@ function get(port, { pathname = '/', host = '127.0.0.1:4317', method = 'GET' } =
         port,
         path: pathname,
         method,
-        headers: { Host: host },
+        headers: { Host: host, ...headers },
       },
       (response) => {
         const chunks = [];
         response.on('data', (chunk) => chunks.push(chunk));
-        response.on('end', () =>
+        response.on('end', () => {
+          const rawBody = Buffer.concat(chunks);
           resolve({
             status: response.statusCode,
             headers: response.headers,
-            body: Buffer.concat(chunks).toString('utf8'),
-          }),
-        );
+            body: rawBody.toString('utf8'),
+            rawBody,
+          });
+        });
       },
     );
     request.on('error', reject);
@@ -214,6 +225,35 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
   const applicationScript = await get(port, { pathname: '/app.js' });
   assert.equal(applicationScript.status, 200);
   assert.equal(applicationScript.headers['cache-control'], 'no-cache');
+
+  const compressedScript = await get(port, {
+    pathname: '/app.js',
+    headers: { 'Accept-Encoding': 'gzip, br' },
+  });
+  assert.equal(compressedScript.status, 200);
+  assert.equal(compressedScript.headers['content-encoding'], 'br');
+  assert.equal(compressedScript.headers.vary, 'Accept-Encoding');
+  assert.ok(
+    compressedScript.rawBody.length <
+      Buffer.byteLength(applicationScript.body),
+  );
+  assert.equal(
+    brotliDecompressSync(compressedScript.rawBody).toString('utf8'),
+    applicationScript.body,
+  );
+
+  const disabledCompression = await get(port, {
+    pathname: '/app.js',
+    headers: { 'Accept-Encoding': 'br;q=0' },
+  });
+  assert.equal(disabledCompression.headers['content-encoding'], undefined);
+  assert.match(
+    await fs.readFile(
+      new URL('../src/server.mjs', import.meta.url),
+      'utf8',
+    ),
+    /try \{[\s\S]*brotli = await brotliCompressAsync[\s\S]*\} catch \{[\s\S]*Compression is optional/,
+  );
 });
 
 test('production shell emits HTTPS upgrade and HSTS', async (context) => {
@@ -1544,6 +1584,10 @@ test('service worker handles only Pocket shell paths and Pocket-owned caches', a
     source,
     /matchAll\(\{ type: 'window', includeUncontrolled: true \}\)/,
   );
+  assert.match(
+    source,
+    /VERSIONED_SHELL_PATHS\.has\(requestUrl\.pathname\)[\s\S]*caches[\s\S]*\.match\(event\.request\)[\s\S]*response \|\| fetchAndCache\(event\.request\)/,
+  );
 });
 
 test('Pocket shell asset versions remain consistent across the rollout', async () => {
@@ -1564,8 +1608,17 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const appVersion = document.match(
     /src="\/app\.js\?v=([^"]+)"/,
   )?.[1];
+  const cssVersion = document.match(
+    /href="\/app\.css\?v=([^"]+)"/,
+  )?.[1];
+  const preloadVersion = document.match(
+    /rel="modulepreload" href="\/delivery-receipts\.js\?v=([^"]+)"/,
+  )?.[1];
   const cachedAppVersion = serviceWorker.match(
     /'\/app\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedCssVersion = serviceWorker.match(
+    /'\/app\.css\?v=([^']+)'/,
   )?.[1];
   const receiptsVersion = application.match(
     /from '\.\/delivery-receipts\.js\?v=([^']+)'/,
@@ -1575,9 +1628,43 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   )?.[1];
 
   assert.ok(appVersion);
+  assert.equal(cssVersion, appVersion);
+  assert.equal(preloadVersion, appVersion);
   assert.equal(cachedAppVersion, appVersion);
+  assert.equal(cachedCssVersion, appVersion);
   assert.equal(receiptsVersion, appVersion);
   assert.equal(cachedReceiptsVersion, appVersion);
+});
+
+test('Pocket navigation paints cached routes before live refreshes finish', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const switcherStart = source.indexOf('async function openSwitcher');
+  const connectionSheetStart = source.indexOf(
+    'async function openConnectionSheet',
+  );
+  const switcherBlock = source.slice(
+    switcherStart,
+    connectionSheetStart,
+  );
+
+  assert.match(
+    source,
+    /click: \(\) => \{[\s\S]*navigate\(\{ view: 'sessions', workspaceId: workspace\.id, sessionId: null \}\);[\s\S]*void loadSessions\(workspace\.id\)/,
+  );
+  assert.match(
+    source,
+    /if \(crossWorkspace && session\.workspaceId !== state\.route\.workspaceId\) \{[\s\S]*void loadSessions\(session\.workspaceId\);[\s\S]*\}[\s\S]*await openSession\(session\.id/,
+  );
+  assert.ok(switcherStart >= 0);
+  assert.ok(connectionSheetStart > switcherStart);
+  assert.doesNotMatch(switcherBlock, /await loadRecentSessions\(\)/);
+  assert.match(
+    switcherBlock,
+    /openSheet\([\s\S]*void loadRecentSessions\(\)\.then\(render\)/,
+  );
 });
 
 test('sign-out purge removes the Pocket cache and root service worker', async () => {
@@ -1614,7 +1701,13 @@ test('pending sends persist before draft clearing and recover for the full send 
     optimisticPush,
   );
   const draftClear = source.indexOf("field.value = ''", requiredPersistence);
+  const durableActiveKey = source.indexOf(
+    'activeDeliveryKey: idempotencyKey',
+    optimisticPush - 500,
+  );
   assert.ok(optimisticPush >= 0);
+  assert.ok(durableActiveKey >= 0);
+  assert.ok(durableActiveKey < requiredPersistence);
   assert.ok(requiredPersistence > optimisticPush);
   assert.ok(draftClear > requiredPersistence);
   assert.match(source, /const DELIVERY_RECOVERY_MS = 27_000/);
@@ -1627,6 +1720,33 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.match(
     source,
     /!error\.status\s*\|\|\s*error\.code === 'send_not_confirmed'[\s\S]*await checkDelivery\(optimistic\)/,
+  );
+  assert.match(
+    source,
+    /await deliverOptimistic\(optimistic, \{ deliveryIdentityPersisted: true \}\)/,
+  );
+  assert.match(
+    source,
+    /const deliveryIdentityChanged[\s\S]*if \(!deliveryIdentityPersisted \|\| deliveryIdentityChanged\) \{[\s\S]*await persistPendingDeliveries\(\{ required: true \}\)[\s\S]*fetch\(/,
+  );
+  const retryStart = source.indexOf('function retryMessage');
+  const conflictStart = source.indexOf('function openDraftConflict', retryStart);
+  const retryBlock = source.slice(retryStart, conflictStart);
+  assert.match(
+    retryBlock,
+    /deliverOptimistic\(message, \{ replaceDraft: message\.replaceDraft === true \}\)/,
+  );
+  assert.doesNotMatch(
+    retryBlock,
+    /deliveryIdentityPersisted: true/,
+  );
+  assert.match(
+    source,
+    /applyDeliveryReceipt\(optimistic, payload\)[\s\S]*renderTranscript\(\)[\s\S]*refreshMessages\(optimistic\.sessionId, \{ full: true \}\)[\s\S]*await persistence/,
+  );
+  assert.doesNotMatch(
+    source,
+    /setTimeout\(\(\) => refreshMessages\(optimistic\.sessionId, \{ full: true \}\), 120\)/,
   );
   const persistStart = source.indexOf(
     'async function persistPendingDeliveries',
@@ -1677,4 +1797,8 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.ok(restoreWrite > restoreDiscard);
   assert.ok(startupRestore >= 0);
   assert.ok(startupRecovery > startupRestore);
+  assert.match(
+    startApplicationBlock,
+    /Promise\.all\(\[[\s\S]*refreshWorkspaces\(\)[\s\S]*loadRecentSessions\(\)[\s\S]*\]\)/,
+  );
 });
