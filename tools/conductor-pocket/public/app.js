@@ -1,4 +1,7 @@
-import { reconcileDeliveryReceipts } from './delivery-receipts.js?v=0.2.0-delivery-fix-2';
+import {
+  discardTerminalUnconfirmedDeliveries,
+  reconcileDeliveryReceipts,
+} from './delivery-receipts.js?v=0.2.0-unconfirmed-cleanup-1';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -777,7 +780,14 @@ function pendingDeliverySnapshot() {
     .filter(Boolean);
 }
 
+function discardTerminalUnconfirmed() {
+  const result = discardTerminalUnconfirmedDeliveries(state.optimistic);
+  state.optimistic = result.remaining;
+  return result.discarded;
+}
+
 async function persistPendingDeliveries({ required = false } = {}) {
+  discardTerminalUnconfirmed();
   const snapshot = pendingDeliverySnapshot();
   if (required) {
     await cacheSetRequired(PENDING_DELIVERIES_KEY, snapshot);
@@ -791,6 +801,9 @@ async function restorePendingDeliveries() {
   state.optimistic = Array.isArray(cached)
     ? cached.map(sanitizePendingDelivery).filter(Boolean)
     : [];
+  if (discardTerminalUnconfirmed().length > 0) {
+    await cacheSet(PENDING_DELIVERIES_KEY, pendingDeliverySnapshot());
+  }
 }
 
 async function clearTranscriptCache() {
