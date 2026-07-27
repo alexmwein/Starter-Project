@@ -1,10 +1,10 @@
-const CACHE = 'conductor-pocket-shell-v8';
+const CACHE = 'conductor-pocket-shell-v9';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-performance-3',
-  '/app.js?v=0.2.0-performance-3',
-  '/delivery-receipts.js?v=0.2.0-performance-3',
+  '/app.css?v=0.2.0-trusted-device-1',
+  '/app.js?v=0.2.0-trusted-device-1',
+  '/delivery-receipts.js?v=0.2.0-trusted-device-1',
   '/icon.svg',
   '/manifest.webmanifest',
 ];

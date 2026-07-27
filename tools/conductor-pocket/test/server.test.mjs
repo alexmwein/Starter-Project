@@ -4,7 +4,9 @@ import http from 'node:http';
 import test from 'node:test';
 import { brotliDecompressSync } from 'node:zlib';
 import { createConfig } from '../src/config.mjs';
+import { SESSION_COOKIE } from '../src/constants.mjs';
 import { sha256 } from '../src/encoding.mjs';
+import { HttpError } from '../src/errors.mjs';
 import {
   createPocketServer,
   reconcileExactUserMessage,
@@ -93,6 +95,45 @@ function get(
     );
     request.on('error', reject);
     request.end();
+  });
+}
+
+function postJson(
+  port,
+  pathname,
+  payload,
+  { host = '127.0.0.1:4317', headers = {} } = {},
+) {
+  const body = JSON.stringify(payload);
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: pathname,
+        method: 'POST',
+        headers: {
+          Host: host,
+          Origin: `http://${host}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          ...headers,
+        },
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    request.end(body);
   });
 }
 
@@ -273,6 +314,96 @@ test('production shell emits HTTPS upgrade and HSTS', async (context) => {
   assert.match(page.headers['strict-transport-security'], /max-age=31536000/);
 });
 
+test('auth endpoints preserve explicit lock intent and refreshed secure cookies', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const lockCalls = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      async lock(_request, options) {
+        lockCalls.push(options);
+        return { locked: options.explicit };
+      },
+      async verifyAuthentication() {
+        return {
+          unlocked: true,
+          csrfToken: 'refreshed-csrf',
+          setCookie:
+            `${SESSION_COOKIE}=opaque; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000`,
+        };
+      },
+    },
+    database: {},
+    watcher: createWatcher(),
+    transport: {},
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const explicit = await postJson(
+    port,
+    '/api/auth/lock',
+    { explicit: true },
+  );
+  const legacy = await postJson(port, '/api/auth/lock', {});
+  const verified = await postJson(
+    port,
+    '/api/auth/verify',
+    { response: { id: 'credential' } },
+  );
+
+  assert.equal(explicit.status, 200);
+  assert.equal(legacy.status, 200);
+  assert.deepEqual(lockCalls, [
+    { explicit: true },
+    { explicit: false },
+  ]);
+  assert.equal(verified.status, 200);
+  assert.equal(
+    verified.headers['set-cookie'][0],
+    `${SESSION_COOKIE}=opaque; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000`,
+  );
+  assert.deepEqual(JSON.parse(verified.body), {
+    unlocked: true,
+    csrfToken: 'refreshed-csrf',
+  });
+});
+
+test('a freshly rejected event stream emits a lock event for cached clients', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      session() {
+        throw new HttpError(423, 'device_locked');
+      },
+    },
+    database: {},
+    watcher: createWatcher(),
+    transport: {},
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await get(port, { pathname: '/api/events' });
+  assert.equal(response.status, 200);
+  assert.match(
+    response.headers['content-type'],
+    /text\/event-stream/,
+  );
+  assert.equal(response.headers.connection, 'close');
+  assert.equal(
+    response.body,
+    'event: locked\ndata: {"code":"device_locked"}\n\n',
+  );
+});
+
 test('connection probe reports the real relay version', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -288,6 +419,67 @@ test('connection probe reports the real relay version', async (context) => {
   assert.equal(connection.relayVersion, '0.2.0');
   assert.equal(connection.conductor, true);
   assert.equal(connection.sendPath, true);
+});
+
+test('a send rechecks the durable lock immediately before touching Conductor', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sessionChecks = 0;
+  let sends = 0;
+  let cursorReads = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        sessionChecks += 1;
+        if (sessionChecks > 1) {
+          throw new HttpError(423, 'device_locked');
+        }
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        cursorReads += 1;
+        return 0;
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return { ok: true, code: 'sent' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'lock_boundary_recheck_key',
+  });
+  assert.equal(response.status, 423);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: { code: 'device_locked' },
+  });
+  assert.equal(sessionChecks, 2);
+  assert.equal(cursorReads, 0);
+  assert.equal(sends, 0);
 });
 
 test('a pre-send failure can retry without weakening ambiguous-send idempotency', async (context) => {
@@ -1634,6 +1826,52 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(cachedCssVersion, appVersion);
   assert.equal(receiptsVersion, appVersion);
   assert.equal(cachedReceiptsVersion, appVersion);
+});
+
+test('remembered Tailnet access keeps the privacy shield without background auto-lock', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /state\.auth\.reauthenticationMode === TAILSCALE_SESSION_MODE/,
+  );
+  assert.match(source, /if \(awayTooLong && !trustedSession\)/);
+  assert.match(
+    source,
+    /request\('\/api\/auth\/lock'[\s\S]*body: \{ explicit: true \}/,
+  );
+  assert.match(source, /id: 'privacy-shield'/);
+  assert.match(source, /shieldApplication\(\)/);
+  assert.match(source, /stopEvents\(\)/);
+  assert.match(source, /state\.visibilityEpoch \+= 1/);
+  assert.match(
+    source,
+    /document\.hidden \|\|[\s\S]*revealEpoch !== state\.visibilityEpoch/,
+  );
+  assert.match(
+    source,
+    /code === 'device_session_expired'[\s\S]*purgeThenRenderSignedOut/,
+  );
+  assert.match(
+    source,
+    /code === 'device_identity_mismatch'[\s\S]*renderConnectionGate\(code\)/,
+  );
+  const verifyRequest = source.indexOf(
+    "await request('/api/auth/verify'",
+  );
+  const postVerifyBootstrap = source.indexOf(
+    "auth = await request('/api/auth/bootstrap')",
+    verifyRequest,
+  );
+  const postVerifyStart = source.indexOf(
+    'await startApplication()',
+    postVerifyBootstrap,
+  );
+  assert.ok(verifyRequest >= 0);
+  assert.ok(postVerifyBootstrap > verifyRequest);
+  assert.ok(postVerifyStart > postVerifyBootstrap);
 });
 
 test('Pocket navigation paints cached routes before live refreshes finish', async () => {

@@ -14,8 +14,14 @@ import {
   originRetirementComplete,
   rotatePairing,
   saveConfig,
+  setReauthenticationMode,
   validateConfig,
 } from '../src/config.mjs';
+import {
+  DEVICE_SESSION_TTL_SECONDS,
+  REAUTHENTICATION_MODE_FACE_ID,
+  REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+} from '../src/constants.mjs';
 
 test('configuration is loopback-only and stores only a pairing digest', async (context) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'conductor-pocket-config-'));
@@ -29,6 +35,10 @@ test('configuration is loopback-only and stores only a pairing digest', async (c
 
   assert.equal(config.bindHost, '127.0.0.1');
   assert.equal(config.requireTailscaleIdentity, false);
+  assert.equal(
+    config.reauthenticationMode,
+    REAUTHENTICATION_MODE_FACE_ID,
+  );
   assert.equal(config.rpId, '127.0.0.1');
   assert.notEqual(config.pairing.codeHash, pairingCode);
   assert.equal(JSON.stringify(config).includes(pairingCode), false);
@@ -180,5 +190,156 @@ test('live config updates reload the latest locked file before mutating', async 
 
   const saved = await loadConfig(configPath);
   assert.equal(saved.allowedTailscaleLogin, 'alex@example.com');
-  assert.deepEqual(saved.devices, [{ id: 'phone-a' }]);
+  assert.deepEqual(saved.devices, [
+    {
+      id: 'phone-a',
+      lockGeneration: 0,
+      previousSessionHash: null,
+      previousSessionExpiresAt: null,
+      sessionExpiresAt: null,
+      trustedUntil: null,
+      lockedAt: null,
+    },
+  ]);
+});
+
+test('trusted Tailnet mode migrates paired devices once and starts locked', () => {
+  const now = Date.parse('2026-07-27T20:00:00.000Z');
+  const { config } = createConfig({
+    publicOrigin: 'https://pocket.example.ts.net',
+  });
+  config.allowedTailscaleLogin = 'alex@example.com';
+  config.devices = [
+    {
+      id: 'phone-a',
+      sessionHash: 'session-a',
+      tailscaleLogin: 'alex@example.com',
+    },
+  ];
+
+  const trusted = setReauthenticationMode(
+    config,
+    REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+    now,
+  );
+  assert.equal(
+    trusted.reauthenticationMode,
+    REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+  );
+  assert.deepEqual(trusted.devices[0], {
+    id: 'phone-a',
+    sessionHash: 'session-a',
+    tailscaleLogin: 'alex@example.com',
+    lockGeneration: 1,
+    previousSessionHash: null,
+    previousSessionExpiresAt: null,
+    sessionExpiresAt: new Date(
+      now + DEVICE_SESSION_TTL_SECONDS * 1_000,
+    ).toISOString(),
+    trustedUntil: null,
+    lockedAt: new Date(now).toISOString(),
+  });
+
+  const repeated = setReauthenticationMode(
+    trusted,
+    REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+    now + 60_000,
+  );
+  assert.deepEqual(repeated, trusted);
+  assert.notEqual(configRevision(trusted), configRevision(config));
+});
+
+test('trusted Tailnet mode fails closed without an exact pinned identity and expiry', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://pocket.example.ts.net',
+  });
+  config.devices = [
+    {
+      id: 'phone-a',
+      tailscaleLogin: 'alex@example.com',
+    },
+  ];
+  assert.throws(
+    () =>
+      setReauthenticationMode(
+        config,
+        REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+      ),
+    /paired, pinned Tailscale identity/,
+  );
+
+  config.allowedTailscaleLogin = 'alex@example.com';
+  const trusted = setReauthenticationMode(
+    config,
+    REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+    1_000,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...trusted,
+        devices: trusted.devices.map((device) => ({
+          ...device,
+          sessionExpiresAt: null,
+        })),
+      }),
+    /server-side device expiry/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...trusted,
+        devices: trusted.devices.map((device) => ({
+          ...device,
+          tailscaleLogin: 'other@example.com',
+        })),
+      }),
+    /pinned identity/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...trusted,
+        devices: trusted.devices.map((device) => ({
+          ...device,
+          previousSessionHash: 'orphaned-old-session',
+          previousSessionExpiresAt: null,
+        })),
+      }),
+    /hash and expiry/,
+  );
+});
+
+test('dedicated-origin migration resets trusted access before new pairing', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+  });
+  config.allowedTailscaleLogin = 'alex@example.com';
+  config.devices = [
+    {
+      id: 'phone-a',
+      sessionHash: 'session-a',
+      tailscaleLogin: 'alex@example.com',
+    },
+  ];
+  const trusted = setReauthenticationMode(
+    config,
+    REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+    1_000,
+  );
+  const retirement = beginOriginRetirement(trusted, 2_000);
+  retirement.devices = [];
+  retirement.originRetirement.retiredDeviceIds = ['phone-a'];
+
+  const migrated = migrateToDedicatedOrigin(
+    retirement,
+    'https://conductor-pocket.example.ts.net',
+    3_000,
+  );
+  assert.equal(
+    migrated.config.reauthenticationMode,
+    REAUTHENTICATION_MODE_FACE_ID,
+  );
+  assert.equal(migrated.config.allowedTailscaleLogin, null);
+  assert.deepEqual(migrated.config.devices, []);
 });

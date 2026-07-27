@@ -6,8 +6,11 @@ import {
   DEFAULT_CONFIG_PATH,
   DEFAULT_DB_PATH,
   DEFAULT_PORT,
+  DEVICE_SESSION_TTL_SECONDS,
   LOOPBACK_HOST,
   PAIRING_TTL_MS,
+  REAUTHENTICATION_MODE_FACE_ID,
+  REAUTHENTICATION_MODE_TAILSCALE_SESSION,
 } from './constants.mjs';
 import { withOperationLock } from './operation-lock.mjs';
 
@@ -66,6 +69,55 @@ function validateOriginRetirement(raw, publicOrigin) {
   };
 }
 
+function optionalTimestamp(value, label) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`${label} is invalid`);
+  }
+  return new Date(value).toISOString();
+}
+
+function validateDevices(rawDevices) {
+  if (!Array.isArray(rawDevices)) throw new Error('devices must be an array');
+  return rawDevices.map((rawDevice, index) => {
+    assertObject(rawDevice, `devices[${index}]`);
+    const lockGeneration = rawDevice.lockGeneration ?? 0;
+    if (
+      !Number.isSafeInteger(lockGeneration) ||
+      lockGeneration < 0
+    ) {
+      throw new Error(
+        `devices[${index}].lockGeneration is invalid`,
+      );
+    }
+    return {
+      ...rawDevice,
+      lockGeneration,
+      previousSessionHash:
+        typeof rawDevice.previousSessionHash === 'string' &&
+        rawDevice.previousSessionHash
+          ? rawDevice.previousSessionHash
+          : null,
+      previousSessionExpiresAt: optionalTimestamp(
+        rawDevice.previousSessionExpiresAt,
+        `devices[${index}].previousSessionExpiresAt`,
+      ),
+      sessionExpiresAt: optionalTimestamp(
+        rawDevice.sessionExpiresAt,
+        `devices[${index}].sessionExpiresAt`,
+      ),
+      trustedUntil: optionalTimestamp(
+        rawDevice.trustedUntil,
+        `devices[${index}].trustedUntil`,
+      ),
+      lockedAt: optionalTimestamp(
+        rawDevice.lockedAt,
+        `devices[${index}].lockedAt`,
+      ),
+    };
+  });
+}
+
 export function validateConfig(raw) {
   assertObject(raw, 'config');
   if (raw.version !== 1) throw new Error('Unsupported config version');
@@ -86,9 +138,52 @@ export function validateConfig(raw) {
   if (typeof raw.dbPath !== 'string' || !path.isAbsolute(raw.dbPath)) {
     throw new Error('dbPath must be absolute');
   }
-  if (!Array.isArray(raw.devices)) throw new Error('devices must be an array');
   if (typeof raw.requireTailscaleIdentity !== 'boolean') {
     throw new Error('requireTailscaleIdentity must be boolean');
+  }
+  const reauthenticationMode =
+    raw.reauthenticationMode || REAUTHENTICATION_MODE_FACE_ID;
+  const allowedTailscaleLogin = raw.allowedTailscaleLogin || null;
+  if (
+    reauthenticationMode !== REAUTHENTICATION_MODE_FACE_ID &&
+    reauthenticationMode !== REAUTHENTICATION_MODE_TAILSCALE_SESSION
+  ) {
+    throw new Error('reauthenticationMode is invalid');
+  }
+  if (
+    reauthenticationMode === REAUTHENTICATION_MODE_TAILSCALE_SESSION &&
+    !raw.requireTailscaleIdentity
+  ) {
+    throw new Error(
+      'tailscale-session requires mandatory Tailscale identity',
+    );
+  }
+  const devices = validateDevices(raw.devices);
+  if (
+    devices.some(
+      (device) =>
+        Boolean(device.previousSessionHash) !==
+        Boolean(device.previousSessionExpiresAt),
+    )
+  ) {
+    throw new Error(
+      'previous device session hash and expiry must be stored together',
+    );
+  }
+  if (
+    reauthenticationMode === REAUTHENTICATION_MODE_TAILSCALE_SESSION &&
+    (!allowedTailscaleLogin ||
+      devices.some(
+        (device) =>
+          !device.sessionExpiresAt ||
+          typeof device.tailscaleLogin !== 'string' ||
+          device.tailscaleLogin.toLowerCase() !==
+            allowedTailscaleLogin.toLowerCase(),
+      ))
+  ) {
+    throw new Error(
+      'tailscale-session requires a pinned identity and server-side device expiry',
+    );
   }
   const originRetirement = validateOriginRetirement(
     raw.originRetirement,
@@ -97,8 +192,9 @@ export function validateConfig(raw) {
   return {
     ...raw,
     publicOrigin,
-    devices: raw.devices,
-    allowedTailscaleLogin: raw.allowedTailscaleLogin || null,
+    devices,
+    reauthenticationMode,
+    allowedTailscaleLogin,
     pairing: raw.pairing || null,
     originRetirement,
   };
@@ -146,6 +242,7 @@ export function createConfig({
     dbPath,
     developmentMode,
     requireTailscaleIdentity,
+    reauthenticationMode: REAUTHENTICATION_MODE_FACE_ID,
     allowedTailscaleLogin: null,
     csrfSecret: randomToken(32),
     originRetirement: null,
@@ -156,6 +253,52 @@ export function createConfig({
     devices: [],
   });
   return { config, pairingCode };
+}
+
+export function setReauthenticationMode(
+  config,
+  mode,
+  now = Date.now(),
+) {
+  const validated = validateConfig(config);
+  if (validated.reauthenticationMode === mode) {
+    return validated;
+  }
+  if (mode === REAUTHENTICATION_MODE_FACE_ID) {
+    return validateConfig({
+      ...validated,
+      reauthenticationMode: REAUTHENTICATION_MODE_FACE_ID,
+    });
+  }
+  if (mode !== REAUTHENTICATION_MODE_TAILSCALE_SESSION) {
+    throw new Error('reauthenticationMode is invalid');
+  }
+  if (
+    !validated.requireTailscaleIdentity ||
+    !validated.allowedTailscaleLogin ||
+    validated.devices.length === 0
+  ) {
+    throw new Error(
+      'tailscale-session requires a paired, pinned Tailscale identity',
+    );
+  }
+  const lockedAt = new Date(now).toISOString();
+  const sessionExpiresAt = new Date(
+    now + DEVICE_SESSION_TTL_SECONDS * 1000,
+  ).toISOString();
+  return validateConfig({
+    ...validated,
+    reauthenticationMode: REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+    devices: validated.devices.map((device) => ({
+      ...device,
+      sessionExpiresAt,
+      trustedUntil: null,
+      lockedAt,
+      lockGeneration: device.lockGeneration + 1,
+      previousSessionHash: null,
+      previousSessionExpiresAt: null,
+    })),
+  });
 }
 
 export function rotatePairing(config, now = Date.now()) {
@@ -220,6 +363,7 @@ export function migrateToDedicatedOrigin(config, publicOrigin, now = Date.now())
       rpId: new URL(origin).hostname,
       developmentMode: false,
       requireTailscaleIdentity: true,
+      reauthenticationMode: REAUTHENTICATION_MODE_FACE_ID,
       allowedTailscaleLogin: null,
       csrfSecret: randomToken(32),
       originRetirement: null,
@@ -246,9 +390,15 @@ export function configRevision(config) {
     .map((device) => ({
       id: device.id,
       sessionHash: device.sessionHash,
+      previousSessionHash: device.previousSessionHash,
+      previousSessionExpiresAt: device.previousSessionExpiresAt,
       tailscaleLogin: device.tailscaleLogin,
       passkeyId: device.passkey?.id,
       passkeyCounter: device.passkey?.counter,
+      sessionExpiresAt: device.sessionExpiresAt,
+      trustedUntil: device.trustedUntil,
+      lockedAt: device.lockedAt,
+      lockGeneration: device.lockGeneration,
     }))
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
   const retirement = validated.originRetirement
@@ -272,6 +422,7 @@ export function configRevision(config) {
       rpId: validated.rpId,
       developmentMode: validated.developmentMode,
       requireTailscaleIdentity: validated.requireTailscaleIdentity,
+      reauthenticationMode: validated.reauthenticationMode,
       allowedTailscaleLogin: validated.allowedTailscaleLogin,
       csrfSecret: validated.csrfSecret,
       pairing: validated.pairing,

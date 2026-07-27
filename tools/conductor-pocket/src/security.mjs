@@ -10,7 +10,10 @@ import {
   DEVICE_SESSION_TTL_SECONDS,
   PAIR_COOKIE,
   PAIR_SESSION_TTL_MS,
+  REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+  SESSION_ROTATION_GRACE_MS,
   SESSION_COOKIE,
+  TRUSTED_DEVICE_TTL_MS,
   UNLOCK_IDLE_TTL_MS,
   UNLOCK_TTL_MS,
 } from './constants.mjs';
@@ -45,6 +48,17 @@ function sessionCookie(name, value, { maxAge, clear = false } = {}) {
     'Priority=High',
   ];
   return parts.join('; ');
+}
+
+export function authenticationCookieRefresh(
+  rawSessionToken,
+  { trustedMode },
+) {
+  return trustedMode && rawSessionToken
+    ? sessionCookie(SESSION_COOKIE, rawSessionToken, {
+        maxAge: DEVICE_SESSION_TTL_SECONDS,
+      })
+    : null;
 }
 
 function normalizeDeviceName(value) {
@@ -91,6 +105,69 @@ export function evaluateUnlockWindow(window, now, { touch = false } = {}) {
   };
 }
 
+export function evaluateTrustedDeviceSession(device, now) {
+  const sessionExpiresAt = Date.parse(device?.sessionExpiresAt);
+  if (!Number.isFinite(sessionExpiresAt) || sessionExpiresAt <= now) {
+    return {
+      sessionValid: false,
+      unlocked: false,
+      unlockedUntil: 0,
+    };
+  }
+  const trustedUntil = Date.parse(device?.trustedUntil);
+  const lockedAt = Date.parse(device?.lockedAt);
+  if (
+    Number.isFinite(lockedAt) ||
+    !Number.isFinite(trustedUntil) ||
+    trustedUntil <= now
+  ) {
+    return {
+      sessionValid: true,
+      unlocked: false,
+      unlockedUntil: 0,
+    };
+  }
+  return {
+    sessionValid: true,
+    unlocked: true,
+    unlockedUntil: Math.min(sessionExpiresAt, trustedUntil),
+  };
+}
+
+export function assertAuthenticationGeneration(
+  device,
+  expectedLockGeneration,
+) {
+  if (device.lockGeneration !== expectedLockGeneration) {
+    throw new HttpError(409, 'authentication_state_changed');
+  }
+}
+
+export function assertAuthenticationChallengeCurrent(
+  current,
+  expected,
+  now,
+) {
+  if (current !== expected) {
+    throw new HttpError(409, 'authentication_state_changed');
+  }
+  if (expected.expiresAt <= now) {
+    throw new HttpError(401, 'authentication_challenge_expired');
+  }
+}
+
+function trustedDeviceDeadlines(now) {
+  const sessionExpiresAt =
+    now + DEVICE_SESSION_TTL_SECONDS * 1000;
+  return {
+    sessionExpiresAt,
+    trustedUntil: Math.min(
+      sessionExpiresAt,
+      now + TRUSTED_DEVICE_TTL_MS,
+    ),
+  };
+}
+
 export function assertOriginRetirementRevocation({
   retirement,
   currentDeviceId,
@@ -117,10 +194,19 @@ export class SecurityManager {
   #challenges = new Map();
   #unlocks = new Map();
   #pairAttempts = new Map();
+  #verifyAuthenticationResponse;
 
-  constructor(configStore, { now = () => Date.now() } = {}) {
+  constructor(
+    configStore,
+    {
+      now = () => Date.now(),
+      verifyAuthentication =
+        verifyAuthenticationResponse,
+    } = {},
+  ) {
     this.#store = configStore;
     this.#now = now;
+    this.#verifyAuthenticationResponse = verifyAuthentication;
   }
 
   get config() {
@@ -242,7 +328,14 @@ export class SecurityManager {
       verification.registrationInfo;
     const rawSessionToken = randomToken(32);
     const sessionHash = sha256(rawSessionToken);
-    const now = new Date(this.#now()).toISOString();
+    const nowMs = this.#now();
+    const now = new Date(nowMs).toISOString();
+    const trustedMode =
+      this.config.reauthenticationMode ===
+      REAUTHENTICATION_MODE_TAILSCALE_SESSION;
+    const trustedDeadlines = trustedMode
+      ? trustedDeviceDeadlines(nowMs)
+      : null;
     const device = {
       id: pending.deviceId,
       name: pending.deviceName,
@@ -250,6 +343,16 @@ export class SecurityManager {
       createdAt: now,
       lastSeenAt: now,
       sessionHash,
+      previousSessionHash: null,
+      previousSessionExpiresAt: null,
+      sessionExpiresAt: trustedDeadlines
+        ? new Date(trustedDeadlines.sessionExpiresAt).toISOString()
+        : null,
+      trustedUntil: trustedDeadlines
+        ? new Date(trustedDeadlines.trustedUntil).toISOString()
+        : null,
+      lockedAt: null,
+      lockGeneration: 0,
       passkey: {
         id: credential.id,
         publicKey: toBase64Url(credential.publicKey),
@@ -280,11 +383,15 @@ export class SecurityManager {
     });
 
     this.#pendingPairs.delete(pendingKey);
-    const unlock = createUnlockWindow(this.#now());
+    const unlock = createUnlockWindow(nowMs);
     this.#unlocks.set(sessionHash, unlock);
     return {
       device: this.#publicDevice(device),
       csrfToken: this.#csrfToken(device),
+      reauthenticationMode: this.config.reauthenticationMode,
+      unlockedUntil: trustedDeadlines
+        ? new Date(trustedDeadlines.trustedUntil).toISOString()
+        : new Date(unlock.idleUntil).toISOString(),
       setCookies: [
         sessionCookie(SESSION_COOKIE, rawSessionToken, {
           maxAge: DEVICE_SESSION_TTL_SECONDS,
@@ -303,9 +410,24 @@ export class SecurityManager {
     const token = cookies.get(SESSION_COOKIE);
     if (!token) throw new HttpError(401, 'authentication_required');
     const sessionHash = sha256(token);
-    const device = this.config.devices.find((candidate) =>
+    let device = this.config.devices.find((candidate) =>
       safeEqual(candidate.sessionHash, sessionHash),
     );
+    let sessionRotationRequired = false;
+    if (
+      !device &&
+      this.config.reauthenticationMode ===
+        REAUTHENTICATION_MODE_TAILSCALE_SESSION
+    ) {
+      const now = this.#now();
+      device = this.config.devices.find(
+        (candidate) =>
+          typeof candidate.previousSessionHash === 'string' &&
+          safeEqual(candidate.previousSessionHash, sessionHash) &&
+          Date.parse(candidate.previousSessionExpiresAt) > now,
+      );
+      sessionRotationRequired = Boolean(device);
+    }
     if (!device) throw new HttpError(401, 'device_revoked');
     const requestLogin = tailscaleLogin(request);
     if (
@@ -314,7 +436,7 @@ export class SecurityManager {
     ) {
       throw new HttpError(403, 'device_identity_mismatch');
     }
-    const csrfToken = this.#csrfToken(device);
+    const csrfToken = this.#csrfToken(device, sessionHash);
     if (
       requireCsrf &&
       (typeof request.headers['x-csrf-token'] !== 'string' ||
@@ -322,16 +444,36 @@ export class SecurityManager {
     ) {
       throw new HttpError(403, 'csrf_denied');
     }
-    const unlockWindow = this.#unlocks.get(device.sessionHash);
-    const unlock = evaluateUnlockWindow(unlockWindow, this.#now(), { touch });
-    if (!unlock.unlocked && unlockWindow) {
-      this.#unlocks.delete(device.sessionHash);
+    let unlock;
+    if (
+      this.config.reauthenticationMode ===
+      REAUTHENTICATION_MODE_TAILSCALE_SESSION
+    ) {
+      unlock = evaluateTrustedDeviceSession(device, this.#now());
+      if (!unlock.sessionValid) {
+        throw new HttpError(401, 'device_session_expired');
+      }
+      if (sessionRotationRequired) {
+        unlock = {
+          sessionValid: true,
+          unlocked: false,
+          unlockedUntil: 0,
+        };
+      }
+    } else {
+      const unlockWindow = this.#unlocks.get(device.sessionHash);
+      unlock = evaluateUnlockWindow(unlockWindow, this.#now(), { touch });
+      if (!unlock.unlocked && unlockWindow) {
+        this.#unlocks.delete(device.sessionHash);
+      }
     }
     if (requireUnlocked && !unlock.unlocked) {
       throw new HttpError(423, 'device_locked');
     }
     return {
       device,
+      sessionHash,
+      sessionRotationRequired,
       csrfToken,
       unlocked: unlock.unlocked,
       unlockedUntil: unlock.unlocked
@@ -346,6 +488,8 @@ export class SecurityManager {
       authenticated: true,
       unlocked: session.unlocked,
       unlockedUntil: session.unlockedUntil,
+      reauthenticationMode: this.config.reauthenticationMode,
+      sessionRotationRequired: session.sessionRotationRequired,
       csrfToken: session.csrfToken,
       device: this.#publicDevice(session.device),
     };
@@ -353,7 +497,9 @@ export class SecurityManager {
 
   async authenticationOptions(request) {
     this.assertOrigin(request);
-    const { device } = this.session(request, { requireCsrf: true });
+    const { device, sessionHash } = this.session(request, {
+      requireCsrf: true,
+    });
     const options = await generateAuthenticationOptions({
       rpID: this.config.rpId,
       allowCredentials: [
@@ -365,24 +511,29 @@ export class SecurityManager {
       userVerification: 'required',
       timeout: 60_000,
     });
-    this.#challenges.set(device.sessionHash, {
+    this.#challenges.set(sessionHash, {
       challenge: options.challenge,
       expiresAt: this.#now() + CHALLENGE_TTL_MS,
+      lockGeneration: device.lockGeneration,
     });
     return options;
   }
 
   async verifyAuthentication(request, response) {
     this.assertOrigin(request);
-    const { device, csrfToken } = this.session(request, { requireCsrf: true });
-    const pending = this.#challenges.get(device.sessionHash);
+    const {
+      device,
+      sessionHash,
+      csrfToken,
+    } = this.session(request, { requireCsrf: true });
+    const pending = this.#challenges.get(sessionHash);
     if (!pending || pending.expiresAt <= this.#now()) {
-      this.#challenges.delete(device.sessionHash);
+      this.#challenges.delete(sessionHash);
       throw new HttpError(401, 'authentication_challenge_expired');
     }
     let verification;
     try {
-      verification = await verifyAuthenticationResponse({
+      verification = await this.#verifyAuthenticationResponse({
         response,
         expectedChallenge: pending.challenge,
         expectedOrigin: this.config.publicOrigin,
@@ -401,20 +552,83 @@ export class SecurityManager {
     if (!verification.verified) {
       throw new HttpError(401, 'passkey_authentication_failed');
     }
-    this.#challenges.delete(device.sessionHash);
-    const unlock = createUnlockWindow(this.#now());
-    this.#unlocks.set(device.sessionHash, unlock);
-    await this.#store.update((config) => {
+    try {
+      assertAuthenticationChallengeCurrent(
+        this.#challenges.get(sessionHash),
+        pending,
+        this.#now(),
+      );
+    } catch (error) {
+      if (this.#challenges.get(sessionHash) === pending) {
+        this.#challenges.delete(sessionHash);
+      }
+      throw error;
+    }
+    this.#challenges.delete(sessionHash);
+    const now = this.#now();
+    const trustedMode =
+      this.config.reauthenticationMode ===
+      REAUTHENTICATION_MODE_TAILSCALE_SESSION;
+    const trustedDeadlines = trustedMode
+      ? trustedDeviceDeadlines(now)
+      : null;
+    const nextSessionToken = trustedMode ? randomToken(32) : null;
+    const nextSessionHash = nextSessionToken
+      ? sha256(nextSessionToken)
+      : null;
+    const unlock = createUnlockWindow(now);
+    if (!trustedMode) {
+      this.#unlocks.set(device.sessionHash, unlock);
+    } else {
+      this.#unlocks.delete(sessionHash);
+    }
+    const updatedConfig = await this.#store.update((config) => {
       const stored = config.devices.find((candidate) => candidate.id === device.id);
       if (!stored) throw new HttpError(401, 'device_revoked');
+      if (trustedMode) {
+        assertAuthenticationGeneration(
+          stored,
+          pending.lockGeneration,
+        );
+      }
       stored.passkey.counter = verification.authenticationInfo.newCounter;
-      stored.lastSeenAt = new Date(this.#now()).toISOString();
+      stored.lastSeenAt = new Date(now).toISOString();
+      if (trustedDeadlines) {
+        stored.previousSessionHash = sessionHash;
+        stored.previousSessionExpiresAt = new Date(
+          now + SESSION_ROTATION_GRACE_MS,
+        ).toISOString();
+        stored.sessionHash = nextSessionHash;
+        stored.sessionExpiresAt = new Date(
+          trustedDeadlines.sessionExpiresAt,
+        ).toISOString();
+        stored.trustedUntil = new Date(
+          trustedDeadlines.trustedUntil,
+        ).toISOString();
+        stored.lockedAt = null;
+        stored.lockGeneration += 1;
+      }
       return config;
     });
+    const updatedDevice = updatedConfig.devices.find(
+      (candidate) => candidate.id === device.id,
+    );
+    if (!updatedDevice) throw new HttpError(401, 'device_revoked');
     return {
       unlocked: true,
-      unlockedUntil: new Date(unlock.idleUntil).toISOString(),
-      csrfToken,
+      unlockedUntil: new Date(
+        trustedDeadlines
+          ? trustedDeadlines.trustedUntil
+          : unlock.idleUntil,
+      ).toISOString(),
+      reauthenticationMode: this.config.reauthenticationMode,
+      csrfToken: trustedMode
+        ? this.#csrfToken(updatedDevice)
+        : csrfToken,
+      setCookie: authenticationCookieRefresh(
+        nextSessionToken,
+        { trustedMode },
+      ),
     };
   }
 
@@ -431,9 +645,34 @@ export class SecurityManager {
     };
   }
 
-  lock(request) {
+  async lock(request, { explicit = false } = {}) {
     this.assertOrigin(request);
-    const { device } = this.session(request, { requireCsrf: true });
+    const { device, sessionHash } = this.session(request, {
+      requireCsrf: true,
+    });
+    if (
+      this.config.reauthenticationMode ===
+      REAUTHENTICATION_MODE_TAILSCALE_SESSION
+    ) {
+      if (!explicit) {
+        return { locked: false, ignored: true };
+      }
+      this.#challenges.delete(sessionHash);
+      this.#challenges.delete(device.sessionHash);
+      const lockedAt = new Date(this.#now()).toISOString();
+      await this.#store.update((config) => {
+        const stored = config.devices.find(
+          (candidate) => candidate.id === device.id,
+        );
+        if (!stored) throw new HttpError(401, 'device_revoked');
+        stored.lockedAt = lockedAt;
+        stored.trustedUntil = null;
+        stored.lockGeneration += 1;
+        return config;
+      });
+    }
+    this.#challenges.delete(sessionHash);
+    this.#challenges.delete(device.sessionHash);
     this.#unlocks.delete(device.sessionHash);
     return { locked: true };
   }
@@ -486,14 +725,15 @@ export class SecurityManager {
       name: device.name,
       createdAt: device.createdAt,
       lastSeenAt: device.lastSeenAt,
+      sessionExpiresAt: device.sessionExpiresAt || null,
       tailscaleLogin: device.tailscaleLogin,
       passkeyBackedUp: Boolean(device.passkey?.backedUp),
     };
   }
 
-  #csrfToken(device) {
+  #csrfToken(device, sessionHash = device.sessionHash) {
     return createHmac('sha256', this.config.csrfSecret)
-      .update(`csrf:${device.id}:${device.sessionHash}`)
+      .update(`csrf:${device.id}:${sessionHash}`)
       .digest('base64url');
   }
 

@@ -69,11 +69,24 @@ successful passkey registration. A short authentication cookie protects the
 registration ceremony.
 
 Each paired device gets a WebAuthn credential and a separate 256-bit session
-token. Only the token digest and public credential key are persisted. The
-server forgets unlock state on restart. Face ID unlocks for at most one hour
-and expires after five minutes without a heartbeat from a visible app. SSE
-heartbeats never extend that deadline. The PWA stops its stream while hidden
-and adds an opaque privacy shield before iOS takes an app-switcher snapshot.
+token. Only the token digest and public credential key are persisted. Strict
+mode keeps unlock state only in relay memory. Face ID unlocks for at most one
+hour and expires after five minutes without a heartbeat from a visible app.
+SSE heartbeats never extend that deadline.
+
+Optional trusted-device mode is accepted only when the relay proves it owns
+the audited dedicated Tailscale origin and exclusive Serve root. A request is
+unlocked only when the enrolled cookie digest, exact pinned Tailscale login,
+server-side device-session deadline, remembered deadline, and persistent lock
+state all pass. The device session lasts 30 days and remembered access lasts
+at most 29 days. Manual lock is persisted, nonexplicit legacy auto-lock calls
+are ignored, and successful WebAuthn verification rotates the bearer token and
+refreshes both deadlines. The immediately prior token has a five-minute,
+Face-ID-only recovery window for a lost cookie-update response; it cannot read
+transcripts or send.
+
+In both modes, the PWA stops its stream while hidden and adds an opaque
+privacy shield before iOS takes an app-switcher snapshot.
 
 ### Authorization and request integrity
 
@@ -130,7 +143,7 @@ The service worker handles only an allowlist of Pocket shell paths, deletes
 only `conductor-pocket-shell-*` caches, and never intercepts sibling routes or
 `/api/`.
 Device-local transcript snapshots are bounded and are not rendered until
-after Face ID unlock. During an origin migration, the server records the
+after Pocket authorization. During an origin migration, the server records the
 original device set, disables remote revocation, and accepts only a
 version-matched self-sign-out. The phone first writes a persistent origin
 tombstone, prevents every Pocket context from reopening its cache, verifies
@@ -138,7 +151,7 @@ through the service worker that no other browser window remains, and deletes
 Pocket's localStorage keys, IndexedDB, Cache Storage, and root service worker.
 Blocked deletion fails visibly and keeps the device enrolled. Only then does
 the client send its retirement receipt. A device that never reconnects remains
-protected by iOS Data Protection and the app's Face ID gate.
+protected by iOS Data Protection and Pocket's selected authorization gate.
 
 ## Residual risks
 
@@ -161,6 +174,10 @@ protected by iOS Data Protection and the app's Face ID gate.
 - Tailscale users with access to the Mac's Serve endpoint can reach the
   unauthenticated app shell and pairing endpoint, but cannot pair without the
   high-entropy one-time link and matching identity.
+- Trusted-device mode accepts the paired cookie and pinned Tailscale identity
+  without Face ID on each routine open. A person holding the already-unlocked
+  enrolled iPhone can therefore open Pocket until manual lock, revocation, or
+  expiry. iOS device security is part of this explicitly selected boundary.
 - Device-local browser storage cannot be remotely erased while the iPhone is
   permanently offline. iOS device security is the recovery boundary until
   that phone reconnects and completes its own retirement purge.

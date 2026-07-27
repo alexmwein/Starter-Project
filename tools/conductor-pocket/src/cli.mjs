@@ -14,12 +14,15 @@ import {
   loadConfig,
   rotatePairing,
   saveConfig,
+  setReauthenticationMode,
 } from './config.mjs';
 import {
   APP_NAME,
   APP_VERSION,
   DEFAULT_CONFIG_PATH,
   DEFAULT_PORT,
+  REAUTHENTICATION_MODE_FACE_ID,
+  REAUTHENTICATION_MODE_TAILSCALE_SESSION,
 } from './constants.mjs';
 import { ConductorDatabase, DatabaseWatcher } from './conductor-db.mjs';
 import { SecurityManager } from './security.mjs';
@@ -51,6 +54,14 @@ const dedicatedTailscaleLaunchAgent = path.join(
   'LaunchAgents',
   `${dedicatedTailscaleLabel}.plist`,
 );
+const relayLaunchAgentLabel = 'com.ovo.conductor-pocket';
+const relayLaunchAgentPath = path.join(
+  os.homedir(),
+  'Library',
+  'LaunchAgents',
+  `${relayLaunchAgentLabel}.plist`,
+);
+const RELAY_START_ATTEMPTS = 150;
 
 function parseArguments(values) {
   const parsed = { _: [] };
@@ -256,6 +267,66 @@ async function healthStatus(
   }
 }
 
+async function waitForInstalledRelay(config) {
+  const healthUrl =
+    `http://127.0.0.1:${config.port}/api/health`;
+  const expectedRevision = configRevision(config);
+  for (
+    let attempt = 0;
+    attempt < RELAY_START_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      const response = await fetch(healthUrl, {
+        cache: 'no-store',
+        headers: { Host: `127.0.0.1:${config.port}` },
+        signal: AbortSignal.timeout(1_000),
+      });
+      const body = response.ok ? await response.json() : null;
+      if (
+        body?.ok === true &&
+        body.version === APP_VERSION &&
+        body.configRevision === expectedRevision
+      ) {
+        return;
+      }
+    } catch {
+      // launchd may still be replacing the relay.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(
+    `The installed relay did not activate ${config.reauthenticationMode}`,
+  );
+}
+
+async function restartInstalledRelay(config) {
+  await execFileAsync('/bin/launchctl', [
+    'kickstart',
+    '-k',
+    `gui/${process.getuid()}/${relayLaunchAgentLabel}`,
+  ]);
+  await waitForInstalledRelay(config);
+}
+
+async function ensureInstalledRelay(config) {
+  const health = await healthStatus(
+    `http://127.0.0.1:${config.port}`,
+    APP_VERSION,
+    configRevision(config),
+  );
+  if (!health.ok) {
+    await restartInstalledRelay(config);
+  }
+}
+
+async function stopInstalledRelay() {
+  await execFileAsync('/bin/launchctl', [
+    'bootout',
+    `gui/${process.getuid()}/${relayLaunchAgentLabel}`,
+  ]);
+}
+
 async function mainTailscaleStatus() {
   const executable = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
   await fs.access(executable);
@@ -264,6 +335,80 @@ async function mainTailscaleStatus() {
     maxBuffer: 2 * 1024 * 1024,
   });
   return { executable, status: JSON.parse(stdout) };
+}
+
+async function assertTrustedSessionIngress(config) {
+  if (
+    config.reauthenticationMode !==
+    REAUTHENTICATION_MODE_TAILSCALE_SESSION
+  ) {
+    return;
+  }
+  const tailscale = await tailscaleStatus();
+  if (!tailscale.ok || !versionAtLeast(tailscale.status.Version)) {
+    throw new Error(
+      'tailscale-session requires the audited dedicated Tailscale node',
+    );
+  }
+  if (
+    config.publicOrigin !== tailscale.publicOrigin ||
+    config.rpId !== tailscale.dnsName
+  ) {
+    throw new Error(
+      'tailscale-session requires Pocket to own its dedicated browser origin',
+    );
+  }
+  await assertDoctorLaunchProfile(tailscale.executable);
+  const { stdout: prefsOutput } = await sidecarCommand(
+    tailscale.executable,
+    ['debug', 'prefs'],
+  );
+  assertLockedSidecarPrefs(JSON.parse(prefsOutput));
+  const { stdout: serveOutput } = await sidecarCommand(
+    tailscale.executable,
+    ['serve', 'status', '--json'],
+  );
+  assertPrivateServeStatus(JSON.parse(serveOutput || '{}'), {
+    rpId: config.rpId,
+    port: config.port,
+  });
+  const { stdout: funnelOutput } = await sidecarCommand(
+    tailscale.executable,
+    ['funnel', 'status', '--json'],
+  );
+  assertNoFunnel(JSON.parse(funnelOutput || '{}'));
+  const main = await mainTailscaleStatus();
+  if (!versionAtLeast(main.status.Version)) {
+    throw new Error('main_tailscale_version_unsupported');
+  }
+  assertSameTailnet(tailscale.status, main.status);
+  const sidecarIdentity = runningTailscaleIdentity(tailscale.status);
+  const mainIdentity = runningTailscaleIdentity(main.status);
+  const mainAddresses = new Set(mainIdentity.addresses);
+  if (
+    sidecarIdentity.dnsName === mainIdentity.dnsName ||
+    sidecarIdentity.addresses.some((address) =>
+      mainAddresses.has(address),
+    )
+  ) {
+    throw new Error('sidecar_identity_not_isolated');
+  }
+  const { stdout: mainServeOutput } = await execFileAsync(
+    main.executable,
+    ['serve', 'status', '--json'],
+    { timeout: 10_000, maxBuffer: 2 * 1024 * 1024 },
+  );
+  if (
+    pocketRootState(
+      JSON.parse(mainServeOutput || '{}'),
+      {
+        rpId: mainIdentity.dnsName,
+        port: config.port,
+      },
+    ) === 'pocket'
+  ) {
+    throw new Error('old_shared_root_still_configured');
+  }
 }
 
 async function macName() {
@@ -403,9 +548,107 @@ async function pair(options) {
   );
 }
 
+async function authMode(options) {
+  const configPath = path.resolve(options.config || DEFAULT_CONFIG_PATH);
+  const mode = options.mode || options._[1];
+  if (
+    mode !== REAUTHENTICATION_MODE_FACE_ID &&
+    mode !== REAUTHENTICATION_MODE_TAILSCALE_SESSION
+  ) {
+    throw new Error(
+      'auth-mode must be face-id or tailscale-session',
+    );
+  }
+  const lockPath = path.join(
+    path.dirname(configPath),
+    'operation.lock',
+  );
+  await withOperationLock(
+    'change Pocket authentication mode',
+    async () => {
+      const prior = await loadConfig(configPath);
+      const proposed = setReauthenticationMode(
+        prior,
+        mode,
+        Date.now(),
+      );
+      await assertTrustedSessionIngress(proposed);
+      await fs.access(relayLaunchAgentPath);
+      if (isDeepStrictEqual(prior, proposed)) {
+        try {
+          await ensureInstalledRelay(prior);
+        } catch (activationError) {
+          try {
+            await stopInstalledRelay();
+          } catch (stopError) {
+            throw new AggregateError(
+              [activationError, stopError],
+              'Pocket authentication mode could not be verified and the relay could not be stopped',
+            );
+          }
+          throw new Error(
+            'Pocket authentication mode could not be verified; the relay was stopped',
+            { cause: activationError },
+          );
+        }
+        return;
+      }
+      await saveConfig(configPath, proposed);
+      try {
+        await restartInstalledRelay(proposed);
+      } catch (activationError) {
+        if (
+          mode === REAUTHENTICATION_MODE_TAILSCALE_SESSION &&
+          prior.reauthenticationMode !==
+            REAUTHENTICATION_MODE_TAILSCALE_SESSION
+        ) {
+          try {
+            await saveConfig(configPath, prior);
+            await restartInstalledRelay(prior);
+          } catch (rollbackError) {
+            try {
+              await stopInstalledRelay();
+            } catch (stopError) {
+              throw new AggregateError(
+                [activationError, rollbackError, stopError],
+                'Trusted-session activation and strict-mode rollback failed',
+              );
+            }
+            throw new AggregateError(
+              [activationError, rollbackError],
+              'Trusted-session activation failed; the relay was stopped after rollback failed',
+            );
+          }
+          throw new Error(
+            'Trusted-session activation failed and was rolled back to Face ID',
+            { cause: activationError },
+          );
+        }
+        try {
+          await stopInstalledRelay();
+        } catch (stopError) {
+          throw new AggregateError(
+            [activationError, stopError],
+            'Face ID activation failed and the prior relay could not be stopped',
+          );
+        }
+        throw new Error(
+          'Face ID activation failed; strict config remains on disk and the relay was stopped',
+          { cause: activationError },
+        );
+      }
+    },
+    lockPath,
+  );
+  process.stdout.write(
+    `Conductor Pocket authentication mode: ${mode}\n`,
+  );
+}
+
 async function serve(options) {
   const configPath = path.resolve(options.config || DEFAULT_CONFIG_PATH);
   const config = await loadConfig(configPath);
+  await assertTrustedSessionIngress(config);
   const store = new ConfigStore(configPath, config);
   const database = new ConductorDatabase(config.dbPath);
   const watcher = new DatabaseWatcher(config.dbPath);
@@ -581,6 +824,7 @@ async function doctor(options) {
               publicOrigin: config.publicOrigin,
               loopbackOnly: config.bindHost === '127.0.0.1',
               tailscaleIdentityRequired: config.requireTailscaleIdentity,
+              reauthenticationMode: config.reauthenticationMode,
               pairedDevices: config.devices.length,
             }
           : { ok: false, path: configPath },
@@ -615,6 +859,7 @@ function usage() {
   process.stdout.write(`Usage:
   node src/cli.mjs setup [--origin https://mac.tailnet.ts.net] [--port 4317]
   node src/cli.mjs pair
+  node src/cli.mjs auth-mode face-id|tailscale-session
   node src/cli.mjs serve
   node src/cli.mjs doctor
 
@@ -628,6 +873,7 @@ const command = options._[0];
 try {
   if (command === 'setup') await setup(options);
   else if (command === 'pair') await pair(options);
+  else if (command === 'auth-mode') await authMode(options);
   else if (command === 'serve') await serve(options);
   else if (command === 'doctor') await doctor(options);
   else usage();
