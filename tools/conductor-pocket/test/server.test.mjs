@@ -1546,6 +1546,40 @@ test('service worker handles only Pocket shell paths and Pocket-owned caches', a
   );
 });
 
+test('Pocket shell asset versions remain consistent across the rollout', async () => {
+  const [application, document, serviceWorker] = await Promise.all([
+    fs.readFile(
+      new URL('../public/app.js', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(
+      new URL('../public/index.html', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(
+      new URL('../public/service-worker.js', import.meta.url),
+      'utf8',
+    ),
+  ]);
+  const appVersion = document.match(
+    /src="\/app\.js\?v=([^"]+)"/,
+  )?.[1];
+  const cachedAppVersion = serviceWorker.match(
+    /'\/app\.js\?v=([^']+)'/,
+  )?.[1];
+  const receiptsVersion = application.match(
+    /from '\.\/delivery-receipts\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedReceiptsVersion = serviceWorker.match(
+    /'\/delivery-receipts\.js\?v=([^']+)'/,
+  )?.[1];
+
+  assert.ok(appVersion);
+  assert.equal(cachedAppVersion, appVersion);
+  assert.equal(receiptsVersion, appVersion);
+  assert.equal(cachedReceiptsVersion, appVersion);
+});
+
 test('sign-out purge removes the Pocket cache and root service worker', async () => {
   const source = await fs.readFile(
     new URL('../public/app.js', import.meta.url),
@@ -1594,4 +1628,53 @@ test('pending sends persist before draft clearing and recover for the full send 
     source,
     /!error\.status\s*\|\|\s*error\.code === 'send_not_confirmed'[\s\S]*await checkDelivery\(optimistic\)/,
   );
+  const persistStart = source.indexOf(
+    'async function persistPendingDeliveries',
+  );
+  const restoreStart = source.indexOf(
+    'async function restorePendingDeliveries',
+  );
+  const clearCacheStart = source.indexOf(
+    'async function clearTranscriptCache',
+  );
+  const startApplicationStart = source.indexOf(
+    'async function startApplication',
+  );
+  const restoreRouteStart = source.indexOf(
+    'async function restoreRoute',
+  );
+  const persistBlock = source.slice(persistStart, restoreStart);
+  const restoreBlock = source.slice(restoreStart, clearCacheStart);
+  const startApplicationBlock = source.slice(
+    startApplicationStart,
+    restoreRouteStart,
+  );
+  const persistDiscard = persistBlock.indexOf(
+    'discardTerminalUnconfirmed()',
+  );
+  const persistSnapshot = persistBlock.indexOf(
+    'pendingDeliverySnapshot()',
+  );
+  const restoreDiscard = restoreBlock.indexOf(
+    'discardTerminalUnconfirmed()',
+  );
+  const restoreWrite = restoreBlock.indexOf('cacheSet(');
+  const startupRestore = startApplicationBlock.indexOf(
+    'await restorePendingDeliveries()',
+  );
+  const startupRecovery = startApplicationBlock.indexOf(
+    'void recoverPendingDeliveries()',
+  );
+
+  assert.ok(persistStart >= 0);
+  assert.ok(restoreStart > persistStart);
+  assert.ok(clearCacheStart > restoreStart);
+  assert.ok(startApplicationStart >= 0);
+  assert.ok(restoreRouteStart > startApplicationStart);
+  assert.ok(persistDiscard >= 0);
+  assert.ok(persistSnapshot > persistDiscard);
+  assert.ok(restoreDiscard >= 0);
+  assert.ok(restoreWrite > restoreDiscard);
+  assert.ok(startupRestore >= 0);
+  assert.ok(startupRecovery > startupRestore);
 });

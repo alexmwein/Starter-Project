@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  discardTerminalUnconfirmedDeliveries,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
 } from '../public/delivery-receipts.js';
@@ -8,6 +9,7 @@ import {
 function optimistic(overrides = {}) {
   return {
     id: 'optimistic-1',
+    kind: 'optimistic',
     sessionId: 'session-1',
     delivery: 'delivered',
     receiptBaselineCursor: 10,
@@ -70,4 +72,64 @@ test('invalid or absent receipt cursors fail closed', () => {
   ]) {
     assert.equal(receiptReachedTranscript(receipt, 50), false);
   }
+});
+
+test('terminal unconfirmed bubbles are partitioned from actionable deliveries', () => {
+  const explicitFailure = optimistic({
+    id: 'explicit-failure',
+    delivery: 'failed',
+    retrySafe: false,
+    errorCode: 'send_not_confirmed',
+  });
+  const restoredFailure = optimistic({
+    id: 'restored-failure',
+    sessionId: 'session-2',
+    delivery: 'failed',
+    errorCode: 'delivery_unknown',
+  });
+  const retryable = optimistic({
+    id: 'retryable',
+    delivery: 'failed',
+    retrySafe: true,
+  });
+  const delivering = optimistic({
+    id: 'delivering',
+    delivery: 'delivering',
+  });
+  const confirming = optimistic({
+    id: 'confirming',
+    delivery: 'confirming',
+  });
+  const delivered = optimistic({ id: 'delivered' });
+  const transcriptMessage = optimistic({
+    id: 'transcript-message',
+    kind: 'user',
+    delivery: 'failed',
+    retrySafe: false,
+  });
+
+  const input = [
+    explicitFailure,
+    restoredFailure,
+    retryable,
+    delivering,
+    confirming,
+    delivered,
+    transcriptMessage,
+  ];
+  const original = [...input];
+  const result = discardTerminalUnconfirmedDeliveries(input);
+
+  assert.deepEqual(result.discarded, [
+    explicitFailure,
+    restoredFailure,
+  ]);
+  assert.deepEqual(result.remaining, [
+    retryable,
+    delivering,
+    confirming,
+    delivered,
+    transcriptMessage,
+  ]);
+  assert.deepEqual(input, original);
 });
