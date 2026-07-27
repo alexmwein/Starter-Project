@@ -3,7 +3,35 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { withOperationLock } from '../src/operation-lock.mjs';
+import {
+  recoveryLockCommandForPlatform,
+  withOperationLock,
+} from '../src/operation-lock.mjs';
+
+test('recovery lock selects exact crash-releasing platform primitives', () => {
+  const recoveryPath = '/private/recovery.lock';
+  assert.deepEqual(recoveryLockCommandForPlatform('darwin', recoveryPath), {
+    command: '/usr/bin/lockf',
+    args: ['-s', '-t', '0', '-k', recoveryPath, '/bin/cat'],
+  });
+  assert.deepEqual(recoveryLockCommandForPlatform('linux', recoveryPath), {
+    command: '/usr/bin/flock',
+    args: [
+      '--exclusive',
+      '--nonblock',
+      '--conflict-exit-code',
+      '75',
+      '--no-fork',
+      '--',
+      recoveryPath,
+      '/bin/cat',
+    ],
+  });
+  assert.throws(
+    () => recoveryLockCommandForPlatform('win32', recoveryPath),
+    /operation locking is unsupported on win32/,
+  );
+});
 
 test('global operation lock serializes active mutations', async (context) => {
   const directory = await fs.mkdtemp(

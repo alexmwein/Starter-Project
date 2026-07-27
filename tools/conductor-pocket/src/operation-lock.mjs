@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomToken } from './encoding.mjs';
 
 const LOCKF_PATH = '/usr/bin/lockf';
+const FLOCK_PATH = '/usr/bin/flock';
 const CAT_PATH = '/bin/cat';
 const RECOVERY_READY = 'conductor-pocket-recovery-ready\n';
 
@@ -58,6 +59,33 @@ function recoveryLockPath(lockPath) {
   return `${lockPath}.recovery`;
 }
 
+export function recoveryLockCommandForPlatform(platform, recoveryPath) {
+  if (platform === 'darwin') {
+    return {
+      command: LOCKF_PATH,
+      args: ['-s', '-t', '0', '-k', recoveryPath, CAT_PATH],
+    };
+  }
+  if (platform === 'linux') {
+    return {
+      command: FLOCK_PATH,
+      args: [
+        '--exclusive',
+        '--nonblock',
+        '--conflict-exit-code',
+        '75',
+        '--no-fork',
+        '--',
+        recoveryPath,
+        CAT_PATH,
+      ],
+    };
+  }
+  throw new Error(
+    `Conductor Pocket operation locking is unsupported on ${platform}`,
+  );
+}
+
 function observeProcess(child) {
   return new Promise((resolve) => {
     let settled = false;
@@ -87,11 +115,13 @@ function waitForProcess(finished, timeoutMs) {
 
 async function acquireRecoveryLock(lockPath) {
   const recoveryPath = recoveryLockPath(lockPath);
-  const child = spawn(
-    LOCKF_PATH,
-    ['-s', '-t', '0', '-k', recoveryPath, CAT_PATH],
-    { stdio: ['pipe', 'pipe', 'pipe'] },
+  const invocation = recoveryLockCommandForPlatform(
+    process.platform,
+    recoveryPath,
   );
+  const child = spawn(invocation.command, invocation.args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   child.stdin.on('error', () => {});
   child.stderr.resume();
   const finished = observeProcess(child);
