@@ -9,6 +9,11 @@ on draftConflict(existingDraft)
 	return "{\"ok\":false,\"code\":\"draft_conflict\",\"draftBase64\":\"" & encodedDraft & "\"}"
 end draftConflict
 
+on decodeBase64(encodedValue)
+	if encodedValue is "" then return ""
+	return do shell script "/usr/bin/printf %s " & quoted form of encodedValue & " | /usr/bin/base64 -D" without altering line endings
+end decodeBase64
+
 on normalizedDraft(rawValue)
 	set valueText to rawValue as text
 	if valueText ends with linefeed then
@@ -82,7 +87,22 @@ on getSessionTabs()
 				try
 					if (role of candidate as text) is "AXTabGroup" then
 						set tabGroupChildren to UI elements of candidate
-						if (count of tabGroupChildren) is greater than 0 then return UI elements of item 1 of tabGroupChildren
+						set sessionTabs to {}
+						repeat with tabGroupChild in tabGroupChildren
+							try
+								if (role of tabGroupChild as text) is "AXRadioButton" then
+									copy tabGroupChild to end of sessionTabs
+								else
+									set tabGroupElements to UI elements of tabGroupChild
+									repeat with tabGroupElement in tabGroupElements
+										try
+											if (role of tabGroupElement as text) is "AXRadioButton" then copy tabGroupElement to end of sessionTabs
+										end try
+									end repeat
+								end if
+							end try
+						end repeat
+						return sessionTabs
 					end if
 				end try
 			end repeat
@@ -105,8 +125,7 @@ on getComposerGroup()
 	return missing value
 end getComposerGroup
 
-on getTextArea()
-	set composerGroup to getComposerGroup()
+on getTextAreaFromComposer(composerGroup)
 	if composerGroup is missing value then return missing value
 	tell application "System Events"
 		try
@@ -119,47 +138,76 @@ on getTextArea()
 		end try
 	end tell
 	return missing value
+end getTextAreaFromComposer
+
+on getTextArea()
+	return my getTextAreaFromComposer(getComposerGroup())
 end getTextArea
 
-on commitTextAreaValue(textArea, requestedValue)
+on workspaceIsSelected(workspaceName)
+	set workspaceContainer to getWorkspaceContainer()
+	if workspaceContainer is missing value then return false
+	tell application "System Events"
+		repeat with candidate in UI elements of workspaceContainer
+			try
+				if (role of candidate as text) is "AXLink" then
+					set candidateName to name of candidate as text
+					if my workspaceMatches(workspaceName, candidateName) then
+						set candidateClasses to value of attribute "AXDOMClassList" of candidate
+						return candidateClasses contains "bg-sidebar-accent"
+					end if
+				end if
+			end try
+		end repeat
+	end tell
+	return false
+end workspaceIsSelected
+
+on sessionIsSelected(sessionTitle, sessionOrdinal)
+	tell application "System Events"
+		set matchedCount to 0
+		repeat with candidate in my getSessionTabs()
+			try
+				if (name of candidate as text) is ("Close chat " & sessionTitle) then
+					set matchedCount to matchedCount + 1
+					if matchedCount is sessionOrdinal then return value of candidate as boolean
+				end if
+			end try
+		end repeat
+	end tell
+	return false
+end sessionIsSelected
+
+on commitAndPressMessage(textArea, inputScriptPath, conductorPid)
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
 		set focused of textArea to true
-		set value of attribute "AXValue" of textArea to requestedValue
-		-- Conductor's composer is controlled by React. Toggling one real key
-		-- forces its state to adopt the accessibility value without using the
-		-- clipboard or leaving an extra character in the message.
-		keystroke "x"
-		key code 51
 	end tell
-	delay 0.1
-	set committedValue to my normalizedDraft(value of textArea as text)
-	considering case
-		return committedValue is requestedValue
-	end considering
-end commitTextAreaValue
-
-on clearOwnedDraft(expectedMessage)
+	delay 0.05
 	try
-		set textArea to getTextArea()
-		if textArea is not missing value then
-			tell application "System Events"
-				set currentValue to my normalizedDraft(value of textArea as text)
-			end tell
-			considering case
-				if currentValue is expectedMessage then my commitTextAreaValue(textArea, "")
-			end considering
-		end if
+		set helperResult to do shell script "/usr/bin/env POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "draft_conflict" then return "draft_conflict"
+		if errorText contains "composer_focus_changed" then return "composer_focus_changed"
+		if errorText contains "session_locked" then return "session_locked"
+		return "composer_update_failed"
 	end try
-end clearOwnedDraft
+	if helperResult starts with "pressed:" then return helperResult
+	if helperResult starts with "ambiguous:" then return helperResult
+	if helperResult starts with "interrupted:" then return helperResult
+	if helperResult is "session_locked" then return helperResult
+	return "composer_update_failed"
+end commitAndPressMessage
 
 set operationMode to system attribute "POCKET_OPERATION"
+set inputScriptPath to system attribute "POCKET_INPUT_SCRIPT"
 
 tell application "System Events"
 	if UI elements enabled is false then return "{\"ok\":false,\"code\":\"accessibility_disabled\"}"
 	if not (exists process "Conductor") then return "{\"ok\":false,\"code\":\"conductor_not_running\"}"
 	tell process "Conductor"
 		if not (exists front window) then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+		set conductorPid to unix id
 	end tell
 end tell
 
@@ -168,15 +216,26 @@ if operationMode is "doctor" then
 	if textArea is missing value then
 		return "{\"ok\":false,\"code\":\"composer_unavailable\"}"
 	end if
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		set focused of textArea to true
+	end tell
+	try
+		set helperResult to do shell script "/usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
+	end try
+	if helperResult is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
 	return "{\"ok\":true,\"code\":\"ready\"}"
 end if
 
-set workspaceName to system attribute "POCKET_WORKSPACE_NAME"
-set sessionTitle to system attribute "POCKET_SESSION_TITLE"
+set workspaceName to my decodeBase64(system attribute "POCKET_WORKSPACE_NAME_BASE64")
+set sessionTitle to my decodeBase64(system attribute "POCKET_SESSION_TITLE_BASE64")
 set sessionOrdinal to (system attribute "POCKET_SESSION_ORDINAL") as integer
-set messageText to system attribute "POCKET_MESSAGE"
+set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")
 set replaceDraft to (system attribute "POCKET_REPLACE_DRAFT") is "true"
-set expectedDraft to system attribute "POCKET_EXPECTED_DRAFT"
+set expectedDraft to my decodeBase64(system attribute "POCKET_EXPECTED_DRAFT_BASE64")
 
 set workspaceContainer to getWorkspaceContainer()
 if workspaceContainer is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
@@ -195,7 +254,8 @@ tell application "System Events"
 		end try
 	end repeat
 	if workspaceLink is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
-	perform action "AXPress" of workspaceLink
+	set workspaceClasses to value of attribute "AXDOMClassList" of workspaceLink
+	if workspaceClasses does not contain "bg-sidebar-accent" then perform action "AXPress" of workspaceLink
 end tell
 
 set sessionFound to false
@@ -223,6 +283,18 @@ end repeat
 
 if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
+set stableRouteChecks to 0
+repeat with waitIndex from 1 to 50
+	delay 0.1
+	if my workspaceIsSelected(workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
+		set stableRouteChecks to stableRouteChecks + 1
+		if stableRouteChecks is 3 then exit repeat
+	else
+		set stableRouteChecks to 0
+	end if
+end repeat
+if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+
 set textArea to missing value
 repeat with waitIndex from 1 to 50
 	set textArea to getTextArea()
@@ -241,47 +313,30 @@ tell application "System Events"
 	end considering
 end tell
 
-if my commitTextAreaValue(textArea, messageText) is false then
-	clearOwnedDraft(messageText)
+if my workspaceIsSelected(workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
+if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+
+set commitResult to my commitAndPressMessage(textArea, inputScriptPath, conductorPid)
+if commitResult is "draft_conflict" then
+	set latestTextArea to getTextArea()
+	if latestTextArea is missing value then return "{\"ok\":false,\"code\":\"composer_unavailable\"}"
+	tell application "System Events"
+		set latestDraft to my normalizedDraft(value of latestTextArea as text)
+	end tell
+	return my draftConflict(latestDraft)
+end if
+if commitResult starts with "pressed:" then
+	set pressedAt to text 9 thru -1 of commitResult
+else if commitResult starts with "ambiguous:" then
+	set pressedAt to text 11 thru -1 of commitResult
+else if commitResult starts with "interrupted:" then
+	set pressedAt to text 13 thru -1 of commitResult
+	return "{\"ok\":false,\"code\":\"send_interrupted\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
+else if commitResult is "session_locked" then
+	return "{\"ok\":false,\"code\":\"session_locked\"}"
+else
 	return "{\"ok\":false,\"code\":\"composer_update_failed\"}"
 end if
-
-set sendButton to missing value
-repeat with waitIndex from 1 to 40
-	tell application "System Events"
-		set composerGroup to my getComposerGroup()
-		if composerGroup is not missing value then
-			set bestX to -1
-			set composerElements to UI elements of composerGroup
-			repeat with candidate in composerElements
-				try
-					if (role of candidate as text) is "AXButton" and (enabled of candidate as boolean) is true then
-						set buttonPosition to position of candidate
-						set buttonX to item 1 of buttonPosition
-						if buttonX is greater than bestX then
-							set bestX to buttonX
-							set sendButton to candidate
-						end if
-					end if
-				end try
-			end repeat
-		end if
-	end tell
-	if sendButton is not missing value then exit repeat
-	delay 0.1
-end repeat
-
-if sendButton is missing value then
-	clearOwnedDraft(messageText)
-	return "{\"ok\":false,\"code\":\"send_unavailable\"}"
-end if
-
-try
-	tell application "System Events" to perform action "AXPress" of sendButton
-on error
-	clearOwnedDraft(messageText)
-	return "{\"ok\":false,\"code\":\"send_failed\"}"
-end try
 
 repeat with waitIndex from 1 to 40
 	delay 0.1
@@ -289,10 +344,10 @@ repeat with waitIndex from 1 to 40
 	if currentTextArea is not missing value then
 		tell application "System Events"
 			if my normalizedDraft(value of currentTextArea as text) is "" then
-				return "{\"ok\":true,\"code\":\"sent\"}"
+				return "{\"ok\":true,\"code\":\"sent\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
 			end if
 		end tell
 	end if
 end repeat
 
-return "{\"ok\":false,\"code\":\"send_not_confirmed\"}"
+return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"

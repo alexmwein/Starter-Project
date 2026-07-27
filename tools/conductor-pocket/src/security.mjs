@@ -6,6 +6,7 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import {
+  APP_VERSION,
   DEVICE_SESSION_TTL_SECONDS,
   PAIR_COOKIE,
   PAIR_SESSION_TTL_MS,
@@ -88,6 +89,25 @@ export function evaluateUnlockWindow(window, now, { touch = false } = {}) {
     unlocked: true,
     unlockedUntil: Math.min(window.absoluteUntil, window.idleUntil),
   };
+}
+
+export function assertOriginRetirementRevocation({
+  retirement,
+  currentDeviceId,
+  targetDeviceId,
+  clientVersion,
+  localPurgeCompleted,
+}) {
+  if (!retirement) return;
+  if (currentDeviceId !== targetDeviceId) {
+    throw new HttpError(409, 'self_signout_required');
+  }
+  if (
+    clientVersion !== APP_VERSION ||
+    localPurgeCompleted !== true
+  ) {
+    throw new HttpError(409, 'retirement_client_upgrade_required');
+  }
 }
 
 export class SecurityManager {
@@ -423,7 +443,7 @@ export class SecurityManager {
     return this.config.devices.map((device) => this.#publicDevice(device));
   }
 
-  async revokeDevice(request, deviceId) {
+  async revokeDevice(request, deviceId, retirementProof = {}) {
     this.assertOrigin(request);
     const current = this.session(request, {
       requireUnlocked: true,
@@ -431,8 +451,22 @@ export class SecurityManager {
     });
     const target = this.config.devices.find((device) => device.id === deviceId);
     if (!target) throw new HttpError(404, 'device_not_found');
+    assertOriginRetirementRevocation({
+      retirement: this.config.originRetirement,
+      currentDeviceId: current.device.id,
+      targetDeviceId: deviceId,
+      clientVersion: retirementProof.clientVersion,
+      localPurgeCompleted: retirementProof.localPurgeCompleted,
+    });
     await this.#store.update((config) => {
       config.devices = config.devices.filter((device) => device.id !== deviceId);
+      if (
+        config.originRetirement &&
+        config.originRetirement.requiredDeviceIds.includes(deviceId) &&
+        !config.originRetirement.retiredDeviceIds.includes(deviceId)
+      ) {
+        config.originRetirement.retiredDeviceIds.push(deviceId);
+      }
       return config;
     });
     this.#unlocks.delete(target.sessionHash);

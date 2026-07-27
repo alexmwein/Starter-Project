@@ -4,9 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  ConfigStore,
+  beginOriginRetirement,
+  configRevision,
   createConfig,
   getVerificationCode,
   loadConfig,
+  migrateToDedicatedOrigin,
+  originRetirementComplete,
+  rotatePairing,
   saveConfig,
   validateConfig,
 } from '../src/config.mjs';
@@ -53,4 +59,126 @@ test('configuration rejects a LAN or wildcard bind', () => {
       }),
     /HTTPS/,
   );
+});
+
+test('dedicated-origin migration revokes old trust and rotates every browser secret', () => {
+  const { config: createdConfig } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+    now: 1_000,
+  });
+  const config = structuredClone(createdConfig);
+  config.allowedTailscaleLogin = 'alex@example.com';
+  config.devices = [
+    {
+      id: 'old-device',
+      sessionHash: 'old-session-hash',
+      tailscaleLogin: 'alex@example.com',
+    },
+  ];
+  const retirement = beginOriginRetirement(config, 2_000);
+  retirement.devices = [];
+  retirement.originRetirement.retiredDeviceIds = ['old-device'];
+  const oldCsrfSecret = config.csrfSecret;
+  const oldPairingHash = config.pairing.codeHash;
+
+  const migrated = migrateToDedicatedOrigin(
+    retirement,
+    'https://conductor-pocket.example.ts.net',
+    5_000,
+  );
+
+  assert.equal(
+    migrated.config.publicOrigin,
+    'https://conductor-pocket.example.ts.net',
+  );
+  assert.equal(migrated.config.rpId, 'conductor-pocket.example.ts.net');
+  assert.equal(migrated.config.allowedTailscaleLogin, null);
+  assert.deepEqual(migrated.config.devices, []);
+  assert.notEqual(migrated.config.csrfSecret, oldCsrfSecret);
+  assert.notEqual(migrated.config.pairing.codeHash, oldPairingHash);
+  assert.notEqual(migrated.config.pairing.codeHash, migrated.pairingCode);
+  assert.equal(
+    JSON.stringify(migrated.config).includes(migrated.pairingCode),
+    false,
+  );
+  assert.equal(
+    migrated.config.pairing.expiresAt,
+    new Date(5_000 + 15 * 60 * 1_000).toISOString(),
+  );
+  assert.equal(migrated.config.originRetirement, null);
+});
+
+test('origin migration requires every original device to self-retire', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+  });
+  config.devices = [
+    { id: 'phone-a' },
+    { id: 'phone-b' },
+  ];
+  const retirement = beginOriginRetirement(config, 2_000);
+
+  assert.equal(retirement.pairing, null);
+  assert.throws(
+    () => rotatePairing(retirement),
+    /Pairing stays disabled/,
+  );
+  assert.deepEqual(retirement.originRetirement.requiredDeviceIds, [
+    'phone-a',
+    'phone-b',
+  ]);
+  assert.equal(originRetirementComplete(retirement), false);
+  assert.throws(
+    () =>
+      migrateToDedicatedOrigin(
+        retirement,
+        'https://conductor-pocket.example.ts.net',
+      ),
+    /Every old-origin device/,
+  );
+
+  retirement.devices = [];
+  retirement.originRetirement.retiredDeviceIds = ['phone-a', 'phone-b'];
+  assert.equal(originRetirementComplete(retirement), true);
+});
+
+test('config revision changes for same-origin retirement and pairing updates', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+  });
+  config.devices = [{ id: 'phone-a', sessionHash: 'session-a' }];
+  const initial = configRevision(config);
+  const retirement = beginOriginRetirement(config, 2_000);
+  const armed = configRevision(retirement);
+  assert.notEqual(armed, initial);
+  retirement.devices = [];
+  retirement.originRetirement.retiredDeviceIds = ['phone-a'];
+  assert.notEqual(configRevision(retirement), initial);
+  assert.notEqual(configRevision(retirement), armed);
+});
+
+test('live config updates reload the latest locked file before mutating', async (context) => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-config-store-'),
+  );
+  context.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, 'config.json');
+  const { config } = createConfig({
+    publicOrigin: 'https://pocket.example.ts.net',
+  });
+  await saveConfig(configPath, config);
+  const store = new ConfigStore(configPath, config);
+
+  await saveConfig(configPath, {
+    ...config,
+    allowedTailscaleLogin: 'alex@example.com',
+  });
+  await store.update((draft) => {
+    draft.devices.push({ id: 'phone-a' });
+    return draft;
+  });
+
+  const saved = await loadConfig(configPath);
+  assert.equal(saved.allowedTailscaleLogin, 'alex@example.com');
+  assert.deepEqual(saved.devices, [{ id: 'phone-a' }]);
 });

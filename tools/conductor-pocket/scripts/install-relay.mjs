@@ -4,12 +4,14 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { loadConfig } from '../src/config.mjs';
+import { configRevision, loadConfig } from '../src/config.mjs';
 import { APP_VERSION } from '../src/constants.mjs';
+import { withOperationLock } from '../src/operation-lock.mjs';
 import {
-  assertEmptyTailscaleConfig,
-  assertPrivateServeStatus,
-} from '../src/tailscale-config.mjs';
+  bootoutIfLoaded,
+  waitForLaunchdRemoval,
+  writePrivateFile,
+} from './lib/sidecar.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -31,24 +33,6 @@ function xml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
-}
-
-async function tailscaleExecutable() {
-  const candidates = [
-    path.join(os.homedir(), '.local', 'bin', 'tailscale'),
-    '/opt/homebrew/bin/tailscale',
-    '/usr/local/bin/tailscale',
-    '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
-  ];
-  for (const candidate of candidates) {
-    try {
-      await fs.access(candidate);
-      return candidate;
-    } catch {
-      // Try the next location.
-    }
-  }
-  throw new Error('Tailscale CLI was not found');
 }
 
 async function run(executable, argumentsList, options = {}) {
@@ -126,7 +110,13 @@ async function installStableRuntime(dataDirectory) {
   return runtimeDirectory;
 }
 
-async function waitForRelay(config) {
+async function waitForRelay(
+  config,
+  {
+    expectedVersion = APP_VERSION,
+    expectedRevision = configRevision(config),
+  } = {},
+) {
   const url = `http://127.0.0.1:${config.port}/api/health`;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
@@ -134,13 +124,26 @@ async function waitForRelay(config) {
         headers: { Host: `127.0.0.1:${config.port}` },
         signal: AbortSignal.timeout(1_000),
       });
-      if (response.ok) return;
+      if (response.ok) {
+        const body = await response.json();
+        if (
+          body?.ok === true &&
+          (!expectedVersion || body.version === expectedVersion) &&
+          (!expectedRevision || body.configRevision === expectedRevision)
+        ) {
+          return body;
+        }
+      }
     } catch {
       // launchd may still be starting the process.
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error('The loopback relay did not become healthy after launch');
+  throw new Error(
+    expectedVersion
+      ? `The loopback relay did not start Conductor Pocket ${expectedVersion}`
+      : 'The loopback relay did not become healthy after launch',
+  );
 }
 
 async function install() {
@@ -159,28 +162,6 @@ async function install() {
       'Refusing to install: production HTTPS and Tailscale identity are required',
     );
   }
-  const tailscale = await tailscaleExecutable();
-  const { stdout: statusOutput } = await run(tailscale, ['status', '--json']);
-  const status = JSON.parse(statusOutput);
-  const dnsName = status.Self?.DNSName?.replace(/\.$/, '') || null;
-  if (status.BackendState !== 'Running' || !dnsName) {
-    throw new Error('Tailscale is not connected on this Mac');
-  }
-  if (
-    config.publicOrigin !== `https://${dnsName}` ||
-    config.rpId !== dnsName
-  ) {
-    throw new Error(
-      'Refusing to install: config origin does not match this Mac Tailscale identity',
-    );
-  }
-  const { stdout: funnelOutput } = await run(tailscale, ['funnel', 'status', '--json']);
-  const funnel = JSON.parse(funnelOutput || '{}');
-  assertEmptyTailscaleConfig(funnel, 'Funnel');
-  const { stdout: serveOutput } = await run(tailscale, ['serve', 'status', '--json']);
-  const serve = JSON.parse(serveOutput || '{}');
-  assertEmptyTailscaleConfig(serve, 'Serve');
-
   const dataDirectory = path.dirname(configPath);
   await fs.mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   await fs.chmod(dataDirectory, 0o700);
@@ -221,60 +202,58 @@ async function install() {
 </dict>
 </plist>
 `;
-  await fs.mkdir(path.dirname(launchAgentPath), { recursive: true });
-  const launchAgentTemporaryPath = `${launchAgentPath}.tmp-${process.pid}`;
-  await fs.writeFile(launchAgentTemporaryPath, plist, {
-    mode: 0o600,
-    flag: 'wx',
-  });
-  await fs.rename(launchAgentTemporaryPath, launchAgentPath);
-  await fs.chmod(launchAgentPath, 0o600);
-
-  const serviceTarget = `gui/${process.getuid()}/${label}`;
+  let previousPlist = null;
   try {
-    await run('/bin/launchctl', ['bootout', serviceTarget]);
-  } catch {
-    // The service was not installed yet.
-  }
-  await run('/bin/launchctl', [
-    'bootstrap',
-    `gui/${process.getuid()}`,
-    launchAgentPath,
-  ]);
-  await waitForRelay(config);
-
-  let configuredServe = false;
-  try {
-    await run(tailscale, [
-      'serve',
-      '--bg',
-      '--yes',
-      `http://127.0.0.1:${config.port}`,
-    ]);
-    configuredServe = true;
-    const { stdout: finalServeOutput } = await run(tailscale, [
-      'serve',
-      'status',
-      '--json',
-    ]);
-    assertPrivateServeStatus(JSON.parse(finalServeOutput || '{}'), {
-      rpId: config.rpId,
-      port: config.port,
-    });
-    const { stdout: finalFunnelOutput } = await run(tailscale, [
-      'funnel',
-      'status',
-      '--json',
-    ]);
-    assertEmptyTailscaleConfig(
-      JSON.parse(finalFunnelOutput || '{}'),
-      'Funnel',
-    );
+    previousPlist = await fs.readFile(launchAgentPath, 'utf8');
   } catch (error) {
-    if (configuredServe) {
-      await run(tailscale, ['serve', 'off']).catch(() => {});
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  let previousJobWasLoaded = false;
+  let plistReplaced = false;
+  try {
+    await writePrivateFile(launchAgentPath, plist);
+    plistReplaced = true;
+    previousJobWasLoaded = await bootoutIfLoaded(label);
+    await waitForLaunchdRemoval(label);
+    await run('/bin/launchctl', [
+      'bootstrap',
+      `gui/${process.getuid()}`,
+      launchAgentPath,
+    ]);
+    await waitForRelay(config);
+  } catch (primaryError) {
+    if (!plistReplaced) throw primaryError;
+    try {
+      await bootoutIfLoaded(label);
+      await waitForLaunchdRemoval(label);
+      if (previousPlist == null) {
+        await fs.unlink(launchAgentPath).catch((error) => {
+          if (error?.code !== 'ENOENT') throw error;
+        });
+        if (previousJobWasLoaded) {
+          throw new Error('The prior relay job had no restorable LaunchAgent');
+        }
+      } else {
+        await writePrivateFile(launchAgentPath, previousPlist);
+        if (previousJobWasLoaded) {
+          await run('/bin/launchctl', [
+            'bootstrap',
+            `gui/${process.getuid()}`,
+            launchAgentPath,
+          ]);
+          await waitForRelay(config, {
+            expectedVersion: null,
+            expectedRevision: null,
+          });
+        }
+      }
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [primaryError, rollbackError],
+        'The relay install failed and the previous LaunchAgent could not be restored',
+      );
     }
-    throw error;
+    throw primaryError;
   }
 
   process.stdout.write(`Conductor Pocket relay installed.
@@ -282,6 +261,7 @@ async function install() {
 Private URL: ${config.publicOrigin}
 LaunchAgent: ${launchAgentPath}
 Stable runtime: ${runtimeDirectory}
+Network ingress: managed by the dedicated Conductor Pocket Tailscale node
 
 One Mac permission remains:
 System Settings → Privacy & Security → Accessibility
@@ -292,7 +272,7 @@ Then run: npm run doctor
 `);
 }
 
-install().catch((error) => {
+withOperationLock('install the stable Pocket relay', install).catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 });
