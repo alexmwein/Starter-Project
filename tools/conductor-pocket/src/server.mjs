@@ -226,6 +226,44 @@ export async function waitForExactUserMessage({
   } while (true);
 }
 
+export async function reconcileExactUserMessage({
+  database,
+  sessionId,
+  afterRowId,
+  exactContentHash,
+  pressedAt,
+  composerOwned,
+  attributionWindowMs,
+  timeoutMs = SEND_DELIVERY_RECOVERY_TIMEOUT_MS,
+}) {
+  const reconcile = (candidateTimeoutMs) =>
+    waitForExactUserMessage({
+      database,
+      sessionId,
+      afterRowId,
+      exactContentHash,
+      pressedAt,
+      composerOwned,
+      timeoutMs: candidateTimeoutMs,
+      attributionWindowMs,
+    });
+  let match = await reconcile(timeoutMs);
+  if (match) return { state: 'delivered', match };
+  if (Date.now() > pressedAt + attributionWindowMs) {
+    return { state: 'failed' };
+  }
+  try {
+    const rows = database.listUserMessagesAfter(sessionId, afterRowId);
+    if (rows.length === 0) return { state: 'pending' };
+  } catch {
+    return { state: 'pending' };
+  }
+  match = await reconcile(0);
+  return match
+    ? { state: 'delivered', match }
+    : { state: 'failed' };
+}
+
 function databaseDeliveryResult(match, baselineCursor) {
   return {
     ok: true,
@@ -364,30 +402,35 @@ class IdempotencyStore {
         SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
     ) {
       if (!entry.reconciliationPromise) {
-        entry.reconciliationPromise = waitForExactUserMessage({
+        entry.reconciliationPromise = reconcileExactUserMessage({
           database,
           sessionId,
           afterRowId: recovery.baselineCursor,
           exactContentHash: recovery.contentHash,
           pressedAt: recovery.pressedAt,
           composerOwned: recovery.composerOwned,
-          timeoutMs: SEND_DELIVERY_RECOVERY_TIMEOUT_MS,
           attributionWindowMs: recovery.attributionWindowMs,
         })
-          .then((match) => {
-            if (!match || entry.result.ok) return;
-            const delivered = databaseDeliveryResult(
-              match,
-              recovery.baselineCursor,
-            );
-            entry.result = delivered;
-            entry.promise = Promise.resolve(delivered);
+          .then((reconciliation) => {
+            if (
+              reconciliation.state === 'delivered' &&
+              !entry.result.ok
+            ) {
+              const delivered = databaseDeliveryResult(
+                reconciliation.match,
+                recovery.baselineCursor,
+              );
+              entry.result = delivered;
+              entry.promise = Promise.resolve(delivered);
+            }
+            return reconciliation.state;
           })
           .finally(() => {
             entry.reconciliationPromise = null;
           });
       }
-      await entry.reconciliationPromise;
+      const reconciliationState = await entry.reconciliationPromise;
+      if (reconciliationState === 'pending') return { state: 'pending' };
     }
     if (entry.result.ok) {
       return {

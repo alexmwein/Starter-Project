@@ -15,6 +15,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const RELAY_START_ATTEMPTS = 150;
 const configPath =
   process.env.CONDUCTOR_POCKET_CONFIG ||
   path.join(os.homedir(), '.config', 'conductor-pocket', 'config.json');
@@ -118,7 +119,11 @@ async function waitForRelay(
   } = {},
 ) {
   const url = `http://127.0.0.1:${config.port}/api/health`;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < RELAY_START_ATTEMPTS;
+    attempt += 1
+  ) {
     try {
       const response = await fetch(url, {
         headers: { Host: `127.0.0.1:${config.port}` },
@@ -273,6 +278,14 @@ Then run: npm run doctor
 }
 
 withOperationLock('install the stable Pocket relay', install).catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  const details =
+    error instanceof AggregateError
+      ? [error.message, ...error.errors.map((cause) => cause?.message)]
+          .filter(Boolean)
+          .join('\n')
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  process.stderr.write(`${details}\n`);
   process.exitCode = 1;
 });

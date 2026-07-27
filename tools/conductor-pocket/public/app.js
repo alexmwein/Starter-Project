@@ -1890,7 +1890,10 @@ async function deliverOptimistic(
       await persistPendingDeliveries();
       renderTranscript();
       handleRuntimeError(error);
-    } else if (!error.status) {
+    } else if (
+      !error.status ||
+      error.code === 'send_not_confirmed'
+    ) {
       await checkDelivery(optimistic);
     } else {
       optimistic.delivery = 'failed';

@@ -136,7 +136,7 @@ test('draft ownership and replacement checks are case-sensitive', async () => {
   assert.match(source, /considering case[\s\S]*existingDraft is not messageText/);
   assert.match(
     inputHelper,
-    /normalizedDraft\(candidate\.value\(\)\) === expectedDraft/,
+    /normalizedDraft\(focusedElement\.value\(\)\) !== expectedDraft/,
   );
   assert.match(source, /existingDraft is not expectedDraft/);
   assert.match(inputHelper, /currentDraft === message/);
@@ -156,7 +156,7 @@ test('the structural accessibility linefeed is not treated as a Mac draft', asyn
   assert.match(source, /if \(length of valueText\) is 1 then return ""/);
   assert.match(inputHelper, /function normalizedDraft\(rawValue\)/);
   assert.match(inputHelper, /value\.endsWith\('\\n'\)/);
-  assert.match(inputHelper, /normalizedDraft\(candidate\.value\(\)\)/);
+  assert.match(inputHelper, /normalizedDraft\(focusedElement\.value\(\)\)/);
 });
 
 test('session lookup scans every radio button in the Conductor tab group', async () => {
@@ -176,7 +176,7 @@ test('session lookup scans every radio button in the Conductor tab group', async
   );
 });
 
-test('message submission presses Conductor’s unique enabled Send control', async () => {
+test('message submission posts Return only to Conductor after exact revalidation', async () => {
   const [source, inputHelper] = await Promise.all([
     fs.readFile(
       new URL('../src/conductor-send.applescript', import.meta.url),
@@ -184,28 +184,22 @@ test('message submission presses Conductor’s unique enabled Send control', asy
     ),
     fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
   ]);
+  assert.match(inputHelper, /submitEvents: eventPair\(source, KEY_RETURN\)/);
   assert.match(
     inputHelper,
-    /const SEND_CLASSES = \[[\s\S]*'ml-1'[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
+    /function validateComposerOwnership[\s\S]*description\(\) === 'composer'[\s\S]*candidate\.focused\(\) === true[\s\S]*normalizedDraft\(candidate\.value\(\)\) === expectedDraft/,
   );
   assert.match(
     inputHelper,
-    /const NON_SEND_CLASSES = \[[\s\S]*'bg-foreground\/50'[\s\S]*'cursor-not-allowed'[\s\S]*'hover:bg-muted'[\s\S]*'border'/,
-  );
-  assert.match(
-    inputHelper,
-    /function resolveComposerSend[\s\S]*description\(\) === 'composer'[\s\S]*candidate\.focused\(\) === true[\s\S]*pressActions\.length === 1/,
-  );
-  assert.match(
-    inputHelper,
-    /validateRoute\(process\)[\s\S]*resolveComposerSend\(process, message\)[\s\S]*validateRoute\(process\)[\s\S]*resolveComposerSend\(process, message\)/,
+    /validateFocusedComposer\(pid, message\)[\s\S]*validateRoute\(process\)[\s\S]*validateComposerOwnership\(process, message\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*validateRoute\(process\)[\s\S]*validateComposerOwnership\(process, message\)/,
   );
   assert.match(inputHelper, /exactDraftExposedAt = draftReadStartedAt/);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
   assert.match(
     inputHelper,
-    /assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*actions\.byName\('AXPress'\)\.perform\(\)[\s\S]*assertInputLease\(inputLease\)/,
+    /assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*postToConductor\([\s\S]*prepared\.submitEvents[\s\S]*exactDraftExposedAt/,
   );
+  assert.doesNotMatch(inputHelper, /AXPress|resolveComposerSend|SEND_CLASSES/);
   assert.match(
     inputHelper,
     /return `ambiguous:\$\{[\s\S]*pressInvokedAt \|\| exactDraftExposedAt \|\| attemptStartedAt/,
@@ -306,7 +300,7 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   );
   assert.match(
     inputHelper,
-    /pressInvokedAt = Date\.now\(\)[\s\S]*AXPress'\)\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
+    /pressInvokedAt = Date\.now\(\)[\s\S]*prepared\.submitEvents[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
   );
   assert.match(appleScript, /session_locked/);
 

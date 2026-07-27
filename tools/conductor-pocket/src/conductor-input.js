@@ -17,17 +17,6 @@ const COMPOSER_CLASSES = [
   'ProseMirror',
   'composer-tiptap-editor',
 ];
-const SEND_CLASSES = [
-  'ml-1',
-  'bg-foreground',
-  'hover:bg-foreground/80',
-];
-const NON_SEND_CLASSES = [
-  'bg-foreground/50',
-  'cursor-not-allowed',
-  'hover:bg-muted',
-  'border',
-];
 const MAX_MESSAGE_BYTES = 16 * 1024;
 const MAX_CHUNK_UTF16 = 256;
 const MIN_PHYSICAL_IDLE_SECONDS = 1;
@@ -428,6 +417,7 @@ function prepareInput(message) {
       ...eventPair(source, KEY_A, $.kCGEventFlagMaskCommand),
       ...eventPair(source, KEY_DELETE),
     ],
+    submitEvents: eventPair(source, KEY_RETURN),
     operations,
   };
 }
@@ -439,7 +429,7 @@ function focusedDraft(process) {
   return normalizedDraft(focusedElement.value());
 }
 
-function resolveComposerSend(process, expectedDraft) {
+function validateComposerOwnership(process, expectedDraft) {
   const mainElements = childElements(webAreaRootElements(process)[2]);
   const composers = mainElements.filter((candidate) => {
     try {
@@ -448,10 +438,9 @@ function resolveComposerSend(process, expectedDraft) {
       return false;
     }
   });
-  if (composers.length !== 1) fail('send_unavailable');
+  if (composers.length !== 1) fail('composer_focus_changed');
 
-  const composerElements = childElements(composers[0]);
-  const textAreas = composerElements.filter((candidate) => {
+  const textAreas = childElements(composers[0]).filter((candidate) => {
     try {
       const classes = candidate.attributes
         .byName('AXDOMClassList')
@@ -467,30 +456,7 @@ function resolveComposerSend(process, expectedDraft) {
       return false;
     }
   });
-  if (textAreas.length !== 1) fail('send_unavailable');
-
-  const buttons = composerElements.filter((candidate) => {
-    try {
-      const classes = candidate.attributes
-        .byName('AXDOMClassList')
-        .value();
-      const pressActions = candidate
-        .actions()
-        .filter((action) => action.name() === 'AXPress');
-      return (
-        candidate.role() === 'AXButton' &&
-        candidate.enabled() === true &&
-        Array.isArray(classes) &&
-        SEND_CLASSES.every((name) => classes.includes(name)) &&
-        NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
-        pressActions.length === 1
-      );
-    } catch {
-      return false;
-    }
-  });
-  if (buttons.length !== 1) fail('send_unavailable');
-  return { composer: composers[0], textArea: textAreas[0], button: buttons[0] };
+  if (textAreas.length !== 1) fail('composer_focus_changed');
 }
 
 function waitForExactDraft(pid, expectedDraft) {
@@ -581,17 +547,19 @@ function typeAndSendMessage(pid) {
     assertInputLease(inputLease);
     process = validateFocusedComposer(pid, message);
     validateRoute(process);
+    validateComposerOwnership(process, message);
     process = validateFocusedComposer(pid, message);
-    resolveComposerSend(process, message);
     validateRoute(process);
-    process = validateFocusedComposer(pid, message);
-    const freshTarget = resolveComposerSend(process, message);
+    validateComposerOwnership(process, message);
     assertInputLease(inputLease);
     assertSessionUnlocked();
     pressInvokedAt = Date.now();
-    freshTarget.button.actions.byName('AXPress').perform();
-    assertSessionUnlocked();
-    assertInputLease(inputLease);
+    postToConductor(
+      pid,
+      inputLease,
+      prepared.submitEvents,
+      exactDraftExposedAt,
+    );
     return `pressed:${pressInvokedAt}`;
   } catch (error) {
     const possibleExposureAt = Number(
