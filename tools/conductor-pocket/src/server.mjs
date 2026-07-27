@@ -2,6 +2,11 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import {
+  brotliCompress,
+  constants as zlibConstants,
+} from 'node:zlib';
 import {
   APP_NAME,
   APP_VERSION,
@@ -20,6 +25,8 @@ const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
+const brotliCompressAsync = promisify(brotliCompress);
+const staticAssetCache = new Map();
 
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -933,7 +940,7 @@ export function createPocketServer({
         (request.method === 'GET' || request.method === 'HEAD') &&
         staticFiles.has(requestUrl.pathname)
       ) {
-        return serveStatic(response, requestUrl.pathname, config, {
+        return serveStatic(request, response, requestUrl.pathname, config, {
           head: request.method === 'HEAD',
         });
       }
@@ -978,14 +985,60 @@ function assertHost(request, config) {
   }
 }
 
-async function serveStatic(response, pathname, config, { head = false } = {}) {
+function acceptsBrotli(request) {
+  const header = request.headers['accept-encoding'];
+  if (typeof header !== 'string') return false;
+  return header.split(',').some((entry) => {
+    const [name, ...parameters] = entry.split(';');
+    if (name.trim().toLowerCase() !== 'br') return false;
+    return !parameters.some((parameter) => {
+      const [key, value] = parameter.split('=');
+      return key.trim().toLowerCase() === 'q' && Number(value) === 0;
+    });
+  });
+}
+
+function loadStaticAsset(filename) {
+  if (!staticAssetCache.has(filename)) {
+    staticAssetCache.set(
+      filename,
+      fs.readFile(path.join(publicDirectory, filename)).then(async (body) => {
+        let brotli = null;
+        if (body.length >= 1024) {
+          try {
+            brotli = await brotliCompressAsync(body, {
+              params: {
+                [zlibConstants.BROTLI_PARAM_QUALITY]: 5,
+              },
+            });
+          } catch {
+            // Compression is optional. The identity representation stays live.
+          }
+        }
+        return { body, brotli };
+      }),
+    );
+  }
+  return staticAssetCache.get(filename);
+}
+
+async function serveStatic(
+  request,
+  response,
+  pathname,
+  config,
+  { head = false } = {},
+) {
   const [filename, contentType] = staticFiles.get(pathname);
   try {
-    const body = await fs.readFile(path.join(publicDirectory, filename));
-    response.writeHead(200, {
+    const asset = await loadStaticAsset(filename);
+    const useBrotli = acceptsBrotli(request) && asset.brotli;
+    const body = useBrotli ? asset.brotli : asset.body;
+    const headers = {
       ...securityHeaders(config),
       'Content-Type': contentType,
       'Content-Length': body.length,
+      Vary: 'Accept-Encoding',
       'Cache-Control':
         pathname === '/service-worker.js' ||
         pathname === '/app.js' ||
@@ -994,7 +1047,9 @@ async function serveStatic(response, pathname, config, { head = false } = {}) {
         pathname === '/index.html'
           ? 'no-cache'
           : 'public, max-age=3600',
-    });
+    };
+    if (useBrotli) headers['Content-Encoding'] = 'br';
+    response.writeHead(200, headers);
     response.end(head ? undefined : body);
   } catch (error) {
     if (error?.code === 'ENOENT') throw new HttpError(404, 'asset_not_found');

@@ -255,31 +255,38 @@ tell application "System Events"
 	end repeat
 	if workspaceLink is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 	set workspaceClasses to value of attribute "AXDOMClassList" of workspaceLink
-	if workspaceClasses does not contain "bg-sidebar-accent" then perform action "AXPress" of workspaceLink
+	set routeAlreadySelected to false
+	if workspaceClasses contains "bg-sidebar-accent" then
+		set routeAlreadySelected to my sessionIsSelected(sessionTitle, sessionOrdinal)
+	else
+		perform action "AXPress" of workspaceLink
+	end if
 end tell
 
-set sessionFound to false
-repeat with waitIndex from 1 to 50
-	delay 0.1
-	tell application "System Events"
-		set matchedCount to 0
-		set sessionTabs to my getSessionTabs()
-		repeat with candidate in sessionTabs
-			try
-				set candidateName to name of candidate as text
-				if candidateName is ("Close chat " & sessionTitle) then
-					set matchedCount to matchedCount + 1
-					if matchedCount is sessionOrdinal then
-						if (value of candidate as boolean) is false then perform action "AXPress" of candidate
-						set sessionFound to true
-						exit repeat
+set sessionFound to routeAlreadySelected
+if sessionFound is false then
+	repeat with waitIndex from 1 to 50
+		delay 0.1
+		tell application "System Events"
+			set matchedCount to 0
+			set sessionTabs to my getSessionTabs()
+			repeat with candidate in sessionTabs
+				try
+					set candidateName to name of candidate as text
+					if candidateName is ("Close chat " & sessionTitle) then
+						set matchedCount to matchedCount + 1
+						if matchedCount is sessionOrdinal then
+							if (value of candidate as boolean) is false then perform action "AXPress" of candidate
+							set sessionFound to true
+							exit repeat
+						end if
 					end if
-				end if
-			end try
-		end repeat
-	end tell
-	if sessionFound then exit repeat
-end repeat
+				end try
+			end repeat
+		end tell
+		if sessionFound then exit repeat
+	end repeat
+end if
 
 if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
@@ -327,8 +334,10 @@ if commitResult is "draft_conflict" then
 end if
 if commitResult starts with "pressed:" then
 	set pressedAt to text 9 thru -1 of commitResult
+	return "{\"ok\":true,\"code\":\"sent\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
 else if commitResult starts with "ambiguous:" then
 	set pressedAt to text 11 thru -1 of commitResult
+	return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
 else if commitResult starts with "interrupted:" then
 	set pressedAt to text 13 thru -1 of commitResult
 	return "{\"ok\":false,\"code\":\"send_interrupted\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
@@ -337,17 +346,3 @@ else if commitResult is "session_locked" then
 else
 	return "{\"ok\":false,\"code\":\"composer_update_failed\"}"
 end if
-
-repeat with waitIndex from 1 to 40
-	delay 0.1
-	set currentTextArea to getTextArea()
-	if currentTextArea is not missing value then
-		tell application "System Events"
-			if my normalizedDraft(value of currentTextArea as text) is "" then
-				return "{\"ok\":true,\"code\":\"sent\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
-			end if
-		end tell
-	end if
-end repeat
-
-return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
