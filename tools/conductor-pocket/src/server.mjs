@@ -8,16 +8,26 @@ import {
   MAX_JSON_BODY_BYTES,
   SSE_HEARTBEAT_MS,
 } from './constants.mjs';
-import { getVerificationCode } from './config.mjs';
+import { configRevision, getVerificationCode } from './config.mjs';
+import { normalizeText, sha256 } from './encoding.mjs';
 import { HttpError, asHttpError } from './errors.mjs';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
+const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
+const SEND_CONFIRMATION_POLL_MS = 50;
+const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
+const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
+const SEND_ATTRIBUTION_RECHECK_MS = 400;
 
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.css', ['app.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  [
+    '/delivery-receipts.js',
+    ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
+  ],
   ['/icon.svg', ['icon.svg', 'image/svg+xml']],
   ['/manifest.webmanifest', ['manifest.webmanifest', 'application/manifest+json']],
   ['/service-worker.js', ['service-worker.js', 'text/javascript; charset=utf-8']],
@@ -37,8 +47,10 @@ const errorStatuses = new Map([
   ['conductor_not_running', 503],
   ['conductor_window_unavailable', 503],
   ['accessibility_disabled', 503],
+  ['session_locked', 503],
   ['send_unavailable', 503],
   ['send_failed', 502],
+  ['user_input_active', 409],
   ['send_not_confirmed', 502],
   ['automation_timeout', 504],
   ['automation_failed', 502],
@@ -128,25 +140,165 @@ function pathMatch(pathname, expression) {
   return match.slice(1).map((value) => decodeURIComponent(value));
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function waitForExactUserMessage({
+  database,
+  sessionId,
+  afterRowId,
+  exactContent,
+  pressedAt,
+  composerOwned,
+  timeoutMs = SEND_CONFIRMATION_TIMEOUT_MS,
+  pollMs = SEND_CONFIRMATION_POLL_MS,
+  recheckMs = SEND_ATTRIBUTION_RECHECK_MS,
+  attributionWindowMs = SEND_ATTRIBUTION_WINDOW_MS,
+}) {
+  if (
+    composerOwned !== true ||
+    !Number.isSafeInteger(pressedAt) ||
+    pressedAt <= 0
+  ) {
+    return null;
+  }
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  do {
+    try {
+      const messages = database.listUserMessagesAfter(
+        sessionId,
+        afterRowId,
+      );
+      if (messages.length > 0) {
+        if (messages.length !== 1) return null;
+        const [match] = messages;
+        const createdAt = Date.parse(match.createdAt);
+        if (
+          typeof match.id !== 'string' ||
+          match.id.length === 0 ||
+          !Number.isSafeInteger(match.rowId) ||
+          match.rowId <= afterRowId ||
+          match.text !== exactContent ||
+          !Number.isFinite(createdAt) ||
+          createdAt < pressedAt ||
+          createdAt > pressedAt + attributionWindowMs
+        ) {
+          return null;
+        }
+        await delay(Math.max(0, recheckMs));
+        const rechecked = database.listUserMessagesAfter(
+          sessionId,
+          afterRowId,
+        );
+        const recheckedMatch = rechecked[0];
+        const recheckedCreatedAt = Date.parse(recheckedMatch?.createdAt);
+        if (
+          rechecked.length === 1 &&
+          recheckedMatch.id === match.id &&
+          recheckedMatch.rowId === match.rowId &&
+          recheckedMatch.text === exactContent &&
+          Number.isFinite(recheckedCreatedAt) &&
+          recheckedCreatedAt >= pressedAt &&
+          recheckedCreatedAt <= pressedAt + attributionWindowMs
+        ) {
+          return recheckedMatch;
+        }
+        return null;
+      }
+    } catch {
+      // SQLite can be briefly busy while Conductor commits the user row.
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
+    await delay(Math.min(Math.max(1, pollMs), remaining));
+  } while (true);
+}
+
 class IdempotencyStore {
   #entries = new Map();
+  #bindings = new Map();
 
-  run(key, sessionId, task) {
+  run(key, sessionId, fingerprint, task) {
     this.#prune();
+    const expiresAt = Date.now() + 60 * 60 * 1000;
+    const binding = this.#bindings.get(key);
+    if (
+      binding &&
+      (binding.sessionId !== sessionId ||
+        binding.fingerprint !== fingerprint)
+    ) {
+      throw new HttpError(409, 'idempotency_key_reused');
+    }
+    if (!binding) {
+      this.#bindings.set(key, {
+        sessionId,
+        fingerprint,
+        expiresAt,
+      });
+    } else {
+      binding.expiresAt = expiresAt;
+    }
     const existing = this.#entries.get(key);
     if (existing) {
-      if (existing.sessionId !== sessionId) {
+      if (
+        existing.sessionId !== sessionId ||
+        existing.fingerprint !== fingerprint
+      ) {
         throw new HttpError(409, 'idempotency_key_reused');
       }
       return existing.promise;
     }
     const promise = Promise.resolve().then(task);
-    this.#entries.set(key, {
+    const entry = {
       sessionId,
+      fingerprint,
       promise,
-      expiresAt: Date.now() + 60 * 60 * 1000,
-    });
+      state: 'pending',
+      result: null,
+      expiresAt,
+    };
+    this.#entries.set(key, entry);
+    void promise.then(
+      (result) => {
+        entry.state = 'resolved';
+        entry.result = result;
+        if (result?.ok !== false || result.safeToRetry !== true) return;
+        const current = this.#entries.get(key);
+        if (current?.promise === promise) this.#entries.delete(key);
+      },
+      () => {
+        entry.state = 'rejected';
+        // Unknown failures remain cached because the send outcome may be ambiguous.
+      },
+    );
     return promise;
+  }
+
+  status(key, sessionId) {
+    this.#prune();
+    const entry = this.#entries.get(key);
+    if (!entry || entry.sessionId !== sessionId) {
+      return { state: 'unknown' };
+    }
+    if (entry.state === 'pending') return { state: 'pending' };
+    if (entry.state !== 'resolved' || !entry.result) {
+      return { state: 'unknown' };
+    }
+    if (entry.result.ok) {
+      return {
+        state: 'delivered',
+        deliveredAt: entry.result.deliveredAt,
+        baselineCursor: entry.result.baselineCursor,
+        messageId: entry.result.messageId || null,
+        rowId: entry.result.rowId || null,
+      };
+    }
+    return {
+      state: 'failed',
+      code: entry.result.code,
+      retrySafe: entry.result.safeToRetry === true,
+    };
   }
 
   #prune() {
@@ -154,7 +306,20 @@ class IdempotencyStore {
     for (const [key, entry] of this.#entries) {
       if (entry.expiresAt <= now) this.#entries.delete(key);
     }
+    for (const [key, binding] of this.#bindings) {
+      if (binding.expiresAt <= now) this.#bindings.delete(key);
+    }
   }
+}
+
+function sendFingerprint({
+  message,
+  replaceDraft,
+  expectedMacDraft,
+}) {
+  return sha256(
+    JSON.stringify([message, replaceDraft, expectedMacDraft]),
+  );
 }
 
 class ConnectionProbe {
@@ -201,6 +366,16 @@ export function createPocketServer({
   const idempotency = new IdempotencyStore();
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
+  let sendQueue = Promise.resolve();
+
+  function serializeSend(task) {
+    const pending = sendQueue.then(task, task);
+    sendQueue = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  }
 
   const unsubscribe = watcher.subscribe((event) => {
     const payload = `event: change\ndata: ${JSON.stringify(event)}\n\n`;
@@ -223,7 +398,12 @@ export function createPocketServer({
         return sendJson(
           response,
           200,
-          { ok: true, app: APP_NAME, version: APP_VERSION },
+          {
+            ok: true,
+            app: APP_NAME,
+            version: APP_VERSION,
+            configRevision: configRevision(config),
+          },
           config,
         );
       }
@@ -399,6 +579,26 @@ export function createPocketServer({
         requestUrl.pathname,
         /^\/api\/sessions\/([^/]+)\/messages$/,
       );
+      const deliveryStatus = pathMatch(
+        requestUrl.pathname,
+        /^\/api\/sessions\/([^/]+)\/delivery-status$/,
+      );
+      if (request.method === 'POST' && deliveryStatus) {
+        security.assertOrigin(request);
+        const auth = security.session(request, {
+          requireUnlocked: true,
+          requireCsrf: true,
+        });
+        const route = database.getSessionRoute(deliveryStatus[0]);
+        if (!route) throw new HttpError(404, 'session_not_found');
+        const key = `${auth.device.id}:${idempotencyKey(request)}`;
+        return sendJson(
+          response,
+          200,
+          { delivery: idempotency.status(key, route.id) },
+          config,
+        );
+      }
       if (request.method === 'GET' && sessionMessages) {
         security.session(request, { requireUnlocked: true });
         const result = database.listMessages(sessionMessages[0], {
@@ -419,15 +619,99 @@ export function createPocketServer({
         const route = database.getSessionRoute(sessionMessages[0]);
         if (!route) throw new HttpError(404, 'session_not_found');
         const key = `${auth.device.id}:${idempotencyKey(request)}`;
-        const result = await idempotency.run(key, route.id, () =>
-          transport.send({
-            workspaceName: route.workspaceName,
-            sessionTitle: route.title,
-            sessionOrdinal: route.titleOrdinal,
-            message: body.message,
-            replaceDraft: body.replaceDraft === true,
-            expectedMacDraft: body.expectedMacDraft,
-          }),
+        const normalizedMessage = normalizeText(body.message);
+        const replaceDraft = body.replaceDraft === true;
+        const expectedMacDraft =
+          typeof body.expectedMacDraft === 'string'
+            ? normalizeText(body.expectedMacDraft)
+            : null;
+        const fingerprint = sendFingerprint({
+          message: normalizedMessage,
+          replaceDraft,
+          expectedMacDraft,
+        });
+        const result = await idempotency.run(
+          key,
+          route.id,
+          fingerprint,
+          () =>
+            serializeSend(async () => {
+              const beforeRowId = database.getSessionMessageCursor(route.id);
+              const sendResult = await transport.send({
+                workspaceName: route.workspaceName,
+                sessionTitle: route.title,
+                sessionOrdinal: route.titleOrdinal,
+                message: normalizedMessage,
+                replaceDraft,
+                expectedMacDraft,
+              });
+              if (
+                !sendResult.ok &&
+                sendResult.code !== 'send_not_confirmed' &&
+                sendResult.code !== 'send_interrupted'
+              ) {
+                return sendResult;
+              }
+              const confirmed = await waitForExactUserMessage({
+                database,
+                sessionId: route.id,
+                afterRowId: beforeRowId,
+                exactContent: normalizedMessage,
+                pressedAt: sendResult.pressedAt,
+                composerOwned: sendResult.composerOwned,
+                timeoutMs:
+                  sendResult.code === 'send_interrupted'
+                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                    : SEND_CONFIRMATION_TIMEOUT_MS,
+                attributionWindowMs:
+                  sendResult.code === 'send_interrupted'
+                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                    : SEND_ATTRIBUTION_WINDOW_MS,
+              });
+              if (!confirmed) {
+                if (sendResult.code === 'send_interrupted') {
+                  try {
+                    const rows = database.listUserMessagesAfter(
+                      route.id,
+                      beforeRowId,
+                    );
+                    if (rows.length === 0) {
+                      return {
+                        ok: false,
+                        code: 'user_input_active',
+                        safeToRetry: true,
+                      };
+                    }
+                  } catch {
+                    // Any unreadable or interfering row keeps the result ambiguous.
+                  }
+                  return {
+                    ok: false,
+                    code: 'send_not_confirmed',
+                    pressedAt: sendResult.pressedAt,
+                    composerOwned: sendResult.composerOwned,
+                  };
+                }
+                if (!sendResult.ok) return sendResult;
+                return {
+                  ok: false,
+                  code: 'send_not_confirmed',
+                  pressedAt: sendResult.pressedAt,
+                  composerOwned: sendResult.composerOwned,
+                };
+              }
+              return {
+                ok: true,
+                code: 'sent',
+                confirmation: 'database',
+                messageId: confirmed.id,
+                rowId: confirmed.rowId,
+                sentAt: confirmed.sentAt,
+                deliveredAt:
+                  confirmed.sentAt || new Date().toISOString(),
+                baselineCursor: beforeRowId,
+              };
+            }),
         );
         if (!result.ok) {
           if (result.code === 'draft_conflict') {
@@ -441,9 +725,16 @@ export function createPocketServer({
               config,
             );
           }
-          throw new HttpError(
+          return sendJson(
+            response,
             errorStatuses.get(result.code) || 502,
-            result.code,
+            {
+              error: {
+                code: result.code,
+                retrySafe: result.safeToRetry === true,
+              },
+            },
+            config,
           );
         }
         return sendJson(
@@ -451,8 +742,12 @@ export function createPocketServer({
           200,
           {
             delivery: 'delivered',
-            deliveredAt: new Date().toISOString(),
+            deliveredAt: result.deliveredAt,
             sessionId: route.id,
+            confirmation: result.confirmation || 'accessibility',
+            baselineCursor: result.baselineCursor,
+            messageId: result.messageId || null,
+            rowId: result.rowId || null,
           },
           config,
         );
@@ -468,7 +763,15 @@ export function createPocketServer({
         /^\/api\/devices\/([^/]+)\/revoke$/,
       );
       if (request.method === 'POST' && revokeDevice) {
-        const result = await security.revokeDevice(request, revokeDevice[0]);
+        const body = await readJson(request);
+        const result = await security.revokeDevice(
+          request,
+          revokeDevice[0],
+          {
+            clientVersion: body.clientVersion,
+            localPurgeCompleted: body.localPurgeCompleted,
+          },
+        );
         return sendJson(
           response,
           200,
@@ -536,7 +839,11 @@ async function serveStatic(response, pathname, config, { head = false } = {}) {
       'Content-Type': contentType,
       'Content-Length': body.length,
       'Cache-Control':
-        pathname === '/service-worker.js' || pathname === '/' || pathname === '/index.html'
+        pathname === '/service-worker.js' ||
+        pathname === '/app.js' ||
+        pathname === '/delivery-receipts.js' ||
+        pathname === '/' ||
+        pathname === '/index.html'
           ? 'no-cache'
           : 'public, max-age=3600',
     });

@@ -12,6 +12,7 @@ import {
 import { sha256 } from '../src/encoding.mjs';
 import {
   SecurityManager,
+  assertOriginRetirementRevocation,
   createUnlockWindow,
   evaluateUnlockWindow,
 } from '../src/security.mjs';
@@ -55,6 +56,46 @@ test('unlock window enforces both idle and absolute Face ID deadlines', () => {
       startedAt + UNLOCK_TTL_MS,
     ).unlocked,
     false,
+  );
+});
+
+test('origin retirement accepts only a current 0.2 client after local purge', () => {
+  const retirement = {
+    requiredDeviceIds: ['device-1', 'device-2'],
+    retiredDeviceIds: [],
+  };
+  assert.throws(
+    () =>
+      assertOriginRetirementRevocation({
+        retirement,
+        currentDeviceId: 'device-1',
+        targetDeviceId: 'device-2',
+        clientVersion: '0.2.0',
+        localPurgeCompleted: true,
+      }),
+    (error) => error.status === 409 && error.code === 'self_signout_required',
+  );
+  assert.throws(
+    () =>
+      assertOriginRetirementRevocation({
+        retirement,
+        currentDeviceId: 'device-1',
+        targetDeviceId: 'device-1',
+        clientVersion: '0.1.0',
+        localPurgeCompleted: true,
+      }),
+    (error) =>
+      error.status === 409 &&
+      error.code === 'retirement_client_upgrade_required',
+  );
+  assert.doesNotThrow(() =>
+    assertOriginRetirementRevocation({
+      retirement,
+      currentDeviceId: 'device-1',
+      targetDeviceId: 'device-1',
+      clientVersion: '0.2.0',
+      localPurgeCompleted: true,
+    }),
   );
 });
 
