@@ -9,13 +9,14 @@ import {
   SSE_HEARTBEAT_MS,
 } from './constants.mjs';
 import { configRevision, getVerificationCode } from './config.mjs';
-import { normalizeText } from './encoding.mjs';
+import { normalizeText, sha256 } from './encoding.mjs';
 import { HttpError, asHttpError } from './errors.mjs';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
 const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
+const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 
 const staticFiles = new Map([
@@ -46,8 +47,10 @@ const errorStatuses = new Map([
   ['conductor_not_running', 503],
   ['conductor_window_unavailable', 503],
   ['accessibility_disabled', 503],
+  ['session_locked', 503],
   ['send_unavailable', 503],
   ['send_failed', 502],
+  ['user_input_active', 409],
   ['send_not_confirmed', 502],
   ['automation_timeout', 504],
   ['automation_failed', 502],
@@ -151,6 +154,7 @@ export async function waitForExactUserMessage({
   timeoutMs = SEND_CONFIRMATION_TIMEOUT_MS,
   pollMs = SEND_CONFIRMATION_POLL_MS,
   recheckMs = SEND_ATTRIBUTION_RECHECK_MS,
+  attributionWindowMs = SEND_ATTRIBUTION_WINDOW_MS,
 }) {
   if (
     composerOwned !== true ||
@@ -178,7 +182,7 @@ export async function waitForExactUserMessage({
           match.text !== exactContent ||
           !Number.isFinite(createdAt) ||
           createdAt < pressedAt ||
-          createdAt > pressedAt + SEND_ATTRIBUTION_WINDOW_MS
+          createdAt > pressedAt + attributionWindowMs
         ) {
           return null;
         }
@@ -187,12 +191,18 @@ export async function waitForExactUserMessage({
           sessionId,
           afterRowId,
         );
+        const recheckedMatch = rechecked[0];
+        const recheckedCreatedAt = Date.parse(recheckedMatch?.createdAt);
         if (
           rechecked.length === 1 &&
-          rechecked[0].id === match.id &&
-          rechecked[0].rowId === match.rowId
+          recheckedMatch.id === match.id &&
+          recheckedMatch.rowId === match.rowId &&
+          recheckedMatch.text === exactContent &&
+          Number.isFinite(recheckedCreatedAt) &&
+          recheckedCreatedAt >= pressedAt &&
+          recheckedCreatedAt <= pressedAt + attributionWindowMs
         ) {
-          return match;
+          return recheckedMatch;
         }
         return null;
       }
@@ -207,12 +217,34 @@ export async function waitForExactUserMessage({
 
 class IdempotencyStore {
   #entries = new Map();
+  #bindings = new Map();
 
-  run(key, sessionId, task) {
+  run(key, sessionId, fingerprint, task) {
     this.#prune();
+    const expiresAt = Date.now() + 60 * 60 * 1000;
+    const binding = this.#bindings.get(key);
+    if (
+      binding &&
+      (binding.sessionId !== sessionId ||
+        binding.fingerprint !== fingerprint)
+    ) {
+      throw new HttpError(409, 'idempotency_key_reused');
+    }
+    if (!binding) {
+      this.#bindings.set(key, {
+        sessionId,
+        fingerprint,
+        expiresAt,
+      });
+    } else {
+      binding.expiresAt = expiresAt;
+    }
     const existing = this.#entries.get(key);
     if (existing) {
-      if (existing.sessionId !== sessionId) {
+      if (
+        existing.sessionId !== sessionId ||
+        existing.fingerprint !== fingerprint
+      ) {
         throw new HttpError(409, 'idempotency_key_reused');
       }
       return existing.promise;
@@ -220,10 +252,11 @@ class IdempotencyStore {
     const promise = Promise.resolve().then(task);
     const entry = {
       sessionId,
+      fingerprint,
       promise,
       state: 'pending',
       result: null,
-      expiresAt: Date.now() + 60 * 60 * 1000,
+      expiresAt,
     };
     this.#entries.set(key, entry);
     void promise.then(
@@ -273,7 +306,20 @@ class IdempotencyStore {
     for (const [key, entry] of this.#entries) {
       if (entry.expiresAt <= now) this.#entries.delete(key);
     }
+    for (const [key, binding] of this.#bindings) {
+      if (binding.expiresAt <= now) this.#bindings.delete(key);
+    }
   }
+}
+
+function sendFingerprint({
+  message,
+  replaceDraft,
+  expectedMacDraft,
+}) {
+  return sha256(
+    JSON.stringify([message, replaceDraft, expectedMacDraft]),
+  );
 }
 
 class ConnectionProbe {
@@ -574,62 +620,98 @@ export function createPocketServer({
         if (!route) throw new HttpError(404, 'session_not_found');
         const key = `${auth.device.id}:${idempotencyKey(request)}`;
         const normalizedMessage = normalizeText(body.message);
-        const result = await idempotency.run(key, route.id, () =>
-          serializeSend(async () => {
-            const beforeRowId = database.getSessionMessageCursor(route.id);
-            const sendResult = await transport.send({
-              workspaceName: route.workspaceName,
-              sessionTitle: route.title,
-              sessionOrdinal: route.titleOrdinal,
-              message: normalizedMessage,
-              replaceDraft: body.replaceDraft === true,
-              expectedMacDraft: body.expectedMacDraft,
-            });
-            if (
-              sendResult.ok ||
-              sendResult.code !== 'send_not_confirmed'
-            ) {
-              if (!sendResult.ok) return sendResult;
-              let accepted = null;
-              try {
-                accepted = database.findExactUserMessageAfter(
-                  route.id,
-                  beforeRowId,
-                  normalizedMessage,
-                );
-              } catch {
-                // Composer clearance is still authoritative for a normal send.
+        const replaceDraft = body.replaceDraft === true;
+        const expectedMacDraft =
+          typeof body.expectedMacDraft === 'string'
+            ? normalizeText(body.expectedMacDraft)
+            : null;
+        const fingerprint = sendFingerprint({
+          message: normalizedMessage,
+          replaceDraft,
+          expectedMacDraft,
+        });
+        const result = await idempotency.run(
+          key,
+          route.id,
+          fingerprint,
+          () =>
+            serializeSend(async () => {
+              const beforeRowId = database.getSessionMessageCursor(route.id);
+              const sendResult = await transport.send({
+                workspaceName: route.workspaceName,
+                sessionTitle: route.title,
+                sessionOrdinal: route.titleOrdinal,
+                message: normalizedMessage,
+                replaceDraft,
+                expectedMacDraft,
+              });
+              if (
+                !sendResult.ok &&
+                sendResult.code !== 'send_not_confirmed' &&
+                sendResult.code !== 'send_interrupted'
+              ) {
+                return sendResult;
+              }
+              const confirmed = await waitForExactUserMessage({
+                database,
+                sessionId: route.id,
+                afterRowId: beforeRowId,
+                exactContent: normalizedMessage,
+                pressedAt: sendResult.pressedAt,
+                composerOwned: sendResult.composerOwned,
+                timeoutMs:
+                  sendResult.code === 'send_interrupted'
+                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                    : SEND_CONFIRMATION_TIMEOUT_MS,
+                attributionWindowMs:
+                  sendResult.code === 'send_interrupted'
+                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                    : SEND_ATTRIBUTION_WINDOW_MS,
+              });
+              if (!confirmed) {
+                if (sendResult.code === 'send_interrupted') {
+                  try {
+                    const rows = database.listUserMessagesAfter(
+                      route.id,
+                      beforeRowId,
+                    );
+                    if (rows.length === 0) {
+                      return {
+                        ok: false,
+                        code: 'user_input_active',
+                        safeToRetry: true,
+                      };
+                    }
+                  } catch {
+                    // Any unreadable or interfering row keeps the result ambiguous.
+                  }
+                  return {
+                    ok: false,
+                    code: 'send_not_confirmed',
+                    pressedAt: sendResult.pressedAt,
+                    composerOwned: sendResult.composerOwned,
+                  };
+                }
+                if (!sendResult.ok) return sendResult;
+                return {
+                  ok: false,
+                  code: 'send_not_confirmed',
+                  pressedAt: sendResult.pressedAt,
+                  composerOwned: sendResult.composerOwned,
+                };
               }
               return {
-                ...sendResult,
+                ok: true,
+                code: 'sent',
+                confirmation: 'database',
+                messageId: confirmed.id,
+                rowId: confirmed.rowId,
+                sentAt: confirmed.sentAt,
                 deliveredAt:
-                  accepted?.sentAt || new Date().toISOString(),
+                  confirmed.sentAt || new Date().toISOString(),
                 baselineCursor: beforeRowId,
-                messageId: accepted?.id || null,
-                rowId: accepted?.rowId || null,
               };
-            }
-            const confirmed = await waitForExactUserMessage({
-              database,
-              sessionId: route.id,
-              afterRowId: beforeRowId,
-              exactContent: normalizedMessage,
-              pressedAt: sendResult.pressedAt,
-              composerOwned: sendResult.composerOwned,
-            });
-            if (!confirmed) return sendResult;
-            return {
-              ok: true,
-              code: 'sent',
-              confirmation: 'database',
-              messageId: confirmed.id,
-              rowId: confirmed.rowId,
-              sentAt: confirmed.sentAt,
-              deliveredAt:
-                confirmed.sentAt || new Date().toISOString(),
-              baselineCursor: beforeRowId,
-            };
-          }),
+            }),
         );
         if (!result.ok) {
           if (result.code === 'draft_conflict') {

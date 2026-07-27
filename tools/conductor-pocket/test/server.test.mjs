@@ -83,8 +83,21 @@ function get(port, { pathname = '/', host = '127.0.0.1:4317', method = 'GET' } =
   });
 }
 
-function postMessage(port, { idempotencyKey, message = 'Test message' }) {
-  const body = JSON.stringify({ message });
+function postMessage(
+  port,
+  {
+    idempotencyKey,
+    message = 'Test message',
+    replaceDraft,
+    expectedMacDraft,
+  },
+) {
+  const payload = { message };
+  if (typeof replaceDraft === 'boolean') payload.replaceDraft = replaceDraft;
+  if (typeof expectedMacDraft === 'string') {
+    payload.expectedMacDraft = expectedMacDraft;
+  }
+  const body = JSON.stringify(payload);
   return new Promise((resolve, reject) => {
     const request = http.request(
       {
@@ -244,6 +257,7 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
   let ambiguousSends = 0;
   let mappedPermissionFailures = 0;
   let rejectedSends = 0;
+  const acceptedRows = [];
   const server = createPocketServer({
     configStore: { value: config },
     security: {
@@ -266,10 +280,10 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
         };
       },
       getSessionMessageCursor() {
-        return 0;
+        return acceptedRows.at(-1)?.rowId || 0;
       },
-      findExactUserMessageAfter() {
-        throw new Error('Confirmation database unavailable');
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return acceptedRows.filter((row) => row.rowId > afterRowId);
       },
     },
     watcher: createWatcher(),
@@ -292,13 +306,27 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
             : { ok: true, code: 'sent' };
         }
         retryableSends += 1;
-        return retryableSends === 1
-          ? {
-              ok: false,
-              code: 'accessibility_disabled',
-              safeToRetry: true,
-            }
-          : { ok: true, code: 'sent' };
+        if (retryableSends === 1) {
+          return {
+            ok: false,
+            code: 'accessibility_disabled',
+            safeToRetry: true,
+          };
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        acceptedRows.push({
+          id: `accepted-${acceptedRows.length + 1}`,
+          rowId: acceptedRows.length + 1,
+          text: message,
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
       },
     },
   });
@@ -360,6 +388,81 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
   assert.equal(rejected.status, 500);
   assert.equal(rejectedRetry.status, 500);
   assert.equal(rejectedSends, 1);
+});
+
+test('an idempotency key remains bound to the exact send body across safe retries', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'composer_unavailable',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'body_bound_retry_key',
+    message: 'Original message',
+  });
+  const changedMessage = await postMessage(port, {
+    idempotencyKey: 'body_bound_retry_key',
+    message: 'Changed message',
+  });
+  const changedReplacement = await postMessage(port, {
+    idempotencyKey: 'body_bound_retry_key',
+    message: 'Original message',
+    replaceDraft: true,
+    expectedMacDraft: 'Owned draft',
+  });
+  const exactRetry = await postMessage(port, {
+    idempotencyKey: 'body_bound_retry_key',
+    message: 'Original message',
+  });
+
+  assert.equal(first.status, 503);
+  assert.equal(changedMessage.status, 409);
+  assert.equal(changedReplacement.status, 409);
+  assert.deepEqual(JSON.parse(changedMessage.body).error, {
+    code: 'idempotency_key_reused',
+  });
+  assert.equal(exactRetry.status, 503);
+  assert.equal(sends, 2);
 });
 
 test('an ambiguous UI result is confirmed by the exact new Conductor row', async (context) => {
@@ -483,6 +586,312 @@ test('an ambiguous UI result is confirmed by the exact new Conductor row', async
   });
 });
 
+test('a physical-input interruption is delivered when Conductor has the exact new row', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const interruptedAt = Date.now();
+  let sends = 0;
+  const exactRow = {
+    id: 'user-row-after-interruption',
+    rowId: 18,
+    kind: 'user',
+    text: 'User completed this send',
+    createdAt: new Date(interruptedAt + 5_000).toISOString(),
+    sentAt: null,
+  };
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 17;
+      },
+      listUserMessagesAfter() {
+        return [exactRow];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'send_interrupted',
+          pressedAt: interruptedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'input_interruption_confirmed_key',
+    message: exactRow.text,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(sends, 1);
+  const receipt = JSON.parse(response.body);
+  assert.equal(typeof receipt.deliveredAt, 'string');
+  assert.deepEqual({ ...receipt, deliveredAt: '<timestamp>' }, {
+    delivery: 'delivered',
+    deliveredAt: '<timestamp>',
+    sessionId: 'test-session',
+    confirmation: 'database',
+    baselineCursor: 17,
+    messageId: exactRow.id,
+    rowId: exactRow.rowId,
+  });
+});
+
+test('an interfering user row makes an interrupted send non-retryable', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const interruptedAt = Date.now();
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 20;
+      },
+      listUserMessagesAfter() {
+        return [
+          {
+            id: 'manual-row',
+            rowId: 21,
+            text: 'Different manual message',
+            createdAt: new Date(interruptedAt + 100).toISOString(),
+          },
+        ];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'send_interrupted',
+          pressedAt: interruptedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'input_interruption_interference_key',
+    message: 'Expected Pocket message',
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'input_interruption_interference_key',
+    message: 'Expected Pocket message',
+  });
+
+  assert.equal(first.status, 502);
+  assert.equal(repeated.status, 502);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(first.body).error, {
+    code: 'send_not_confirmed',
+    retrySafe: false,
+  });
+});
+
+test('an interrupted pre-send attempt is retryable only after Conductor stays unchanged', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const interruptedAt = Date.now();
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 25;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        if (sends === 1) {
+          return {
+            ok: false,
+            code: 'send_interrupted',
+            pressedAt: interruptedAt,
+            composerOwned: true,
+          };
+        }
+        return {
+          ok: false,
+          code: 'composer_unavailable',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'input_interruption_retry_key',
+  });
+  const retry = await postMessage(port, {
+    idempotencyKey: 'input_interruption_retry_key',
+  });
+
+  assert.equal(first.status, 409);
+  assert.deepEqual(JSON.parse(first.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+  });
+  assert.equal(retry.status, 503);
+  assert.equal(sends, 2);
+});
+
+test('a cleared composer without an exact database row is never reported delivered', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 7;
+      },
+      listUserMessagesAfter() {
+        return [
+          {
+            id: 'manual-row',
+            rowId: 8,
+            text: 'Different manual message',
+            createdAt: new Date(pressedAt + 100).toISOString(),
+            sentAt: null,
+          },
+        ];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'unattributed_success_key',
+    message: 'Expected Pocket message',
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'unattributed_success_key',
+    message: 'Expected Pocket message',
+  });
+
+  assert.equal(first.status, 502);
+  assert.equal(repeated.status, 502);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(first.body).error, {
+    code: 'send_not_confirmed',
+    retrySafe: false,
+  });
+});
+
 test('ambiguous-send attribution retries database reads and rejects interference', async () => {
   const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
   const exact = {
@@ -537,6 +946,32 @@ test('ambiguous-send attribution retries database reads and rejects interference
     recheckMs: 1,
   });
   assert.equal(interfered, null);
+
+  let mutableRead = 0;
+  const changedOnRecheck = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        mutableRead += 1;
+        return [
+          mutableRead === 1
+            ? exact
+            : {
+                ...exact,
+                text: 'Changed while rechecking',
+              },
+        ];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 10,
+    pollMs: 1,
+    recheckMs: 1,
+  });
+  assert.equal(changedOnRecheck, null);
 
   let unownedReads = 0;
   const unowned = await waitForExactUserMessage({

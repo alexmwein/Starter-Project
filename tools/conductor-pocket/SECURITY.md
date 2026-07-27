@@ -14,7 +14,7 @@ Pocket. They remain inside the processes and profiles Conductor already owns.
 
 ### Trusted
 
-- Alex's logged-in macOS account and its local files.
+- The host's logged-in macOS account and its local files.
 - The installed Conductor application.
 - The loopback interface.
 - The dedicated Pocket Tailscale node and Serve proxy after its identity
@@ -82,8 +82,9 @@ and adds an opaque privacy shield before iOS takes an app-switcher snapshot.
 - Mutations require an HMAC-derived, device-specific CSRF token.
 - Send requests require an idempotency key and are serialized globally so
   concurrent UI automation cannot target different chats at once.
-- An explicit retry reuses its original idempotency key, so a lost HTTP
-  response does not normally create a second Conductor message.
+- Each idempotency key is bound to its normalized message and draft-replacement
+  parameters. An explicit retry must reuse both the key and exact body, so a
+  lost HTTP response cannot be replayed as different content.
 - Pairing attempts are rate-limited.
 - Input bodies and user messages have hard byte limits.
 
@@ -98,12 +99,25 @@ A send uses macOS Accessibility to:
 1. select the database-resolved workspace;
 2. select the database-resolved session title and duplicate ordinal;
 3. refuse a differing Mac draft;
-4. set the real composer value;
-5. focus that exact composer and invoke Conductor's documented Return submit;
-6. report delivery only after the composer clears.
+4. require a physical-input quiet lease, focus that exact composer, and enter
+   process-targeted Unicode chunks, rechecking the lease, selected route, focus,
+   and exact committed prefix between chunks;
+5. resolve the text area and Conductor's unique enabled Send control from the
+   same composer, recheck the exact draft, and invoke `AXPress` while retaining
+   the same physical-input lease;
+6. report delivery only after the exact new user-message row appears after the
+   pre-send database cursor in the intended session.
 
 If any check fails, the phone sees a specific failure code and the message
 remains available for explicit retry. Reconnect never auto-sends a draft.
+Physical-input interruptions are checked against that same post-cursor database
+boundary before retry is permitted; any new or unreadable row keeps the outcome
+non-retryable.
+
+macOS exposes no Conductor window to Accessibility while the login session is
+locked. Sends therefore fail closed until the Mac is unlocked. Pocket does not
+change sleep, lock-screen, or login settings; read-only transcript sync remains
+available.
 
 ### Browser
 
@@ -128,9 +142,9 @@ protected by iOS Data Protection and the app's Face ID gate.
 
 ## Residual risks
 
-- A process already running as Alex can read the Conductor database or use
-  macOS UI automation. Pocket does not claim to defend against compromise of
-  the Mac user account.
+- A process already running as the host's logged-in macOS account can read the
+  Conductor database or use macOS UI automation. Pocket does not claim to
+  defend against compromise of the Mac user account.
 - macOS Accessibility permission is broad. The relay's Node executable must
   be trusted and should not be replaced by an untrusted binary.
 - The dedicated Tailscale state contains a node private key. Its directory is
