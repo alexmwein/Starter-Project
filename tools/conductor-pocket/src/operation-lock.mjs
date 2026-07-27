@@ -69,16 +69,7 @@ export function recoveryLockCommandForPlatform(platform, recoveryPath) {
   if (platform === 'linux') {
     return {
       command: FLOCK_PATH,
-      args: [
-        '--exclusive',
-        '--nonblock',
-        '--conflict-exit-code',
-        '75',
-        '--no-fork',
-        '--',
-        recoveryPath,
-        CAT_PATH,
-      ],
+      args: ['-x', '-n', '-E', '75', '-F', recoveryPath, CAT_PATH],
     };
   }
   throw new Error(
@@ -302,6 +293,9 @@ export async function withOperationLock(
   task,
   lockPath = DEFAULT_OPERATION_LOCK_PATH,
 ) {
+  if (!path.isAbsolute(lockPath)) {
+    throw new TypeError('Conductor Pocket operation lock path must be absolute');
+  }
   const owner = await acquireOperationLock(lockPath, operation);
   try {
     return await task();

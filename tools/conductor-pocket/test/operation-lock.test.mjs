@@ -16,20 +16,18 @@ test('recovery lock selects exact crash-releasing platform primitives', () => {
   });
   assert.deepEqual(recoveryLockCommandForPlatform('linux', recoveryPath), {
     command: '/usr/bin/flock',
-    args: [
-      '--exclusive',
-      '--nonblock',
-      '--conflict-exit-code',
-      '75',
-      '--no-fork',
-      '--',
-      recoveryPath,
-      '/bin/cat',
-    ],
+    args: ['-x', '-n', '-E', '75', '-F', recoveryPath, '/bin/cat'],
   });
   assert.throws(
     () => recoveryLockCommandForPlatform('win32', recoveryPath),
     /operation locking is unsupported on win32/,
+  );
+});
+
+test('operation locks reject relative paths before changing the filesystem', async () => {
+  await assert.rejects(
+    withOperationLock('unsafe relative lock', async () => {}, 'relative.lock'),
+    /operation lock path must be absolute/,
   );
 });
 
