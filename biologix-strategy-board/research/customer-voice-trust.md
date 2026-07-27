@@ -20,7 +20,7 @@ Across the coded set, the same five promises determine conversion and repeat pur
 
 Cheap acquisition can create a first order. Those five promises create the second order. One broken promise can erase months of brand building because this market's default assumption is that the seller, review, certificate, payment page, or shipment may be fake.
 
-For OVO, the commercially attractive wedge is therefore a **creator-distributed trust system with unusually strong operations**, not a large anonymous catalog. The current U.S. evidence does not support a consumer retatrutide RUO funnel. Any launch would need an independently cleared legal model and a genuinely qualified audience.
+For Noli, the commercially attractive wedge is therefore a **creator-distributed trust system with unusually strong operations**, not a large anonymous catalog. The current U.S. evidence does not support a consumer retatrutide RUO funnel. Any launch would need an independently cleared legal model and a genuinely qualified audience.
 
 ## What was researched
 
@@ -84,7 +84,7 @@ Current community discussions explicitly recognize that domestic sites can cost 
 
 This explains how a private phone number can spread without appearing on a homepage. A contact can move through forwarded introductions, customer address books, affiliate or vendor lists, private groups, scraped business data, prior transactions, and messaging-platform discovery. That is plausible. It is not evidence that any one explanation is what happened to Braden.
 
-OVO requirement: every public profile, creator mention, email, package insert, and support reply should point to one canonical-domain verification page. Never make the private phone number the identity proof.
+Noli requirement: every public profile, creator mention, email, package insert, and support reply should point to one canonical-domain verification page. Never make the private phone number the identity proof.
 
 ### 2. Buyers triangulate, because every evidence source can be compromised
 
@@ -103,7 +103,7 @@ Customers compare:
 
 [GLP1Forum's current vendor disclaimer](https://glp1forum.com/pages/vendors-disclaimer/) similarly says paid sponsors are not endorsed, verified, or vetted and that lists may carry commissions, discounts, or free-product incentives. E4.
 
-OVO requirement: make evidence inspectable, not declarative. “99% pure” is a claim. A batch page linking to the original lab record, sample provenance, test date, identity, net content, purity, applicable safety panel, and release decision is proof.
+Noli requirement: make evidence inspectable, not declarative. “99% pure” is a claim. A batch page linking to the original lab record, sample provenance, test date, identity, net content, purity, applicable safety panel, and release decision is proof.
 
 ### 3. The first order is a risk test
 
@@ -125,7 +125,7 @@ On current Trustpilot pages, OROS reviewers repeatedly praise easy checkout, FAQ
 - A June 2025 [Recon Peptides BBB complaint](https://www.bbb.org/us/fl/gulf-breeze/profile/biotechnology/recon-peptides-0683-90100323/complaints) describes the same label-versus-acceptance dispute. The company later reported delivery. E2.
 - Current negative Trustpilot reviews punish sellers for promising two-day delivery during a promotion and then going silent when capacity breaks.
 
-OVO requirement: publish and measure two clocks separately:
+Noli requirement: publish and measure two clocks separately:
 
 1. Order-to-carrier-acceptance
 2. Carrier-acceptance-to-delivery
@@ -141,7 +141,7 @@ Several reviewers describe fast replacements alongside repeat loyalty, suggestin
 - On [OROS Research Trustpilot](https://www.trustpilot.com/review/orosresearch.com), a reviewer reports a broken vial replaced within two days. E2.
 - A July 2026 [Peptide Technologies BBB complaint](https://www.bbb.org/us/wy/sheridan/profile/biotechnology/peptide-technologies-0805-46148891/complaints) describes an order, merchant-descriptor, shipping, and refund dispute that was eventually marked resolved. E2.
 
-OVO requirement: authorize support to resolve ordinary loss, damage, wrong-item, and lot-label mismatch cases in one interaction. Track time to *resolution*, not merely first response.
+Noli requirement: authorize support to resolve ordinary loss, damage, wrong-item, and lot-label mismatch cases in one interaction. Track time to *resolution*, not merely first response.
 
 ## Five buyer jobs to be done
 
@@ -153,7 +153,7 @@ OVO requirement: authorize support to resolve ordinary loss, damage, wrong-item,
 | Reliability/repeat buyer | “Make this boring and consistent” | Several successful orders | Inventory gap, formulation/lot drift, domain disappearance | Stable lots, stock visibility, consistent packaging, continuity plan |
 | Qualified B2B researcher | “Source documented material for legitimate work” | Institutional or controlled research need | Identity, specification, documentation, change control | Real qualification, technical packet, traceability, contract terms |
 
-The first four personas dominate public gray-market discussion. They are useful customer psychology but do not establish a lawfully addressable audience. OVO still needs direct discovery interviews with actual qualified research purchasers.
+The first four personas dominate public gray-market discussion. They are useful customer psychology but do not establish a lawfully addressable audience. Noli still needs direct discovery interviews with actual qualified research purchasers.
 
 ## What converts, what retains, what causes switching
 
@@ -185,7 +185,7 @@ Snapshot values below were visible on 2026-07-26. A Trustpilot rating is not com
 
 A site calling itself “Official Peptide Sciences” republishes alleged Google reviews that repeatedly name a different business, “Peptide Technologies”: [review page](https://officialpeptidesciences.com/customer-reviews/). Meanwhile, the [actual Peptide Sciences site](https://www.peptidesciences.com/) says it voluntarily ceased sales and that purported successors or affiliates are unauthorized. E4.
 
-This does not prove who authored the republished reviews. It does prove that brand, review, and company identity can become badly entangled. OVO should never import reviews without source, date, product, and exact legal-brand attribution.
+This does not prove who authored the republished reviews. It does prove that brand, review, and company identity can become badly entangled. Noli should never import reviews without source, date, product, and exact legal-brand attribution.
 
 ## Testing: the strongest trust lever and the easiest one to fake
 
@@ -221,7 +221,7 @@ These pages are measuring different samples, attributes, periods, and submission
 
 A March 2026 [MESO-Rx ZLZ thread](https://www.thinksteroids.com/community/threads/zlz-peptide-test-results-multiple-compounds-pending-janoshik.134438915/) also demonstrates that extensive lab-linked evidence and a referral incentive can coexist in the same post. A disclosed incentive does not invalidate a report, but it changes how the recommendation should be weighted. E3/E5.
 
-OVO requirement: build a lot passport, not a logo wall:
+Noli requirement: build a lot passport, not a logo wall:
 
 - Exact product and lot
 - Sample owner and acquisition method
@@ -250,7 +250,7 @@ Current examples:
 - [GLP1Forum's paid-vendor policy](https://glp1forum.com/pages/newvendor/) allows paid vendor sections under advertising and dispute rules, while its separate disclaimer denies endorsement or verification. E4.
 - A March 2026 [Reddit vendor-review-site thread](https://www.reddit.com/r/ResearchCompounds/comments/1s6akid/vendor_review_website/) questions rankings that appear to favor expensive sellers. E1/E5.
 
-OVO requirements:
+Noli requirements:
 
 - Disclose cash, free product, codes, equity, agency relationships, and house brands beside the recommendation.
 - Never suppress a valid negative review in exchange for remedy.
@@ -262,7 +262,7 @@ OVO requirements:
 
 This table records current market language without teaching circumvention.
 
-| Current company/forum claim or pattern | Current example | Primary reality | OVO decision rule |
+| Current company/forum claim or pattern | Current example | Primary reality | Noli decision rule |
 |---|---|---|---|
 | “Research use only” or “not for human consumption” defines the transaction | [Kinetic Compounds RUO policy, updated June 15, 2026](https://kineticcompounds.com/research-use-only/) | [21 CFR 201.128](https://www.ecfr.gov/current/title-21/chapter-I/subchapter-C/part-201/subpart-D/section-201.128) says intended use can be shown by claims, advertising, statements, design, and distribution circumstances. In the [March 31, 2026 Gram Peptides letter](https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/warning-letters/gram-peptides-721806-03312026), FDA said RUO language did not outweigh human-use evidence. P. | A disclaimer is not the model. Only pursue a genuinely qualified research channel after counsel reviews the entire funnel. |
 | An 18+/21+ age gate creates a safe harbor | [TitanPep](https://www.titanpep.com/) currently combines a 21+ gate and RUO checkbox with retail categories and benefit-oriented language. E4. | Age is not the approval or intended-use test. FDA evaluates the overall objective evidence under §201.128. P. | Use age controls only where independently required, never as the legal thesis. |
@@ -275,7 +275,7 @@ This table records current market language without teaching circumvention.
 | An affiliate disclosure cures the recommendation or claim | Current [Peptides Uncaged comparisons](https://peptidesuncaged.com/reviews/compare-peptide-companies.html) disclose compensated links and house/partner relationships. E4. | [16 CFR 255.1](https://www.ecfr.gov/current/title-16/chapter-I/subchapter-B/part-255/section-255.1) and [255.5](https://www.ecfr.gov/current/title-16/chapter-I/subchapter-B/part-255/section-255.5) require honest endorsements and clear material-connection disclosure. The [FTC Health Products Compliance Guidance](https://www.ftc.gov/business-guidance/resources/health-products-compliance-guidance) still requires competent substantiation. P. | Disclose prominently, but also substantiate every claim and prohibit unapproved health/outcome claims. |
 | “Discreet” shipping or a customs reship promise solves import risk | Forum users value reship guarantees; a May 2026 [GLP1Forum thread](https://glp1forum.com/threads/shipping-question.16267/) expects the seller to own failed delivery. E1. | A reship policy is customer service, not legal authorization. FDA's current GLP-1 page describes border action, and federal cases have alleged misbranding and unlawful import conduct. P. | Promise remedies only for lawfully shippable goods. Use accurate descriptions, documented chain of custody, and approved lanes. Never disguise a shipment. |
 
-## The minimum viable OVO trust product
+## The minimum viable Noli trust product
 
 “Simple scales, complex fails” should produce one short page and one strong operating system.
 
@@ -348,7 +348,7 @@ Everything else can open into proof drawers or linked pages. Do not make the buy
 
 Do not optimize top-line revenue before the last metric is known.
 
-## What OVO should test before calling this viable
+## What Noli should test before calling this viable
 
 ### Ten interviews
 
@@ -445,7 +445,7 @@ BBB says it does not verify third-party submissions. Complaint counts have no kn
 
 The market is viable enough to investigate and too untrustworthy to enter casually.
 
-The winning brand will not be the one with the longest peptide catalog or the lowest vial quote. It will be the one that makes seller identity, lot evidence, shipment progress, and remedy boringly reliable. That is unusually compatible with OVO's creator distribution and operator training, but only if OVO treats compliance, quality, payments, fulfillment, and support as the product.
+The winning brand will not be the one with the longest peptide catalog or the lowest vial quote. It will be the one that makes seller identity, lot evidence, shipment progress, and remedy boringly reliable. That is unusually compatible with Noli's access to OVO Talent distribution and OVO Academy operator training, but only if Noli treats compliance, quality, payments, fulfillment, and support as the product.
 
 The immediate move is not “launch the store.” It is:
 

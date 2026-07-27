@@ -102,7 +102,7 @@ Buyers use peer discussion to resolve uncertainty about quality, shipping, suppo
 
 **Durable lesson**
 
-Community distribution is real. Manufactured independence is brittle. OVO should disclose creator, affiliate, sponsor, and commercial relationships on every relevant asset. Build one useful category resource whose methodology and incentives are visible.
+Community distribution is real. Manufactured independence is brittle. Noli should disclose creator, affiliate, sponsor, and commercial relationships on every relevant asset. Build one useful category resource whose methodology and incentives are visible.
 
 ### 4. RUO language, coded names, age gates, questionnaires, and account walls
 
@@ -153,7 +153,7 @@ Creators can produce demand and explain the category in language the storefront 
 
 **Durable lesson**
 
-Separation is real only when governance is real. A creator cannot say the merchant's quiet part for it. For OVO, creators explain a cleared journey and disclose compensation. They do not diagnose, prescribe, promise, or provide administration guidance.
+Separation is real only when governance is real. A creator cannot say the merchant's quiet part for it. For Noli, creators explain a cleared journey and disclose compensation. They do not diagnose, prescribe, promise, or provide administration guidance.
 
 ### 6. Supplier discovery, private sourcing, domestic labels, and white label
 
@@ -408,7 +408,7 @@ Across the forums, companies, and customer sources, the durable pattern is:
 9. Treating a seller ask, agency case study, or dashboard as verified value
 10. Using telehealth as a wrapper without clinical governance
 
-## The OVO move
+## The Noli move
 
 The fastest serious test is not 250 creators.
 
@@ -420,7 +420,7 @@ The fastest serious test is not 250 creators.
 6. Continue only if settled CM2, delivery, claims, quality, support, and repeat behavior pass.
 7. Move to 25 and then 50 creators in controlled waves. Use the broader 250-creator network only after the machine works without Alex.
 
-OVO Talent owns creator selection, contracts, creative operations, and partner care. Academy becomes a supervised evidence and operations bench only after the workflow is proven. Labs becomes software only after the same manual pain repeats. Neither OVO nor its creators diagnose, prescribe, or store patient health data.
+OVO Talent owns creator selection, contracts, creative operations, and partner care. Academy becomes a supervised evidence and operations bench only after the workflow is proven. Labs becomes software only after the same manual pain repeats. Neither Noli nor its creators diagnose, prescribe, or store patient health data.
 
 ## Decision
 
