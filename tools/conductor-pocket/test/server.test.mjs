@@ -3,8 +3,10 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
 import { createConfig } from '../src/config.mjs';
+import { sha256 } from '../src/encoding.mjs';
 import {
   createPocketServer,
+  reconcileExactUserMessage,
   waitForExactUserMessage,
 } from '../src/server.mjs';
 
@@ -707,6 +709,93 @@ test('delivery status recovers a late exact row without resending or exposing co
   assert.equal(sends, 1);
 });
 
+test('delivery status remains pending in-window and recovers the exact row', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Pending exact Pocket message';
+  const pressedAt = Date.now();
+  const rows = [];
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 60;
+      },
+      listUserMessagesAfter() {
+        return rows;
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'pending_database_confirmation_key',
+    message,
+  });
+  const pending = await postDeliveryStatus(port, {
+    idempotencyKey: 'pending_database_confirmation_key',
+  });
+
+  assert.equal(first.status, 502);
+  assert.deepEqual(JSON.parse(pending.body).delivery, {
+    state: 'pending',
+  });
+  assert.equal(pending.body.includes(message), false);
+  assert.equal(pending.body.includes('contentHash'), false);
+
+  rows.push({
+    id: 'pending-user-row',
+    rowId: 61,
+    text: message,
+    createdAt: new Date().toISOString(),
+    sentAt: new Date().toISOString(),
+  });
+  const delivered = await postDeliveryStatus(port, {
+    idempotencyKey: 'pending_database_confirmation_key',
+  });
+
+  assert.equal(delivered.status, 200);
+  assert.equal(
+    JSON.parse(delivered.body).delivery.state,
+    'delivered',
+  );
+  assert.equal(sends, 1);
+});
+
 test('delivery status stays fail-closed for an interfering late row', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -1284,6 +1373,72 @@ test('ambiguous-send attribution retries database reads and rejects interference
   assert.equal(unownedReads, 0);
 });
 
+test('delivery reconciliation handles the post-scan boundary without false failure', async () => {
+  const pressedAt = Date.now() - 100;
+  const exact = {
+    id: 'boundary-user-row',
+    rowId: 32,
+    text: 'Boundary exact message',
+    createdAt: new Date(pressedAt + 50).toISOString(),
+    sentAt: new Date(pressedAt + 60).toISOString(),
+  };
+  let exactReads = 0;
+  const delivered = await reconcileExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        exactReads += 1;
+        return exactReads === 1 ? [] : [exact];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 31,
+    exactContentHash: sha256(exact.text),
+    pressedAt,
+    composerOwned: true,
+    attributionWindowMs: 15_000,
+    timeoutMs: 0,
+  });
+  assert.equal(delivered.state, 'delivered');
+  assert.equal(delivered.match, exact);
+  assert.equal(exactReads, 4);
+
+  let interferenceReads = 0;
+  const interfered = await reconcileExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        interferenceReads += 1;
+        return interferenceReads === 1
+          ? []
+          : [{ ...exact, text: 'Interfering message' }];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 31,
+    exactContentHash: sha256(exact.text),
+    pressedAt,
+    composerOwned: true,
+    attributionWindowMs: 15_000,
+    timeoutMs: 0,
+  });
+  assert.deepEqual(interfered, { state: 'failed' });
+
+  const expired = await reconcileExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 31,
+    exactContentHash: sha256(exact.text),
+    pressedAt: Date.now() - 20_000,
+    composerOwned: true,
+    attributionWindowMs: 15_000,
+    timeoutMs: 0,
+  });
+  assert.deepEqual(expired, { state: 'failed' });
+});
+
 test('concurrent identical sends claim distinct post-cursor rows', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -1434,5 +1589,9 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.match(
     source,
     /activeDeliveryKey\s*\|\|\s*message\.idempotencyKey/,
+  );
+  assert.match(
+    source,
+    /!error\.status\s*\|\|\s*error\.code === 'send_not_confirmed'[\s\S]*await checkDelivery\(optimistic\)/,
   );
 });

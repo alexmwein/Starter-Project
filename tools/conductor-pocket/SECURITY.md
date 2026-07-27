@@ -102,9 +102,9 @@ A send uses macOS Accessibility to:
 4. require a physical-input quiet lease, focus that exact composer, and enter
    process-targeted Unicode chunks, rechecking the lease, selected route, focus,
    and exact committed prefix between chunks;
-5. resolve the text area and Conductor's unique enabled Send control from the
-   same composer, recheck the exact draft, and invoke `AXPress` while retaining
-   the same physical-input lease;
+5. prove the focused text area is the unique text area in Conductor's unique
+   composer, recheck the exact draft, and post an unmodified Return key pair
+   only to Conductor's process while retaining the same physical-input lease;
 6. report delivery only after the exact new user-message row appears after the
    pre-send database cursor in the intended session.
 
@@ -153,8 +153,8 @@ protected by iOS Data Protection and the app's Face ID gate.
   transparency logs. The hostname reveals the service label, not its content
   or access.
 - UI automation depends on Conductor's accessible structure. Version changes
-  fail closed: a missing workspace, session, composer, or enabled Send
-  control produces an error rather than a guessed click.
+  fail closed: a missing workspace, session, unique composer, focused text
+  area, or exact draft produces an error rather than a guessed submission.
 - Idempotency history is held in relay memory. An unlikely relay restart after
   Conductor accepts a message but before the phone receives the response can
   still make an explicit retry ambiguous; Pocket never retries automatically.

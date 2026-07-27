@@ -21,14 +21,15 @@ On a healthy tailnet, replies normally appear a few hundred milliseconds
 after Conductor saves them.
 
 Phone sends are serialized through macOS Accessibility. Selecting the target
-workspace/chat, entering and verifying its real draft, pressing Conductor's
-enabled Send control, and confirming the exact database row typically takes a
-few seconds and briefly brings Conductor to the foreground. A draft already
-present on the Mac produces a conflict sheet; Pocket never overwrites or merges
-it silently. Physical keyboard or pointer input on the Mac aborts entry rather
-than risking text in the wrong app, so pause Mac input briefly while a phone
-message is being sent. Before offering a retry after an interruption, Pocket
-waits for Conductor's database; it retries only when no new user row appeared.
+workspace/chat, entering and verifying its real draft, proving ownership of
+Conductor's unique composer, posting Return only to Conductor's process, and
+confirming the exact database row typically takes a few seconds and briefly
+brings Conductor to the foreground. A draft already present on the Mac produces
+a conflict sheet; Pocket never overwrites or merges it silently. Physical
+keyboard or pointer input on the Mac aborts entry rather than risking text in
+the wrong app, so pause Mac input briefly while a phone message is being sent.
+Before offering a retry after an interruption, Pocket waits for Conductor's
+database; it retries only when no new user row appeared.
 
 The Mac login session must be unlocked and Conductor must have a visible
 window for phone sends. macOS removes locked apps from the Accessibility tree,
