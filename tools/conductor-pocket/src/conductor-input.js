@@ -3,6 +3,14 @@ ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
 ObjC.import('Foundation');
 
+// JXA exposes NSData.bytes as a generic pointer. Rebind the ABI-compatible C
+// signature so CoreGraphics accepts the UTF-16 backing buffer without a
+// shared paste state or globally posted keyboard event.
+ObjC.bindFunction('CGEventKeyboardSetUnicodeString', [
+  'void',
+  ['pointer', 'unsigned long', 'pointer'],
+]);
+
 const CONDUCTOR_BUNDLE_ID = 'com.conductor.app';
 const COMPOSER_CLASSES = [
   'tiptap',
@@ -23,6 +31,24 @@ const NON_SEND_CLASSES = [
 const MAX_MESSAGE_BYTES = 16 * 1024;
 const MAX_CHUNK_UTF16 = 256;
 const MIN_PHYSICAL_IDLE_SECONDS = 1;
+const PHYSICAL_INPUT_EVENT_TYPES = [
+  $.kCGEventLeftMouseDown,
+  $.kCGEventLeftMouseUp,
+  $.kCGEventRightMouseDown,
+  $.kCGEventRightMouseUp,
+  $.kCGEventMouseMoved,
+  $.kCGEventLeftMouseDragged,
+  $.kCGEventRightMouseDragged,
+  $.kCGEventKeyDown,
+  $.kCGEventKeyUp,
+  $.kCGEventFlagsChanged,
+  $.kCGEventScrollWheel,
+  $.kCGEventTabletPointer,
+  $.kCGEventTabletProximity,
+  $.kCGEventOtherMouseDown,
+  $.kCGEventOtherMouseUp,
+  $.kCGEventOtherMouseDragged,
+];
 const KEY_A = 0;
 const KEY_DELETE = 51;
 const KEY_RETURN = 36;
@@ -263,29 +289,41 @@ function physicalIdleSeconds() {
   );
 }
 
-function physicalInputCounter() {
-  return Number(
-    $.CGEventSourceCounterForEventType(
-      $.kCGEventSourceStateHIDSystemState,
-      $.kCGAnyInputEventType,
+function physicalInputCounters() {
+  return PHYSICAL_INPUT_EVENT_TYPES.map((eventType) =>
+    Number(
+      $.CGEventSourceCounterForEventType(
+        $.kCGEventSourceStateHIDSystemState,
+        eventType,
+      ),
     ),
   );
 }
 
+function sameCounters(left, right) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
 function physicalInputSnapshot() {
-  const counterBefore = physicalInputCounter();
+  const countersBefore = physicalInputCounters();
   const idleSeconds = physicalIdleSeconds();
-  const counterAfter = physicalInputCounter();
+  const countersAfter = physicalInputCounters();
   if (
     !Number.isFinite(idleSeconds) ||
-    !Number.isSafeInteger(counterBefore) ||
-    counterBefore < 0 ||
-    !Number.isSafeInteger(counterAfter) ||
-    counterBefore !== counterAfter
+    countersBefore.some(
+      (counter) => !Number.isSafeInteger(counter) || counter < 0,
+    ) ||
+    countersAfter.some(
+      (counter) => !Number.isSafeInteger(counter) || counter < 0,
+    ) ||
+    !sameCounters(countersBefore, countersAfter)
   ) {
     fail('user_input_active');
   }
-  return { idleSeconds, inputCounter: counterAfter };
+  return { idleSeconds, inputCounters: countersAfter };
 }
 
 function acquireInputLease() {
@@ -293,14 +331,18 @@ function acquireInputLease() {
   if (snapshot.idleSeconds < MIN_PHYSICAL_IDLE_SECONDS) {
     fail('user_input_active');
   }
-  return { inputCounter: snapshot.inputCounter };
+  return {
+    inputCounters: snapshot.inputCounters,
+    syntheticInputPosted: false,
+  };
 }
 
 function assertInputLease(lease) {
   const snapshot = physicalInputSnapshot();
   if (
-    snapshot.idleSeconds < MIN_PHYSICAL_IDLE_SECONDS ||
-    snapshot.inputCounter !== lease.inputCounter
+    !sameCounters(snapshot.inputCounters, lease.inputCounters) ||
+    (!lease.syntheticInputPosted &&
+      snapshot.idleSeconds < MIN_PHYSICAL_IDLE_SECONDS)
   ) {
     fail('user_input_active');
   }
@@ -328,6 +370,10 @@ function postToConductor(
     for (const event of events) {
       $.CGEventPostToPid(pid, event);
       eventPosted = true;
+      // The aggregate HID idle timer includes the first targeted synthetic
+      // event on macOS. Per-type HID counters do not, so they remain the
+      // physical-input proof after this point.
+      lease.syntheticInputPosted = true;
     }
     delay(0.03);
     assertSessionUnlocked();
@@ -485,7 +531,7 @@ function typeAndSendMessage(pid) {
   const prepared = prepareInput(message);
   let inputLease = null;
   let exactDraftExposedAt = 0;
-  let pressInvoked = false;
+  let pressInvokedAt = 0;
   try {
     inputLease = acquireInputLease();
     assertSessionUnlocked();
@@ -542,11 +588,11 @@ function typeAndSendMessage(pid) {
     const freshTarget = resolveComposerSend(process, message);
     assertInputLease(inputLease);
     assertSessionUnlocked();
-    pressInvoked = true;
+    pressInvokedAt = Date.now();
     freshTarget.button.actions.byName('AXPress').perform();
     assertSessionUnlocked();
     assertInputLease(inputLease);
-    return `pressed:${exactDraftExposedAt}`;
+    return `pressed:${pressInvokedAt}`;
   } catch (error) {
     const possibleExposureAt = Number(
       error?.pocketExactDraftExposedAt,
@@ -567,8 +613,10 @@ function typeAndSendMessage(pid) {
           leaseError?.pocketCode === 'user_input_active';
       }
     }
-    if (pressInvoked || exactDraftExposedAt > 0) {
-      return `ambiguous:${exactDraftExposedAt || attemptStartedAt}`;
+    if (pressInvokedAt > 0 || exactDraftExposedAt > 0) {
+      return `ambiguous:${
+        pressInvokedAt || exactDraftExposedAt || attemptStartedAt
+      }`;
     }
     if (inputInterrupted) return `interrupted:${attemptStartedAt}`;
     if (error?.pocketCode === 'session_locked') return 'session_locked';

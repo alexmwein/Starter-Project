@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { AccessibilityTransport, parseResult } from '../src/accessibility.mjs';
+
+const execFileAsync = promisify(execFile);
 
 test('accessibility transport rejects invalid messages before UI automation', async () => {
   const transport = new AccessibilityTransport();
@@ -200,11 +204,11 @@ test('message submission presses Conductor’s unique enabled Send control', asy
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
   assert.match(
     inputHelper,
-    /assertInputLease\(inputLease\)[\s\S]*pressInvoked = true[\s\S]*actions\.byName\('AXPress'\)\.perform\(\)[\s\S]*assertInputLease\(inputLease\)/,
+    /assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*actions\.byName\('AXPress'\)\.perform\(\)[\s\S]*assertInputLease\(inputLease\)/,
   );
   assert.match(
     inputHelper,
-    /return `ambiguous:\$\{exactDraftExposedAt \|\| attemptStartedAt\}`/,
+    /return `ambiguous:\$\{[\s\S]*pressInvokedAt \|\| exactDraftExposedAt \|\| attemptStartedAt/,
   );
   assert.match(
     inputHelper,
@@ -245,6 +249,10 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   assert.doesNotMatch(appleScript, /\bkeystroke\b/);
 
   assert.match(inputHelper, /com\.conductor\.app/);
+  assert.match(
+    inputHelper,
+    /ObjC\.bindFunction\('CGEventKeyboardSetUnicodeString', \[\s*'void',\s*\['pointer', 'unsigned long', 'pointer'\],\s*\]\)/,
+  );
   assert.match(inputHelper, /CGEventKeyboardSetUnicodeString/);
   assert.match(inputHelper, /CGEventPostToPid\(pid, event\)/);
   assert.match(inputHelper, /CGEventSourceSecondsSinceLastEventType/);
@@ -253,8 +261,20 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   assert.match(inputHelper, /CGSSessionScreenIsLocked/);
   assert.match(inputHelper, /function assertSessionUnlocked/);
   assert.match(inputHelper, /MIN_PHYSICAL_IDLE_SECONDS = 1/);
-  assert.match(inputHelper, /counterBefore !== counterAfter/);
-  assert.match(inputHelper, /snapshot\.inputCounter !== lease\.inputCounter/);
+  assert.match(inputHelper, /PHYSICAL_INPUT_EVENT_TYPES/);
+  assert.match(inputHelper, /kCGEventMouseMoved/);
+  assert.match(inputHelper, /kCGEventKeyDown/);
+  assert.match(inputHelper, /kCGEventScrollWheel/);
+  assert.match(inputHelper, /sameCounters\(countersBefore, countersAfter\)/);
+  assert.match(
+    inputHelper,
+    /sameCounters\(snapshot\.inputCounters, lease\.inputCounters\)/,
+  );
+  assert.match(inputHelper, /lease\.syntheticInputPosted = true/);
+  assert.match(
+    inputHelper,
+    /!lease\.syntheticInputPosted[\s\S]*snapshot\.idleSeconds < MIN_PHYSICAL_IDLE_SECONDS/,
+  );
   assert.match(inputHelper, /acquireInputLease/);
   assert.match(inputHelper, /assertInputLease/);
   assert.match(inputHelper, /NSUTF16LittleEndianStringEncoding/);
@@ -284,8 +304,49 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
     inputHelper,
     /postToConductor\([\s\S]*possibleExposureAt[\s\S]*exactDraftExposedAt = possibleExposureAt[\s\S]*waitForExactDraft/,
   );
+  assert.match(
+    inputHelper,
+    /pressInvokedAt = Date\.now\(\)[\s\S]*AXPress'\)\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
+  );
   assert.match(appleScript, /session_locked/);
 
   assert.doesNotMatch(`${appleScript}\n${inputHelper}`, /clipboard|NSPasteboard/i);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
 });
+
+test(
+  'the macOS JXA bridge round-trips UTF-16 without posting an event',
+  { skip: process.platform !== 'darwin' },
+  async () => {
+    const sample = 'café 東京 👩‍💻 é';
+    const probe = `
+ObjC.import('AppKit');
+ObjC.import('CoreGraphics');
+ObjC.import('Foundation');
+ObjC.bindFunction('CGEventKeyboardSetUnicodeString', [
+  'void',
+  ['pointer', 'unsigned long', 'pointer'],
+]);
+function run(argv) {
+  const sample = argv[0];
+  const source = $.CGEventSourceCreate($.kCGEventSourceStatePrivate);
+  const event = $.CGEventCreateKeyboardEvent(source, 0, true);
+  const utf16 = $(sample).dataUsingEncoding(
+    $.NSUTF16LittleEndianStringEncoding,
+  );
+  $.CGEventKeyboardSetUnicodeString(event, sample.length, utf16.bytes);
+  const roundTrip = $.NSEvent.eventWithCGEvent(event);
+  return ObjC.unwrap(roundTrip.characters);
+}`;
+    const { stdout } = await execFileAsync(
+      '/usr/bin/osascript',
+      ['-l', 'JavaScript', '-e', probe, sample],
+      {
+        encoding: 'utf8',
+        timeout: 5_000,
+        maxBuffer: 16 * 1024,
+      },
+    );
+    assert.equal(stdout.trim(), sample);
+  },
+);

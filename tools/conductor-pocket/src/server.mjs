@@ -18,6 +18,8 @@ const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
 const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
+const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
+const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
 
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -149,6 +151,7 @@ export async function waitForExactUserMessage({
   sessionId,
   afterRowId,
   exactContent,
+  exactContentHash,
   pressedAt,
   composerOwned,
   timeoutMs = SEND_CONFIRMATION_TIMEOUT_MS,
@@ -159,10 +162,18 @@ export async function waitForExactUserMessage({
   if (
     composerOwned !== true ||
     !Number.isSafeInteger(pressedAt) ||
-    pressedAt <= 0
+    pressedAt <= 0 ||
+    (typeof exactContent !== 'string' &&
+      (typeof exactContentHash !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(exactContentHash)))
   ) {
     return null;
   }
+  const contentMatches = (message) =>
+    typeof message?.text === 'string' &&
+    (typeof exactContent === 'string'
+      ? message.text === exactContent
+      : sha256(message.text) === exactContentHash);
   const deadline = Date.now() + Math.max(0, timeoutMs);
   do {
     try {
@@ -179,7 +190,7 @@ export async function waitForExactUserMessage({
           match.id.length === 0 ||
           !Number.isSafeInteger(match.rowId) ||
           match.rowId <= afterRowId ||
-          match.text !== exactContent ||
+          !contentMatches(match) ||
           !Number.isFinite(createdAt) ||
           createdAt < pressedAt ||
           createdAt > pressedAt + attributionWindowMs
@@ -197,7 +208,7 @@ export async function waitForExactUserMessage({
           rechecked.length === 1 &&
           recheckedMatch.id === match.id &&
           recheckedMatch.rowId === match.rowId &&
-          recheckedMatch.text === exactContent &&
+          contentMatches(recheckedMatch) &&
           Number.isFinite(recheckedCreatedAt) &&
           recheckedCreatedAt >= pressedAt &&
           recheckedCreatedAt <= pressedAt + attributionWindowMs
@@ -213,6 +224,55 @@ export async function waitForExactUserMessage({
     if (remaining <= 0) return null;
     await delay(Math.min(Math.max(1, pollMs), remaining));
   } while (true);
+}
+
+function databaseDeliveryResult(match, baselineCursor) {
+  return {
+    ok: true,
+    code: 'sent',
+    confirmation: 'database',
+    messageId: match.id,
+    rowId: match.rowId,
+    sentAt: match.sentAt,
+    deliveredAt: match.sentAt || new Date().toISOString(),
+    baselineCursor,
+  };
+}
+
+function sendNotConfirmedResult({
+  baselineCursor,
+  contentHash,
+  pressedAt,
+  composerOwned,
+  attributionWindowMs = SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS,
+}) {
+  const result = {
+    ok: false,
+    code: 'send_not_confirmed',
+    pressedAt,
+    composerOwned,
+  };
+  if (
+    Number.isSafeInteger(baselineCursor) &&
+    baselineCursor >= 0 &&
+    typeof contentHash === 'string' &&
+    /^[A-Za-z0-9_-]{43}$/.test(contentHash) &&
+    Number.isSafeInteger(pressedAt) &&
+    pressedAt > 0 &&
+    composerOwned === true &&
+    Number.isSafeInteger(attributionWindowMs) &&
+    attributionWindowMs > 0 &&
+    attributionWindowMs <= SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+  ) {
+    result.recovery = {
+      baselineCursor,
+      contentHash,
+      pressedAt,
+      composerOwned,
+      attributionWindowMs,
+    };
+  }
+  return result;
 }
 
 class IdempotencyStore {
@@ -256,6 +316,7 @@ class IdempotencyStore {
       promise,
       state: 'pending',
       result: null,
+      reconciliationPromise: null,
       expiresAt,
     };
     this.#entries.set(key, entry);
@@ -275,7 +336,7 @@ class IdempotencyStore {
     return promise;
   }
 
-  status(key, sessionId) {
+  async status(key, sessionId, database) {
     this.#prune();
     const entry = this.#entries.get(key);
     if (!entry || entry.sessionId !== sessionId) {
@@ -284,6 +345,49 @@ class IdempotencyStore {
     if (entry.state === 'pending') return { state: 'pending' };
     if (entry.state !== 'resolved' || !entry.result) {
       return { state: 'unknown' };
+    }
+    const recovery = entry.result.recovery;
+    if (
+      !entry.result.ok &&
+      entry.result.code === 'send_not_confirmed' &&
+      recovery &&
+      Number.isSafeInteger(recovery.baselineCursor) &&
+      recovery.baselineCursor >= 0 &&
+      typeof recovery.contentHash === 'string' &&
+      /^[A-Za-z0-9_-]{43}$/.test(recovery.contentHash) &&
+      Number.isSafeInteger(recovery.pressedAt) &&
+      recovery.pressedAt > 0 &&
+      recovery.composerOwned === true &&
+      Number.isSafeInteger(recovery.attributionWindowMs) &&
+      recovery.attributionWindowMs > 0 &&
+      recovery.attributionWindowMs <=
+        SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+    ) {
+      if (!entry.reconciliationPromise) {
+        entry.reconciliationPromise = waitForExactUserMessage({
+          database,
+          sessionId,
+          afterRowId: recovery.baselineCursor,
+          exactContentHash: recovery.contentHash,
+          pressedAt: recovery.pressedAt,
+          composerOwned: recovery.composerOwned,
+          timeoutMs: SEND_DELIVERY_RECOVERY_TIMEOUT_MS,
+          attributionWindowMs: recovery.attributionWindowMs,
+        })
+          .then((match) => {
+            if (!match || entry.result.ok) return;
+            const delivered = databaseDeliveryResult(
+              match,
+              recovery.baselineCursor,
+            );
+            entry.result = delivered;
+            entry.promise = Promise.resolve(delivered);
+          })
+          .finally(() => {
+            entry.reconciliationPromise = null;
+          });
+      }
+      await entry.reconciliationPromise;
     }
     if (entry.result.ok) {
       return {
@@ -595,7 +699,7 @@ export function createPocketServer({
         return sendJson(
           response,
           200,
-          { delivery: idempotency.status(key, route.id) },
+          { delivery: await idempotency.status(key, route.id, database) },
           config,
         );
       }
@@ -686,31 +790,32 @@ export function createPocketServer({
                     // Any unreadable or interfering row keeps the result ambiguous.
                   }
                   return {
-                    ok: false,
-                    code: 'send_not_confirmed',
-                    pressedAt: sendResult.pressedAt,
-                    composerOwned: sendResult.composerOwned,
+                    ...sendNotConfirmedResult({
+                      baselineCursor: beforeRowId,
+                      contentHash: sha256(normalizedMessage),
+                      pressedAt: sendResult.pressedAt,
+                      composerOwned: sendResult.composerOwned,
+                      attributionWindowMs:
+                        SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS,
+                    }),
                   };
                 }
-                if (!sendResult.ok) return sendResult;
-                return {
-                  ok: false,
-                  code: 'send_not_confirmed',
+                if (!sendResult.ok) {
+                  return sendNotConfirmedResult({
+                    baselineCursor: beforeRowId,
+                    contentHash: sha256(normalizedMessage),
+                    pressedAt: sendResult.pressedAt,
+                    composerOwned: sendResult.composerOwned,
+                  });
+                }
+                return sendNotConfirmedResult({
+                  baselineCursor: beforeRowId,
+                  contentHash: sha256(normalizedMessage),
                   pressedAt: sendResult.pressedAt,
                   composerOwned: sendResult.composerOwned,
-                };
+                });
               }
-              return {
-                ok: true,
-                code: 'sent',
-                confirmation: 'database',
-                messageId: confirmed.id,
-                rowId: confirmed.rowId,
-                sentAt: confirmed.sentAt,
-                deliveredAt:
-                  confirmed.sentAt || new Date().toISOString(),
-                baselineCursor: beforeRowId,
-              };
+              return databaseDeliveryResult(confirmed, beforeRowId);
             }),
         );
         if (!result.ok) {

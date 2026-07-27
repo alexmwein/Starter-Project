@@ -586,6 +586,299 @@ test('an ambiguous UI result is confirmed by the exact new Conductor row', async
   });
 });
 
+test('delivery status recovers a late exact row without resending or exposing content', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Late exact Pocket message';
+  const pressedAt = Date.now() - 5_000;
+  const exactRow = {
+    id: 'late-user-row',
+    rowId: 52,
+    text: message,
+    createdAt: new Date(pressedAt + 4_000).toISOString(),
+    sentAt: new Date(pressedAt + 4_100).toISOString(),
+  };
+  let sends = 0;
+  let databaseReads = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session(request) {
+        return {
+          device: {
+            id: request.headers['x-test-device'] || 'test-device',
+          },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute(sessionId) {
+        return {
+          id: sessionId,
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 51;
+      },
+      listUserMessagesAfter() {
+        databaseReads += 1;
+        return [exactRow];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'late_database_confirmation_key',
+    message,
+  });
+  assert.equal(first.status, 502);
+  assert.equal(first.body.includes(message), false);
+  assert.equal(first.body.includes('contentHash'), false);
+
+  const readsBeforeWrongScope = databaseReads;
+  const wrongSession = await postDeliveryStatus(port, {
+    idempotencyKey: 'late_database_confirmation_key',
+    sessionId: 'other-session',
+  });
+  const wrongDevice = await postDeliveryStatus(port, {
+    idempotencyKey: 'late_database_confirmation_key',
+    deviceId: 'other-device',
+  });
+  assert.deepEqual(JSON.parse(wrongSession.body).delivery, {
+    state: 'unknown',
+  });
+  assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
+    state: 'unknown',
+  });
+  assert.equal(databaseReads, readsBeforeWrongScope);
+
+  const readsBeforeRecovery = databaseReads;
+  const [status, concurrentStatus] = await Promise.all([
+    postDeliveryStatus(port, {
+      idempotencyKey: 'late_database_confirmation_key',
+    }),
+    postDeliveryStatus(port, {
+      idempotencyKey: 'late_database_confirmation_key',
+    }),
+  ]);
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'delivered',
+    deliveredAt: exactRow.sentAt,
+    baselineCursor: 51,
+    messageId: exactRow.id,
+    rowId: exactRow.rowId,
+  });
+  assert.deepEqual(
+    JSON.parse(concurrentStatus.body),
+    JSON.parse(status.body),
+  );
+  assert.equal(databaseReads - readsBeforeRecovery, 2);
+  assert.equal(status.body.includes(message), false);
+  assert.equal(status.body.includes('contentHash'), false);
+
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'late_database_confirmation_key',
+    message,
+  });
+  assert.equal(repeated.status, 200);
+  assert.equal(JSON.parse(repeated.body).rowId, exactRow.rowId);
+  assert.equal(sends, 1);
+});
+
+test('delivery status stays fail-closed for an interfering late row', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Expected late Pocket message';
+  const pressedAt = Date.now() - 5_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 80;
+      },
+      listUserMessagesAfter() {
+        return [
+          {
+            id: 'late-exact-row',
+            rowId: 81,
+            text: message,
+            createdAt: new Date(pressedAt + 4_000).toISOString(),
+          },
+          {
+            id: 'interfering-user-row',
+            rowId: 82,
+            text: 'A different user message',
+            createdAt: new Date(pressedAt + 4_100).toISOString(),
+          },
+        ];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'late_database_interference_key',
+    message,
+  });
+  const status = await postDeliveryStatus(port, {
+    idempotencyKey: 'late_database_interference_key',
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'late_database_interference_key',
+    message,
+  });
+
+  assert.equal(first.status, 502);
+  assert.equal(repeated.status, 502);
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'failed',
+    code: 'send_not_confirmed',
+    retrySafe: false,
+  });
+  assert.equal(status.body.includes(message), false);
+  assert.equal(status.body.includes('contentHash'), false);
+  assert.equal(sends, 1);
+});
+
+test('delivery status rejects an exact row outside the recovery window', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Out-of-window Pocket message';
+  const pressedAt = Date.now() - 20_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 90;
+      },
+      listUserMessagesAfter() {
+        return [
+          {
+            id: 'out-of-window-row',
+            rowId: 91,
+            text: message,
+            createdAt: new Date(pressedAt + 15_001).toISOString(),
+          },
+        ];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'out_of_window_confirmation_key',
+    message,
+  });
+  const status = await postDeliveryStatus(port, {
+    idempotencyKey: 'out_of_window_confirmation_key',
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'out_of_window_confirmation_key',
+    message,
+  });
+
+  assert.equal(first.status, 502);
+  assert.equal(repeated.status, 502);
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'failed',
+    code: 'send_not_confirmed',
+    retrySafe: false,
+  });
+  assert.equal(status.body.includes(message), false);
+  assert.equal(status.body.includes('contentHash'), false);
+  assert.equal(sends, 1);
+});
+
 test('a physical-input interruption is delivered when Conductor has the exact new row', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
