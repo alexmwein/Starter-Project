@@ -230,7 +230,7 @@
               <li>
                 <header><b>${escapeHtml(note.Topic)}</b>${timeMarkup}</header>
                 <p>${escapeHtml(note["What the operator said / what happened"])}</p>
-                <p><strong>OVO application:</strong> ${escapeHtml(note["What Biologix can learn"])}</p>
+                <p><strong>Noli application:</strong> ${escapeHtml(note["What Biologix can learn"])}</p>
                 <p><strong>Evidence:</strong> ${escapeHtml(note["Evidence class"])}. ${escapeHtml(note["Freshness note"])}</p>
               </li>
             `;
