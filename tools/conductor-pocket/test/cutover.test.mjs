@@ -6,7 +6,10 @@ import {
   migrateToDedicatedOrigin,
 } from '../src/config.mjs';
 import {
+  activateAdministrativeRetirement,
   migrateRelayOrigin,
+  parseAdministrativeRetirementArgs,
+  parseCutoverArgs,
   removeMainPocketRoot,
   resumeDedicatedOrigin,
 } from '../scripts/lib/cutover.mjs';
@@ -22,6 +25,216 @@ function retiredOldConfig() {
   retirement.originRetirement.retiredDeviceIds = ['old-phone'];
   return retirement;
 }
+
+test('cutover arguments allow only normal, exact legacy attestation, or complete recovery', () => {
+  assert.deepEqual(parseCutoverArgs([]), {
+    attestNoOldDevices: false,
+    administrativeRetirement: null,
+  });
+  assert.deepEqual(parseCutoverArgs(['--attest-no-old-devices']), {
+    attestNoOldDevices: true,
+    administrativeRetirement: null,
+  });
+  assert.throws(
+    () =>
+      parseCutoverArgs([
+        '--administratively-retire-device=phone-a',
+      ]),
+    /unsupported option/,
+  );
+  assert.throws(
+    () => parseCutoverArgs(['--adminstratively-retire-device', 'phone-a']),
+    /unsupported option/,
+  );
+  assert.throws(
+    () =>
+      parseCutoverArgs([
+        '--attest-no-old-devices',
+        'unexpected',
+      ]),
+    /unsupported option/,
+  );
+});
+
+test('administrative retirement arguments require exact state and both acknowledgements', () => {
+  assert.equal(parseAdministrativeRetirementArgs([]), null);
+  const parsed = parseAdministrativeRetirementArgs([
+    '--administratively-retire-device',
+    'phone-a',
+    '--expect-origin',
+    'https://shared.example.ts.net',
+    '--expect-revision',
+    'revision-a',
+    '--confirm-reported-ios-app-deleted',
+    '--acknowledge-local-purge-unverified',
+  ]);
+  assert.deepEqual(parsed, {
+    deviceId: 'phone-a',
+    expectedOrigin: 'https://shared.example.ts.net',
+    expectedRevision: 'revision-a',
+  });
+  assert.throws(
+    () =>
+      parseAdministrativeRetirementArgs([
+        '--administratively-retire-device',
+        'phone-a',
+        '--expect-origin',
+        'https://shared.example.ts.net',
+        '--expect-revision',
+        'revision-a',
+        '--confirm-reported-ios-app-deleted',
+      ]),
+    /acknowledge-local-purge-unverified/,
+  );
+  assert.throws(
+    () =>
+      parseAdministrativeRetirementArgs([
+        '--administratively-retire-device',
+        'phone-a',
+        '--administratively-retire-device',
+        'phone-b',
+        '--expect-origin',
+        'https://shared.example.ts.net',
+        '--expect-revision',
+        'revision-a',
+        '--confirm-reported-ios-app-deleted',
+        '--acknowledge-local-purge-unverified',
+      ]),
+    /provided only once/,
+  );
+  assert.throws(
+    () =>
+      parseAdministrativeRetirementArgs([
+        '--administratively-retire-device',
+        'phone-a',
+        '--expect-origin',
+        'https://shared.example.ts.net',
+        '--expect-revision',
+        'revision-a',
+        '--confirm-reported-ios-app-deleted',
+        '--acknowledge-local-purge-unverified',
+        '--attest-no-old-devices',
+      ]),
+    /unsupported option/,
+  );
+  assert.throws(
+    () =>
+      parseAdministrativeRetirementArgs([
+        '--administratively-retire-device',
+        'phone-a',
+        '--expect-origin',
+        'https://shared.example.ts.net',
+        '--expect-revision',
+        'revision-a',
+        '--confirm-reported-ios-app-deleted',
+        '--acknowledge-local-purge-unverified',
+        'unexpected',
+      ]),
+    /unexpected argument/,
+  );
+  assert.throws(
+    () =>
+      parseAdministrativeRetirementArgs([
+        '--administratively-retire-device',
+        'phone-a',
+        '--expect-origin',
+        'https://shared.example.ts.net',
+        '--expect-revision',
+        'revision-a',
+        '--confirm-reported-ios-app-deleted=false',
+        '--acknowledge-local-purge-unverified',
+      ]),
+    /unsupported option/,
+  );
+});
+
+test('administrative retirement activates and verifies without migrating', async () => {
+  const nextConfig = {
+    publicOrigin: 'https://shared.example.ts.net',
+  };
+  const sequence = [];
+  const activated = await activateAdministrativeRetirement({
+    nextConfig,
+    save: async () => sequence.push('save'),
+    restart: async () => sequence.push('restart'),
+    verify: async (origin) => sequence.push(`verify:${origin}`),
+    stopRelay: async () => sequence.push('stop'),
+  });
+  assert.equal(activated, nextConfig);
+  assert.deepEqual(sequence, [
+    'save',
+    'restart',
+    'verify:https://shared.example.ts.net',
+  ]);
+});
+
+test('failed administrative activation never restores a revoked token and stops the relay', async () => {
+  const nextConfig = {
+    publicOrigin: 'https://shared.example.ts.net',
+  };
+  const sequence = [];
+  await assert.rejects(
+    activateAdministrativeRetirement({
+      nextConfig,
+      save: async () => sequence.push('save-revoked'),
+      restart: async () => sequence.push('restart'),
+      verify: async () => {
+        sequence.push('verify-failed');
+        throw new Error('old HTTPS revision mismatch');
+      },
+      stopRelay: async () => sequence.push('stop'),
+    }),
+    /old HTTPS revision mismatch/,
+  );
+  assert.deepEqual(sequence, [
+    'save-revoked',
+    'restart',
+    'verify-failed',
+    'stop',
+  ]);
+});
+
+test('a rejected administrative save stops because it may have committed before throwing', async () => {
+  const sequence = [];
+  await assert.rejects(
+    activateAdministrativeRetirement({
+      nextConfig: {
+        publicOrigin: 'https://shared.example.ts.net',
+      },
+      save: async () => {
+        sequence.push('save-failed');
+        throw new Error('atomic save failed');
+      },
+      restart: async () => sequence.push('restart'),
+      verify: async () => sequence.push('verify'),
+      stopRelay: async () => sequence.push('stop'),
+    }),
+    /atomic save failed/,
+  );
+  assert.deepEqual(sequence, ['save-failed', 'stop']);
+});
+
+test('administrative activation reports both verification and fail-closed stop failures', async () => {
+  await assert.rejects(
+    activateAdministrativeRetirement({
+      nextConfig: {
+        publicOrigin: 'https://shared.example.ts.net',
+      },
+      save: async () => {},
+      restart: async () => {},
+      verify: async () => {
+        throw new Error('old HTTPS revision mismatch');
+      },
+      stopRelay: async () => {
+        throw new Error('launchd stop failed');
+      },
+    }),
+    (error) =>
+      error instanceof AggregateError &&
+      /stopping the relay also failed/.test(error.message) &&
+      error.errors.length === 2,
+  );
+});
 
 test('main-node cleanup performs only the exact noninteractive root mutation', async () => {
   const before = {

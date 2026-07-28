@@ -7,8 +7,129 @@ import {
   rotatePairing,
 } from '../../src/config.mjs';
 
+const ADMINISTRATIVE_RETIREMENT_VALUE_OPTIONS = [
+  '--administratively-retire-device',
+  '--expect-origin',
+  '--expect-revision',
+];
+const ADMINISTRATIVE_RETIREMENT_ACKNOWLEDGEMENTS = [
+  '--confirm-reported-ios-app-deleted',
+  '--acknowledge-local-purge-unverified',
+];
+
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function parseAdministrativeRetirementArgs(argumentsList) {
+  if (argumentsList.length === 0) return null;
+  const allowedOptions = new Set([
+    ...ADMINISTRATIVE_RETIREMENT_VALUE_OPTIONS,
+    ...ADMINISTRATIVE_RETIREMENT_ACKNOWLEDGEMENTS,
+  ]);
+  const parsed = Object.fromEntries(
+    ADMINISTRATIVE_RETIREMENT_VALUE_OPTIONS.map((option) => [option, []]),
+  );
+  const acknowledgementCounts = Object.fromEntries(
+    ADMINISTRATIVE_RETIREMENT_ACKNOWLEDGEMENTS.map((option) => [option, 0]),
+  );
+  for (let index = 0; index < argumentsList.length; index += 1) {
+    const argument = argumentsList[index];
+    if (ADMINISTRATIVE_RETIREMENT_VALUE_OPTIONS.includes(argument)) {
+      const value = argumentsList[index + 1];
+      if (!value || value.startsWith('--')) {
+        throw new Error(`${argument} requires one value`);
+      }
+      parsed[argument].push(value);
+      index += 1;
+      continue;
+    }
+    if (ADMINISTRATIVE_RETIREMENT_ACKNOWLEDGEMENTS.includes(argument)) {
+      acknowledgementCounts[argument] += 1;
+      continue;
+    }
+    if (argument.startsWith('--')) {
+      throw new Error(
+        `Administrative retirement refuses unsupported option ${argument}`,
+      );
+    }
+    throw new Error(
+      `Administrative retirement refuses unexpected argument ${argument}`,
+    );
+  }
+  for (const option of ADMINISTRATIVE_RETIREMENT_VALUE_OPTIONS) {
+    if (parsed[option].length > 1) {
+      throw new Error(`${option} may be provided only once`);
+    }
+    if (parsed[option].length === 0) {
+      throw new Error(
+        `Administrative retirement requires exactly one ${option}`,
+      );
+    }
+  }
+  for (const option of ADMINISTRATIVE_RETIREMENT_ACKNOWLEDGEMENTS) {
+    if (acknowledgementCounts[option] !== 1) {
+      throw new Error(
+        `Administrative retirement requires exactly one ${option}`,
+      );
+    }
+  }
+
+  return {
+    deviceId: parsed['--administratively-retire-device'][0],
+    expectedOrigin: parsed['--expect-origin'][0],
+    expectedRevision: parsed['--expect-revision'][0],
+  };
+}
+
+export function parseCutoverArgs(argumentsList) {
+  if (argumentsList.length === 0) {
+    return {
+      attestNoOldDevices: false,
+      administrativeRetirement: null,
+    };
+  }
+  if (
+    argumentsList.length === 1 &&
+    argumentsList[0] === '--attest-no-old-devices'
+  ) {
+    return {
+      attestNoOldDevices: true,
+      administrativeRetirement: null,
+    };
+  }
+  return {
+    attestNoOldDevices: false,
+    administrativeRetirement:
+      parseAdministrativeRetirementArgs(argumentsList),
+  };
+}
+
+export async function activateAdministrativeRetirement({
+  nextConfig,
+  save,
+  restart,
+  verify,
+  stopRelay,
+}) {
+  try {
+    await save(nextConfig);
+    await restart(nextConfig);
+    await verify(nextConfig.publicOrigin, nextConfig);
+    return nextConfig;
+  } catch (primaryError) {
+    try {
+      await stopRelay();
+    } catch (stopError) {
+      throw new AggregateError(
+        [primaryError, stopError],
+        `Administrative retirement activation failed (${errorMessage(
+          primaryError,
+        )}); stopping the relay also failed (${errorMessage(stopError)})`,
+      );
+    }
+    throw primaryError;
+  }
 }
 
 export async function waitForExpectedHealth(
