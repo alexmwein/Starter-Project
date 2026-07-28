@@ -92,7 +92,7 @@ const sessionsByWorkspace = new Map([
         title: 'Explain conductor operations',
         agentType: 'codex',
         model: 'gpt-5.6-sol',
-        status: 'working',
+        status: fixtureMode === 'errors' ? 'error' : 'working',
         unreadCount: 0,
         queuedCount: 0,
         queuePaused: false,
@@ -237,9 +237,43 @@ const messages = [
     rowId: 7,
     kind: 'assistant',
     text:
-      '## What makes it fast\n**New transcript rows** should appear in hundreds of milliseconds.\n1. Pocket watches the local Conductor database.\n2. Phone sends use the real `Conductor` composer.\n3. Your *account and model* stay exactly where you configured them.\n\nNames like MAX_RETRY_COUNT stay untouched, and 2 * 3 * 4 remains readable.',
+      '## What makes it fast\n**New transcript rows** should appear in hundreds of milliseconds.\n1. Pocket watches the local Conductor database.\n2. Phone sends use the real `Conductor` composer.\n   - delivery is confirmed against the exact Conductor row\n3. Your *account and model* stay exactly where you configured them.\n\n> **Pocket rule:** keep the Mac as the source of truth.\n\n- [x] Private Tailnet transport\n- [x] Safe Markdown\n- [ ] Faster than mind reading\n- Plain mixed-list item keeps its bullet\n\n| Surface | Behavior |\n| --- | :---: |\n| Short reply | Compact |\n| Long answer | Comfortable |\n\nRead the [security notes](https://example.com/security) when you want the full model.\n\nNames like MAX_RETRY_COUNT stay untouched, and 2 * 3 * 4 remains readable.',
     createdAt: at(1),
     model: 'gpt-5.6-sol',
+  },
+];
+
+const errorMessages = [
+  {
+    id: 'm-8',
+    rowId: 8,
+    kind: 'tool',
+    toolCallId: 'tool-error-1',
+    name: 'Publish GitHub Branch',
+    state: 'running',
+    createdAt: at(0.8),
+    turnId: 'turn-error',
+  },
+  {
+    id: 'm-9',
+    rowId: 9,
+    kind: 'tool-result',
+    toolCallId: 'tool-error-1',
+    state: 'failed',
+    createdAt: at(0.7),
+    turnId: 'turn-error',
+  },
+  {
+    id: 'm-10',
+    rowId: 10,
+    kind: 'agent-error',
+    code: 'usage_limit',
+    severity: 'error',
+    title: 'Account limit reached',
+    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
+    retrying: false,
+    createdAt: at(0.5),
+    turnId: 'turn-error',
   },
 ];
 
@@ -284,7 +318,12 @@ const database = {
   },
   listMessages(sessionId, { after = 0 } = {}) {
     if (!recentSessions.some((candidate) => candidate.id === sessionId)) return null;
-    const source = sessionId === 's-pocket' ? messages : [];
+    const source =
+      sessionId === 's-pocket'
+        ? fixtureMode === 'errors'
+          ? [...messages, ...errorMessages]
+          : messages
+        : [];
     return {
       cursor: source.at(-1)?.rowId || 0,
       messages: source.filter((message) => message.rowId > Number(after || 0)),

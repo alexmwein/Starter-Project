@@ -1,14 +1,15 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-mobile-markdown-20260728';
-import { fetchJson } from './http.js?v=0.2.0-mobile-markdown-20260728';
+} from './delivery-receipts.js?v=0.2.0-adaptive-errors-20260728';
+import { fetchJson } from './http.js?v=0.2.0-adaptive-errors-20260728';
 import {
   createLiveRefreshCoordinator,
-} from './live-refresh.js?v=0.2.0-mobile-markdown-20260728';
+} from './live-refresh.js?v=0.2.0-adaptive-errors-20260728';
 import {
   renderRichText,
-} from './rich-text.js?v=0.2.0-mobile-markdown-20260728';
+  richTextProfile,
+} from './rich-text.js?v=0.2.0-adaptive-errors-20260728';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -1526,12 +1527,18 @@ function renderSessionsPanel() {
 
 function sessionRow(session, { crossWorkspace = false } = {}) {
   const isWorking = session.status === 'working';
+  const isError = session.status === 'error';
   const subtitleText = crossWorkspace
     ? session.workspaceName
     : `${session.agentType || 'agent'}${session.model ? ` · ${session.model}` : ''}`;
   const meta = node('span', { className: 'row-meta' }, [
     node('span', { text: formatRelative(session.activityAt) }),
-    isWorking
+    isError
+      ? node('span', { className: 'row-error' }, [
+        icon('warn'),
+        document.createTextNode('Error'),
+      ])
+      : isWorking
       ? node('span', { className: 'status-dot working' })
       : session.unreadCount > 0
         ? node('span', { className: 'badge', text: cappedCount(session.unreadCount) })
@@ -1661,8 +1668,19 @@ function renderTranscript() {
   transcriptNav.heading.textContent = session?.title || 'Transcript';
   updateNavSubtitle(
     transcriptNav.subtitle,
-    session?.status === 'working' ? 'Working' : workspace?.name || 'Live',
+    session?.status === 'error'
+      ? 'Error'
+      : session?.status === 'working'
+        ? 'Working'
+        : workspace?.name || 'Live',
   );
+  if (state.connection === 'live' && session?.status === 'error') {
+    transcriptNav.subtitle.className = 'nav-subtitle down';
+    transcriptNav.subtitle.replaceChildren(
+      icon('warn'),
+      document.createTextNode('Error'),
+    );
+  }
   renderBanner(transcriptBanner);
 
   const distanceBefore =
@@ -1677,7 +1695,7 @@ function renderTranscript() {
   const toolResults = new Map(
     messages
       .filter((message) => message.kind === 'tool-result' && message.toolCallId)
-      .map((message) => [message.toolCallId, message.state]),
+      .map((message) => [message.toolCallId, message]),
   );
   const existingNodes = new Map(
     [...messageList.children].map((element) => [
@@ -1686,8 +1704,15 @@ function renderTranscript() {
     ]),
   );
   const fragment = document.createDocumentFragment();
+  let previousVisibleMessage = null;
   for (const message of messages) {
-    if (message.kind === 'tool-result' || message.kind === 'status') continue;
+    if (
+      message.kind === 'tool-result' ||
+      message.kind === 'status' ||
+      (message.kind === 'agent-error' && message.retrying)
+    ) {
+      continue;
+    }
     const messageId = String(message.id);
     const renderKey = messageRenderKey(message, toolResults);
     let rendered = existingNodes.get(messageId);
@@ -1698,6 +1723,9 @@ function renderTranscript() {
       rendered.__pocketRenderKey = renderKey;
       if (!state.seenMessageIds.has(messageId)) {
         rendered.classList.add('is-new');
+        if (message.kind === 'agent-error') {
+          announce(`${message.title}. ${message.guidance}`);
+        }
         rendered.addEventListener(
           'animationend',
           () => rendered.classList.remove('is-new'),
@@ -1705,11 +1733,16 @@ function renderTranscript() {
         );
       }
     }
+    rendered.classList.toggle(
+      'is-continuation',
+      isMessageContinuation(previousVisibleMessage, message),
+    );
     state.seenMessageIds.add(messageId);
     fragment.append(rendered);
+    previousVisibleMessage = message;
   }
   messageList.replaceChildren(fragment);
-  renderAgentStatus(statusRow, session);
+  renderAgentStatus(statusRow, session, messages);
   requestAnimationFrame(() => {
     if (!state.shell) return;
     if (pinned) {
@@ -1723,15 +1756,39 @@ function renderTranscript() {
   renderComposerState();
 }
 
+function isMessageContinuation(previous, message) {
+  if (!previous) return false;
+  if (
+    ['user', 'optimistic'].includes(previous.kind) ||
+    ['user', 'optimistic'].includes(message.kind)
+  ) {
+    return false;
+  }
+  if (
+    message.turnId &&
+    previous.turnId &&
+    message.turnId === previous.turnId
+  ) {
+    return true;
+  }
+  return ['assistant', 'tool', 'agent-error'].includes(previous.kind) &&
+    ['assistant', 'tool', 'agent-error'].includes(message.kind);
+}
+
 function messageRenderKey(message, toolResults) {
+  const toolResult =
+    message.kind === 'tool' ? toolResults.get(message.toolCallId) : null;
   return JSON.stringify([
     message.kind,
     message.text,
     message.delivery,
     message.errorCode,
     message.kind === 'tool'
-      ? toolResults.get(message.toolCallId) || message.state
+      ? toolResult?.state || message.state
       : message.state,
+    message.code,
+    message.title,
+    message.guidance,
   ]);
 }
 
@@ -1764,8 +1821,9 @@ function renderBanner(container) {
 
 function renderMessage(message, toolResults) {
   if (message.kind === 'assistant') {
+    const profile = richTextProfile(message.text);
     const item = node('li', {
-      className: 'message assistant',
+      className: `message assistant is-${profile.density}`,
     });
     item.append(
       node('span', {
@@ -1832,35 +1890,82 @@ function renderMessage(message, toolResults) {
     ]);
   }
   if (message.kind === 'tool') {
-    const stateValue = toolResults.get(message.toolCallId) || message.state;
+    const result = toolResults.get(message.toolCallId);
+    const stateValue = result?.state || message.state;
+    const failed = stateValue === 'failed';
     const details = node('details', {
-      className: `tool-card ${stateValue === 'failed' ? 'failed' : stateValue === 'running' ? 'running' : ''}`,
+      className: `tool-card ${failed ? 'failed' : stateValue === 'running' ? 'running' : 'completed'}`,
+      open: failed,
     });
     const summary = node('summary', { className: 'tool-summary' }, [
-      stateValue === 'running' ? node('span', { className: 'status-dot working' }) : icon('terminal'),
+      failed
+        ? icon('warn')
+        : stateValue === 'running'
+          ? node('span', { className: 'status-dot working' })
+          : icon('terminal'),
       node('span', { className: 'tool-summary-copy', text: message.name }),
       node('span', {
         className: 'tool-duration',
-        text: stateValue === 'running' ? 'running' : stateValue || 'done',
+        text:
+          stateValue === 'running'
+            ? 'Running'
+            : failed
+              ? 'Failed'
+              : 'Done',
       }),
       icon('chevronDown', 'chevron'),
     ]);
     const detail = node('div', {
       className: 'tool-details',
       text:
-        stateValue === 'failed'
-          ? 'This action failed. Open Conductor on the Mac for its full output.'
+        failed
+          ? 'This action failed. Sensitive inputs and full output stay on your Mac.'
           : 'Full tool inputs and outputs stay on the Mac.',
     });
     details.append(summary, detail);
     return node('li', { className: 'message tool' }, details);
   }
+  if (message.kind === 'agent-error') {
+    return node('li', { className: 'message agent-error' }, [
+      node('div', { className: `agent-error-row ${message.severity}` }, [
+        icon('warn'),
+        node('div', { className: 'agent-error-copy' }, [
+          node('strong', { className: 'agent-error-title', text: message.title }),
+          node('p', { text: message.guidance }),
+          node('code', { className: 'agent-error-code', text: message.code }),
+        ]),
+      ]),
+    ]);
+  }
   return null;
 }
 
-function renderAgentStatus(container, session) {
+function renderAgentStatus(container, session, messages = []) {
   container.replaceChildren();
   container.className = '';
+  const lastMeaningful = [...messages]
+    .reverse()
+    .find((message) => !['tool-result', 'status', 'tool'].includes(message.kind));
+  if (lastMeaningful?.kind === 'agent-error' && lastMeaningful.retrying) {
+    container.className = 'status-row reconnecting';
+    container.append(
+      node('span', { className: 'status-dot working' }),
+      document.createTextNode('Reconnecting to agent'),
+    );
+    return;
+  }
+  if (session?.status === 'error') {
+    if (
+      messages.some(
+        (message) => message.kind === 'agent-error' && !message.retrying,
+      )
+    ) {
+      return;
+    }
+    container.className = 'status-row failed';
+    container.append(icon('warn'), document.createTextNode('Agent stopped with an error'));
+    return;
+  }
   if (session?.status !== 'working') return;
   container.className = 'status-row';
   container.append(
