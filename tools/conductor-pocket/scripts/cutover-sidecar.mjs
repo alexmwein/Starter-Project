@@ -2,11 +2,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  administrativelyRetireDeletedDevice,
   beginOriginRetirement,
   configRevision,
   getVerificationCode,
   loadConfig,
   originRetirementComplete,
+  remainingOriginRetirementDeviceIds,
   saveConfig,
 } from '../src/config.mjs';
 import { APP_VERSION } from '../src/constants.mjs';
@@ -20,7 +22,9 @@ import {
   runningTailscaleIdentity,
 } from '../src/tailscale-config.mjs';
 import {
+  activateAdministrativeRetirement,
   migrateRelayOrigin,
+  parseCutoverArgs,
   removeMainPocketRoot,
   resumeDedicatedOrigin,
   waitForExpectedHealth,
@@ -28,9 +32,11 @@ import {
 import {
   RELAY_LABEL,
   SIDECAR_DIRECTORY,
+  assertRelayLaunchProfile,
   assertSidecarLaunchProfile,
   assertSupportedStatusVersion,
   assertSupportedTailscaleVersion,
+  bootoutIfLoaded,
   formulaBinaries,
   mainTailscaleCli,
   readMainStatus,
@@ -38,6 +44,8 @@ import {
   readSidecarStatus,
   run,
   runSidecar,
+  waitForLaunchdRemoval,
+  waitForRelayShutdown,
 } from './lib/sidecar.mjs';
 
 const configPath =
@@ -82,15 +90,13 @@ function sameAddress(left, right) {
   return left.addresses.some((address) => rightAddresses.has(address));
 }
 
-function remainingRetirementDevices(config) {
-  const retired = new Set(config.originRetirement?.retiredDeviceIds || []);
-  return (config.originRetirement?.requiredDeviceIds || []).filter(
-    (id) => !retired.has(id),
-  );
-}
-
 async function cutover() {
   process.umask(0o077);
+  const cutoverArguments = parseCutoverArgs(
+    process.argv.slice(2),
+  );
+  const administrativeRetirement =
+    cutoverArguments.administrativeRetirement;
   const { cli: sidecarCli, daemon: sidecarDaemon } = await formulaBinaries();
   await assertSupportedTailscaleVersion(sidecarCli);
   await assertSidecarLaunchProfile(sidecarDaemon);
@@ -159,10 +165,63 @@ async function cutover() {
     delayMs: 200,
   });
 
+  if (administrativeRetirement) {
+    if (alreadyDedicated) {
+      throw new Error(
+        'Administrative retirement is only available before dedicated-origin migration',
+      );
+    }
+    const relayProfile = await assertRelayLaunchProfile({
+      configPath,
+      port: config.port,
+    });
+    const operator = os.userInfo();
+    const nextConfig = administrativelyRetireDeletedDevice(config, {
+      ...administrativeRetirement,
+      operatorUid: process.getuid(),
+      operatorUsername: operator.username,
+      operatorHost: os.hostname(),
+    });
+    await activateAdministrativeRetirement({
+      nextConfig,
+      save: (candidate) => saveConfig(configPath, candidate),
+      restart: restartRelay,
+      verify: (origin, expectedConfig) =>
+        waitForExpectedHealth(origin, {
+          version: APP_VERSION,
+          configRevision: configRevision(expectedConfig),
+        }),
+      stopRelay: async () => {
+        await bootoutIfLoaded(RELAY_LABEL);
+        await waitForLaunchdRemoval(RELAY_LABEL);
+        await waitForRelayShutdown({
+          port: config.port,
+          expectedPid: relayProfile.pid,
+        });
+      },
+    });
+    process.stdout.write(`Old-device server access revoked.
+
+Device: ${administrativeRetirement.deviceId}
+Old origin: ${config.publicOrigin}
+Source revision: ${administrativeRetirement.expectedRevision}
+Active revision: ${configRevision(nextConfig)}
+Self-purge receipt: missing
+Reported iOS app deletion: recorded
+Local purge verification: unavailable
+Relay verification: exact at loopback and old HTTPS origin
+Origin migration: not run
+
+Review the audit record, then rerun without recovery flags:
+npm run sidecar:cutover
+`);
+    return;
+  }
+
   if (!alreadyDedicated && !config.originRetirement) {
     if (
       config.devices.length === 0 &&
-      !process.argv.includes('--attest-no-old-devices')
+      !cutoverArguments.attestNoOldDevices
     ) {
       throw new Error(
         'The legacy config has no retirement record and no paired devices, so Pocket cannot prove whether an old client already revoked itself. If this origin was never paired or you independently erased every old Pocket copy, rerun with --attest-no-old-devices.',
@@ -191,13 +250,16 @@ Then rerun: npm run sidecar:cutover
   }
 
   if (!alreadyDedicated && !originRetirementComplete(config)) {
-    const remaining = remainingRetirementDevices(config);
+    const remaining = remainingOriginRetirementDeviceIds(config);
     process.stdout.write(`Cutover remains locked.
 
 ${remaining.length} old phone${remaining.length === 1 ? '' : 's'} still must self-sign-out with client ${APP_VERSION}.
 Remote revocation cannot satisfy this check.
 
-After every old Home Screen copy is removed, rerun: npm run sidecar:cutover
+If a phone already deleted its iOS Home Screen app but its final receipt was
+lost, use the explicitly acknowledged administrative recovery documented in
+README.md. Otherwise, after every old Home Screen copy is removed, rerun:
+npm run sidecar:cutover
 `);
     return;
   }

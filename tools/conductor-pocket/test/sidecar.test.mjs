@@ -5,9 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  DATA_DIRECTORY,
+  RELAY_LABEL,
+  RELAY_LAUNCH_AGENT_PATH,
+  assertRelayLaunchProfile,
   assertSupportedStatusVersion,
   launchdNotFound,
   launchdArguments,
+  relayListenerPids,
   removeVerifiedStaleSocket,
   sidecarCliArguments,
   sidecarDaemonArguments,
@@ -16,6 +21,7 @@ import {
   versionAtLeast,
   waitForSidecarLoginOutcome,
   waitForSidecarResponse,
+  waitForRelayShutdown,
   xml,
 } from '../scripts/lib/sidecar.mjs';
 
@@ -100,6 +106,129 @@ test('an already-unloaded launchd job is recognized for print and bootout', () =
 
 test('LaunchAgent XML values are escaped', () => {
   assert.equal(xml('a&<b>"\''), 'a&amp;&lt;b&gt;&quot;&apos;');
+});
+
+test('relay LaunchAgent and listener ownership are attested together', async () => {
+  const configPath = path.join(DATA_DIRECTORY, 'config.json');
+  const runtime = path.join(
+    DATA_DIRECTORY,
+    'runtimes',
+    'runtime-0.2.0-test',
+  );
+  const cliPath = path.join(runtime, 'src', 'cli.mjs');
+  const argumentsList = [
+    '/opt/homebrew/bin/node',
+    '--no-warnings=ExperimentalWarning',
+    cliPath,
+    'serve',
+    '--config',
+    configPath,
+  ];
+  const launchdOutput = `
+path = ${RELAY_LAUNCH_AGENT_PATH}
+state = running
+arguments = {
+  ${argumentsList.join('\n  ')}
+}
+pid = 4242
+`;
+  const profile = await assertRelayLaunchProfile(
+    { configPath, port: 4317 },
+    {
+      stat: async () => ({ mode: 0o100600 }),
+      readPlist: async () => ({
+        Label: RELAY_LABEL,
+        ProgramArguments: argumentsList,
+        WorkingDirectory: runtime,
+        RunAtLoad: true,
+      }),
+      readLaunchd: async () => launchdOutput,
+      readListenerPids: async () => [4242],
+      access: async () => {},
+      realpath: async (value) => value,
+    },
+  );
+  assert.equal(profile.pid, 4242);
+  assert.equal(profile.workingDirectory, runtime);
+
+  await assert.rejects(
+    assertRelayLaunchProfile(
+      { configPath, port: 4317 },
+      {
+        stat: async () => ({ mode: 0o100600 }),
+        readPlist: async () => ({
+          Label: RELAY_LABEL,
+          ProgramArguments: argumentsList,
+          WorkingDirectory: runtime,
+          RunAtLoad: true,
+        }),
+        readLaunchd: async () => launchdOutput,
+        readListenerPids: async () => [9999],
+        access: async () => {},
+        realpath: async (value) => value,
+      },
+    ),
+    /listener is not the audited LaunchAgent/,
+  );
+});
+
+test('relay listener parsing and shutdown require both port and health death', async () => {
+  assert.deepEqual(
+    await relayListenerPids(4317, {
+      runCommand: async () => ({
+        stdout: 'p42\nf10\np42\np43\n',
+      }),
+    }),
+    [42, 43],
+  );
+  assert.deepEqual(
+    await relayListenerPids(4317, {
+      runCommand: async () => {
+        const error = new Error('no listeners');
+        error.code = 1;
+        throw error;
+      },
+    }),
+    [],
+  );
+
+  let attempt = 0;
+  await waitForRelayShutdown(
+    { port: 4317, expectedPid: 42 },
+    {
+      readListenerPids: async () => (attempt === 0 ? [42] : []),
+      probeHealth: async () => {
+        const reachable = attempt === 0;
+        attempt += 1;
+        return reachable;
+      },
+      attempts: 2,
+      delayMs: 0,
+      sleep: async () => {},
+    },
+  );
+  await assert.rejects(
+    waitForRelayShutdown(
+      { port: 4317, expectedPid: 42 },
+      {
+        readListenerPids: async () => [99],
+        probeHealth: async () => false,
+        attempts: 1,
+      },
+    ),
+    /unexpected process/,
+  );
+  await assert.rejects(
+    waitForRelayShutdown(
+      { port: 4317, expectedPid: 42 },
+      {
+        readListenerPids: async () => [],
+        probeHealth: async () => true,
+        attempts: 1,
+      },
+    ),
+    /remained reachable/,
+  );
 });
 
 test('relay install gives cold startup and rollback a thirty-second health window', async () => {

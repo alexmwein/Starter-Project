@@ -176,12 +176,44 @@ service workers.
 7. Open the new one-time link, enroll a new Face ID passkey, and add the new
    dedicated address to the Home Screen.
 
-Cutover rotates the CSRF secret, pairing secret, RP ID, and public origin,
-requires a versioned self-purge receipt from every original device, verifies
-the exact live config revision over both loopback and HTTPS, and removes only
-Pocket's old `/` handler. Remote revocation cannot satisfy retirement. Other
-handlers and listeners on the Mac's normal Tailscale hostname are checked
-against the complete pre-cutover Serve document and preserved exactly.
+Cutover rotates the CSRF secret, pairing secret, RP ID, and public origin. Its
+normal path requires a versioned self-purge receipt from every original
+device. It verifies the exact live config revision over both loopback and
+HTTPS and removes only Pocket's old `/` handler. Remote revocation cannot
+satisfy retirement. Other handlers and listeners on the Mac's normal
+Tailscale hostname are checked against the complete pre-cutover Serve document
+and preserved exactly.
+
+If the user reports that the iOS Home Screen app was deleted but its final
+receipt never reached the Mac, an explicit administrative recovery can revoke
+that exact device without hand-editing config. This is a two-step recovery: it
+never chooses a device, guesses live state, or migrates the origin in the same
+invocation. Copy the exact device ID, old origin, and live config revision from
+the private config and health endpoint, then run:
+
+```sh
+npm run sidecar:cutover -- \
+  --administratively-retire-device EXACT_DEVICE_ID \
+  --expect-origin https://OLD_POCKET_HOSTNAME \
+  --expect-revision EXACT_LIVE_CONFIG_REVISION \
+  --confirm-reported-ios-app-deleted \
+  --acknowledge-local-purge-unverified
+npm run sidecar:cutover
+```
+
+The first command validates the operation lock, exact old origin and revision,
+dedicated sidecar, private Serve state, and disabled Funnel. It removes only
+the named server session, rotates CSRF state, records a persistent
+administrative attestation, restarts the old-origin relay, verifies its exact
+new revision, and stops without migrating. If activation cannot be verified,
+the audited LaunchAgent is removed and both listener and health-endpoint death
+are verified fail-closed; the revoked token is never restored. The second
+command performs the normal audited origin migration.
+
+Use this recovery only after the user explicitly reports deleting the iOS
+Home Screen app. It restores server-side security but cannot prove that iOS
+erased every local transcript snapshot. The audit record keeps that
+distinction after migration. There is no wildcard or all-devices form.
 
 If a legacy config already has no paired devices and no retirement record,
 cutover refuses to guess. Only when the origin was never paired or every old

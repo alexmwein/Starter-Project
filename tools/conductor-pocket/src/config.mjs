@@ -14,6 +14,11 @@ import {
 } from './constants.mjs';
 import { withOperationLock } from './operation-lock.mjs';
 
+const ADMINISTRATIVE_RETIREMENT_BASIS =
+  'user_reported_ios_home_screen_app_deleted';
+const ADMINISTRATIVE_RECEIPT_STATUS = 'missing';
+const ADMINISTRATIVE_LOCAL_PURGE_STATUS = 'unverified';
+
 function assertObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
@@ -35,15 +40,102 @@ function parsePublicOrigin(value, allowInsecureLocalhost = false) {
   return url.origin;
 }
 
-function validateOriginRetirement(raw, publicOrigin) {
+function nonemptyString(value, label, maximumLength = 512) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maximumLength ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function validateAdministrativeAttestations(raw, requiredDeviceIds, label) {
+  const rawAttestations = raw ?? [];
+  if (!Array.isArray(rawAttestations)) {
+    throw new Error(`${label} must be an array`);
+  }
+  const seen = new Set();
+  return rawAttestations.map((rawAttestation, index) => {
+    const itemLabel = `${label}[${index}]`;
+    assertObject(rawAttestation, itemLabel);
+    const deviceId = nonemptyString(
+      rawAttestation.deviceId,
+      `${itemLabel}.deviceId`,
+    );
+    if (!requiredDeviceIds.includes(deviceId) || seen.has(deviceId)) {
+      throw new Error(`${label} contains an invalid or duplicate device id`);
+    }
+    seen.add(deviceId);
+    if (rawAttestation.basis !== ADMINISTRATIVE_RETIREMENT_BASIS) {
+      throw new Error(`${itemLabel}.basis is invalid`);
+    }
+    if (rawAttestation.receiptStatus !== ADMINISTRATIVE_RECEIPT_STATUS) {
+      throw new Error(`${itemLabel}.receiptStatus is invalid`);
+    }
+    if (
+      rawAttestation.localPurgeStatus !==
+      ADMINISTRATIVE_LOCAL_PURGE_STATUS
+    ) {
+      throw new Error(`${itemLabel}.localPurgeStatus is invalid`);
+    }
+    const sourceConfigRevision = nonemptyString(
+      rawAttestation.sourceConfigRevision,
+      `${itemLabel}.sourceConfigRevision`,
+      128,
+    );
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(sourceConfigRevision)) {
+      throw new Error(`${itemLabel}.sourceConfigRevision is invalid`);
+    }
+    if (
+      !Number.isSafeInteger(rawAttestation.operatorUid) ||
+      rawAttestation.operatorUid < 0
+    ) {
+      throw new Error(`${itemLabel}.operatorUid is invalid`);
+    }
+    const attestedAt = optionalTimestamp(
+      rawAttestation.attestedAt,
+      `${itemLabel}.attestedAt`,
+    );
+    if (!attestedAt) {
+      throw new Error(`${itemLabel}.attestedAt is invalid`);
+    }
+    return {
+      deviceId,
+      basis: ADMINISTRATIVE_RETIREMENT_BASIS,
+      receiptStatus: ADMINISTRATIVE_RECEIPT_STATUS,
+      localPurgeStatus: ADMINISTRATIVE_LOCAL_PURGE_STATUS,
+      attestedAt,
+      sourceConfigRevision,
+      operatorUid: rawAttestation.operatorUid,
+      operatorUsername: nonemptyString(
+        rawAttestation.operatorUsername,
+        `${itemLabel}.operatorUsername`,
+        256,
+      ),
+      operatorHost: nonemptyString(
+        rawAttestation.operatorHost,
+        `${itemLabel}.operatorHost`,
+        256,
+      ),
+    };
+  });
+}
+
+function validateRetirementRecord(
+  raw,
+  { label, activePublicOrigin = null, completed = false },
+) {
   if (raw == null) return null;
-  assertObject(raw, 'originRetirement');
+  assertObject(raw, label);
   const sourceOrigin = parsePublicOrigin(raw.sourceOrigin);
-  if (sourceOrigin !== publicOrigin) {
+  if (activePublicOrigin && sourceOrigin !== activePublicOrigin) {
     throw new Error('originRetirement must belong to the current publicOrigin');
   }
   if (!Array.isArray(raw.requiredDeviceIds) || !Array.isArray(raw.retiredDeviceIds)) {
-    throw new Error('originRetirement device lists are invalid');
+    throw new Error(`${label} device lists are invalid`);
   }
   const requiredDeviceIds = [...new Set(raw.requiredDeviceIds)];
   const retiredDeviceIds = [...new Set(raw.retiredDeviceIds)];
@@ -53,20 +145,78 @@ function validateOriginRetirement(raw, publicOrigin) {
       (id) => typeof id !== 'string' || !requiredDeviceIds.includes(id),
     )
   ) {
-    throw new Error('originRetirement contains an invalid device id');
+    throw new Error(`${label} contains an invalid device id`);
+  }
+  const administrativeAttestations = validateAdministrativeAttestations(
+    raw.administrativeAttestations,
+    requiredDeviceIds,
+    `${label}.administrativeAttestations`,
+  );
+  const administrativelyRetired = new Set(
+    administrativeAttestations.map((attestation) => attestation.deviceId),
+  );
+  if (retiredDeviceIds.some((id) => administrativelyRetired.has(id))) {
+    throw new Error(
+      `${label} cannot record both a self-purge receipt and an administrative attestation for one device`,
+    );
   }
   if (
     typeof raw.startedAt !== 'string' ||
     !Number.isFinite(Date.parse(raw.startedAt))
   ) {
-    throw new Error('originRetirement.startedAt is invalid');
+    throw new Error(`${label}.startedAt is invalid`);
+  }
+  const completedAt = completed
+    ? optionalTimestamp(raw.completedAt, `${label}.completedAt`)
+    : null;
+  if (completed && !completedAt) {
+    throw new Error(`${label}.completedAt is invalid`);
+  }
+  if (
+    completed &&
+    requiredDeviceIds.some(
+      (id) =>
+        !retiredDeviceIds.includes(id) && !administrativelyRetired.has(id),
+    )
+  ) {
+    throw new Error(`${label} is missing retirement evidence`);
   }
   return {
     sourceOrigin,
     requiredDeviceIds,
     retiredDeviceIds,
+    administrativeAttestations,
     startedAt: new Date(raw.startedAt).toISOString(),
+    ...(completed ? { completedAt } : {}),
   };
+}
+
+function validateOriginRetirement(raw, publicOrigin) {
+  return validateRetirementRecord(raw, {
+    label: 'originRetirement',
+    activePublicOrigin: publicOrigin,
+  });
+}
+
+function validateCompletedOriginRetirements(raw) {
+  const records = raw ?? [];
+  if (!Array.isArray(records)) {
+    throw new Error('completedOriginRetirements must be an array');
+  }
+  const seenOrigins = new Set();
+  return records.map((record, index) => {
+    const validated = validateRetirementRecord(record, {
+      label: `completedOriginRetirements[${index}]`,
+      completed: true,
+    });
+    if (seenOrigins.has(validated.sourceOrigin)) {
+      throw new Error(
+        'completedOriginRetirements contains a duplicate source origin',
+      );
+    }
+    seenOrigins.add(validated.sourceOrigin);
+    return validated;
+  });
 }
 
 function optionalTimestamp(value, label) {
@@ -189,6 +339,9 @@ export function validateConfig(raw) {
     raw.originRetirement,
     publicOrigin,
   );
+  const completedOriginRetirements = validateCompletedOriginRetirements(
+    raw.completedOriginRetirements,
+  );
   return {
     ...raw,
     publicOrigin,
@@ -197,6 +350,7 @@ export function validateConfig(raw) {
     allowedTailscaleLogin,
     pairing: raw.pairing || null,
     originRetirement,
+    completedOriginRetirements,
   };
 }
 
@@ -246,6 +400,7 @@ export function createConfig({
     allowedTailscaleLogin: null,
     csrfSecret: randomToken(32),
     originRetirement: null,
+    completedOriginRetirements: [],
     pairing: {
       codeHash: sha256(pairingCode),
       expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
@@ -331,7 +486,82 @@ export function beginOriginRetirement(config, now = Date.now()) {
       sourceOrigin: validated.publicOrigin,
       requiredDeviceIds: validated.devices.map((device) => device.id),
       retiredDeviceIds: [],
+      administrativeAttestations: [],
       startedAt: new Date(now).toISOString(),
+    },
+  });
+}
+
+export function administrativelyRetireDeletedDevice(
+  config,
+  {
+    deviceId,
+    expectedOrigin,
+    expectedRevision,
+    operatorUid,
+    operatorUsername,
+    operatorHost,
+    now = Date.now(),
+  } = {},
+) {
+  const validated = validateConfig(config);
+  const retirement = validated.originRetirement;
+  if (!retirement) {
+    throw new Error('Origin retirement is not armed');
+  }
+  const normalizedExpectedOrigin = parsePublicOrigin(
+    nonemptyString(expectedOrigin, 'expectedOrigin'),
+  );
+  if (
+    normalizedExpectedOrigin !== validated.publicOrigin ||
+    normalizedExpectedOrigin !== retirement.sourceOrigin
+  ) {
+    throw new Error('The expected old origin does not match the armed retirement');
+  }
+  const actualRevision = configRevision(validated);
+  if (expectedRevision !== actualRevision) {
+    throw new Error('The expected config revision is stale or incorrect');
+  }
+  if (validated.pairing) {
+    throw new Error('Administrative retirement requires pairing to be disabled');
+  }
+  if (!retirement.requiredDeviceIds.includes(deviceId)) {
+    throw new Error('The selected device is not part of the armed retirement');
+  }
+  if (retirement.retiredDeviceIds.includes(deviceId)) {
+    throw new Error('The selected device already supplied a self-purge receipt');
+  }
+  if (
+    retirement.administrativeAttestations.some(
+      (attestation) => attestation.deviceId === deviceId,
+    )
+  ) {
+    throw new Error('The selected device was already administratively retired');
+  }
+  if (!validated.devices.some((device) => device.id === deviceId)) {
+    throw new Error('The selected device is not currently enrolled');
+  }
+
+  return validateConfig({
+    ...validated,
+    csrfSecret: randomToken(32),
+    devices: validated.devices.filter((device) => device.id !== deviceId),
+    originRetirement: {
+      ...retirement,
+      administrativeAttestations: [
+        ...retirement.administrativeAttestations,
+        {
+          deviceId,
+          basis: ADMINISTRATIVE_RETIREMENT_BASIS,
+          receiptStatus: ADMINISTRATIVE_RECEIPT_STATUS,
+          localPurgeStatus: ADMINISTRATIVE_LOCAL_PURGE_STATUS,
+          attestedAt: new Date(now).toISOString(),
+          sourceConfigRevision: actualRevision,
+          operatorUid,
+          operatorUsername,
+          operatorHost,
+        },
+      ],
     },
   });
 }
@@ -340,25 +570,44 @@ export function originRetirementComplete(config) {
   const validated = validateConfig(config);
   const retirement = validated.originRetirement;
   if (!retirement) return false;
-  const retired = new Set(retirement.retiredDeviceIds);
   return (
     validated.devices.length === 0 &&
-    retirement.requiredDeviceIds.every((id) => retired.has(id))
+    remainingOriginRetirementDeviceIds(validated).length === 0
+  );
+}
+
+export function remainingOriginRetirementDeviceIds(config) {
+  const validated = validateConfig(config);
+  const retirement = validated.originRetirement;
+  if (!retirement) return [];
+  const retired = new Set([
+    ...retirement.retiredDeviceIds,
+    ...retirement.administrativeAttestations.map(
+      (attestation) => attestation.deviceId,
+    ),
+  ]);
+  return retirement.requiredDeviceIds.filter(
+    (deviceId) => !retired.has(deviceId),
   );
 }
 
 export function migrateToDedicatedOrigin(config, publicOrigin, now = Date.now()) {
   if (!originRetirementComplete(config)) {
     throw new Error(
-      'Every old-origin device must complete the local retirement purge before migration',
+      'Every old-origin device must supply a self-purge receipt or an explicit administrative deletion attestation before migration',
     );
   }
+  const validated = validateConfig(config);
   const origin = parsePublicOrigin(publicOrigin);
   const pairingCode = randomToken(24);
+  const completedRetirement = {
+    ...validated.originRetirement,
+    completedAt: new Date(now).toISOString(),
+  };
   return {
     pairingCode,
     config: validateConfig({
-      ...config,
+      ...validated,
       publicOrigin: origin,
       rpId: new URL(origin).hostname,
       developmentMode: false,
@@ -367,6 +616,10 @@ export function migrateToDedicatedOrigin(config, publicOrigin, now = Date.now())
       allowedTailscaleLogin: null,
       csrfSecret: randomToken(32),
       originRetirement: null,
+      completedOriginRetirements: [
+        ...validated.completedOriginRetirements,
+        completedRetirement,
+      ],
       pairing: {
         codeHash: sha256(pairingCode),
         expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
@@ -410,9 +663,27 @@ export function configRevision(config) {
         retiredDeviceIds: [
           ...validated.originRetirement.retiredDeviceIds,
         ].sort(),
+        administrativeAttestations:
+          validated.originRetirement.administrativeAttestations
+            .map((attestation) => ({ ...attestation }))
+            .sort((left, right) =>
+              left.deviceId.localeCompare(right.deviceId),
+            ),
         startedAt: validated.originRetirement.startedAt,
       }
     : null;
+  const completedRetirements = validated.completedOriginRetirements
+    .map((record) => ({
+      sourceOrigin: record.sourceOrigin,
+      requiredDeviceIds: [...record.requiredDeviceIds].sort(),
+      retiredDeviceIds: [...record.retiredDeviceIds].sort(),
+      administrativeAttestations: record.administrativeAttestations
+        .map((attestation) => ({ ...attestation }))
+        .sort((left, right) => left.deviceId.localeCompare(right.deviceId)),
+      startedAt: record.startedAt,
+      completedAt: record.completedAt,
+    }))
+    .sort((left, right) => left.sourceOrigin.localeCompare(right.sourceOrigin));
   return sha256(
     JSON.stringify({
       version: validated.version,
@@ -428,6 +699,7 @@ export function configRevision(config) {
       pairing: validated.pairing,
       devices,
       retirement,
+      completedRetirements,
     }),
   );
 }

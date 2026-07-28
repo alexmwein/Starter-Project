@@ -153,6 +153,24 @@ Blocked deletion fails visibly and keeps the device enrolled. Only then does
 the client send its retirement receipt. A device that never reconnects remains
 protected by iOS Data Protection and Pocket's selected authorization gate.
 
+There is one explicit recovery for a lost final receipt after the user reports
+that the iOS Home Screen app was deleted. It requires the exact device ID,
+source origin, source config revision, and two acknowledgement flags under the
+global operation lock. The recovery records the missing receipt and
+unverified local-purge status separately from self-purge receipts, removes the
+entire server-side device object, rotates CSRF state, restarts the relay, and
+verifies the exact new revision at loopback and the old HTTPS origin. It
+returns before origin migration. Activation failure stops the relay without
+restoring the revoked token, after preflight binds the listener to the audited
+LaunchAgent and shutdown verifies both listener and health-endpoint death. The
+completed migration retains this administrative attestation for audit.
+
+Administrative recovery does not claim that iOS local data was erased. It
+restores server-side security by revoking the old session before the old route
+is removed and the browser origin, RP ID, CSRF secret, and pairing secret are
+rotated. Any leftover offline transcript snapshot remains protected only by
+iOS Data Protection.
+
 ## Residual risks
 
 - A process already running as the host's logged-in macOS account can read the
@@ -180,4 +198,6 @@ protected by iOS Data Protection and Pocket's selected authorization gate.
   expiry. iOS device security is part of this explicitly selected boundary.
 - Device-local browser storage cannot be remotely erased while the iPhone is
   permanently offline. iOS device security is the recovery boundary until
-  that phone reconnects and completes its own retirement purge.
+  that phone reconnects and completes its own retirement purge. If an operator
+  uses the explicit deleted-app administrative recovery, local erasure remains
+  user-reported and unverified in the retained audit record.

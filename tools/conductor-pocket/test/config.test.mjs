@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   ConfigStore,
+  administrativelyRetireDeletedDevice,
   beginOriginRetirement,
   configRevision,
   createConfig,
@@ -12,6 +13,7 @@ import {
   loadConfig,
   migrateToDedicatedOrigin,
   originRetirementComplete,
+  remainingOriginRetirementDeviceIds,
   rotatePairing,
   saveConfig,
   setReauthenticationMode,
@@ -150,6 +152,193 @@ test('origin migration requires every original device to self-retire', () => {
   retirement.devices = [];
   retirement.originRetirement.retiredDeviceIds = ['phone-a', 'phone-b'];
   assert.equal(originRetirementComplete(retirement), true);
+});
+
+test('deleted-app administrative retirement revokes only the exact device and preserves its audit', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+  });
+  config.devices = [
+    {
+      id: 'phone-a',
+      sessionHash: 'session-a',
+      previousSessionHash: 'previous-a',
+      previousSessionExpiresAt: '2026-07-28T12:00:00.000Z',
+    },
+  ];
+  const retirement = beginOriginRetirement(config, 2_000);
+  const sourceRevision = configRevision(retirement);
+  const oldCsrfSecret = retirement.csrfSecret;
+  const recovered = administrativelyRetireDeletedDevice(retirement, {
+    deviceId: 'phone-a',
+    expectedOrigin: retirement.publicOrigin,
+    expectedRevision: sourceRevision,
+    operatorUid: 501,
+    operatorUsername: 'alex',
+    operatorHost: 'alex-mac',
+    now: 3_000,
+  });
+
+  assert.deepEqual(recovered.devices, []);
+  assert.deepEqual(recovered.originRetirement.retiredDeviceIds, []);
+  assert.deepEqual(
+    recovered.originRetirement.administrativeAttestations,
+    [
+      {
+        deviceId: 'phone-a',
+        basis: 'user_reported_ios_home_screen_app_deleted',
+        receiptStatus: 'missing',
+        localPurgeStatus: 'unverified',
+        attestedAt: new Date(3_000).toISOString(),
+        sourceConfigRevision: sourceRevision,
+        operatorUid: 501,
+        operatorUsername: 'alex',
+        operatorHost: 'alex-mac',
+      },
+    ],
+  );
+  assert.notEqual(recovered.csrfSecret, oldCsrfSecret);
+  assert.equal(originRetirementComplete(recovered), true);
+  assert.notEqual(configRevision(recovered), sourceRevision);
+
+  const migrated = migrateToDedicatedOrigin(
+    recovered,
+    'https://conductor-pocket.example.ts.net',
+    4_000,
+  ).config;
+  assert.equal(migrated.originRetirement, null);
+  assert.equal(migrated.completedOriginRetirements.length, 1);
+  assert.deepEqual(
+    migrated.completedOriginRetirements[0].administrativeAttestations,
+    recovered.originRetirement.administrativeAttestations,
+  );
+  assert.equal(
+    migrated.completedOriginRetirements[0].completedAt,
+    new Date(4_000).toISOString(),
+  );
+});
+
+test('administrative retirement fails closed on stale or ambiguous state', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+  });
+  config.devices = [{ id: 'phone-a', sessionHash: 'session-a' }];
+  const retirement = beginOriginRetirement(config, 2_000);
+  const options = {
+    deviceId: 'phone-a',
+    expectedOrigin: retirement.publicOrigin,
+    expectedRevision: configRevision(retirement),
+    operatorUid: 501,
+    operatorUsername: 'alex',
+    operatorHost: 'alex-mac',
+    now: 3_000,
+  };
+
+  assert.throws(
+    () =>
+      administrativelyRetireDeletedDevice(retirement, {
+        ...options,
+        expectedRevision: 'stale-revision-value-that-is-long-enough',
+      }),
+    /revision is stale/,
+  );
+  assert.throws(
+    () =>
+      administrativelyRetireDeletedDevice(retirement, {
+        ...options,
+        expectedOrigin: 'https://other.example.ts.net',
+      }),
+    /expected old origin/,
+  );
+  assert.throws(
+    () =>
+      administrativelyRetireDeletedDevice(retirement, {
+        ...options,
+        deviceId: 'phone-b',
+      }),
+    /not part of the armed retirement/,
+  );
+  assert.throws(
+    () => administrativelyRetireDeletedDevice(config, options),
+    /not armed/,
+  );
+
+  const selfRetired = structuredClone(retirement);
+  selfRetired.devices = [];
+  selfRetired.originRetirement.retiredDeviceIds = ['phone-a'];
+  assert.throws(
+    () =>
+      administrativelyRetireDeletedDevice(selfRetired, {
+        ...options,
+        expectedRevision: configRevision(selfRetired),
+      }),
+    /self-purge receipt/,
+  );
+});
+
+test('retirement evidence cannot overlap and mixed evidence can complete', () => {
+  const { config } = createConfig({
+    publicOrigin: 'https://shared.example.ts.net',
+  });
+  config.devices = [
+    { id: 'phone-a', sessionHash: 'session-a' },
+    { id: 'phone-b', sessionHash: 'session-b' },
+  ];
+  const retirement = beginOriginRetirement(config, 2_000);
+  const firstRecovery = administrativelyRetireDeletedDevice(retirement, {
+    deviceId: 'phone-b',
+    expectedOrigin: retirement.publicOrigin,
+    expectedRevision: configRevision(retirement),
+    operatorUid: 501,
+    operatorUsername: 'alex',
+    operatorHost: 'alex-mac',
+    now: 2_500,
+  });
+  assert.equal(originRetirementComplete(firstRecovery), false);
+  assert.deepEqual(
+    remainingOriginRetirementDeviceIds(firstRecovery),
+    ['phone-a'],
+  );
+  assert.deepEqual(
+    firstRecovery.devices.map((device) => device.id),
+    ['phone-a'],
+  );
+
+  retirement.devices = retirement.devices.filter(
+    (device) => device.id === 'phone-b',
+  );
+  retirement.originRetirement.retiredDeviceIds = ['phone-a'];
+  const recovered = administrativelyRetireDeletedDevice(retirement, {
+    deviceId: 'phone-b',
+    expectedOrigin: retirement.publicOrigin,
+    expectedRevision: configRevision(retirement),
+    operatorUid: 501,
+    operatorUsername: 'alex',
+    operatorHost: 'alex-mac',
+    now: 3_000,
+  });
+  assert.equal(originRetirementComplete(recovered), true);
+
+  const overlap = structuredClone(recovered);
+  overlap.originRetirement.retiredDeviceIds.push('phone-b');
+  assert.throws(
+    () => validateConfig(overlap),
+    /cannot record both/,
+  );
+
+  const incompleteAudit = structuredClone(recovered);
+  incompleteAudit.originRetirement = null;
+  incompleteAudit.completedOriginRetirements = [
+    {
+      ...recovered.originRetirement,
+      administrativeAttestations: [],
+      completedAt: new Date(4_000).toISOString(),
+    },
+  ];
+  assert.throws(
+    () => validateConfig(incompleteAudit),
+    /missing retirement evidence/,
+  );
 });
 
 test('config revision changes for same-origin retirement and pairing updates', () => {
