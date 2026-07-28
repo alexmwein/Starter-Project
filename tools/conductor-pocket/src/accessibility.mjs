@@ -14,9 +14,11 @@ const safeToRetryCodes = new Set([
   'conductor_not_running',
   'conductor_window_unavailable',
   'draft_conflict',
+  'input_helper_unavailable',
   'session_locked',
   'send_unavailable',
   'session_not_visible',
+  'user_input_active',
   'workspace_list_unavailable',
   'workspace_not_visible',
 ]);

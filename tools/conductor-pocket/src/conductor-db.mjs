@@ -174,7 +174,11 @@ export class ConductorDatabase {
             WHERE queued.session_id = s.id
               AND queued.role = 'user'
               AND queued.sent_at IS NULL
-              AND queued.cancelled_at IS NULL
+              -- The unary plus keeps SQLite from choosing the much broader
+              -- (session_id, cancelled_at) index. The semantically identical
+              -- predicate then uses (session_id, sent_at), which makes this
+              -- correlated count constant-time on large Conductor databases.
+              AND +queued.cancelled_at IS NULL
           ) AS queued_count
         FROM sessions s
         WHERE s.workspace_id = ? AND s.is_hidden = 0
@@ -240,7 +244,7 @@ export class ConductorDatabase {
           model,
           turn_id
         FROM session_messages
-        WHERE session_id = ?
+        WHERE session_id = ? AND cancelled_at IS NULL
         ORDER BY rowid DESC
         LIMIT ?
       `),
@@ -256,14 +260,21 @@ export class ConductorDatabase {
           model,
           turn_id
         FROM session_messages
-        WHERE session_id = ? AND rowid > ?
+        WHERE session_id = ? AND cancelled_at IS NULL AND rowid > ?
         ORDER BY rowid
         LIMIT ?
       `),
       maxRowId: this.#db.prepare(`
-        SELECT COALESCE(MAX(rowid), 0) AS row_id
-        FROM session_messages
-        WHERE session_id = ?
+        SELECT COALESCE(
+          (
+            SELECT rowid
+            FROM session_messages
+            WHERE session_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+          ),
+          0
+        ) AS row_id
       `),
       exactUserMessageAfter: this.#db.prepare(`
         SELECT
