@@ -1,11 +1,14 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-fast-reliable-20260728';
-import { fetchJson } from './http.js?v=0.2.0-fast-reliable-20260728';
+} from './delivery-receipts.js?v=0.2.0-mobile-markdown-20260728';
+import { fetchJson } from './http.js?v=0.2.0-mobile-markdown-20260728';
 import {
   createLiveRefreshCoordinator,
-} from './live-refresh.js?v=0.2.0-fast-reliable-20260728';
+} from './live-refresh.js?v=0.2.0-mobile-markdown-20260728';
+import {
+  renderRichText,
+} from './rich-text.js?v=0.2.0-mobile-markdown-20260728';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -1763,9 +1766,14 @@ function renderMessage(message, toolResults) {
   if (message.kind === 'assistant') {
     const item = node('li', {
       className: 'message assistant',
-      'aria-label': `Conductor replied ${message.text}`,
     });
-    item.append(renderRichText(message.text));
+    item.append(
+      node('span', {
+        className: 'sr-only',
+        text: 'Conductor replied:',
+      }),
+      renderRichText(document, message.text),
+    );
     return item;
   }
   if (message.kind === 'user' || message.kind === 'optimistic') {
@@ -1848,34 +1856,6 @@ function renderMessage(message, toolResults) {
     return node('li', { className: 'message tool' }, details);
   }
   return null;
-}
-
-function renderRichText(text) {
-  const fragment = document.createDocumentFragment();
-  const sections = String(text).split(/```/);
-  sections.forEach((section, index) => {
-    if (index % 2 === 1) {
-      const firstBreak = section.indexOf('\n');
-      const code = firstBreak >= 0 ? section.slice(firstBreak + 1) : section;
-      fragment.append(node('pre', {}, node('code', { text: code.trimEnd() })));
-      return;
-    }
-    const paragraphs = section.split(/\n{2,}/);
-    for (const paragraph of paragraphs) {
-      if (!paragraph.trim()) continue;
-      const lines = paragraph.split('\n');
-      if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-        const list = node('ul');
-        lines.forEach((line) =>
-          list.append(node('li', { text: line.replace(/^\s*[-*]\s+/, '') })),
-        );
-        fragment.append(list);
-      } else {
-        fragment.append(node('p', { text: paragraph }));
-      }
-    }
-  });
-  return fragment;
 }
 
 function renderAgentStatus(container, session) {

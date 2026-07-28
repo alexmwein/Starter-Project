@@ -633,13 +633,39 @@ button:active {
   margin-bottom: 0;
 }
 
-.message.assistant ul {
+.message.assistant ul,
+.message.assistant ol {
   margin: 0 0 12px;
   padding-left: 20px;
 }
 
 .message.assistant li {
   overflow-wrap: anywhere;
+}
+
+.message.assistant li + li {
+  margin-top: 4px;
+}
+
+.message.assistant .message-heading {
+  margin: 20px 0 8px;
+  font-size: 1.0625rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.4rem;
+  overflow-wrap: anywhere;
+}
+
+.message.assistant > .sr-only + .message-heading {
+  margin-top: 0;
+}
+
+.message.assistant strong {
+  font-weight: 650;
+}
+
+.message.assistant em {
+  font-style: italic;
 }
 
 .message.assistant pre {
@@ -652,7 +678,7 @@ button:active {
   background: var(--inset);
 }
 
-.message.assistant code {
+.message.assistant pre code {
   display: block;
   min-width: max-content;
   padding: 12px;
@@ -660,6 +686,21 @@ button:active {
   font-size: 0.8125rem;
   line-height: 1.1875rem;
   white-space: pre;
+}
+
+.message.assistant p code,
+.message.assistant li code,
+.message.assistant .message-heading code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--inset);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+}
+
+.message.assistant > :last-child {
+  margin-bottom: 0;
 }
 
 .message.user {
