@@ -39,15 +39,16 @@ test("commercial dataset keeps measured facts separate from models", async () =>
   const data = await loadIntelligence();
   const audits = Object.values(data.audits);
 
-  assert.equal(data.stats.coreCompetitorDomains, 112);
-  assert.equal(data.stats.supplementalCaseDomains, 2);
-  assert.equal(data.stats.domainsInCommercialDataset, 114);
-  assert.equal(data.stats.verifiedDomainAges, 114);
-  assert.equal(data.stats.trafficModeledDomains, 42);
-  assert.ok(data.stats.publicCatalogsAttempted >= 112);
-  assert.ok(data.stats.normalizedCatalogOffers >= 9_000);
-  assert.ok(data.stats.retatrutideOffers >= 300);
-  assert.equal(audits.length, 114);
+  assert.equal(data.stats.coreCompetitorDomains, 129);
+  assert.equal(data.stats.supplementalCaseProfiles, 2);
+  assert.equal(data.stats.supplementalOnlyDomains, 1);
+  assert.equal(data.stats.domainsInCommercialDataset, 130);
+  assert.equal(data.stats.verifiedDomainAges, 130);
+  assert.equal(data.stats.trafficModeledDomains, 56);
+  assert.equal(data.stats.publicCatalogsAttempted, 130);
+  assert.equal(data.stats.normalizedCatalogOffers, 13_310);
+  assert.equal(data.stats.retatrutideOffers, 513);
+  assert.equal(audits.length, 130);
   assert.ok(
     audits
       .filter((audit) => audit.commercial.gmvBase != null)
@@ -62,9 +63,9 @@ test("Northline and Biologix cases preserve exact evidence boundaries", async ()
   const northline = data.audits["northlinelabs.org"];
   const biologix = data.audits["biologixlabsresearch.com"];
 
-  assert.equal(northline.commercial.trailing30VisitsModel, 55_638);
-  assert.equal(northline.commercial.currentMonthlyVisitsModel, 82_023);
-  assert.equal(northline.commercial.gmvBase, 189_225);
+  assert.equal(northline.commercial.trailing30VisitsModel, 57_470);
+  assert.equal(northline.commercial.currentMonthlyVisitsModel, 83_086);
+  assert.equal(northline.commercial.gmvBase, 195_455);
   assert.ok(northline.catalog.variantCount >= 40);
   assert.match(northline.commercial.caveat, /not measured revenue/i);
 
@@ -91,16 +92,18 @@ test("wave-specific schemas retain coverage, identity, timestamps, and UI findin
   const sparta = data.audits["spartalabs.net"];
   const spartaOffers = catalog.byDomain["spartalabs.net"];
   const peptara = data.audits["peptara.org"];
-  const waveCUnavailable = Object.values(data.audits).filter((audit) =>
-    /^(gated_public_catalog_unknown|unresolved_transport_failure)$/.test(
-      audit.catalog.coverage,
-    ),
-  );
+  const waveCUnavailable = Object.entries(data.audits)
+    .map(([domain, audit]) => ({ domain, audit }))
+    .filter(({ audit }) =>
+      /^(gated_public_catalog_unknown|unresolved_transport_failure)$/.test(
+        audit.catalog.coverage,
+      ),
+    );
   const waveBDesign = data.audits["licensedpeptides.com"].design;
 
-  assert.equal(data.stats.fullyEnumeratedCatalogs, 86);
-  assert.equal(data.stats.partialCatalogs, 6);
-  assert.equal(data.stats.unknownOrGatedCatalogs, 22);
+  assert.equal(data.stats.fullyEnumeratedCatalogs, 97);
+  assert.equal(data.stats.partialCatalogs, 10);
+  assert.equal(data.stats.unknownOrGatedCatalogs, 23);
   assert.equal(sparta.catalog.coverage, "complete_public_catalog");
   assert.equal(sparta.catalog.productCount, 12);
   assert.equal(sparta.catalog.variantCount, 28);
@@ -109,8 +112,16 @@ test("wave-specific schemas retain coverage, identity, timestamps, and UI findin
   assert.ok(spartaOffers.every((row) => row.capturedAt && row.extractionMethod));
   assert.equal(peptara.catalog.variantCount, 92);
   assert.equal(peptara.catalog.retaVariantCount, 8);
-  assert.equal(waveCUnavailable.length, 9);
-  assert.ok(waveCUnavailable.every((audit) => audit.catalog.variantCount === 0));
+  assert.equal(waveCUnavailable.length, 10);
+  assert.deepEqual(
+    waveCUnavailable
+      .filter(({ audit }) => audit.catalog.variantCount > 0)
+      .map(({ domain, audit }) => ({
+        domain,
+        variantCount: audit.catalog.variantCount,
+      })),
+    [{ domain: "apex-peptides.com", variantCount: 1 }],
+  );
   assert.equal(waveBDesign.accessStatus, "account-gate");
   assert.ok(waveBDesign.reasons.length >= 2);
   assert.equal(waveBDesign.confidence, "medium");
@@ -166,16 +177,20 @@ test("central page exposes compact mobile intelligence and lazy full catalogs", 
   assert.match(html, /noli-competitor-intelligence-data\.js/);
   assert.match(html, /noli-competitor-intelligence\.js/);
   assert.match(html, /noli-competitor-intelligence\.css/);
-  assert.match(html, /Age, traffic, catalog, price, and UI—in one place/);
+  assert.match(html, /Price, traffic, ads, and marketing—in one place/);
+  assert.match(html, /noli-marketing-watch-data\.js/);
   assert.match(html, /data-ci-search/);
   assert.match(html, /Full catalog CSV/);
-  assert.match(component, /noli-competitor-catalogs\/\$\{safeDomain\}\.json/);
+  assert.match(component, /catalogShardBasePath\.replace[\s\S]+\$\{safeDomain\}\.json/);
   assert.match(component, /Load full catalog/);
   assert.match(component, /Public traffic panels:/);
   assert.match(component, /Checkout scenario:/);
   assert.match(component, /UI review:/);
   assert.match(component, /commercial\.externalPanels/);
   assert.match(component, /catalogPromises\.delete\(domain\)/);
+  assert.match(component, /catalogJsonPath/);
+  assert.match(component, /marketingJsonPath/);
+  assert.match(component, /Snap: 0 exact-domain matches in this snapshot/);
   assert.match(summaryCsv.split("\n", 1)[0], /cvr_base_assumption/);
   assert.match(summaryCsv.split("\n", 1)[0], /aov_base_assumption/);
   assert.match(summaryCsv.split("\n", 1)[0], /rank_source/);

@@ -2,17 +2,32 @@
   "use strict";
 
   const data = window.NOLI_COMPETITOR_INTELLIGENCE;
+  const marketing = window.NOLI_MARKETING_WATCH || {};
+  const marketingByDomain = marketing.byDomain || {};
   const root = document.getElementById("noli-competitor-intelligence");
   if (!data || !root) return;
 
   const stats = root.querySelector("[data-ci-stats]");
   const caseStudies = root.querySelector("[data-ci-cases]");
+  const marketingRollup = root.querySelector("[data-ci-marketing-rollup]");
   const search = root.querySelector("[data-ci-search]");
   const filter = root.querySelector("[data-ci-filter]");
   const sort = root.querySelector("[data-ci-sort]");
   const resultCount = root.querySelector("[data-ci-count]");
   const list = root.querySelector("[data-ci-list]");
   const loadMore = root.querySelector("[data-ci-more]");
+  const catalogShardBasePath =
+    data.catalogShardBasePath || "./noli-competitor-catalogs";
+  const catalogExportPath =
+    data.catalogExportPath || "./noli-competitor-catalog-2026-07-27.csv";
+  const catalogJsonPath =
+    data.catalogJsonPath || "./noli-competitor-catalog-2026-07-27.json";
+  const commercialExportPath =
+    data.commercialExportPath || "./noli-competitor-intelligence-2026-07-27.csv";
+  const marketingExportPath =
+    marketing.exportPath || "./noli-marketing-watch-2026-07-28.csv";
+  const marketingJsonPath =
+    marketing.jsonPath || "./noli-marketing-watch-2026-07-28.json";
   const PAGE_SIZE = 12;
   let visibleCount = PAGE_SIZE;
   const catalogPromises = new Map();
@@ -76,6 +91,19 @@
     value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value))
       ? `${Math.round(Number(value) * 100)}%`
       : "Unknown";
+  const shortDate = (value) => {
+    const source = /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))
+      ? `${value}T12:00:00Z`
+      : value || "";
+    const parsed = Date.parse(source);
+    return Number.isFinite(parsed)
+      ? new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(parsed)
+      : "Unknown";
+  };
 
   const rows = Object.entries(data.audits || {}).map(([domain, audit]) => ({
     domain,
@@ -84,16 +112,61 @@
 
   function renderStats() {
     const values = [
-      [data.stats.coreCompetitorDomains, "competitors"],
-      [data.stats.verifiedDomainAges, "domain ages verified"],
-      [data.stats.trafficModeledDomains, "traffic models"],
-      [data.stats.fullyEnumeratedCatalogs, "full public catalogs"],
+      [data.stats.domainsInCommercialDataset, "competitor records"],
+      [marketing.stats?.monitoredCompanies || marketing.stats?.companies || 0, "marketing monitors"],
+      [data.stats.liveRefreshedCatalogs, "live price feeds"],
       [data.stats.normalizedCatalogOffers, "deduped offers"],
+      [data.stats.retatrutideOffers, "Reta offers"],
       [data.stats.screenshotScoredDomains, "UI scores"],
     ];
     stats.innerHTML = values
       .map(([value, label]) => `<div><strong>${escapeHtml(integer(value))}</strong><span>${escapeHtml(label)}</span></div>`)
       .join("");
+
+    const refreshed = root.querySelector("[data-ci-refreshed]");
+    const capturedAt = Date.parse(data.capturedAt || "");
+    if (refreshed && Number.isFinite(capturedAt)) {
+      const priceTimestamp = new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      }).format(capturedAt);
+      const marketingCapturedAt = Date.parse(marketing.capturedAt || "");
+      const marketingTimestamp = Number.isFinite(marketingCapturedAt)
+        ? new Intl.DateTimeFormat("en-US", {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+            timeZoneName: "short",
+          }).format(marketingCapturedAt)
+        : "not yet available";
+      refreshed.textContent = `${integer(data.stats.liveRefreshedCatalogs)} live price feeds and ${integer(marketing.stats?.monitoredCompanies || marketing.stats?.companies || 0)} marketing monitors refresh every 6 hours. Price: ${priceTimestamp}. Marketing: ${marketingTimestamp}.`;
+    }
+
+    const coverageValues = [
+      ["[data-ci-coverage-records]", `${integer(data.stats.domainsInCommercialDataset)} competitor commercial records`],
+      ["[data-ci-coverage-offers]", `${integer(data.stats.normalizedCatalogOffers)} normalized catalog offers`],
+      ["[data-ci-coverage-reta]", `${integer(data.stats.retatrutideOffers)} Retatrutide offers`],
+    ];
+    for (const [selector, value] of coverageValues) {
+      const element = document.querySelector(selector);
+      if (element) element.textContent = value;
+    }
+    for (const [originalPath, currentPath] of [
+      ["./noli-competitor-catalog-2026-07-27.csv", catalogExportPath],
+      ["./noli-competitor-catalog-2026-07-27.json", catalogJsonPath],
+      ["./noli-competitor-intelligence-2026-07-27.csv", commercialExportPath],
+      ["./noli-marketing-watch-2026-07-28.csv", marketingExportPath],
+      ["./noli-marketing-watch-2026-07-28.json", marketingJsonPath],
+    ]) {
+      document.querySelectorAll(`a[href="${originalPath}"]`).forEach((anchor) => {
+        anchor.href = currentPath;
+      });
+    }
   }
 
   function renderCases() {
@@ -105,6 +178,7 @@
       Number(northline.commercial.currentMonthlyVisitsModel || 0) * 0.0179 * 190,
     );
     const privateSignal = biologix.commercial.caseStudy?.observedPrivateSignal || {};
+    const publicFootprint = biologix.commercial.caseStudy?.publicFootprint || {};
 
     caseStudies.innerHTML = `
       <article>
@@ -117,7 +191,78 @@
         <span>Biologix / private screen</span>
         <strong>${escapeHtml(money(privateSignal.dailyGrossDisplayed))} · ${escapeHtml(integer(privateSignal.dailyOrdersDisplayed))} orders shown</strong>
         <p>${escapeHtml(money(privateSignal.displayedAov))} displayed AOV · ${escapeHtml(money(privateSignal.sustained30DayGrossIllustration, "USD", true))} only if that exact day repeated for 30 days.</p>
-        <small>Strong private signal; not an audited settlement or public traffic measurement.</small>
+        <small>Strong private signal; not an audited settlement or public traffic measurement. Public scan: no verified Braden surname/title or official phone, and no exact-name forum discussion found. ${link(publicFootprint.contactSource, "Official email ↗")} ${link(publicFootprint.affiliateSource, "Affiliate claim ↗")}</small>
+      </article>
+    `;
+  }
+
+  function renderMarketingRollup() {
+    if (!marketingRollup || !marketing.stats) return;
+    const marketingRows = Object.values(marketingByDomain);
+    const verifiedAds = marketingRows.flatMap((row) =>
+      row.adMonitoring?.verifiedAds || []
+    );
+    const adsByPlatform = verifiedAds.reduce((counts, ad) => {
+      const platform = ad.platform || "Other official source";
+      counts[platform] = (counts[platform] || 0) + 1;
+      return counts;
+    }, {});
+    const platformSummary = Object.entries(adsByPlatform)
+      .map(([platform, count]) => {
+        const platformAds = verifiedAds.filter((ad) =>
+          (ad.platform || "Other official source") === platform
+        );
+        const capturedAt = Date.parse(marketing.capturedAt || "");
+        const historical =
+          Number.isFinite(capturedAt) &&
+          platformAds.length > 0 &&
+          platformAds.every((ad) => {
+            const lastShown = Date.parse(ad.lastShown || "");
+            return Number.isFinite(lastShown) && lastShown < capturedAt;
+          });
+        const region =
+          platform === "Microsoft/Bing"
+            ? " EEA"
+            : platform === "Snap"
+              ? " EU"
+              : "";
+        return `${integer(count)} ${historical ? "historical " : ""}${platform}${region}`;
+      })
+      .join(" · ");
+    const snapCount = Number(adsByPlatform.Snap || 0);
+    const sourceStates = marketingRows.flatMap((row) =>
+      row.adMonitoring?.sources || []
+    );
+    const unavailableChecks = sourceStates.filter((source) =>
+      ["source-error", "stale-preserved"].includes(source.status)
+    ).length;
+    const adSummary = [
+      platformSummary
+        ? `${platformSummary} exact-domain ad${verifiedAds.length === 1 ? "" : "s"} in this snapshot.`
+        : "No exact-domain ads observed in the scoped official-source snapshot.",
+      snapCount === 0
+        ? "Snap: 0 exact-domain matches in this snapshot."
+        : null,
+      unavailableChecks
+        ? `${integer(unavailableChecks)} source check${unavailableChecks === 1 ? "" : "s"} unavailable or retained from last-good evidence.`
+        : null,
+      "Official transparency records do not establish current U.S. campaigns, spend, CAC, or ROAS. Meta, Google, and TikTok remain direct review links.",
+    ].filter(Boolean).join(" ");
+    marketingRollup.innerHTML = `
+      <article>
+        <span>Partner + retention</span>
+        <strong>${escapeHtml(integer(marketing.stats.withAffiliate))} affiliate · ${escapeHtml(integer(marketing.stats.withLifecycleSignal))} lifecycle · ${escapeHtml(integer(marketing.stats.withPublicContent))} content</strong>
+        <p>These are observed routes, tools, or forms across ${escapeHtml(integer(marketing.stats.monitoredCompanies || marketing.stats.companies))} priority companies.</p>
+      </article>
+      <article>
+        <span>Paid capability</span>
+        <strong>${escapeHtml(integer(marketing.stats.withPaidSocialPixels))} paid-social pixel · ${escapeHtml(integer(marketing.stats.withGoogleAdsTag))} Google Ads tag</strong>
+        <p>Installed measurement proves capability—not active campaigns, spend, CAC, ROAS, or traffic share.</p>
+      </article>
+      <article>
+        <span>Ads actually verified</span>
+        <strong>${escapeHtml(integer(marketing.stats.verifiedAdsObserved))} exact-domain ads · ${escapeHtml(integer(marketing.stats.companiesWithVerifiedAds))} companies</strong>
+        <p>${escapeHtml(adSummary)}</p>
       </article>
     `;
   }
@@ -127,18 +272,34 @@
     const mode = filter.value;
     const order = sort.value;
     const matched = rows.filter((row) => {
+      const observedMarketing = marketingByDomain[row.domain];
       const searchable = [
         row.domain,
+        row.commercial?.cohort,
+        row.commercial?.marketScope,
         row.catalog?.coverage,
         row.catalog?.retaOffers?.map((offer) => `${offer.title} ${offer.options || ""}`).join(" "),
         row.design?.strongestLesson,
         row.design?.biggestFailure,
         row.design?.reasons?.join(" "),
+        observedMarketing?.positioning?.title,
+        observedMarketing?.positioning?.h1,
+        observedMarketing?.promotions?.map((item) => item.text).join(" "),
+        observedMarketing?.trackingStack?.join(" "),
+        observedMarketing?.marketingTechnology?.join(" "),
+        observedMarketing?.channelSignals?.map((item) =>
+          `${item.channel} ${item.evidence}`
+        ).join(" "),
+        observedMarketing?.adMonitoring?.verifiedAds?.map((ad) =>
+          `${ad.platform} ${ad.title || ""} ${ad.body || ""}`
+        ).join(" "),
       ].join(" ").toLowerCase();
       if (query && !searchable.includes(query)) return false;
       if (mode === "traffic" && row.commercial?.trafficBasisVisitsModel == null) return false;
+      if (mode === "main" && !row.commercial?.mainCompanyAddition) return false;
       if (mode === "catalog" && !/^complete_/i.test(row.catalog?.coverage || "")) return false;
       if (mode === "reta" && !Number(row.catalog?.retaVariantCount || 0)) return false;
+      if (mode === "marketing" && !observedMarketing) return false;
       if (mode === "ui" && row.design?.overall == null) return false;
       return true;
     });
@@ -234,6 +395,128 @@
     `;
   }
 
+  const statusText = (value) =>
+    String(value || "unknown")
+      .replaceAll("-", " ")
+      .replace(/\b\w/g, (character) => character.toUpperCase());
+
+  function marketingMarkup(row) {
+    const observed = marketingByDomain[row.domain];
+    if (!observed) return "";
+    const mechanics = observed.mechanics || {};
+    const channels = observed.channelSignals || [];
+    const promotions = observed.promotions || [];
+    const ads = observed.adMonitoring?.verifiedAds || [];
+    const latestPost = observed.content?.latestPosts?.[0];
+    const social = Object.entries(observed.social || {}).flatMap(
+      ([network, urls]) => urls.map((url) => ({ network, url })),
+    );
+    const programs = [
+      ["Affiliate", mechanics.affiliateStatus],
+      ["Referral", mechanics.referralStatus],
+      ["Loyalty", mechanics.loyaltyStatus],
+      ["Email", mechanics.emailCaptureStatus],
+      ["SMS", mechanics.smsCaptureStatus],
+      ["Subscription", mechanics.subscriptionDetected ? "observed" : "not surfaced"],
+    ];
+    const sourceSummary = (observed.adMonitoring?.sources || []).map((source) => {
+      const effectiveStatus = source.status === "stale-preserved"
+        ? `${source.lastSuccessfulStatus || "last good"} retained`
+        : statusText(source.status);
+      return `${source.platform}: ${effectiveStatus}`;
+    });
+    const changes = observed.changesSincePrevious?.changed
+      ? observed.changesSincePrevious.summary.slice(0, 4)
+      : [];
+    const adMetadata = (ad) => {
+      const impressions = ad.impressionRange
+        ? `${ad.impressionRange} EEA impressions`
+        : ad.impressionsTotal !== null && ad.impressionsTotal !== undefined
+          ? `${integer(ad.impressionsTotal)} EU impressions`
+          : null;
+      return [
+        ad.status ? statusText(ad.status) : null,
+        ad.creativeType || ad.adType || null,
+        ad.callToAction ? `CTA ${statusText(ad.callToAction)}` : null,
+        impressions,
+      ].filter(Boolean).join(" · ");
+    };
+
+    return `
+      <details class="ci-marketing">
+        <summary>
+          <span>Marketing observed in public sources</span>
+          <small>${escapeHtml(integer(ads.length))} verified ad${ads.length === 1 ? "" : "s"} · ${escapeHtml(integer(channels.length))} channel signal${channels.length === 1 ? "" : "s"} · evidence ${escapeHtml(shortDate(observed.capturedAt))}${observed.status === "stale-preserved" ? " · last-good retained" : ""}</small>
+        </summary>
+        <div class="ci-marketing-body">
+          <div class="ci-marketing-grid">
+            <div>
+              <span>Channels observed</span>
+              <strong>${escapeHtml(channels.map((item) => item.channel).join(" · ") || "None surfaced in this scan")}</strong>
+            </div>
+            <div>
+              <span>Tracking</span>
+              <strong>${escapeHtml((observed.trackingStack || []).join(" · ") || "None surfaced")}</strong>
+            </div>
+            <div>
+              <span>Marketing tools</span>
+              <strong>${escapeHtml((observed.marketingTechnology || []).join(" · ") || "None surfaced")}</strong>
+            </div>
+            <div>
+              <span>Programs / capture</span>
+              <strong>${programs.map(([label, value]) =>
+                `${escapeHtml(label)}: ${escapeHtml(statusText(value))}`
+              ).join("<br>")}</strong>
+            </div>
+            <div>
+              <span>Content / social</span>
+              <strong>${latestPost
+                ? `${escapeHtml(shortDate(latestPost.publishedAt))} · ${escapeHtml(latestPost.title || "Latest post")} ${latestPost.url ? link(latestPost.url, "Open ↗") : ""}`
+                : observed.content?.publicContentHubDetected
+                  ? "Public content hub surfaced"
+                  : "No content hub surfaced"}${social.length
+                    ? `<br>${social.slice(0, 4).map((item) => link(item.url, `${item.network} ↗`)).join(" · ")}`
+                    : ""}</strong>
+            </div>
+            <div>
+              <span>Official ad-source scope</span>
+              <strong>${escapeHtml(sourceSummary.join(" · ") || "Not checked")}</strong>
+            </div>
+          </div>
+          ${promotions.length ? `
+            <div class="ci-marketing-section">
+              <strong>Offers and hooks now visible</strong>
+              <ul>${promotions.slice(0, 4).map((item) =>
+                `<li>${escapeHtml(item.text)} ${link(item.evidenceUrl, "Evidence ↗")}</li>`
+              ).join("")}</ul>
+            </div>
+          ` : ""}
+          ${ads.length ? `
+            <div class="ci-marketing-section">
+              <strong>Verified exact-domain ads observed</strong>
+              <div class="ci-ad-list">${ads.slice(0, 6).map((ad) => `
+                <article>
+                  <span>${escapeHtml(ad.platform)} · ${escapeHtml([shortDate(ad.firstShown), shortDate(ad.lastShown)].join("–"))}${adMetadata(ad) ? ` · ${escapeHtml(adMetadata(ad))}` : ""}</span>
+                  <strong>${escapeHtml(ad.title || "Untitled public ad")}</strong>
+                  ${ad.body ? `<p>${escapeHtml(ad.body)}</p>` : ""}
+                  <small>${link(ad.destinationUrl, "Landing page ↗")} ${link(ad.sourceUrl, "Official record ↗")}</small>
+                </article>
+              `).join("")}</div>
+            </div>
+          ` : ""}
+          ${changes.length ? `<p class="ci-change"><strong>Changed since prior successful snapshot:</strong> ${escapeHtml(changes.join(" · "))}</p>` : ""}
+          <div class="ci-marketing-links">
+            ${(observed.adLibraries || []).slice(0, 6).map((item) =>
+              link(item.url, `${item.network} ↗`)
+            ).join("")}
+            ${marketing.jsonPath ? link(marketing.jsonPath, "Full evidence JSON ↗") : ""}
+          </div>
+          <p class="ci-boundary"><strong>Boundary:</strong> ${escapeHtml(observed.caveat)} Empty ad-source results mean only “not observed” in the named source, region, period, and alias set. Competitor ad copy is a claim, not verified medical evidence.</p>
+        </div>
+      </details>
+    `;
+  }
+
   function rowMarkup(row) {
     const commercial = row.commercial || {};
     const catalog = row.catalog || {};
@@ -245,13 +528,23 @@
       : /^partial_/i.test(catalog.coverage || "")
         ? "Partial public catalog"
         : "Catalog unknown/gated";
+    const freshnessLabel = ({
+      live: "Live feed",
+      "live-partial": "Live partial feed",
+      static: "Static page capture",
+      archived: "Archived capture",
+      unresolved: "Unresolved / gated",
+    })[catalog.refreshMode] || "Freshness unknown";
+    const companyLabel = commercial.mainCompanyAddition
+      ? `New main-company addition · ${freshnessLabel} · ${coverageLabel}`
+      : `${freshnessLabel} · ${coverageLabel}`;
 
     return `
       <details class="ci-company" data-domain="${escapeHtml(row.domain)}">
         <summary>
           <span>
             <strong>${escapeHtml(row.domain)}</strong>
-            <small>${escapeHtml(coverageLabel)}</small>
+            <small>${escapeHtml(companyLabel)}</small>
           </span>
           <span><b>${escapeHtml(compact(visits))}</b><small>modeled visits</small></span>
           <span><b>${escapeHtml(integer(catalog.variantCount))}</b><small>offers</small></span>
@@ -263,6 +556,7 @@
             <div><span>Traffic</span><strong>${visits == null ? "No public model" : `${escapeHtml(integer(visits))}/mo · ${escapeHtml(commercial.trafficConfidence)}`}</strong></div>
             <div><span>Gross checkout</span><strong>${gmv == null ? "Not modeled" : `${escapeHtml(money(commercial.gmvLow, "USD", true))}–${escapeHtml(money(commercial.gmvHigh, "USD", true))}`}</strong></div>
             <div><span>Catalog</span><strong>${escapeHtml(integer(catalog.productCount))} products · ${escapeHtml(integer(catalog.variantCount))} offers</strong></div>
+            <div><span>Catalog captured</span><strong>${escapeHtml(shortDate(catalog.capturedAt))} · ${escapeHtml(freshnessLabel)}</strong></div>
             <div><span>Price</span><strong>${catalog.priceMedian == null ? "Unknown" : `${escapeHtml(money(catalog.priceMin, catalog.currency))}–${escapeHtml(money(catalog.priceMax, catalog.currency))} · median ${escapeHtml(money(catalog.priceMedian, catalog.currency))}`}</strong></div>
             <div><span>Reta</span><strong>${escapeHtml(integer(catalog.retaProductCount))} products · ${escapeHtml(integer(catalog.retaVariantCount))} offers</strong></div>
             <div><span>Public stock</span><strong>${escapeHtml(integer(catalog.visibleStockRecords))} binary records · ${escapeHtml(percent(catalog.visibleInStockRate))} shown in stock</strong></div>
@@ -274,13 +568,14 @@
             ${link(commercial.rankSource, "Rank history ↗")}
           </div>
           ${modelEvidenceMarkup(row)}
+          ${marketingMarkup(row)}
           <details class="ci-reta">
             <summary>Reta products and prices</summary>
             ${retaOfferMarkup(row)}
           </details>
           <div class="ci-full-catalog">
             <button type="button" data-ci-catalog="${escapeHtml(row.domain)}">Load full catalog</button>
-            <a href="./noli-competitor-catalog-2026-07-27.csv">Open master CSV</a>
+            ${link(catalogExportPath, "Open master CSV")}
             <div data-ci-catalog-target="${escapeHtml(row.domain)}" aria-live="polite"></div>
           </div>
           <p class="ci-boundary"><strong>Boundary:</strong> ${escapeHtml(commercial.caveat)} ${escapeHtml(catalog.caveat)}</p>
@@ -292,7 +587,7 @@
   function render() {
     const matched = filteredRows();
     const visible = matched.slice(0, visibleCount);
-    resultCount.textContent = `${integer(matched.length)} companies`;
+    resultCount.textContent = `${integer(matched.length)} ${matched.length === 1 ? "company" : "companies"}`;
     list.innerHTML = visible.length
       ? visible.map(rowMarkup).join("")
       : `<p class="ci-empty">No companies match those filters.</p>`;
@@ -303,7 +598,8 @@
   async function getCatalogRows(domain) {
     if (!catalogPromises.has(domain)) {
       const safeDomain = encodeURIComponent(domain);
-      const promise = fetch(`./noli-competitor-catalogs/${safeDomain}.json`, {
+      const shardUrl = `${catalogShardBasePath.replace(/\/$/, "")}/${safeDomain}.json`;
+      const promise = fetch(shardUrl, {
         credentials: "same-origin",
       }).then((response) => {
         if (!response.ok) throw new Error(`Catalog request failed (${response.status})`);
@@ -375,7 +671,7 @@
         renderCatalogRows(domain, target, offers);
         catalogButton.hidden = true;
       } catch (error) {
-        target.innerHTML = `<p class="ci-empty">The inline catalog could not load. <a href="./noli-competitor-catalog-2026-07-27.csv">Open the master CSV instead.</a></p>`;
+        target.innerHTML = `<p class="ci-empty">The inline catalog could not load. ${link(catalogExportPath, "Open the master CSV instead.")}</p>`;
         catalogButton.disabled = false;
         catalogButton.textContent = "Retry full catalog";
       }
@@ -426,5 +722,6 @@
 
   renderStats();
   renderCases();
+  renderMarketingRollup();
   render();
 })();
