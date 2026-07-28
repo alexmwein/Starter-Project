@@ -1614,6 +1614,50 @@ test('ambiguous-send attribution retries database reads and rejects interference
   assert.equal(recovered, exact);
   assert.ok(reads >= 3);
 
+  const eventTimestampedJustBeforePress = {
+    ...exact,
+    createdAt: new Date(pressedAt - 1).toISOString(),
+  };
+  const recoveredAcrossEventTimestampSkew = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        return [eventTimestampedJustBeforePress];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 0,
+    recheckMs: 0,
+  });
+  assert.equal(
+    recoveredAcrossEventTimestampSkew,
+    eventTimestampedJustBeforePress,
+  );
+
+  const rejectedOutsideEventTimestampSkew = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        return [
+          {
+            ...exact,
+            createdAt: new Date(pressedAt - 251).toISOString(),
+          },
+        ];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 0,
+    recheckMs: 0,
+  });
+  assert.equal(rejectedOutsideEventTimestampSkew, null);
+
   const interfered = await waitForExactUserMessage({
     database: {
       listUserMessagesAfter() {

@@ -22,6 +22,7 @@ const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
 const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
+const SEND_EVENT_TIMESTAMP_SKEW_MS = 250;
 const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
@@ -188,6 +189,7 @@ export async function waitForExactUserMessage({
     (typeof exactContent === 'string'
       ? message.text === exactContent
       : sha256(message.text) === exactContentHash);
+  const earliestCreatedAt = pressedAt - SEND_EVENT_TIMESTAMP_SKEW_MS;
   const deadline = Date.now() + Math.max(0, timeoutMs);
   do {
     try {
@@ -206,7 +208,7 @@ export async function waitForExactUserMessage({
           match.rowId <= afterRowId ||
           !contentMatches(match) ||
           !Number.isFinite(createdAt) ||
-          createdAt < pressedAt ||
+          createdAt < earliestCreatedAt ||
           createdAt > pressedAt + attributionWindowMs
         ) {
           return null;
@@ -224,7 +226,7 @@ export async function waitForExactUserMessage({
           recheckedMatch.rowId === match.rowId &&
           contentMatches(recheckedMatch) &&
           Number.isFinite(recheckedCreatedAt) &&
-          recheckedCreatedAt >= pressedAt &&
+          recheckedCreatedAt >= earliestCreatedAt &&
           recheckedCreatedAt <= pressedAt + attributionWindowMs
         ) {
           return recheckedMatch;
