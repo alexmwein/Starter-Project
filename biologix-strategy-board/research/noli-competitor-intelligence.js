@@ -148,6 +148,10 @@
         return (right.catalog?.variantCount || 0) - (left.catalog?.variantCount || 0) ||
           left.domain.localeCompare(right.domain);
       }
+      if (order === "gmv") {
+        return (right.commercial?.gmvBase || -1) - (left.commercial?.gmvBase || -1) ||
+          left.domain.localeCompare(right.domain);
+      }
       if (order === "reta") {
         return (right.catalog?.retaVariantCount || 0) - (left.catalog?.retaVariantCount || 0) ||
           left.domain.localeCompare(right.domain);
