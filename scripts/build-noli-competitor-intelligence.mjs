@@ -5,25 +5,31 @@ import path from "node:path";
 import process from "node:process";
 import { toCsv } from "./lib/safe-csv.mjs";
 
+const GENERATED_AT = new Date().toISOString();
+const GENERATED_DATE = GENERATED_AT.slice(0, 10);
 const args = process.argv.slice(2);
 const valuesFor = (flag) =>
   args.flatMap((value, index) => (value === flag && args[index + 1] ? [args[index + 1]] : []));
 const valueFor = (flag) => valuesFor(flag).at(-1);
 
-const trafficPath = valueFor("--traffic");
+const trafficPaths = valuesFor("--traffic");
 const catalogPaths = valuesFor("--catalog");
+const catalogRefreshPaths = valuesFor("--catalog-refresh");
 const catalogSummaryPaths = valuesFor("--catalog-summary");
+const catalogSummaryRefreshPaths = valuesFor("--catalog-summary-refresh");
 const uiPaths = valuesFor("--ui");
 const outputDirectory = valueFor("--out-dir");
 
-if (!trafficPath || !catalogPaths.length || !catalogSummaryPaths.length || !uiPaths.length || !outputDirectory) {
+if (!trafficPaths.length || !catalogPaths.length || !catalogSummaryPaths.length || !uiPaths.length || !outputDirectory) {
   console.error(
     [
       "Usage:",
       "  node scripts/build-noli-competitor-intelligence.mjs",
-      "    --traffic TRAFFIC.json",
+      "    --traffic TRAFFIC.json [--traffic TRAFFIC.json ...]",
       "    --catalog CATALOG.csv [--catalog CATALOG.csv ...]",
+      "    --catalog-refresh CURRENT.csv [--catalog-refresh CURRENT.csv ...]",
       "    --catalog-summary SUMMARY.csv [--catalog-summary SUMMARY.csv ...]",
+      "    --catalog-summary-refresh CURRENT.csv [--catalog-summary-refresh CURRENT.csv ...]",
       "    --ui UI.json [--ui UI.json ...]",
       "    --out-dir DIRECTORY",
     ].join("\n"),
@@ -172,7 +178,8 @@ function isRetaOffer(row) {
     /\b3rt\b/.test(text) ||
     /\bthree[\s-]?r\b/.test(text) ||
     /\btriple[\s-]?agonist\b/.test(text) ||
-    /\bly[\s-]?3437943\b/.test(text)
+    /\bly[\s-]?3437943\b/.test(text) ||
+    /\b(?:ion-?3r|amp-?3p|nxp-?3p|dp3-?r)\b/.test(text)
   );
 }
 
@@ -294,18 +301,43 @@ function formatInteger(value) {
 function dateAgeDays(created) {
   if (!created) return null;
   const start = Date.parse(`${created}T00:00:00Z`);
-  const end = Date.parse("2026-07-27T00:00:00Z");
+  const end = Date.parse(`${GENERATED_DATE}T00:00:00Z`);
   return Number.isFinite(start) ? Math.floor((end - start) / 86_400_000) : null;
 }
 
-const trafficSource = JSON.parse(await readFile(trafficPath, "utf8"));
-const trafficRows = Array.isArray(trafficSource) ? trafficSource : trafficSource.rows || [];
-const catalogSourceRows = (
+const trafficSources = await Promise.all(
+  trafficPaths.map(async (filePath) => JSON.parse(await readFile(filePath, "utf8"))),
+);
+const trafficRows = trafficSources.flatMap((source) =>
+  Array.isArray(source) ? source : source.rows || []
+);
+const baseCatalogSourceRows = (
   await Promise.all(catalogPaths.map((filePath) => readCsv(filePath)))
 ).flat();
-const catalogSummaryRows = (
+const refreshedCatalogSourceRows = (
+  await Promise.all(catalogRefreshPaths.map((filePath) => readCsv(filePath)))
+).flat();
+const baseCatalogSummaryRows = (
   await Promise.all(catalogSummaryPaths.map((filePath) => readCsv(filePath)))
 ).flat();
+const refreshedCatalogSummaryRows = (
+  await Promise.all(catalogSummaryRefreshPaths.map((filePath) => readCsv(filePath)))
+).flat();
+const refreshedSummaryDomains = new Set(
+  refreshedCatalogSummaryRows.map((row) => normalizeDomain(row.domain)).filter(Boolean),
+);
+const catalogSourceRows = [
+  ...baseCatalogSourceRows.filter(
+    (row) => !refreshedSummaryDomains.has(normalizeDomain(row.domain)),
+  ),
+  ...refreshedCatalogSourceRows,
+];
+const catalogSummaryRows = [
+  ...baseCatalogSummaryRows.filter(
+    (row) => !refreshedSummaryDomains.has(normalizeDomain(row.domain)),
+  ),
+  ...refreshedCatalogSummaryRows,
+];
 const uiSources = await Promise.all(
   uiPaths.map(async (filePath) => JSON.parse(await readFile(filePath, "utf8"))),
 );
@@ -396,6 +428,38 @@ const externalTrafficPanels = {
       sourceUrl: "https://hypestat.com/info/biolongevitylabs.com",
     },
   ],
+  "ameanopeptides.com": [
+    {
+      provider: "Semrush",
+      monthlyVisits: 239_820,
+      period: "June 2026",
+      sourceUrl: "https://www.semrush.com/website/ameanopeptides.com/overview/",
+    },
+  ],
+  "nexaph.com": [
+    {
+      provider: "Semrush",
+      monthlyVisits: 214_760,
+      period: "June 2026",
+      sourceUrl: "https://www.semrush.com/website/nexaph.com/overview/",
+    },
+  ],
+  "verifiedpeptides.com": [
+    {
+      provider: "HypeStat",
+      monthlyVisits: 97_600,
+      period: "public panel checked July 2026",
+      sourceUrl: "https://hypestat.com/info/verifiedpeptides.com",
+    },
+  ],
+  "purerawz.co": [
+    {
+      provider: "Semrush",
+      monthlyVisits: 71_690,
+      period: "June 2026",
+      sourceUrl: "https://www.semrush.com/website/purerawz.co/overview/",
+    },
+  ],
 };
 
 const caseOverrides = {
@@ -471,6 +535,24 @@ const caseOverrides = {
         impliedMonthlyVisitsAt5Pct: 129_600,
         impliedMonthlyVisitsAt8Pct: 81_000,
       },
+      publicFootprint: {
+        currentBusinessEmail: "support@biologixlabsresearch.com",
+        contactSource: "https://biologixlabsresearch.com/contact-us/",
+        officialPhone: null,
+        identityStatus:
+          "No public source verified Braden's surname or a founder, owner, or officer title.",
+        forumStatus:
+          "No exact brand/domain discussion surfaced on Reddit, BlackHatWorld, the major peptide/bodybuilding forums checked, or public social search.",
+        independentReviewStatus:
+          "No stable independent customer-review corpus surfaced. Automated reputation sites conflict and are not customer evidence.",
+        vendorHostedReviewCount: 1,
+        affiliateClaim:
+          "The first-party partner page advertises 15% commission and weekly payouts.",
+        affiliateSource: "https://biologixlabsresearch.com/partners/",
+        scanDate: "2026-07-28",
+        boundary:
+          "No leaked contact data was used and no pseudonymous account was attributed without explicit public self-identification.",
+      },
       decision:
         "Treat the live Woo screen as better evidence than public inventory movement. Verify settlements, refunds, reserves, new/returning mix, and traffic before using it as a valuation base.",
     },
@@ -478,8 +560,42 @@ const caseOverrides = {
 };
 
 const trafficByDomain = new Map(
-  [...trafficRows, ...Object.values(caseOverrides)].map((row) => [normalizeDomain(row.domain), row]),
+  trafficRows.map((row) => [normalizeDomain(row.domain), row]),
 );
+for (const [domain, override] of Object.entries(caseOverrides)) {
+  const current = trafficByDomain.get(domain);
+  if (domain !== "northlinelabs.org" || !current) {
+    trafficByDomain.set(domain, override);
+    continue;
+  }
+  const basis = numberOrNull(current.traffic_basis_visits_model);
+  const currentPace = numberOrNull(current.current_monthly_visits_model);
+  const ordersBase = basis == null ? null : Math.round(basis * 0.0179);
+  const gmvLow = basis == null ? null : Math.round(basis * 0.015 * 175);
+  const gmvBase = basis == null ? null : Math.round(basis * 0.0179 * 190);
+  const gmvHigh = basis == null ? null : Math.round(basis * 0.025 * 210);
+  const currentPaceGmv = currentPace == null
+    ? null
+    : Math.round(currentPace * 0.0179 * 190);
+  trafficByDomain.set(domain, {
+    ...override,
+    ...current,
+    aov_low: 175,
+    aov_base: 190,
+    aov_high: 210,
+    cvr_low: "1.5%",
+    cvr_base: "1.79%",
+    cvr_high: "2.5%",
+    orders_base: ordersBase,
+    gmv_low: gmvLow,
+    gmv_base: gmvBase,
+    gmv_high: gmvHigh,
+    caveat: basis == null
+      ? "The current public rank pull failed, so no traffic or gross-checkout run rate is shown."
+      : `Modeled from the current public rank history. Current-pace gross checkout is about ${formatMoney(currentPaceGmv, "USD")} at 1.79% conversion and $190 AOV.`,
+    caseStudy: override.caseStudy,
+  });
+}
 
 const allDomains = new Set([
   ...trafficByDomain.keys(),
@@ -507,6 +623,20 @@ function buildCatalogSummary(domain) {
   })[sourceStatus] || (rows.length ? "partial_public_catalog" : "unknown");
   const confidence = cleanText(raw.confidence).toLowerCase() || (rows.length ? "medium" : "unknown");
   const rawCaveat = cleanText(raw.caveat);
+  const extractionMethods = unique(rows.map((row) => row.extractionMethod));
+  const isCurrentRefreshDomain = refreshedSummaryDomains.has(domain);
+  const hasLiveFeedMethod = extractionMethods.some((method) =>
+    /(WooCommerce|Shopify public products feed)/i.test(method)
+  );
+  const refreshMode = !isCurrentRefreshDomain
+    ? "archived"
+    : /^complete_/i.test(coverage) && hasLiveFeedMethod
+      ? "live"
+      : /^partial_/i.test(coverage) && hasLiveFeedMethod
+        ? "live-partial"
+        : /^partial_/i.test(coverage)
+          ? "static"
+          : "unresolved";
   const normalizationCaveat = [
     "Duplicate public offers were removed.",
     "Blank and placeholder zero prices are excluded from price statistics.",
@@ -537,7 +667,8 @@ function buildCatalogSummary(domain) {
       url: row.canonicalUrl,
     })),
     coverage,
-    extractionMethods: unique(rows.map((row) => row.extractionMethod)),
+    extractionMethods,
+    refreshMode,
     capturedAt:
       unique(rows.map((row) => row.capturedAt)).sort().at(-1) ||
       cleanText(raw.captured_at || raw.extracted_at_utc) ||
@@ -566,11 +697,16 @@ function buildCommercialSummary(domain) {
   const modelBoundary =
     "Traffic, orders, and gross checkout figures are modeled scenarios—not measured revenue, profit, analytics, or settlement.";
   return {
+    cohort: cleanText(raw.cohort || raw.wave) || null,
+    mainCompanyAddition: cleanText(raw.cohort).toLowerCase() === "main-company-gap",
+    marketScope: cleanText(raw.market_scope) || null,
     domainCreated: cleanText(raw.domain_created) || null,
     domainAgeDays: integerOrNull(raw.domain_age_days),
     domainAgeSource: normalizedUrl(raw.domain_age_source),
     rankObservations: integerOrNull(raw.rank_observations) || 0,
     latestRank: integerOrNull(raw.latest_rank),
+    latestRankDate: cleanText(raw.latest_rank_date) || null,
+    rankFreshnessDays: integerOrNull(raw.rank_freshness_days),
     currentMonthlyVisitsModel: integerOrNull(raw.current_monthly_visits_model),
     trailing30VisitsModel: integerOrNull(raw.trailing30_visits_model),
     trafficBasisVisitsModel: integerOrNull(raw.traffic_basis_visits_model),
@@ -677,18 +813,42 @@ const partialCatalogs = summaries.filter((row) => /^partial_/i.test(row.catalog.
 const unknownCatalogs = summaries.filter((row) =>
   /(unknown|gated|unresolved)/i.test(row.catalog.coverage),
 ).length;
+const liveRefreshedCatalogs = summaries.filter((row) =>
+  /^live(?:-partial)?$/.test(row.catalog.refreshMode)
+).length;
+const staticRefreshCatalogs = summaries.filter((row) =>
+  row.catalog.refreshMode === "static"
+).length;
+const unresolvedRefreshCatalogs = summaries.filter((row) =>
+  row.catalog.refreshMode === "unresolved"
+).length;
+const archivedCatalogs = summaries.filter((row) =>
+  row.catalog.refreshMode === "archived"
+).length;
 const capturedAt = unique(summaries.map((row) => row.catalog.capturedAt)).sort().at(-1) || "2026-07-27";
+const coreCompetitorDomains = new Set(
+  trafficRows.map((row) => normalizeDomain(row.domain)),
+);
+const supplementalCaseProfiles = Object.keys(caseOverrides);
 
 const stats = {
-  coreCompetitorDomains: trafficRows.length,
-  supplementalCaseDomains: Object.keys(caseOverrides).length,
+  coreCompetitorDomains: coreCompetitorDomains.size,
+  supplementalCaseProfiles: supplementalCaseProfiles.length,
+  supplementalOnlyDomains: supplementalCaseProfiles.filter(
+    (domain) => !coreCompetitorDomains.has(domain),
+  ).length,
   domainsInCommercialDataset: summaries.length,
+  mainCompanyAdditions: summaries.filter((row) => row.commercial.mainCompanyAddition).length,
   verifiedDomainAges: summaries.filter((row) => row.commercial.domainCreated).length,
   trafficModeledDomains: summaries.filter((row) => row.commercial.trafficBasisVisitsModel != null).length,
   publicCatalogsAttempted: rawSummaryByDomain.size,
   fullyEnumeratedCatalogs: fullyEnumerated,
   partialCatalogs,
   unknownOrGatedCatalogs: unknownCatalogs,
+  liveRefreshedCatalogs,
+  staticRefreshCatalogs,
+  unresolvedRefreshCatalogs,
+  archivedCatalogs,
   normalizedCatalogOffers: normalizedCatalog.length,
   pricedCatalogOffers: normalizedCatalog.filter((row) => row.currentPrice != null && row.currentPrice > 0).length,
   retatrutideOffers: normalizedCatalog.filter((row) => row.isRetatrutide).length,
@@ -700,8 +860,11 @@ const stats = {
 };
 
 const payload = {
-  generatedAt: "2026-07-27",
+  generatedAt: GENERATED_AT,
   capturedAt,
+  catalogShardBasePath: "./noli-competitor-catalogs",
+  catalogExportPath: "./noli-competitor-catalog-2026-07-27.csv",
+  commercialExportPath: "./noli-competitor-intelligence-2026-07-27.csv",
   stats,
   methodology: {
     traffic:
@@ -786,7 +949,7 @@ const webCatalogsByDomain = Object.fromEntries(
 );
 
 const catalogPayload = {
-  generatedAt: "2026-07-27",
+  generatedAt: GENERATED_AT,
   capturedAt,
   stats: {
     domains: Object.keys(catalogsByDomain).length,
@@ -802,12 +965,17 @@ const catalogPayload = {
 
 const summaryRows = summaries.map((row) => ({
   domain: row.domain,
+  cohort: row.commercial.cohort,
+  main_company_addition: row.commercial.mainCompanyAddition,
+  market_scope: row.commercial.marketScope,
   storefront_url: row.commercial.storefrontUrl,
   domain_created: row.commercial.domainCreated,
   domain_age_days: row.commercial.domainAgeDays,
   domain_age_source: row.commercial.domainAgeSource,
   rank_observations: row.commercial.rankObservations,
   latest_rank: row.commercial.latestRank,
+  latest_rank_date: row.commercial.latestRankDate,
+  rank_freshness_days: row.commercial.rankFreshnessDays,
   rank_source: row.commercial.rankSource,
   traffic_basis_visits_model: row.commercial.trafficBasisVisitsModel,
   current_monthly_visits_model: row.commercial.currentMonthlyVisitsModel,
@@ -835,6 +1003,7 @@ const summaryRows = summaries.map((row) => ({
   gmv_high_model: row.commercial.gmvHigh,
   commercial_caveat: row.commercial.caveat,
   catalog_coverage: row.catalog.coverage,
+  catalog_refresh_mode: row.catalog.refreshMode,
   catalog_captured_at: row.catalog.capturedAt,
   catalog_confidence: row.catalog.confidence,
   catalog_extraction_methods: row.catalog.extractionMethods.join(" | "),
@@ -918,8 +1087,9 @@ await Promise.all([
     writeFile(
       path.join(catalogShardDirectory, `${summary.domain}.json`),
       `${JSON.stringify({
-        generatedAt: "2026-07-27",
-        capturedAt,
+        generatedAt: GENERATED_AT,
+        capturedAt: summary.catalog.capturedAt,
+        refreshMode: summary.catalog.refreshMode,
         domain: summary.domain,
         offers: webCatalogsByDomain[summary.domain] || [],
         methodology: payload.methodology.catalog,

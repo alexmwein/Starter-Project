@@ -53,6 +53,12 @@ const rawInputDefinitions = [
       "Wave A registry responses, daily Rank.to observations, public page statuses, byte counts, and extracted price clues.",
   },
   {
+    file: "noli-traffic-revenue-main-company-gap-2026-07-28.json",
+    layer: "traffic-and-gross-checkout-input",
+    description:
+      "Sixteen newly promoted main-company records plus Northline and Bluum priority refreshes, with daily rank history, domain ages, sources, and model boundaries.",
+  },
+  {
     file: "noli-catalog-wave-a-2026-07-27.csv",
     layer: "raw-catalog-capture",
     description:
@@ -77,6 +83,12 @@ const rawInputDefinitions = [
       "Northline and Biologix supplemental public catalog capture.",
   },
   {
+    file: "noli-catalog-main-company-gap-2026-07-28.csv",
+    layer: "raw-catalog-capture",
+    description:
+      "Live public WooCommerce and Shopify offers plus clearly labeled partial page captures for 16 main-company additions and the priority Northline/Bluum refreshes.",
+  },
+  {
     file: "noli-catalog-summary-wave-a-2026-07-27.csv",
     layer: "raw-catalog-summary",
     description: "Wave A collection coverage and extraction summary.",
@@ -95,6 +107,12 @@ const rawInputDefinitions = [
     file: "noli-catalog-summary-supplemental-2026-07-27.csv",
     layer: "raw-catalog-summary",
     description: "Northline and Biologix supplemental collection summary.",
+  },
+  {
+    file: "noli-catalog-summary-main-company-gap-2026-07-28.csv",
+    layer: "raw-catalog-summary",
+    description:
+      "Coverage, offer counts, methods, timestamps, confidence, and caveats for 16 main-company additions plus Northline and Bluum.",
   },
   {
     file: "noli-ui-score-wave-a-2026-07-27.json",
@@ -124,14 +142,17 @@ const rawInputDefinitions = [
 
 const rebuildInputFiles = new Set([
   "noli-traffic-revenue-all-2026-07-27.json",
+  "noli-traffic-revenue-main-company-gap-2026-07-28.json",
   "noli-catalog-wave-a-2026-07-27.csv",
   "noli-catalog-wave-b-2026-07-27.csv",
   "noli-catalog-wave-c-2026-07-27.csv",
   "noli-catalog-supplemental-2026-07-27.csv",
+  "noli-catalog-main-company-gap-2026-07-28.csv",
   "noli-catalog-summary-wave-a-2026-07-27.csv",
   "noli-catalog-summary-wave-b-2026-07-27.csv",
   "noli-catalog-summary-wave-c-2026-07-27.csv",
   "noli-catalog-summary-supplemental-2026-07-27.csv",
+  "noli-catalog-summary-main-company-gap-2026-07-28.csv",
   "noli-ui-score-wave-a-2026-07-27.json",
   "noli-ui-score-wave-b-2026-07-27.json",
   "noli-ui-score-wave-c-2026-07-27.json",
@@ -156,7 +177,7 @@ const publishedOutputDefinitions = [
   {
     file: "noli-competitor-intelligence-2026-07-27.csv",
     description:
-      "Normalized 114-company commercial sheet with model assumptions, sources, caveats, catalog rollups, and UI findings.",
+      "Normalized 130-company commercial sheet with model assumptions, sources, caveats, catalog rollups, and UI findings.",
   },
   {
     file: "noli-competitor-catalog-2026-07-27.csv",
@@ -173,6 +194,21 @@ const publishedOutputDefinitions = [
     description: "Compact page payload for the searchable commercial viewer.",
   },
   {
+    file: "noli-marketing-watch-2026-07-28.csv",
+    description:
+      "Eighteen-company public marketing, lifecycle, tracking, content, social, promotion, and official ad-source export.",
+  },
+  {
+    file: "noli-marketing-watch-2026-07-28.json",
+    description:
+      "Machine-readable marketing monitor with source scope, freshness, exact evidence URLs, and verified exact-domain public ad observations.",
+  },
+  {
+    file: "noli-marketing-watch-data.js",
+    description:
+      "Compact page payload for the per-company marketing and official ad-source viewer.",
+  },
+  {
     file: "noli-checkout-scan-2026-07-27.json",
     description: "Machine-readable 48-store checkout and growth audit.",
   },
@@ -183,6 +219,11 @@ const publishedOutputDefinitions = [
   {
     file: "noli-forum-founder-sweep-sources-2026-07-27.csv",
     description: "Forum and founder source ledger.",
+  },
+  {
+    file: "noli-biologix-public-footprint-2026-07-28.md",
+    description:
+      "Public-source Braden and Biologix identity, business-contact, forum, reputation, and acquisition scan with explicit attribution boundaries.",
   },
   {
     file: "noli-full-crawl-synthesis-2026-07-27.json",
@@ -208,6 +249,42 @@ const archiveDocumentDefinitions = [
       "Deterministic normalizer that builds the published intelligence and catalog outputs from the archived inputs.",
   },
   {
+    file: "../../../scripts/collect-noli-main-company-gap.mjs",
+    layer: "collection-code",
+    description:
+      "Bounded anonymous-public collector for the 16 main-company additions, including live catalog and traffic refreshes.",
+  },
+  {
+    file: "../../../scripts/refresh-noli-competitor-intelligence.mjs",
+    layer: "refresh-code",
+    description:
+      "Guarded refresh orchestrator that validates every expected live feed, writes one immutable versioned snapshot, and atomically switches the page payload only after the snapshot is complete.",
+  },
+  {
+    file: "../../../scripts/collect-noli-marketing-watch.mjs",
+    layer: "marketing-collection-code",
+    description:
+      "Bounded public collector for onsite marketing signals plus documented anonymous Microsoft/Bing and Snap ad-transparency APIs.",
+  },
+  {
+    file: "../../../scripts/refresh-noli-marketing-watch.mjs",
+    layer: "marketing-refresh-code",
+    description:
+      "Guarded marketing refresh that preserves per-source last-good observations and atomically publishes a versioned snapshot.",
+  },
+  {
+    file: "../../../scripts/refresh-noli-intelligence-suite.mjs",
+    layer: "refresh-supervisor-code",
+    description:
+      "Fault-isolated supervisor that runs catalog/pricing and marketing refreshes independently on one schedule.",
+  },
+  {
+    file: "../../../scripts/install-noli-competitor-refresh.mjs",
+    layer: "refresh-install-code",
+    description:
+      "Fail-closed macOS LaunchAgent installer that pins the live refresh to one committed source SHA and refuses to replace an existing job.",
+  },
+  {
     file: "../../../scripts/build-noli-research-archive-manifest.mjs",
     layer: "archive-code",
     description:
@@ -218,6 +295,12 @@ const archiveDocumentDefinitions = [
     layer: "export-safety-code",
     description:
       "CSV serializer that neutralizes spreadsheet-formula prefixes in normalized exports.",
+  },
+  {
+    file: "../../../scripts/lib/noli-priority-companies.mjs",
+    layer: "monitor-registry-code",
+    description:
+      "Shared 18-company identity, alias, catalog, and public marketing-route registry used by both automatic layers.",
   },
 ];
 
@@ -246,7 +329,10 @@ function csvRecordCount(source) {
 
 function jsonRecordCount(file, source) {
   const value = JSON.parse(source);
-  if (file === "noli-traffic-revenue-all-2026-07-27.json") {
+  if (
+    file === "noli-traffic-revenue-all-2026-07-27.json" ||
+    file === "noli-traffic-revenue-main-company-gap-2026-07-28.json"
+  ) {
     return value.rows?.length || 0;
   }
   if (file === "noli-traffic-revenue-wave-a-2026-07-27.raw.json") {
@@ -262,6 +348,9 @@ function jsonRecordCount(file, source) {
   }
   if (file === "noli-vendor-ui-capture-manifest-2026-07-27.json") {
     return Object.keys(value.results || {}).length;
+  }
+  if (file === "noli-marketing-watch-2026-07-28.json") {
+    return Object.keys(value.byDomain || {}).length;
   }
   return null;
 }
@@ -321,15 +410,32 @@ const intelligence = JSON.parse(
     intelligenceSource.lastIndexOf(";"),
   ),
 );
+const marketingSource = await readFile(
+  path.join(researchDirectory, "noli-marketing-watch-data.js"),
+  "utf8",
+);
+const marketing = JSON.parse(
+  marketingSource.slice(
+    marketingSource.indexOf("{"),
+    marketingSource.lastIndexOf(";"),
+  ),
+);
 
 const manifest = {
   manifestVersion: 1,
-  snapshotDate: "2026-07-27",
-  capturedThrough: intelligence.capturedAt,
+  snapshotDate: "2026-07-28",
+  capturedThrough:
+    Date.parse(marketing.capturedAt) > Date.parse(intelligence.capturedAt)
+      ? marketing.capturedAt
+      : intelligence.capturedAt,
+  marketingCapturedAt: marketing.capturedAt,
   company: "Noli",
   purpose:
-    "Reconstruction-grade archive for future review of the July 2026 competitor, catalog, traffic, gross-checkout, payment, forum, and UI research.",
-  rollups: intelligence.stats,
+    "Reconstruction-grade archive for future review of the July 2026 competitor, catalog, traffic, gross-checkout, payment, forum, UI, marketing, and public ad-source research.",
+  rollups: {
+    ...intelligence.stats,
+    marketing: marketing.stats,
+  },
   modelBoundaries: {
     traffic:
       "Rank.to daily rank converted with 9e10 × rank^-1.05. Public panels are retained where available. Unknown traffic is not zero traffic.",
@@ -341,9 +447,15 @@ const manifest = {
       "Binary stock and public quantity fields are point-in-time storefront observations, not sales or warehouse inventory.",
     ui:
       "Screenshot-reviewed design scores do not establish product quality, legality, traffic, or revenue.",
+    marketing:
+      "Public scripts, routes, forms, copy, social/content links, and lifecycle tools show observable capability—not spend, CAC, ROAS, attributed visits, traffic-source share, or performance.",
+    ads:
+      "Automatic ad observations require an exact destination-domain match in official Microsoft/Bing or Snap sources. Coverage is region- and period-limited; no result never means no advertising.",
   },
   rebuild: {
     builder: "scripts/build-noli-competitor-intelligence.mjs",
+    marketingCollector: "scripts/collect-noli-marketing-watch.mjs",
+    refreshSupervisor: "scripts/refresh-noli-intelligence-suite.mjs",
     safeCsvHelper: "scripts/lib/safe-csv.mjs",
     inputs: rawInputs
       .filter((entry) => entry.requiredForNormalizedBuild)

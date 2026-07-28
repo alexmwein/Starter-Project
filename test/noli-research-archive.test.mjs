@@ -63,15 +63,17 @@ function dangerousSpreadsheetCell(value) {
 test("archive manifest preserves every raw input and major published output by checksum", async () => {
   const manifest = JSON.parse(await readFile(MANIFEST, "utf8"));
   assert.equal(manifest.manifestVersion, 1);
-  assert.equal(manifest.snapshotDate, "2026-07-27");
-  assert.equal(manifest.rawInputs.length, 18);
+  assert.equal(manifest.snapshotDate, "2026-07-28");
+  assert.equal(manifest.rawInputs.length, 21);
   assert.equal(manifest.supportingEvidence.length, 2);
-  assert.equal(manifest.publishedOutputs.length, 9);
-  assert.equal(manifest.archiveDocuments.length, 4);
-  assert.equal(manifest.rollups.domainsInCommercialDataset, 114);
-  assert.equal(manifest.rollups.normalizedCatalogOffers, 10_707);
-  assert.equal(manifest.rollups.retatrutideOffers, 441);
-  assert.equal(manifest.rollups.trafficModeledDomains, 42);
+  assert.equal(manifest.publishedOutputs.length, 13);
+  assert.equal(manifest.archiveDocuments.length, 11);
+  assert.equal(manifest.rollups.domainsInCommercialDataset, 130);
+  assert.equal(manifest.rollups.normalizedCatalogOffers, 13_310);
+  assert.equal(manifest.rollups.retatrutideOffers, 513);
+  assert.equal(manifest.rollups.trafficModeledDomains, 56);
+  assert.equal(manifest.rollups.marketing.companies, 18);
+  assert.equal(manifest.rollups.marketing.verifiedAdsObserved, 4);
   assert.match(manifest.modelBoundaries.grossCheckout, /not measured revenue or profit/i);
 
   for (const entry of [

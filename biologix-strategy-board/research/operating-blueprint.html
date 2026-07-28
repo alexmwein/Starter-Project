@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Noli peptide-company operating intelligence, current through July 27, 2026.">
+  <meta name="description" content="Noli peptide-company operating intelligence, current through July 28, 2026.">
   <title>Noli Operating Intelligence</title>
   <style>
     :root {
@@ -616,6 +616,7 @@
   <script src="./retatrutide-payment-provider-data.js" defer></script>
   <script src="./retatrutide-ui-review-data.js" defer></script>
   <script src="./noli-competitor-intelligence-data.js" defer></script>
+  <script src="./noli-marketing-watch-data.js" defer></script>
   <script src="./noli-competitor-intelligence.js" defer></script>
   <script src="./retatrutide-vendor-universe.js" defer></script>
 </head>
@@ -639,7 +640,7 @@
   <main id="top">
     <section class="shell hero">
       <div>
-        <div class="eyebrow">Noli / Category go / Offer stop / Current July 27, 2026</div>
+        <div class="eyebrow">Noli / Category go / Offer stop / Current July 28, 2026</div>
         <h1>The Noli decision system.</h1>
         <p class="lead"><strong>Simple scales. Complex fails.</strong> Pursue the category. Do not launch the current consumer Reta concept until the exact legal lane clears. The company is trust, distribution, lot proof, cash, service, and repeat.</p>
         <div class="actions">
@@ -693,13 +694,14 @@
         <div class="noli-ci-head">
           <div>
             <div class="label">Commercial intelligence</div>
-            <h3 id="noli-ci-title">Age, traffic, catalog, price, and UI—in one place.</h3>
+            <h3 id="noli-ci-title">Price, traffic, ads, and marketing—in one place.</h3>
           </div>
-          <p>Public facts stay separate from modeled visits and gross checkout. Search a company, open its Reta prices, or load its full public catalog.</p>
+          <p>Search a company, open its catalog, then expand its observed marketing. Facts, models, and unknowns stay separate. <span data-ci-refreshed></span></p>
         </div>
 
         <div class="ci-stats" data-ci-stats aria-label="Commercial research coverage"></div>
         <div class="ci-cases" data-ci-cases aria-label="Northline and Biologix case summaries"></div>
+        <div class="ci-marketing-rollup" data-ci-marketing-rollup aria-label="Current marketing pattern"></div>
 
         <div class="ci-controls">
           <label>
@@ -710,9 +712,11 @@
             <span>Show</span>
             <select data-ci-filter>
               <option value="all">All companies</option>
+              <option value="main">New main-company additions</option>
               <option value="traffic">Traffic modeled</option>
               <option value="catalog">Full public catalog</option>
-              <option value="reta">Reta price captured</option>
+              <option value="reta">Reta listing observed</option>
+              <option value="marketing">Marketing monitored</option>
               <option value="ui">UI scored</option>
             </select>
           </label>
@@ -735,6 +739,8 @@
             <a href="./noli-competitor-intelligence-2026-07-27.csv">Summary CSV</a>
             ·
             <a href="./noli-competitor-catalog-2026-07-27.csv">Full catalog CSV</a>
+            ·
+            <a href="./noli-marketing-watch-2026-07-28.csv">Marketing CSV</a>
           </span>
         </div>
         <div data-ci-list></div>
@@ -747,6 +753,7 @@
             <li><strong>Traffic:</strong> Rank.to order-of-magnitude model; public panel disagreements remain visible.</li>
             <li><strong>Gross checkout:</strong> modeled visits × assumed conversion × modeled AOV—not revenue, profit, or settlement.</li>
             <li><strong>Catalog:</strong> anonymous public GET only; no accounts, gates, carts, orders, payments, or bypass.</li>
+            <li><strong>Marketing:</strong> public copy, routes, tags, social/content links, and exact-domain results from official ad sources. A pixel is capability—not spend; an empty scoped search is not proof of no ads.</li>
             <li><strong>Stock:</strong> “in stock” is binary. Exact positive quantity appears only when the storefront exposes it.</li>
           </ul>
         </details>
@@ -1899,7 +1906,6 @@
             <a class="source-link" href="https://www.fda.gov/drugs/drug-master-files-dmfs/list-drug-master-files-dmfs">FDA Q2 2026 DMF list</a>
             <a class="source-link" href="https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/warning-letters/harbin-jixianglong-biotech-co-ltd-723330-05012026">FDA relabeling proof</a>
             <a class="source-link" href="https://thepeptidewatch.com/">UK COA watchdog</a>
-            <a class="source-link" href="./supplier-reference.html">Full facility screen</a>
           </div>
         </div>
       </div>
@@ -2484,9 +2490,10 @@
         <span>48 high-confidence storefront and checkout profiles</span>
         <span>783 payment-code rows across 149 domains</span>
         <span>112 storefront UIs screenshot-reviewed, 95 scored</span>
-        <span>114 competitor commercial records</span>
-        <span>10,707 normalized catalog offers</span>
-        <span>441 Retatrutide offers</span>
+        <span data-ci-coverage-records>130 competitor commercial records</span>
+        <span>16 newly promoted main-company records</span>
+        <span data-ci-coverage-offers>13,310 normalized catalog offers</span>
+        <span data-ci-coverage-reta>513 Retatrutide offers</span>
         <span>13,555 crawl evidence records</span>
         <span>42-source growth audit</span>
         <span>11 official Reta DMF holders</span>
@@ -2495,7 +2502,7 @@
         <span>30-company landscape</span>
         <span>15 media sources</span>
         <span>169 timestamped notes</span>
-        <span>Current through July 27, 2026</span>
+        <span>Current through July 28, 2026</span>
       </div>
 
       <div class="summary good">Evidence rule: primary policy and inspectable facts outrank operator claims. Named founders outrank anonymous screenshots. Repetition proves a market pressure exists, not that a tactic is lawful, durable, or profitable.</div>
@@ -2542,6 +2549,7 @@
             <a href="./gray-marketing-platform-evidence.md">Gray marketing and platforms</a>
             <a href="./noli-forum-founder-sweep-2026-07-27.md">July 27 forum and founder sweep</a>
             <a href="./noli-forum-founder-sweep-sources-2026-07-27.csv">July 27 source ledger</a>
+            <a href="./noli-biologix-public-footprint-2026-07-28.md">Biologix / Braden public-footprint check</a>
             <a href="./noli-checkout-scan-2026-07-27.md">48-store checkout and growth synthesis</a>
             <a href="./noli-checkout-scan-2026-07-27.json">48-store machine-readable audit</a>
             <a href="./noli-processor-code-census-2026-07-27.md">783-row payment-provider code census</a>
@@ -2553,9 +2561,11 @@
             <a href="./noli-ui-score-wave-c-2026-07-27.md">UI review C: storefronts 73 to 112</a>
             <a href="./noli-full-crawl-synthesis-2026-07-27.md">Corrected 570-domain synthesis</a>
             <a href="./noli-full-crawl-synthesis-2026-07-27.json">570-domain machine-readable rollups</a>
-            <a href="./noli-competitor-intelligence-2026-07-27.csv">114-company commercial summary</a>
+            <a href="./noli-competitor-intelligence-2026-07-27.csv">130-company commercial summary</a>
             <a href="./noli-competitor-catalog-2026-07-27.csv">Collected catalog + pricing snapshot (full, partial, and unknown)</a>
             <a href="./noli-competitor-catalog-2026-07-27.json">Catalog snapshot for inline mobile viewer</a>
+            <a href="./noli-marketing-watch-2026-07-28.csv">18-company marketing and official ad-source monitor</a>
+            <a href="./noli-marketing-watch-2026-07-28.json">Marketing monitor with evidence, freshness, and source limits</a>
             <a href="./retatrutide-vendor-audit-data.js">Complete 570-domain evidence ledger</a>
             <a href="./source-audit.md">Keep, qualify, remove audit</a>
           </div>
@@ -2567,7 +2577,7 @@
   </main>
 
   <footer class="shell">
-    <span>Noli operating intelligence / Current through July 27, 2026</span>
+    <span>Noli operating intelligence / Current through July 28, 2026</span>
     <span>Simple scales. Complex fails.</span>
   </footer>
   <script>
