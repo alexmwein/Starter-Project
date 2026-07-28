@@ -57,6 +57,10 @@ async function createConfirmationFixture(context) {
       model TEXT,
       turn_id TEXT
     );
+    CREATE INDEX idx_session_messages_sent_at
+      ON session_messages(session_id, sent_at);
+    CREATE INDEX idx_session_messages_cancelled_at
+      ON session_messages(session_id, cancelled_at);
 
     INSERT INTO repos (id, name, hidden)
     VALUES ('repo-1', 'Quickstart', 0);
@@ -156,6 +160,10 @@ test('database adapter exposes sanitized chat events without tool payloads', asy
       model TEXT,
       turn_id TEXT
     );
+    CREATE INDEX idx_session_messages_sent_at
+      ON session_messages(session_id, sent_at);
+    CREATE INDEX idx_session_messages_cancelled_at
+      ON session_messages(session_id, cancelled_at);
   `);
   writable
     .prepare('INSERT INTO repos (id, name, hidden) VALUES (?, ?, 0)')
@@ -267,6 +275,65 @@ test('workspace routes use the visible Conductor name instead of the folder code
   assert.equal(
     database.getSessionRoute('session-1').workspaceName,
     'visible workspace name',
+  );
+});
+
+test('cancelled rows stay hidden while the high-water cursor still fences them', async (context) => {
+  const { database, insert } = await createConfirmationFixture(context);
+  insert.run(
+    'visible-queued',
+    'session-1',
+    'user',
+    'Visible queued message',
+    '2026-01-01T00:00:01Z',
+    null,
+    null,
+  );
+  const visibleCursor = database.getSessionMessageCursor('session-1');
+  insert.run(
+    'cancelled-newer',
+    'session-1',
+    'user',
+    'Cancelled message',
+    '2026-01-01T00:00:02Z',
+    null,
+    '2026-01-01T00:00:03Z',
+  );
+
+  const session = database.listSessions('workspace-1').find(
+    (candidate) => candidate.id === 'session-1',
+  );
+  const transcript = database.listMessages('session-1');
+  const highWaterCursor = database.getSessionMessageCursor('session-1');
+  const incremental = database.listMessages('session-1', {
+    after: visibleCursor,
+  });
+
+  assert.equal(session.queuedCount, 1);
+  assert.ok(highWaterCursor > visibleCursor);
+  assert.equal(
+    transcript.messages.some((message) => message.text === 'Cancelled message'),
+    false,
+  );
+  assert.equal(transcript.cursor, visibleCursor);
+  assert.deepEqual(incremental.messages, []);
+  assert.equal(incremental.cursor, highWaterCursor);
+});
+
+test('large-database queries keep the indexed sent and cancellation predicates', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-db.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /queued\.sent_at IS NULL[\s\S]*\+queued\.cancelled_at IS NULL/);
+  assert.match(source, /WHERE session_id = \? AND cancelled_at IS NULL/);
+  assert.match(
+    source,
+    /WHERE session_id = \? AND cancelled_at IS NULL AND rowid > \?/,
+  );
+  assert.match(
+    source,
+    /SELECT rowid[\s\S]*WHERE session_id = \?[\s\S]*ORDER BY rowid DESC[\s\S]*LIMIT 1/,
   );
 });
 

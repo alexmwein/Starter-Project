@@ -267,6 +267,13 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
   assert.equal(applicationScript.status, 200);
   assert.equal(applicationScript.headers['cache-control'], 'no-cache');
 
+  const richTextScript = await get(port, { pathname: '/rich-text.js' });
+  assert.equal(richTextScript.status, 200);
+  assert.equal(
+    richTextScript.headers['content-type'],
+    'text/javascript; charset=utf-8',
+  );
+
   const compressedScript = await get(port, {
     pathname: '/app.js',
     headers: { 'Accept-Encoding': 'gzip, br' },
@@ -1355,6 +1362,84 @@ test('an interfering user row makes an interrupted send non-retryable', async (c
   });
 });
 
+test('an interruption before Pocket owns the full composer fails fast and is retryable', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const interruptedAt = Date.now();
+  let queriedAfterInterruption = false;
+  const audits = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 24;
+      },
+      listUserMessagesAfter() {
+        queriedAfterInterruption = true;
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      audits.push(event);
+    },
+    transport: {
+      async send() {
+        return {
+          ok: false,
+          code: 'send_interrupted',
+          pressedAt: interruptedAt,
+          composerOwned: false,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const startedAt = Date.now();
+  const response = await postMessage(port, {
+    idempotencyKey: 'known_pre_submit_interruption_key',
+  });
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+  });
+  assert.equal(queriedAfterInterruption, false);
+  assert.ok(Date.now() - startedAt < 1_000);
+  assert.deepEqual(
+    audits.map((event) => event.phase),
+    ['accepted', 'transport', 'complete'],
+  );
+  assert.equal(JSON.stringify(audits).includes('Hello from Pocket'), false);
+  assert.deepEqual(
+    audits.map((event) => event.code).filter(Boolean),
+    ['send_interrupted', 'user_input_active'],
+  );
+});
+
 test('an interrupted pre-send attempt is retryable only after Conductor stays unchanged', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -1535,6 +1620,50 @@ test('ambiguous-send attribution retries database reads and rejects interference
   });
   assert.equal(recovered, exact);
   assert.ok(reads >= 3);
+
+  const eventTimestampedJustBeforePress = {
+    ...exact,
+    createdAt: new Date(pressedAt - 1).toISOString(),
+  };
+  const recoveredAcrossEventTimestampSkew = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        return [eventTimestampedJustBeforePress];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 0,
+    recheckMs: 0,
+  });
+  assert.equal(
+    recoveredAcrossEventTimestampSkew,
+    eventTimestampedJustBeforePress,
+  );
+
+  const rejectedOutsideEventTimestampSkew = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        return [
+          {
+            ...exact,
+            createdAt: new Date(pressedAt - 251).toISOString(),
+          },
+        ];
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 0,
+    recheckMs: 0,
+  });
+  assert.equal(rejectedOutsideEventTimestampSkew, null);
 
   const interfered = await waitForExactUserMessage({
     database: {
@@ -1806,6 +1935,15 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const preloadVersion = document.match(
     /rel="modulepreload" href="\/delivery-receipts\.js\?v=([^"]+)"/,
   )?.[1];
+  const httpPreloadVersion = document.match(
+    /rel="modulepreload" href="\/http\.js\?v=([^"]+)"/,
+  )?.[1];
+  const refreshPreloadVersion = document.match(
+    /rel="modulepreload" href="\/live-refresh\.js\?v=([^"]+)"/,
+  )?.[1];
+  const richTextPreloadVersion = document.match(
+    /rel="modulepreload" href="\/rich-text\.js\?v=([^"]+)"/,
+  )?.[1];
   const cachedAppVersion = serviceWorker.match(
     /'\/app\.js\?v=([^']+)'/,
   )?.[1];
@@ -1818,6 +1956,24 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const cachedReceiptsVersion = serviceWorker.match(
     /'\/delivery-receipts\.js\?v=([^']+)'/,
   )?.[1];
+  const httpVersion = application.match(
+    /from '\.\/http\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedHttpVersion = serviceWorker.match(
+    /'\/http\.js\?v=([^']+)'/,
+  )?.[1];
+  const refreshVersion = application.match(
+    /from '\.\/live-refresh\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedRefreshVersion = serviceWorker.match(
+    /'\/live-refresh\.js\?v=([^']+)'/,
+  )?.[1];
+  const richTextVersion = application.match(
+    /from '\.\/rich-text\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedRichTextVersion = serviceWorker.match(
+    /'\/rich-text\.js\?v=([^']+)'/,
+  )?.[1];
 
   assert.ok(appVersion);
   assert.equal(cssVersion, appVersion);
@@ -1826,6 +1982,36 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(cachedCssVersion, appVersion);
   assert.equal(receiptsVersion, appVersion);
   assert.equal(cachedReceiptsVersion, appVersion);
+  assert.equal(httpPreloadVersion, appVersion);
+  assert.equal(httpVersion, appVersion);
+  assert.equal(cachedHttpVersion, appVersion);
+  assert.equal(refreshPreloadVersion, appVersion);
+  assert.equal(refreshVersion, appVersion);
+  assert.equal(cachedRefreshVersion, appVersion);
+  assert.equal(richTextPreloadVersion, appVersion);
+  assert.equal(richTextVersion, appVersion);
+  assert.equal(cachedRichTextVersion, appVersion);
+});
+
+test('assistant messages preserve rich semantics and speaker context', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const assistantStart = source.indexOf(
+    "if (message.kind === 'assistant')",
+  );
+  const userStart = source.indexOf(
+    "if (message.kind === 'user'",
+    assistantStart,
+  );
+  const assistantRenderer = source.slice(assistantStart, userStart);
+
+  assert.ok(assistantStart >= 0);
+  assert.ok(userStart > assistantStart);
+  assert.match(assistantRenderer, /className: 'sr-only'/);
+  assert.match(assistantRenderer, /text: 'Conductor replied:'[\s\S]*renderRichText\(document, message\.text\)/);
+  assert.doesNotMatch(assistantRenderer, /aria-label/);
 });
 
 test('remembered Tailnet access keeps the privacy shield without background auto-lock', async () => {
@@ -1902,6 +2088,35 @@ test('Pocket navigation paints cached routes before live refreshes finish', asyn
   assert.match(
     switcherBlock,
     /openSheet\([\s\S]*void loadRecentSessions\(\)\.then\(render\)/,
+  );
+});
+
+test('the application wires bounded, cancellable live refreshes and wake requests', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /const LIVE_REFRESH_DEBOUNCE_MS = 100/);
+  assert.match(source, /const LIVE_REFRESH_REQUEST_MS = 6 \* 1000/);
+  assert.match(source, /createLiveRefreshCoordinator\(\{/);
+  assert.match(
+    source,
+    /async run\(\{ signal \}\)[\s\S]*timeoutMs: LIVE_REFRESH_REQUEST_MS/,
+  );
+  assert.match(
+    source,
+    /eventSource\.addEventListener\('change', \(\) => \{[\s\S]*liveRefresh\.schedule\(\)/,
+  );
+  assert.match(source, /function stopEvents\(\)[\s\S]*liveRefresh\.stop\(\)/);
+  assert.match(source, /const RESUME_REQUEST_MS = 6 \* 1000/);
+  assert.match(
+    source,
+    /request\('\/api\/auth\/touch'[\s\S]*timeoutMs: RESUME_REQUEST_MS/,
+  );
+  assert.match(source, /function discardFailedMessage\(message\)/);
+  assert.match(
+    source,
+    /text: 'Delete'[\s\S]*click: \(\) => discardFailedMessage\(message\)/,
   );
 });
 

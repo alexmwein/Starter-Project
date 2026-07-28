@@ -237,7 +237,7 @@ const messages = [
     rowId: 7,
     kind: 'assistant',
     text:
-      'On a healthy tailnet, new transcript rows should appear in hundreds of milliseconds. Phone sends are serialized through the real Conductor composer, so account and model selection remain exactly where you configured them.',
+      '## What makes it fast\n**New transcript rows** should appear in hundreds of milliseconds.\n1. Pocket watches the local Conductor database.\n2. Phone sends use the real `Conductor` composer.\n3. Your *account and model* stay exactly where you configured them.\n\nNames like MAX_RETRY_COUNT stay untouched, and 2 * 3 * 4 remains readable.',
     createdAt: at(1),
     model: 'gpt-5.6-sol',
   },

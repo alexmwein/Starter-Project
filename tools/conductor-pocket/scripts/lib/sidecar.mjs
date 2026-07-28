@@ -221,6 +221,171 @@ export async function assertSidecarLaunchProfile(daemon) {
   return { pid, arguments: expectedArguments };
 }
 
+export async function relayListenerPids(
+  port,
+  { runCommand = run } = {},
+) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error('The relay listener port is invalid');
+  }
+  try {
+    const { stdout } = await runCommand('/usr/sbin/lsof', [
+      '-nP',
+      '-a',
+      '-F',
+      'p',
+      `-iTCP:${port}`,
+      '-sTCP:LISTEN',
+    ]);
+    return [
+      ...new Set(
+        [...stdout.matchAll(/^p(\d+)$/gm)].map((match) => Number(match[1])),
+      ),
+    ];
+  } catch (error) {
+    if (error?.code === 1 || error?.code === '1') return [];
+    throw error;
+  }
+}
+
+async function readLaunchAgentPlist(agentPath) {
+  const { stdout } = await run('/usr/bin/plutil', [
+    '-convert',
+    'json',
+    '-o',
+    '-',
+    agentPath,
+  ]);
+  return JSON.parse(stdout);
+}
+
+async function readLaunchAgentState(label) {
+  const { stdout } = await run('/bin/launchctl', [
+    'print',
+    `gui/${process.getuid()}/${label}`,
+  ]);
+  return stdout;
+}
+
+export async function assertRelayLaunchProfile(
+  { configPath, port },
+  {
+    access = fs.access,
+    realpath = fs.realpath,
+    stat = fs.stat,
+    readPlist = readLaunchAgentPlist,
+    readLaunchd = readLaunchAgentState,
+    readListenerPids = relayListenerPids,
+  } = {},
+) {
+  if (!path.isAbsolute(configPath)) {
+    throw new Error('The relay config path must be absolute');
+  }
+  const agentStat = await stat(RELAY_LAUNCH_AGENT_PATH);
+  if ((agentStat.mode & 0o077) !== 0) {
+    throw new Error('The Pocket relay LaunchAgent is not private');
+  }
+  const plist = await readPlist(RELAY_LAUNCH_AGENT_PATH);
+  const argumentsList = plist.ProgramArguments;
+  if (
+    plist.Label !== RELAY_LABEL ||
+    plist.RunAtLoad !== true ||
+    !Array.isArray(argumentsList) ||
+    argumentsList.length !== 6 ||
+    !path.isAbsolute(argumentsList[0]) ||
+    argumentsList[1] !== '--no-warnings=ExperimentalWarning' ||
+    !path.isAbsolute(argumentsList[2]) ||
+    argumentsList[3] !== 'serve' ||
+    argumentsList[4] !== '--config' ||
+    argumentsList[5] !== configPath ||
+    !path.isAbsolute(plist.WorkingDirectory)
+  ) {
+    throw new Error('The Pocket relay LaunchAgent profile is invalid');
+  }
+  await Promise.all([
+    access(argumentsList[0], fs.constants.X_OK),
+    access(argumentsList[2], fs.constants.R_OK),
+    access(configPath, fs.constants.R_OK),
+  ]);
+  const [runtimeParent, workingDirectory, cliPath] = await Promise.all([
+    realpath(path.join(DATA_DIRECTORY, 'runtimes')),
+    realpath(plist.WorkingDirectory),
+    realpath(argumentsList[2]),
+  ]);
+  const relativeRuntime = path.relative(runtimeParent, workingDirectory);
+  if (
+    !relativeRuntime ||
+    relativeRuntime.startsWith('..') ||
+    path.isAbsolute(relativeRuntime) ||
+    !path.basename(workingDirectory).startsWith('runtime-') ||
+    cliPath !== path.join(workingDirectory, 'src', 'cli.mjs')
+  ) {
+    throw new Error('The Pocket relay runtime path is outside the private runtime store');
+  }
+
+  const launchdOutput = await readLaunchd(RELAY_LABEL);
+  const pid = Number(/\n\s*pid = (\d+)\s*(?:\n|$)/.exec(launchdOutput)?.[1]);
+  if (
+    !Number.isInteger(pid) ||
+    pid < 1 ||
+    !/\n\s*state = running\s*(?:\n|$)/.test(launchdOutput) ||
+    !launchdOutput.includes(`path = ${RELAY_LAUNCH_AGENT_PATH}`) ||
+    !isDeepStrictEqual(launchdArguments(launchdOutput), argumentsList)
+  ) {
+    throw new Error('The audited Pocket relay LaunchAgent is not running');
+  }
+  const listenerPids = await readListenerPids(port);
+  if (listenerPids.length !== 1 || listenerPids[0] !== pid) {
+    throw new Error(
+      'The process owning the Pocket relay listener is not the audited LaunchAgent',
+    );
+  }
+  return { pid, arguments: argumentsList, workingDirectory };
+}
+
+async function defaultRelayHealthProbe(port) {
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/health`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(500),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function waitForRelayShutdown(
+  { port, expectedPid },
+  {
+    readListenerPids = relayListenerPids,
+    probeHealth = defaultRelayHealthProbe,
+    attempts = 100,
+    delayMs = 100,
+    sleep = (milliseconds) =>
+      new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  let unexpectedListener = false;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const [listenerPids, healthReachable] = await Promise.all([
+      readListenerPids(port),
+      probeHealth(port),
+    ]);
+    unexpectedListener ||= listenerPids.some((pid) => pid !== expectedPid);
+    if (listenerPids.length === 0 && !healthReachable) return;
+    if (attempt + 1 < attempts) await sleep(delayMs);
+  }
+  if (unexpectedListener) {
+    throw new Error(
+      'An unexpected process still owns the Pocket relay listener after shutdown',
+    );
+  }
+  throw new Error(
+    'The Pocket relay listener or health endpoint remained reachable after shutdown',
+  );
+}
+
 export function run(executable, argumentsList, options = {}) {
   return execFileAsync(executable, argumentsList, {
     timeout: 30_000,

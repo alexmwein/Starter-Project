@@ -327,8 +327,7 @@ async function stopInstalledRelay() {
   ]);
 }
 
-async function mainTailscaleStatus() {
-  const executable = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
+async function mainTailscaleStatus(executable) {
   await fs.access(executable);
   const { stdout } = await execFileAsync(executable, ['status', '--json'], {
     timeout: 10_000,
@@ -377,7 +376,7 @@ async function assertTrustedSessionIngress(config) {
     ['funnel', 'status', '--json'],
   );
   assertNoFunnel(JSON.parse(funnelOutput || '{}'));
-  const main = await mainTailscaleStatus();
+  const main = await mainTailscaleStatus(tailscale.executable);
   if (!versionAtLeast(main.status.Version)) {
     throw new Error('main_tailscale_version_unsupported');
   }
@@ -660,6 +659,9 @@ async function serve(options) {
     database,
     watcher,
     transport,
+    audit(event) {
+      process.stdout.write(`${JSON.stringify(event)}\n`);
+    },
   });
   watcher.start();
 
@@ -758,7 +760,7 @@ async function doctor(options) {
           ['funnel', 'status', '--json'],
         );
         assertNoFunnel(JSON.parse(funnelOutput || '{}'));
-        const main = await mainTailscaleStatus();
+        const main = await mainTailscaleStatus(tailscale.executable);
         if (!versionAtLeast(main.status.Version)) {
           throw new Error('main_tailscale_version_unsupported');
         }

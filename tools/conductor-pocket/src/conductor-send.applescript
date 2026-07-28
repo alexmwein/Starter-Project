@@ -199,6 +199,18 @@ on commitAndPressMessage(textArea, inputScriptPath, conductorPid)
 	return "composer_update_failed"
 end commitAndPressMessage
 
+on waitForInputIdle(inputScriptPath, conductorPid)
+	try
+		set helperResult to do shell script "/usr/bin/env POCKET_OPERATION=input-check /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "session_locked" then return "session_locked"
+		return "input_helper_unavailable"
+	end try
+	if helperResult is "ready" then return "ready"
+	if helperResult is "busy" then return "busy"
+	return "input_helper_unavailable"
+end waitForInputIdle
+
 set operationMode to system attribute "POCKET_OPERATION"
 set inputScriptPath to system attribute "POCKET_INPUT_SCRIPT"
 
@@ -236,6 +248,11 @@ set sessionOrdinal to (system attribute "POCKET_SESSION_ORDINAL") as integer
 set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")
 set replaceDraft to (system attribute "POCKET_REPLACE_DRAFT") is "true"
 set expectedDraft to my decodeBase64(system attribute "POCKET_EXPECTED_DRAFT_BASE64")
+
+set inputReadiness to my waitForInputIdle(inputScriptPath, conductorPid)
+if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+if inputReadiness is "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+if inputReadiness is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
 
 set workspaceContainer to getWorkspaceContainer()
 if workspaceContainer is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
@@ -340,7 +357,7 @@ else if commitResult starts with "ambiguous:" then
 	return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
 else if commitResult starts with "interrupted:" then
 	set pressedAt to text 13 thru -1 of commitResult
-	return "{\"ok\":false,\"code\":\"send_interrupted\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
+	return "{\"ok\":false,\"code\":\"send_interrupted\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":false}"
 else if commitResult is "session_locked" then
 	return "{\"ok\":false,\"code\":\"session_locked\"}"
 else

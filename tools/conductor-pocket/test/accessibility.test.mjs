@@ -71,6 +71,11 @@ test('only structured pre-send automation failures are marked safe to retry', ()
     code: 'session_locked',
     safeToRetry: true,
   });
+  assert.deepEqual(parseResult('{"ok":false,"code":"user_input_active"}'), {
+    ok: false,
+    code: 'user_input_active',
+    safeToRetry: true,
+  });
   assert.deepEqual(
     parseResult(
       '{"ok":false,"code":"send_not_confirmed","pressedAt":1785093000000,"composerOwned":true}',
@@ -102,6 +107,17 @@ test('only structured pre-send automation failures are marked safe to retry', ()
       code: 'send_interrupted',
       pressedAt: 1785093000000,
       composerOwned: true,
+    },
+  );
+  assert.deepEqual(
+    parseResult(
+      '{"ok":false,"code":"send_interrupted","pressedAt":1785093000000,"composerOwned":false}',
+    ),
+    {
+      ok: false,
+      code: 'send_interrupted',
+      pressedAt: 1785093000000,
+      composerOwned: false,
     },
   );
   assert.deepEqual(parseResult('{"ok":true,"code":"sent"}'), {
@@ -176,7 +192,7 @@ test('session lookup scans every radio button in the Conductor tab group', async
   );
 });
 
-test('message submission posts Return only to Conductor after exact revalidation', async () => {
+test('message submission waits for and presses Conductor’s unique enabled Send control', async () => {
   const [source, inputHelper] = await Promise.all([
     fs.readFile(
       new URL('../src/conductor-send.applescript', import.meta.url),
@@ -184,22 +200,55 @@ test('message submission posts Return only to Conductor after exact revalidation
     ),
     fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
   ]);
-  assert.match(inputHelper, /submitEvents: eventPair\(source, KEY_RETURN\)/);
   assert.match(
     inputHelper,
-    /function validateComposerOwnership[\s\S]*description\(\) === 'composer'[\s\S]*candidate\.focused\(\) === true[\s\S]*normalizedDraft\(candidate\.value\(\)\) === expectedDraft/,
+    /const SEND_CLASSES = \[[\s\S]*'ml-1'[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
   );
   assert.match(
     inputHelper,
-    /validateFocusedComposer\(pid, message\)[\s\S]*validateRoute\(process\)[\s\S]*validateComposerOwnership\(process, message\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*validateRoute\(process\)[\s\S]*validateComposerOwnership\(process, message\)/,
+    /const NON_SEND_CLASSES = \[[\s\S]*'bg-foreground\/50'[\s\S]*'cursor-not-allowed'[\s\S]*'hover:bg-muted'[\s\S]*'border'/,
+  );
+  assert.match(
+    inputHelper,
+    /function resolveComposerSend[\s\S]*description\(\) === 'composer'[\s\S]*candidate\.focused\(\) === true[\s\S]*pressActions\.length === 1/,
+  );
+  assert.match(
+    inputHelper,
+    /QUEUED_EDIT_MARKER = 'Editing queued message'/,
+  );
+  assert.match(
+    inputHelper,
+    /QUEUED_EDIT_PLACEHOLDER = 'Edit queued message'/,
+  );
+  assert.match(
+    inputHelper,
+    /function assertNotQueuedEditMode[\s\S]*hasDescendantStaticText\(main, QUEUED_EDIT_MARKER\)[\s\S]*QUEUED_EDIT_PLACEHOLDER[\s\S]*fail\('send_unavailable'\)/,
+  );
+  const firstEditCheck = inputHelper.indexOf(
+    'assertNotQueuedEditMode(process);',
+    inputHelper.indexOf('function typeAndSendMessage'),
+  );
+  const firstInputPost = inputHelper.indexOf(
+    'postToConductor(',
+    inputHelper.indexOf('function typeAndSendMessage'),
+  );
+  assert.ok(firstEditCheck >= 0);
+  assert.ok(firstInputPost > firstEditCheck);
+  assert.match(
+    inputHelper,
+    /function waitForComposerSend[\s\S]*attempt < 100[\s\S]*validateRoute\(process\)[\s\S]*resolveComposerSend\(refreshed, expectedDraft\)/,
+  );
+  assert.match(
+    inputHelper,
+    /waitForComposerSend\(pid, message, inputLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*validateRoute\(process\)[\s\S]*resolveComposerSend\(process, message\)/,
   );
   assert.match(inputHelper, /exactDraftExposedAt = draftReadStartedAt/);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
   assert.match(
     inputHelper,
-    /assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*postToConductor\([\s\S]*prepared\.submitEvents[\s\S]*exactDraftExposedAt/,
+    /assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*actions\.byName\('AXPress'\)\.perform\(\)[\s\S]*assertInputLease\(inputLease\)/,
   );
-  assert.doesNotMatch(inputHelper, /AXPress|resolveComposerSend|SEND_CLASSES/);
+  assert.doesNotMatch(inputHelper, /submitEvents: eventPair\(source, KEY_RETURN\)/);
   assert.match(
     inputHelper,
     /return `ambiguous:\$\{[\s\S]*pressInvokedAt \|\| exactDraftExposedAt \|\| attemptStartedAt/,
@@ -213,6 +262,10 @@ test('message submission posts Return only to Conductor after exact revalidation
   assert.match(source, /commitResult starts with "ambiguous:"/);
   assert.match(source, /commitResult starts with "interrupted:"/);
   assert.match(source, /send_interrupted/);
+  assert.match(
+    source,
+    /commitResult starts with "interrupted:"[\s\S]*\\"composerOwned\\":false/,
+  );
   assert.match(
     source,
     /set routeAlreadySelected to my sessionIsSelected\(sessionTitle, sessionOrdinal\)/,
@@ -235,6 +288,36 @@ test('message submission posts Return only to Conductor after exact revalidation
   assert.doesNotMatch(postCommit, /repeat with waitIndex from 1 to 40/);
   assert.doesNotMatch(source, /set bestX to/);
   assert.doesNotMatch(source, /\/bin\/date \+%s/);
+});
+
+test('Pocket waits for physical input to go idle before changing the Conductor route', async () => {
+  const [appleScript, inputHelper] = await Promise.all([
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+  ]);
+  const readiness = appleScript.indexOf(
+    'set inputReadiness to my waitForInputIdle',
+  );
+  const workspaceLookup = appleScript.indexOf(
+    'set workspaceContainer to getWorkspaceContainer()',
+    readiness,
+  );
+
+  assert.match(inputHelper, /function waitForInputIdle\(timeoutMs = 3000\)/);
+  assert.match(inputHelper, /return waitForInputIdle\(\) \? 'ready' : 'busy'/);
+  assert.match(
+    appleScript,
+    /POCKET_OPERATION=input-check \/usr\/bin\/osascript -l JavaScript/,
+  );
+  assert.ok(readiness >= 0);
+  assert.ok(workspaceLookup > readiness);
+  assert.match(
+    appleScript,
+    /inputReadiness is "busy" then return "\{\\"ok\\":false,\\"code\\":\\"user_input_active\\"\}"/,
+  );
 });
 
 test('Tiptap text entry uses Unicode events under a physical-input lease', async () => {
@@ -320,7 +403,7 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   );
   assert.match(
     inputHelper,
-    /pressInvokedAt = Date\.now\(\)[\s\S]*prepared\.submitEvents[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
+    /pressInvokedAt = Date\.now\(\)[\s\S]*AXPress'\)\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
   );
   assert.match(appleScript, /session_locked/);
 

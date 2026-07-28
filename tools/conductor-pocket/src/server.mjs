@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -21,6 +22,7 @@ const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
 const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
+const SEND_EVENT_TIMESTAMP_SKEW_MS = 250;
 const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
@@ -37,6 +39,12 @@ const staticFiles = new Map([
     '/delivery-receipts.js',
     ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
   ],
+  ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
+  [
+    '/live-refresh.js',
+    ['live-refresh.js', 'text/javascript; charset=utf-8'],
+  ],
+  ['/rich-text.js', ['rich-text.js', 'text/javascript; charset=utf-8']],
   ['/icon.svg', ['icon.svg', 'image/svg+xml']],
   ['/manifest.webmanifest', ['manifest.webmanifest', 'application/manifest+json']],
   ['/service-worker.js', ['service-worker.js', 'text/javascript; charset=utf-8']],
@@ -56,6 +64,7 @@ const errorStatuses = new Map([
   ['conductor_not_running', 503],
   ['conductor_window_unavailable', 503],
   ['accessibility_disabled', 503],
+  ['input_helper_unavailable', 503],
   ['session_locked', 503],
   ['send_unavailable', 503],
   ['send_failed', 502],
@@ -181,6 +190,7 @@ export async function waitForExactUserMessage({
     (typeof exactContent === 'string'
       ? message.text === exactContent
       : sha256(message.text) === exactContentHash);
+  const earliestCreatedAt = pressedAt - SEND_EVENT_TIMESTAMP_SKEW_MS;
   const deadline = Date.now() + Math.max(0, timeoutMs);
   do {
     try {
@@ -199,7 +209,7 @@ export async function waitForExactUserMessage({
           match.rowId <= afterRowId ||
           !contentMatches(match) ||
           !Number.isFinite(createdAt) ||
-          createdAt < pressedAt ||
+          createdAt < earliestCreatedAt ||
           createdAt > pressedAt + attributionWindowMs
         ) {
           return null;
@@ -217,7 +227,7 @@ export async function waitForExactUserMessage({
           recheckedMatch.rowId === match.rowId &&
           contentMatches(recheckedMatch) &&
           Number.isFinite(recheckedCreatedAt) &&
-          recheckedCreatedAt >= pressedAt &&
+          recheckedCreatedAt >= earliestCreatedAt &&
           recheckedCreatedAt <= pressedAt + attributionWindowMs
         ) {
           return recheckedMatch;
@@ -516,11 +526,24 @@ export function createPocketServer({
   database,
   watcher,
   transport,
+  audit = () => {},
 }) {
   const idempotency = new IdempotencyStore();
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
   let sendQueue = Promise.resolve();
+
+  function recordAudit(event) {
+    try {
+      audit({
+        component: 'conductor-pocket-send',
+        at: new Date().toISOString(),
+        ...event,
+      });
+    } catch {
+      // Diagnostics must never change delivery behavior.
+    }
+  }
 
   function serializeSend(task) {
     const pending = sendQueue.then(task, task);
@@ -814,6 +837,9 @@ export function createPocketServer({
           replaceDraft,
           expectedMacDraft,
         });
+        const traceId = randomUUID();
+        const sendStartedAt = Date.now();
+        recordAudit({ traceId, phase: 'accepted' });
         const result = await idempotency.run(
           key,
           route.id,
@@ -838,6 +864,28 @@ export function createPocketServer({
                 replaceDraft,
                 expectedMacDraft,
               });
+              recordAudit({
+                traceId,
+                phase: 'transport',
+                ok: sendResult.ok === true,
+                code: sendResult.code,
+                composerOwned:
+                  typeof sendResult.composerOwned === 'boolean'
+                    ? sendResult.composerOwned
+                    : null,
+                elapsedMs: Date.now() - sendStartedAt,
+              });
+              if (
+                !sendResult.ok &&
+                sendResult.code === 'send_interrupted' &&
+                sendResult.composerOwned === false
+              ) {
+                return {
+                  ok: false,
+                  code: 'user_input_active',
+                  safeToRetry: true,
+                };
+              }
               if (
                 !sendResult.ok &&
                 sendResult.code !== 'send_not_confirmed' &&
@@ -907,6 +955,13 @@ export function createPocketServer({
               return databaseDeliveryResult(confirmed, beforeRowId);
             }),
         );
+        recordAudit({
+          traceId,
+          phase: 'complete',
+          ok: result.ok === true,
+          code: result.code || (result.ok ? 'delivered' : 'unknown'),
+          elapsedMs: Date.now() - sendStartedAt,
+        });
         if (!result.ok) {
           if (result.code === 'draft_conflict') {
             const draft = typeof result.draftBase64 === 'string'
