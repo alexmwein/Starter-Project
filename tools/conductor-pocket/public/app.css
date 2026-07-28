@@ -474,6 +474,21 @@ button:active {
   gap: 5px;
 }
 
+.row-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--down);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+}
+
+.row-error .icon {
+  width: 13px;
+  height: 13px;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -600,7 +615,7 @@ button:active {
 .message-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -608,6 +623,14 @@ button:active {
 
 .message {
   min-width: 0;
+}
+
+.message + .message {
+  margin-top: 18px;
+}
+
+.message.is-continuation {
+  margin-top: 6px;
 }
 
 .message.is-new {
@@ -623,10 +646,15 @@ button:active {
   line-height: 1.5rem;
 }
 
+.message.assistant.is-brief {
+  line-height: 1.375rem;
+}
+
 .message.assistant p {
-  margin: 0 0 12px;
-  white-space: pre-wrap;
+  margin: 0 0 8px;
   overflow-wrap: anywhere;
+  text-wrap: pretty;
+  white-space: normal;
 }
 
 .message.assistant p:last-child {
@@ -635,25 +663,66 @@ button:active {
 
 .message.assistant ul,
 .message.assistant ol {
-  margin: 0 0 12px;
-  padding-left: 20px;
+  margin: 0 0 8px;
+  padding-left: 22px;
 }
 
 .message.assistant li {
   overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
 .message.assistant li + li {
-  margin-top: 4px;
+  margin-top: 3px;
+}
+
+.message.assistant li > ul,
+.message.assistant li > ol {
+  margin: 3px 0 1px;
+}
+
+.message.assistant .task-list {
+  list-style-position: outside;
+}
+
+.message.assistant .task-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  margin-left: -22px;
+  list-style: none;
+}
+
+.message.assistant .task-item input {
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--copper);
+  opacity: 1;
 }
 
 .message.assistant .message-heading {
-  margin: 20px 0 8px;
-  font-size: 1.0625rem;
+  margin: 16px 0 6px;
   font-weight: 650;
-  letter-spacing: -0.01em;
-  line-height: 1.4rem;
+  letter-spacing: -0.012em;
   overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.message.assistant .heading-tier-2 {
+  font-size: 1.125rem;
+  line-height: 1.4375rem;
+}
+
+.message.assistant .heading-tier-3 {
+  font-size: 1.0625rem;
+  line-height: 1.375rem;
+}
+
+.message.assistant .heading-tier-4 {
+  font-size: 1rem;
+  line-height: 1.3125rem;
 }
 
 .message.assistant > .sr-only + .message-heading {
@@ -668,10 +737,45 @@ button:active {
   font-style: italic;
 }
 
+.message.assistant s {
+  color: var(--text-secondary);
+  text-decoration-thickness: 1px;
+}
+
+.message.assistant a {
+  color: var(--copper);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.message.assistant a:active {
+  color: var(--copper-press);
+}
+
+.message.assistant blockquote {
+  margin: 4px 0 8px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--hairline-strong);
+  color: var(--text-secondary);
+}
+
+.message.assistant blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.message.assistant hr {
+  height: 1px;
+  margin: 14px 0;
+  border: 0;
+  background: var(--hairline);
+}
+
 .message.assistant pre {
   position: relative;
   max-width: 100%;
-  margin: 8px 0 12px;
+  max-height: min(42svh, 360px);
+  margin: 6px 0 8px;
   overflow: auto;
   border: 1px solid var(--hairline);
   border-radius: 10px;
@@ -688,9 +792,63 @@ button:active {
   white-space: pre;
 }
 
+.message.assistant .table-scroll {
+  width: 100%;
+  max-width: 100%;
+  margin: 6px 0 8px;
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.message.assistant table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+
+.message.assistant th,
+.message.assistant td {
+  max-width: 34ch;
+  padding: 7px 9px;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  overflow-wrap: anywhere;
+  text-align: left;
+  vertical-align: top;
+}
+
+.message.assistant th {
+  background: var(--raised);
+  font-weight: 650;
+}
+
+.message.assistant tr:last-child td {
+  border-bottom: 0;
+}
+
+.message.assistant th:last-child,
+.message.assistant td:last-child {
+  border-right: 0;
+}
+
+.message.assistant .align-center {
+  text-align: center;
+}
+
+.message.assistant .align-right {
+  text-align: right;
+}
+
 .message.assistant p code,
 .message.assistant li code,
-.message.assistant .message-heading code {
+.message.assistant .message-heading code,
+.message.assistant blockquote code,
+.message.assistant td code,
+.message.assistant th code {
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--inset);
@@ -753,17 +911,22 @@ button:active {
 .tool-card {
   width: 100%;
   overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  background: var(--raised);
+  border: solid var(--hairline);
+  border-width: 1px 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .tool-card.running {
-  border-left: 2px solid var(--copper);
+  border: 1px solid color-mix(in srgb, var(--copper) 38%, var(--hairline));
+  border-radius: 10px;
+  background: var(--wait-tint);
 }
 
 .tool-card.failed {
-  border-left: 2px solid var(--down);
+  border: 1px solid color-mix(in srgb, var(--down) 42%, var(--hairline));
+  border-radius: 10px;
+  background: var(--down-tint);
 }
 
 .tool-summary {
@@ -795,6 +958,12 @@ button:active {
   line-height: 1rem;
 }
 
+.tool-card.failed .tool-duration {
+  color: var(--down);
+  font-family: var(--font-text);
+  font-weight: 650;
+}
+
 .tool-details {
   display: none;
   max-height: 240px;
@@ -808,12 +977,79 @@ button:active {
   line-height: 1rem;
 }
 
+.tool-card.failed .tool-details {
+  background: color-mix(in srgb, var(--down) 7%, var(--inset));
+  color: var(--text-secondary);
+}
+
 .tool-card[open] .tool-details {
   display: block;
 }
 
 .tool-card[open] .tool-summary .chevron {
   transform: rotate(180deg);
+}
+
+.agent-error {
+  width: min(100%, 68ch);
+  align-self: flex-start;
+}
+
+.agent-error-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--down) 42%, var(--hairline));
+  border-radius: 10px;
+  background: var(--down-tint);
+}
+
+.agent-error-row.warning {
+  border-color: color-mix(in srgb, var(--wait) 42%, var(--hairline));
+  background: var(--wait-tint);
+}
+
+.agent-error-row > .icon {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  color: var(--down);
+}
+
+.agent-error-row.warning > .icon {
+  color: var(--wait);
+}
+
+.agent-error-copy {
+  min-width: 0;
+}
+
+.agent-error-title {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1.1875rem;
+}
+
+.agent-error-copy p {
+  margin: 2px 0 7px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  text-wrap: pretty;
+}
+
+.agent-error-code {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 0.9375rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-row {
@@ -825,6 +1061,19 @@ button:active {
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
   line-height: 1.125rem;
+}
+
+.status-row.failed {
+  color: var(--down);
+}
+
+.status-row.reconnecting {
+  color: var(--wait);
+}
+
+.status-row .icon {
+  width: 15px;
+  height: 15px;
 }
 
 .composer-dock {

@@ -31,6 +31,141 @@ function toolLabel(name) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+const AGENT_ERROR_COPY = {
+  provider_reconnecting: {
+    severity: 'warning',
+    title: 'Agent connection interrupted',
+    guidance: 'Conductor is reconnecting automatically.',
+    retrying: true,
+  },
+  provider_unavailable: {
+    severity: 'error',
+    title: 'Agent service unavailable',
+    guidance: 'Try again in a moment. Your chat is still safe.',
+    retrying: false,
+  },
+  usage_limit: {
+    severity: 'error',
+    title: 'Account limit reached',
+    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
+    retrying: false,
+  },
+  model_unavailable: {
+    severity: 'error',
+    title: 'Model unavailable',
+    guidance: 'Choose another model in Conductor on the Mac, then try again.',
+    retrying: false,
+  },
+  provider_auth_required: {
+    severity: 'error',
+    title: 'Agent sign-in required',
+    guidance: 'Reconnect the account in Conductor on the Mac.',
+    retrying: false,
+  },
+  permission_required: {
+    severity: 'error',
+    title: 'Permission required',
+    guidance: 'Open Conductor on the Mac to approve the requested permission.',
+    retrying: false,
+  },
+  policy_blocked: {
+    severity: 'error',
+    title: 'Request blocked by the provider',
+    guidance: 'Open Conductor on the Mac for the provider’s guidance.',
+    retrying: false,
+  },
+  turn_interrupted: {
+    severity: 'warning',
+    title: 'Agent turn interrupted',
+    guidance: 'Send again when you’re ready.',
+    retrying: false,
+  },
+  agent_failed: {
+    severity: 'error',
+    title: 'Agent stopped with an error',
+    guidance: 'Open Conductor on the Mac for full diagnostic details.',
+    retrying: false,
+  },
+};
+
+function agentErrorSearchText(event) {
+  const values = [
+    event.content,
+    event.result,
+    event.subtype,
+    event.additionalDetails,
+    typeof event.errorInfo === 'string' ? event.errorInfo : null,
+    ...(Array.isArray(event.errors) ? event.errors : []),
+  ];
+  return values
+    .filter((value) => typeof value === 'string')
+    .join(' ')
+    .slice(0, 16_000);
+}
+
+export function classifyAgentError(event) {
+  if (!event || typeof event !== 'object') return null;
+  const systemSignal =
+    event.type === 'system' ? event.subtype || event.status : null;
+  if (systemSignal === 'api_retry') {
+    return {
+      code: 'provider_reconnecting',
+      ...AGENT_ERROR_COPY.provider_reconnecting,
+    };
+  }
+  if (systemSignal === 'permission_denied') {
+    return {
+      code: 'permission_required',
+      ...AGENT_ERROR_COPY.permission_required,
+    };
+  }
+  const isProviderError = event.type === 'error';
+  const isFailedResult = event.type === 'result' && event.is_error === true;
+  if (!isProviderError && !isFailedResult) return null;
+
+  let code = 'agent_failed';
+  if (isProviderError && event.willRetry === true) {
+    code = 'provider_reconnecting';
+  } else {
+    const searchText = agentErrorSearchText(event);
+    if (
+      /\b(?:usage limit|rate limit|quota|credits?|billing|resource exhausted|too many requests)\b/i.test(
+        searchText,
+      )
+    ) {
+      code = 'usage_limit';
+    } else if (
+      /\bmodel\b.{0,80}\b(?:unavailable|not found|unsupported|unknown|disabled)\b/i.test(
+        searchText,
+      )
+    ) {
+      code = 'model_unavailable';
+    } else if (
+      /\b(?:unauthori[sz]ed|authentication|credentials?|sign[ -]?in|log[ -]?in|api key)\b/i.test(
+        searchText,
+      )
+    ) {
+      code = 'provider_auth_required';
+    } else if (
+      /\b(?:policy|safety|content filter|blocked by (?:the )?provider)\b/i.test(
+        searchText,
+      )
+    ) {
+      code = 'policy_blocked';
+    } else if (/\b(?:interrupt(?:ed)?|cancelled|canceled|aborted)\b/i.test(searchText)) {
+      code = 'turn_interrupted';
+    } else if (
+      /\b(?:capacity|overloaded|temporarily unavailable|service unavailable|upstream|server error)\b/i.test(
+        searchText,
+      )
+    ) {
+      code = 'provider_unavailable';
+    }
+  }
+
+  return { code, ...AGENT_ERROR_COPY[code] };
+}
+
 function parseAssistantRow(row) {
   if (row.role === 'user') {
     return [
@@ -96,6 +231,20 @@ function parseAssistantRow(row) {
         },
       ];
     });
+  }
+
+  const agentError = classifyAgentError(event);
+  if (agentError) {
+    return [
+      {
+        id: row.id,
+        rowId: row.row_id,
+        kind: 'agent-error',
+        ...agentError,
+        createdAt: row.created_at,
+        turnId: row.turn_id || null,
+      },
+    ];
   }
 
   if (event.type === 'system') {
