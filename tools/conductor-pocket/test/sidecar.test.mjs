@@ -274,6 +274,18 @@ test('trusted sessions fail closed unless Pocket owns the audited sidecar origin
   assert.match(gate, /assertSameTailnet/);
   assert.match(gate, /sidecar_identity_not_isolated/);
   assert.match(gate, /old_shared_root_still_configured/);
+  assert.match(
+    source,
+    /async function mainTailscaleStatus\(executable\)/,
+  );
+  assert.match(
+    gate,
+    /mainTailscaleStatus\(tailscale\.executable\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /Applications\/Tailscale\.app\/Contents\/MacOS\/Tailscale/,
+  );
 
   const prewriteGate = source.indexOf(
     'await assertTrustedSessionIngress(proposed)',
