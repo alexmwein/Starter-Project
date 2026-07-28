@@ -392,7 +392,7 @@
       font-size: 1.25rem;
       line-height: 1;
     }
-    details[open] summary::after { content: "x"; }
+    details[open] > summary::after { content: "x"; }
 
     .summary-note {
       display: block;
@@ -609,11 +609,14 @@
     }
   </style>
   <link rel="stylesheet" href="./retatrutide-vendor-universe-embed.css">
+  <link rel="stylesheet" href="./noli-competitor-intelligence.css">
   <script src="./retatrutide-vendor-universe-data.js" defer></script>
   <script src="./retatrutide-checkout-audit-data.js" defer></script>
   <script src="./retatrutide-vendor-audit-web-data.js" defer></script>
   <script src="./retatrutide-payment-provider-data.js" defer></script>
   <script src="./retatrutide-ui-review-data.js" defer></script>
+  <script src="./noli-competitor-intelligence-data.js" defer></script>
+  <script src="./noli-competitor-intelligence.js" defer></script>
   <script src="./retatrutide-vendor-universe.js" defer></script>
 </head>
 <body>
@@ -685,6 +688,68 @@
         <div><strong>48</strong><span>checkout paths audited</span></div>
       </div>
       <div class="vendor-audit-rollups" id="vendor-audit-rollups" aria-label="Automated audit summary"></div>
+
+      <section class="noli-ci" id="noli-competitor-intelligence" aria-labelledby="noli-ci-title">
+        <div class="noli-ci-head">
+          <div>
+            <div class="label">Commercial intelligence</div>
+            <h3 id="noli-ci-title">Age, traffic, catalog, price, and UI—in one place.</h3>
+          </div>
+          <p>Public facts stay separate from modeled visits and gross checkout. Search a company, open its Reta prices, or load its full public catalog.</p>
+        </div>
+
+        <div class="ci-stats" data-ci-stats aria-label="Commercial research coverage"></div>
+        <div class="ci-cases" data-ci-cases aria-label="Northline and Biologix case summaries"></div>
+
+        <div class="ci-controls">
+          <label>
+            <span>Find company or product</span>
+            <input type="search" data-ci-search placeholder="Northline, Bluum, Retatrutide 20mg">
+          </label>
+          <label>
+            <span>Show</span>
+            <select data-ci-filter>
+              <option value="all">All companies</option>
+              <option value="traffic">Traffic modeled</option>
+              <option value="catalog">Full public catalog</option>
+              <option value="reta">Reta price captured</option>
+              <option value="ui">UI scored</option>
+            </select>
+          </label>
+          <label>
+            <span>Sort</span>
+            <select data-ci-sort>
+              <option value="traffic">Modeled traffic</option>
+              <option value="catalog">Catalog size</option>
+              <option value="reta">Reta offers</option>
+              <option value="ui">UI score</option>
+              <option value="age">Domain age</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="ci-result-line">
+          <strong data-ci-count>Loading companies…</strong>
+          <span>
+            <a href="./noli-competitor-intelligence-2026-07-27.csv">Summary CSV</a>
+            ·
+            <a href="./noli-competitor-catalog-2026-07-27.csv">Full catalog CSV</a>
+          </span>
+        </div>
+        <div data-ci-list></div>
+        <button class="ci-more" type="button" data-ci-more>Show more</button>
+
+        <details class="ci-method">
+          <summary>Method and hard limits</summary>
+          <ul>
+            <li><strong>Age:</strong> exact registry creation date for every core competitor.</li>
+            <li><strong>Traffic:</strong> Rank.to order-of-magnitude model; public panel disagreements remain visible.</li>
+            <li><strong>Gross checkout:</strong> modeled visits × assumed conversion × modeled AOV—not revenue, profit, or settlement.</li>
+            <li><strong>Catalog:</strong> anonymous public GET only; no accounts, gates, carts, orders, payments, or bypass.</li>
+            <li><strong>Stock:</strong> “in stock” is binary. Exact positive quantity appears only when the storefront exposes it.</li>
+          </ul>
+        </details>
+      </section>
 
       <div class="vendor-radar-callouts">
         <article>
@@ -780,6 +845,8 @@
             <option value="coa">Testing or COA signal</option>
             <option value="growth">Growth system detected</option>
             <option value="provider-code">Payment provider in code</option>
+            <option value="traffic-modeled">Traffic model available</option>
+            <option value="catalog-complete">Full public catalog captured</option>
             <option value="design-strong">UI score 8+</option>
             <option value="blocked">Crawl blocked</option>
             <option value="partial">Partial crawl</option>
@@ -817,6 +884,8 @@
           <select id="vendor-sort">
             <option value="signal">Highest signal</option>
             <option value="coverage">Most complete profile</option>
+            <option value="traffic">Highest modeled traffic</option>
+            <option value="catalog">Largest public catalog</option>
             <option value="design">Best UI and conversion UX</option>
             <option value="tests">Most tests</option>
             <option value="newest">Newest test</option>
@@ -2476,6 +2545,9 @@
             <a href="./noli-ui-score-wave-c-2026-07-27.md">UI review C: storefronts 73 to 112</a>
             <a href="./noli-full-crawl-synthesis-2026-07-27.md">Corrected 570-domain synthesis</a>
             <a href="./noli-full-crawl-synthesis-2026-07-27.json">570-domain machine-readable rollups</a>
+            <a href="./noli-competitor-intelligence-2026-07-27.csv">114-company commercial summary</a>
+            <a href="./noli-competitor-catalog-2026-07-27.csv">Collected catalog + pricing snapshot (full, partial, and unknown)</a>
+            <a href="./noli-competitor-catalog-2026-07-27.json">Catalog snapshot for inline mobile viewer</a>
             <a href="./retatrutide-vendor-audit-data.js">Complete 570-domain evidence ledger</a>
             <a href="./source-audit.md">Keep, qualify, remove audit</a>
           </div>

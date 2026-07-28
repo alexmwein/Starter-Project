@@ -6,11 +6,13 @@
   const checkoutAuditData = window.NOLI_RETATRUTIDE_CHECKOUT_AUDITS || null;
   const paymentProviderData = window.NOLI_RETATRUTIDE_PAYMENT_PROVIDER_CENSUS || null;
   const uiReviewData = window.NOLI_RETATRUTIDE_UI_REVIEWS || null;
+  const competitorData = window.NOLI_COMPETITOR_INTELLIGENCE || null;
   const auditSources = [
     auditData,
     checkoutAuditData,
     paymentProviderData,
-    uiReviewData
+    uiReviewData,
+    competitorData
   ].filter(Boolean);
   const list = document.getElementById("vendor-radar-list");
   if (!data || !list) return;
@@ -25,6 +27,21 @@
   const rollups = document.getElementById("vendor-audit-rollups");
 
   const PAGE_SIZE = 24;
+  const CORE_GROUPS = [
+    "commercial",
+    "catalog",
+    "platform",
+    "reta",
+    "pricing",
+    "marketing",
+    "tracking",
+    "trust",
+    "operations",
+    "payment",
+    "claims",
+    "sourcing",
+    "design"
+  ];
   let visibleCount = PAGE_SIZE;
 
   const escapeHtml = (value) =>
@@ -327,6 +344,22 @@
         ? value
         : null;
     }
+    if (group === "commercial") {
+      return value.domainCreated ||
+        value.trafficBasisVisitsModel != null ||
+        value.gmvBase != null ||
+        hasArrayValues(value.externalPanels)
+        ? value
+        : null;
+    }
+    if (group === "catalog") {
+      return value.variantCount != null ||
+        value.productCount != null ||
+        value.coverage ||
+        hasArrayValues(value.retaOffers)
+        ? value
+        : null;
+    }
     if (group === "design") return designScore(audit) == null ? null : value;
     return hasAuditValue(value) ? value : null;
   };
@@ -358,18 +391,7 @@
 
   const auditCompleteness = (audit) => {
     if (!audit) return 0;
-    return [
-      "platform",
-      "reta",
-      "pricing",
-      "marketing",
-      "tracking",
-      "trust",
-      "operations",
-      "payment",
-      "claims",
-      "sourcing"
-    ].filter((group) => auditGroupValue(audit, group) != null).length;
+    return CORE_GROUPS.filter((group) => auditGroupValue(audit, group) != null).length;
   };
 
   const auditHas = (value, pattern) =>
@@ -403,6 +425,12 @@
       return (audit?.payment?.providerSignals || []).some(
         (signal) => signal?.codeIdentified === true
       );
+    }
+    if (filter === "traffic-modeled") {
+      return audit?.commercial?.trafficBasisVisitsModel != null;
+    }
+    if (filter === "catalog-complete") {
+      return /^complete_/i.test(audit?.catalog?.coverage || "");
     }
     if (filter === "design-strong") return (designScore(audit) || 0) >= 8;
     if (filter === "blocked") return auditStatus(audit) === "Blocked";
@@ -451,7 +479,8 @@
       audit?.errors,
       ...[
         "platform", "reta", "pricing", "marketing", "tracking",
-        "trust", "operations", "payment", "claims", "sourcing", "design"
+        "trust", "operations", "payment", "claims", "sourcing", "design",
+        "commercial", "catalog"
       ].map((group) => auditGroupValue(audit, group))
     ];
     const haystack = [
@@ -500,6 +529,16 @@
           auditCompleteness(auditFor(right)) - auditCompleteness(auditFor(left)) ||
           left.name.localeCompare(right.name);
       }
+      if (order === "traffic") {
+        return (auditFor(right)?.commercial?.trafficBasisVisitsModel || -1) -
+          (auditFor(left)?.commercial?.trafficBasisVisitsModel || -1) ||
+          left.name.localeCompare(right.name);
+      }
+      if (order === "catalog") {
+        return (auditFor(right)?.catalog?.variantCount || -1) -
+          (auditFor(left)?.catalog?.variantCount || -1) ||
+          left.name.localeCompare(right.name);
+      }
       const leftAudit = left.payments.length > 0 ? 1 : 0;
       const rightAudit = right.payments.length > 0 ? 1 : 0;
       return auditCompleteness(auditFor(right)) - auditCompleteness(auditFor(left)) ||
@@ -522,6 +561,66 @@
   }
 
   function auditGroupEntries(label, value) {
+    if (label === "Commercial model") {
+      const number = (candidate) =>
+        Number.isFinite(Number(candidate))
+          ? Number(candidate).toLocaleString()
+          : null;
+      const money = (candidate) =>
+        Number.isFinite(Number(candidate))
+          ? `$${Math.round(Number(candidate)).toLocaleString()}`
+          : null;
+      const panels = (value?.externalPanels || [])
+        .slice(0, 4)
+        .map((panel) => `${panel.provider}: ${number(panel.monthlyVisits)} visits`);
+      return [
+        value?.domainCreated
+          ? `Domain: ${value.domainCreated} · ${number(value.domainAgeDays)} days old`
+          : "",
+        value?.trafficBasisVisitsModel != null
+          ? `Modeled traffic basis: ${number(value.trafficBasisVisitsModel)} visits/month · ${value.trafficConfidence || "unknown confidence"}`
+          : "Traffic: no public model",
+        value?.trailing30VisitsModel != null && value?.currentMonthlyVisitsModel != null
+          ? `Trailing/current: ${number(value.trailing30VisitsModel)} / ${number(value.currentMonthlyVisitsModel)}`
+          : "",
+        value?.gmvBase != null
+          ? `Modeled gross checkout: ${money(value.gmvLow)}–${money(value.gmvHigh)} · base ${money(value.gmvBase)}`
+          : "",
+        panels.length ? `Other public panels: ${panels.join(" · ")}` : "",
+        value?.trafficBasisVisitsModel != null
+          ? "Boundary: model, not analytics, revenue, profit, or settlement"
+          : ""
+      ].filter(Boolean);
+    }
+
+    if (label === "Full public catalog") {
+      const number = (candidate) =>
+        Number.isFinite(Number(candidate))
+          ? Number(candidate).toLocaleString()
+          : "unknown";
+      const currency = value?.currency && value.currency !== "MIXED" ? value.currency : "USD";
+      const money = (candidate) =>
+        Number.isFinite(Number(candidate))
+          ? new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency,
+              maximumFractionDigits: 2
+            }).format(Number(candidate))
+          : null;
+      return [
+        `Coverage: ${String(value?.coverage || "unknown").replaceAll("_", " ")}`,
+        `Catalog: ${number(value?.productCount)} products · ${number(value?.variantCount)} offers`,
+        value?.priceMedian != null
+          ? `Price: ${money(value.priceMin)}–${money(value.priceMax)} · median ${money(value.priceMedian)}`
+          : "Price: unknown",
+        `Reta: ${number(value?.retaProductCount)} products · ${number(value?.retaVariantCount)} offers`,
+        value?.visibleStockRecords
+          ? `Public stock: ${number(value.visibleStockRecords)} binary records · exact positive quantity on ${number(value.exactQuantityRecords)}`
+          : "",
+        "Boundary: point-in-time public catalog; stock is not sales or warehouse inventory"
+      ].filter(Boolean);
+    }
+
     if (label === "Reta listing") {
       const strengths = signalStrings(value?.strengths, 12);
       const forms = signalStrings(value?.forms, 4);
@@ -721,6 +820,8 @@
     const pages = Number(audit.pagesCrawled || audit.pageCount || 0);
     const evidence = auditEvidenceLinks(audit);
     const groups = [
+      renderAuditGroup("Commercial model", auditGroupValue(audit, "commercial")),
+      renderAuditGroup("Full public catalog", auditGroupValue(audit, "catalog")),
       renderAuditGroup("Reta listing", auditGroupValue(audit, "reta")),
       renderAuditGroup("Price and offer", auditGroupValue(audit, "pricing")),
       renderAuditGroup("Marketing and growth", auditGroupValue(audit, "marketing")),
@@ -737,7 +838,7 @@
       <details class="vendor-profile">
         <summary>
           <span>Open automated profile</span>
-          <strong>${escapeHtml(status)} · ${escapeHtml(coverage)}/10 signal groups${pages ? ` · ${escapeHtml(pages)} pages` : ""}</strong>
+          <strong>${escapeHtml(status)} · ${escapeHtml(coverage)}/${escapeHtml(CORE_GROUPS.length)} signal groups${pages ? ` · ${escapeHtml(pages)} pages` : ""}</strong>
         </summary>
         <div class="vendor-profile-grid">
           ${groups || `<section><span>Audit result</span><p>No extractable public profile fields.</p></section>`}
@@ -782,7 +883,7 @@
       extractedPlatform || vendor.platform
         ? `<span>${escapeHtml(extractedPlatform || vendor.platform)}</span>`
         : "",
-      audit ? `<span>Automated · ${escapeHtml(auditCompleteness(audit))}/10 core groups</span>` : "",
+      audit ? `<span>Automated · ${escapeHtml(auditCompleteness(audit))}/${escapeHtml(CORE_GROUPS.length)} core groups</span>` : "",
       designScore(audit) != null ? `<span>UI ${escapeHtml(designScore(audit))}/10</span>` : "",
       vendor.testCount ? `<span>${escapeHtml(vendor.testCount)} Reta tests</span>` : "",
       vendor.latestTest ? `<span>Latest ${escapeHtml(vendor.latestTest)}</span>` : "",
