@@ -1,15 +1,20 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-adaptive-errors-20260728';
-import { fetchJson } from './http.js?v=0.2.0-adaptive-errors-20260728';
+} from './delivery-receipts.js?v=0.2.0-auto-update-20260728';
+import {
+  appUpdateReloadIsSafe,
+  createAppUpdateCoordinator,
+  createServiceWorkerRegistrationGetter,
+} from './app-update.js?v=0.2.0-auto-update-20260728';
+import { fetchJson } from './http.js?v=0.2.0-auto-update-20260728';
 import {
   createLiveRefreshCoordinator,
-} from './live-refresh.js?v=0.2.0-adaptive-errors-20260728';
+} from './live-refresh.js?v=0.2.0-auto-update-20260728';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-adaptive-errors-20260728';
+} from './rich-text.js?v=0.2.0-auto-update-20260728';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -19,6 +24,7 @@ const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
 const RESUME_REQUEST_MS = 6 * 1000;
 const LIVE_REFRESH_DEBOUNCE_MS = 100;
 const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
+const APP_UPDATE_CHECK_INTERVAL_MS = 30 * 1000;
 const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
 const CLIENT_VERSION = '0.2.0';
 const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
@@ -315,6 +321,7 @@ function gateView({ mark = 'bolt', title, body, content, action, secondary }) {
     secondary,
   ]);
   app.replaceChildren(node('main', { className: 'gate' }, column));
+  appUpdateCoordinator?.stateChanged();
 }
 
 function skeletonRows(count = 6) {
@@ -373,22 +380,26 @@ function renderPairing(pairing) {
         control.disabled = true;
         control.textContent = 'Waiting for Face ID…';
         try {
-          if (!window.PublicKeyCredential) throw new Error('passkey_unavailable');
-          const credential = await navigator.credentials.create({
-            publicKey: registrationOptions(pairing.options),
+          await runWithAppUpdatePaused(async () => {
+            if (!window.PublicKeyCredential) {
+              throw new Error('passkey_unavailable');
+            }
+            const credential = await navigator.credentials.create({
+              publicKey: registrationOptions(pairing.options),
+            });
+            const result = await request('/api/pair/finish', {
+              method: 'POST',
+              body: { response: registrationResponse(credential) },
+            });
+            history.replaceState({}, '', '/');
+            state.auth = result;
+            state.csrfToken = result.csrfToken;
+            if (isStandalone()) {
+              await startApplication();
+            } else {
+              renderInstallGuidance({ firstRun: true });
+            }
           });
-          const result = await request('/api/pair/finish', {
-            method: 'POST',
-            body: { response: registrationResponse(credential) },
-          });
-          history.replaceState({}, '', '/');
-          state.auth = result;
-          state.csrfToken = result.csrfToken;
-          if (isStandalone()) {
-            await startApplication();
-          } else {
-            renderInstallGuidance({ firstRun: true });
-          }
         } catch (error) {
           control.disabled = false;
           control.textContent = 'The code matches - Pair';
@@ -465,42 +476,44 @@ function renderLock({ errorMessage = '' } = {}) {
         control.disabled = true;
         control.textContent = 'Waiting for Face ID…';
         try {
-          const options = await request('/api/auth/options', {
-            method: 'POST',
-            body: {},
-            csrf: true,
-          });
-          const credential = await navigator.credentials.get({
-            publicKey: authenticationOptions(options),
-          });
-          let verificationError = null;
-          try {
-            await request('/api/auth/verify', {
+          await runWithAppUpdatePaused(async () => {
+            const options = await request('/api/auth/options', {
               method: 'POST',
-              body: { response: authenticationResponse(credential) },
+              body: {},
               csrf: true,
             });
-          } catch (error) {
-            verificationError = error;
-          }
-          let auth;
-          try {
-            auth = await request('/api/auth/bootstrap');
-          } catch (error) {
-            throw verificationError || error;
-          }
-          state.auth = { ...state.auth, ...auth };
-          state.csrfToken = auth.csrfToken;
-          if (!auth.unlocked) {
-            renderLock({
-              errorMessage:
-                verificationError || auth.sessionRotationRequired
-                ? 'Face ID did not finish syncing. Use it once more.'
-                : '',
+            const credential = await navigator.credentials.get({
+              publicKey: authenticationOptions(options),
             });
-            return;
-          }
-          await startApplication();
+            let verificationError = null;
+            try {
+              await request('/api/auth/verify', {
+                method: 'POST',
+                body: { response: authenticationResponse(credential) },
+                csrf: true,
+              });
+            } catch (error) {
+              verificationError = error;
+            }
+            let auth;
+            try {
+              auth = await request('/api/auth/bootstrap');
+            } catch (error) {
+              throw verificationError || error;
+            }
+            state.auth = { ...state.auth, ...auth };
+            state.csrfToken = auth.csrfToken;
+            if (!auth.unlocked) {
+              renderLock({
+                errorMessage:
+                  verificationError || auth.sessionRotationRequired
+                  ? 'Face ID did not finish syncing. Use it once more.'
+                  : '',
+              });
+              return;
+            }
+            await startApplication();
+          });
         } catch (error) {
           if (
             error.code === 'device_session_expired' ||
@@ -703,7 +716,22 @@ const cachePurgeChannel =
   'BroadcastChannel' in window
     ? new BroadcastChannel(CACHE_PURGE_CHANNEL)
     : null;
-let serviceWorkerRegistrationPromise = null;
+let getServiceWorkerRegistration = null;
+let appUpdateCoordinator = null;
+let appUpdateSensitiveOperations = 0;
+
+async function runWithAppUpdatePaused(operation) {
+  appUpdateSensitiveOperations += 1;
+  try {
+    return await operation();
+  } finally {
+    appUpdateSensitiveOperations = Math.max(
+      0,
+      appUpdateSensitiveOperations - 1,
+    );
+    appUpdateCoordinator?.stateChanged();
+  }
+}
 
 function cacheDatabase() {
   if (
@@ -741,6 +769,7 @@ async function closeCacheDatabase() {
 cachePurgeChannel?.addEventListener('message', (event) => {
   if (event.data?.type === 'retire-origin') {
     originRetired = true;
+    appUpdateCoordinator?.stop();
     stopEvents();
     void closeCacheDatabase();
   } else if (event.data?.type === 'close-transcript-database') {
@@ -924,8 +953,8 @@ async function clearTranscriptCache() {
 
 async function assertOnlyRetiringWindow() {
   if (!('serviceWorker' in navigator)) return;
-  const registration = serviceWorkerRegistrationPromise
-    ? await serviceWorkerRegistrationPromise
+  const registration = getServiceWorkerRegistration
+    ? await getServiceWorkerRegistration()
     : await navigator.serviceWorker.ready;
   await registration.update();
   const candidate = registration.installing || registration.waiting;
@@ -984,6 +1013,7 @@ async function assertOnlyRetiringWindow() {
 async function purgeLocalData() {
   originRetired = true;
   localStorage.setItem(ORIGIN_RETIRED_KEY, '1');
+  appUpdateCoordinator?.stop();
   cachePurgeChannel?.postMessage({ type: 'retire-origin' });
   await assertOnlyRetiringWindow();
   localStorage.removeItem('cp:last-route:v1');
@@ -1182,6 +1212,7 @@ function ensureShell() {
     latestButton,
     composer,
   };
+  appUpdateCoordinator?.stateChanged();
   renderWorkspacePanel();
   renderSessionsPanel();
 }
@@ -1254,6 +1285,7 @@ function createComposer() {
     saveDraft(state.route.sessionId, field.value);
     resize();
     renderComposerState();
+    appUpdateCoordinator?.stateChanged();
   });
   field.addEventListener('keydown', (event) => {
     const touchAppleDevice =
@@ -1754,6 +1786,7 @@ function renderTranscript() {
     else state.shell.latestButton.hidden = false;
   });
   renderComposerState();
+  appUpdateCoordinator?.stateChanged();
 }
 
 function isMessageContinuation(previous, message) {
@@ -2322,7 +2355,10 @@ function startEvents() {
       renderConnectionState();
     }
   };
-  eventSource.addEventListener('ready', live);
+  eventSource.addEventListener('ready', () => {
+    live();
+    void appUpdateCoordinator?.checkForUpdate({ force: true });
+  });
   eventSource.addEventListener('heartbeat', live);
   eventSource.addEventListener('change', () => {
     live();
@@ -2449,6 +2485,7 @@ function closeOverlay(onClose) {
   document.removeEventListener('keydown', sheetEscape);
   overlayRoot.replaceChildren();
   onClose?.();
+  appUpdateCoordinator?.stateChanged();
 }
 
 async function openSwitcher() {
@@ -2872,14 +2909,32 @@ async function revealApplication() {
   app.removeAttribute('aria-hidden');
 }
 
+function currentAppUpdateReloadIsSafe() {
+  return appUpdateReloadIsSafe({
+    originRetired:
+      originRetired ||
+      localStorage.getItem(ORIGIN_RETIRED_KEY) === '1',
+    sensitiveOperations: appUpdateSensitiveOperations,
+    pairing: new URLSearchParams(location.hash.slice(1)).has('pair'),
+    overlayOpen: overlayRoot.childElementCount > 0,
+    composerValue: state.shell?.composer.field.value || '',
+    deliveries: state.optimistic,
+  });
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) shieldApplication();
-  else revealApplication();
+  if (document.hidden) {
+    shieldApplication();
+    return;
+  }
+  if (!appUpdateCoordinator?.foreground()) revealApplication();
 });
 
 window.addEventListener('pagehide', shieldApplication);
 window.addEventListener('pageshow', () => {
+  const reloading = appUpdateCoordinator?.foreground() === true;
   if (
+    !reloading &&
     !document.hidden &&
     (state.hiddenAt || localStorage.getItem(HIDDEN_AT_KEY))
   ) {
@@ -2888,9 +2943,25 @@ window.addEventListener('pageshow', () => {
 });
 
 if ('serviceWorker' in navigator) {
-  serviceWorkerRegistrationPromise =
-    navigator.serviceWorker.register('/service-worker.js');
-  serviceWorkerRegistrationPromise.catch(() => {});
+  getServiceWorkerRegistration = createServiceWorkerRegistrationGetter({
+    serviceWorker: navigator.serviceWorker,
+  });
+  appUpdateCoordinator = createAppUpdateCoordinator({
+    serviceWorker: navigator.serviceWorker,
+    getRegistration: getServiceWorkerRegistration,
+    canCheck: () =>
+      !originRetired &&
+      localStorage.getItem(ORIGIN_RETIRED_KEY) !== '1',
+    canReload: currentAppUpdateReloadIsSafe,
+    reload: () => location.reload(),
+    isHidden: () => document.hidden,
+    checkIntervalMs: APP_UPDATE_CHECK_INTERVAL_MS,
+  });
+  appUpdateCoordinator.start();
+  void appUpdateCoordinator.checkForUpdate({ force: true });
+  window.setInterval(() => {
+    if (!document.hidden) void appUpdateCoordinator.checkForUpdate();
+  }, APP_UPDATE_CHECK_INTERVAL_MS);
 }
 
 const pairingCode = new URLSearchParams(location.hash.slice(1)).get('pair');

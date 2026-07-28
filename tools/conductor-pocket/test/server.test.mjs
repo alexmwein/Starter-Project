@@ -273,6 +273,13 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
     richTextScript.headers['content-type'],
     'text/javascript; charset=utf-8',
   );
+  const appUpdateScript = await get(port, { pathname: '/app-update.js' });
+  assert.equal(appUpdateScript.status, 200);
+  assert.equal(appUpdateScript.headers['cache-control'], 'no-cache');
+  assert.equal(
+    appUpdateScript.headers['content-type'],
+    'text/javascript; charset=utf-8',
+  );
 
   const compressedScript = await get(port, {
     pathname: '/app.js',
@@ -1907,6 +1914,14 @@ test('service worker handles only Pocket shell paths and Pocket-owned caches', a
   );
   assert.match(
     source,
+    /event\.waitUntil\([\s\S]*self\.clients\.claim\(\)[\s\S]*\)/,
+  );
+  assert.match(
+    source,
+    /cache\.addAll\(SHELL\)[\s\S]*self\.skipWaiting\(\)/,
+  );
+  assert.match(
+    source,
     /VERSIONED_SHELL_PATHS\.has\(requestUrl\.pathname\)[\s\S]*caches[\s\S]*\.match\(event\.request\)[\s\S]*response \|\| fetchAndCache\(event\.request\)/,
   );
 });
@@ -1938,6 +1953,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const httpPreloadVersion = document.match(
     /rel="modulepreload" href="\/http\.js\?v=([^"]+)"/,
   )?.[1];
+  const appUpdatePreloadVersion = document.match(
+    /rel="modulepreload" href="\/app-update\.js\?v=([^"]+)"/,
+  )?.[1];
   const refreshPreloadVersion = document.match(
     /rel="modulepreload" href="\/live-refresh\.js\?v=([^"]+)"/,
   )?.[1];
@@ -1959,8 +1977,14 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const httpVersion = application.match(
     /from '\.\/http\.js\?v=([^']+)'/,
   )?.[1];
+  const appUpdateVersion = application.match(
+    /from '\.\/app-update\.js\?v=([^']+)'/,
+  )?.[1];
   const cachedHttpVersion = serviceWorker.match(
     /'\/http\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedAppUpdateVersion = serviceWorker.match(
+    /'\/app-update\.js\?v=([^']+)'/,
   )?.[1];
   const refreshVersion = application.match(
     /from '\.\/live-refresh\.js\?v=([^']+)'/,
@@ -1985,12 +2009,73 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(httpPreloadVersion, appVersion);
   assert.equal(httpVersion, appVersion);
   assert.equal(cachedHttpVersion, appVersion);
+  assert.equal(appUpdatePreloadVersion, appVersion);
+  assert.equal(appUpdateVersion, appVersion);
+  assert.equal(cachedAppUpdateVersion, appVersion);
   assert.equal(refreshPreloadVersion, appVersion);
   assert.equal(refreshVersion, appVersion);
   assert.equal(cachedRefreshVersion, appVersion);
   assert.equal(richTextPreloadVersion, appVersion);
   assert.equal(richTextVersion, appVersion);
   assert.equal(cachedRichTextVersion, appVersion);
+});
+
+test('Pocket applies app updates only when foreground state is safe', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const predicateStart = source.indexOf(
+    'function currentAppUpdateReloadIsSafe()',
+  );
+  const predicateEnd = source.indexOf(
+    "document.addEventListener('visibilitychange'",
+    predicateStart,
+  );
+  const predicate = source.slice(predicateStart, predicateEnd);
+
+  assert.ok(predicateStart >= 0);
+  assert.ok(predicateEnd > predicateStart);
+  assert.match(predicate, /originRetired/);
+  assert.match(predicate, /ORIGIN_RETIRED_KEY/);
+  assert.match(predicate, /sensitiveOperations: appUpdateSensitiveOperations/);
+  assert.doesNotMatch(predicate, /!state\.shell/);
+  assert.match(predicate, /location\.hash/);
+  assert.match(predicate, /overlayOpen: overlayRoot\.childElementCount > 0/);
+  assert.match(predicate, /composerValue: state\.shell\?\.composer\.field\.value/);
+  assert.match(predicate, /deliveries: state\.optimistic/);
+  assert.match(
+    source,
+    /createServiceWorkerRegistrationGetter\(\{[\s\S]*serviceWorker: navigator\.serviceWorker/,
+  );
+  assert.match(
+    source,
+    /navigator\.credentials\.create[\s\S]*runWithAppUpdatePaused|runWithAppUpdatePaused[\s\S]*navigator\.credentials\.create/,
+  );
+  assert.match(
+    source,
+    /navigator\.credentials\.get[\s\S]*runWithAppUpdatePaused|runWithAppUpdatePaused[\s\S]*navigator\.credentials\.get/,
+  );
+  assert.match(
+    source,
+    /function gateView[\s\S]*appUpdateCoordinator\?\.stateChanged\(\)/,
+  );
+  assert.match(
+    source,
+    /async function purgeLocalData\(\)[\s\S]*appUpdateCoordinator\?\.stop\(\)/,
+  );
+  assert.match(
+    source,
+    /visibilitychange[\s\S]*appUpdateCoordinator\?\.foreground\(\)/,
+  );
+  assert.match(
+    source,
+    /eventSource\.addEventListener\('ready'[\s\S]*checkForUpdate\(\{ force: true \}\)/,
+  );
+  assert.match(
+    source,
+    /setInterval\([\s\S]*appUpdateCoordinator\.checkForUpdate\(\)[\s\S]*APP_UPDATE_CHECK_INTERVAL_MS/,
+  );
 });
 
 test('assistant messages preserve rich semantics and speaker context', async () => {

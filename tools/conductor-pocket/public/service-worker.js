@@ -1,13 +1,14 @@
-const CACHE = 'conductor-pocket-shell-v12';
+const CACHE = 'conductor-pocket-shell-v13';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-adaptive-errors-20260728',
-  '/app.js?v=0.2.0-adaptive-errors-20260728',
-  '/delivery-receipts.js?v=0.2.0-adaptive-errors-20260728',
-  '/http.js?v=0.2.0-adaptive-errors-20260728',
-  '/live-refresh.js?v=0.2.0-adaptive-errors-20260728',
-  '/rich-text.js?v=0.2.0-adaptive-errors-20260728',
+  '/app.css?v=0.2.0-auto-update-20260728',
+  '/app.js?v=0.2.0-auto-update-20260728',
+  '/delivery-receipts.js?v=0.2.0-auto-update-20260728',
+  '/app-update.js?v=0.2.0-auto-update-20260728',
+  '/http.js?v=0.2.0-auto-update-20260728',
+  '/live-refresh.js?v=0.2.0-auto-update-20260728',
+  '/rich-text.js?v=0.2.0-auto-update-20260728',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -17,6 +18,7 @@ const SHELL_PATHS = new Set([
   '/app.css',
   '/app.js',
   '/delivery-receipts.js',
+  '/app-update.js',
   '/http.js',
   '/live-refresh.js',
   '/rich-text.js',
@@ -27,6 +29,7 @@ const VERSIONED_SHELL_PATHS = new Set([
   '/app.css',
   '/app.js',
   '/delivery-receipts.js',
+  '/app-update.js',
   '/http.js',
   '/live-refresh.js',
   '/rich-text.js',
@@ -43,26 +46,32 @@ function fetchAndCache(request) {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
-  self.skipWaiting();
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(SHELL))
+      .then(() => self.skipWaiting()),
+  );
 });
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter(
-              (key) =>
-                key.startsWith('conductor-pocket-shell-') &&
-                key !== CACHE,
-            )
-            .map((key) => caches.delete(key)),
+    Promise.all([
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter(
+                (key) =>
+                  key.startsWith('conductor-pocket-shell-') &&
+                  key !== CACHE,
+              )
+              .map((key) => caches.delete(key)),
+          ),
         ),
-      ),
+      self.clients.claim(),
+    ]),
   );
-  self.clients.claim();
 });
 
 self.addEventListener('message', (event) => {
