@@ -660,6 +660,9 @@ async function serve(options) {
     database,
     watcher,
     transport,
+    audit(event) {
+      process.stdout.write(`${JSON.stringify(event)}\n`);
+    },
   });
   watcher.start();
 

@@ -1,13 +1,20 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-trusted-device-1';
+} from './delivery-receipts.js?v=0.2.0-fast-reliable-20260728';
+import { fetchJson } from './http.js?v=0.2.0-fast-reliable-20260728';
+import {
+  createLiveRefreshCoordinator,
+} from './live-refresh.js?v=0.2.0-fast-reliable-20260728';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
 const announcer = document.querySelector('#announcer');
 const AWAY_LOCK_MS = 5 * 60 * 1000;
 const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
+const RESUME_REQUEST_MS = 6 * 1000;
+const LIVE_REFRESH_DEBOUNCE_MS = 100;
+const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
 const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
 const CLIENT_VERSION = '0.2.0';
 const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
@@ -41,6 +48,28 @@ const state = {
   visibilityEpoch: 0,
   seenMessageIds: new Set(),
 };
+
+const liveRefresh = createLiveRefreshCoordinator({
+  delayMs: LIVE_REFRESH_DEBOUNCE_MS,
+  async run({ signal }) {
+    const workspaceId = state.route.workspaceId;
+    const sessionId = state.route.sessionId;
+    const requestOptions = {
+      signal,
+      timeoutMs: LIVE_REFRESH_REQUEST_MS,
+    };
+    await Promise.all([
+      refreshWorkspaces(requestOptions),
+      workspaceId
+        ? loadSessions(workspaceId, requestOptions)
+        : Promise.resolve(),
+      sessionId
+        ? refreshMessages(sessionId, requestOptions)
+        : Promise.resolve(),
+    ]);
+  },
+  onError: handleRuntimeError,
+});
 
 const ICONS = {
   arrowUp: 'i-arrow-up',
@@ -240,18 +269,26 @@ function authenticationResponse(credential) {
   };
 }
 
-async function request(pathname, { method = 'GET', body, csrf = false } = {}) {
+async function request(
+  pathname,
+  {
+    method = 'GET',
+    body,
+    csrf = false,
+    timeoutMs = 0,
+    signal,
+  } = {},
+) {
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (csrf && state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
-  const response = await fetch(pathname, {
+  const { response, payload } = await fetchJson(pathname, {
     method,
     headers,
-    credentials: 'same-origin',
-    cache: 'no-store',
+    timeoutMs,
+    signal,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error?.code || `http_${response.status}`);
     error.code = payload.error?.code || `http_${response.status}`;
@@ -830,6 +867,13 @@ function discardTerminalUnconfirmed() {
   return result.discarded;
 }
 
+function discardFailedMessage(message) {
+  if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  state.optimistic = state.optimistic.filter((item) => item !== message);
+  void persistPendingDeliveries();
+  renderTranscript();
+}
+
 async function persistPendingDeliveries({ required = false } = {}) {
   discardTerminalUnconfirmed();
   const snapshot = pendingDeliverySnapshot();
@@ -1239,9 +1283,9 @@ function navigate(route, push = true) {
   if (route.view === 'transcript' && route.sessionId) openSession(route.sessionId, { push: false });
 }
 
-async function refreshWorkspaces() {
+async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
   try {
-    const data = await request('/api/workspaces');
+    const data = await request('/api/workspaces', { signal, timeoutMs });
     state.workspaces = data.workspaces;
     state.workspacesLoaded = true;
     await cacheSet('workspaces', state.workspaces);
@@ -1262,14 +1306,20 @@ async function loadRecentSessions() {
   }
 }
 
-async function loadSessions(workspaceId) {
+async function loadSessions(
+  workspaceId,
+  { signal, timeoutMs = 0 } = {},
+) {
   const cached = await cacheGet(`sessions:${workspaceId}`);
   if (Array.isArray(cached) && !state.sessionsByWorkspace.has(workspaceId)) {
     state.sessionsByWorkspace.set(workspaceId, cached);
     renderSessionsPanel();
   }
   try {
-    const data = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`);
+    const data = await request(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`,
+      { signal, timeoutMs },
+    );
     state.sessionsByWorkspace.set(workspaceId, data.sessions);
     await cacheSet(`sessions:${workspaceId}`, data.sessions);
     renderSessionsPanel();
@@ -1543,12 +1593,16 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
   renderTranscript();
 }
 
-async function refreshMessages(sessionId, { full = false } = {}) {
+async function refreshMessages(
+  sessionId,
+  { full = false, signal, timeoutMs = 0 } = {},
+) {
   if (!sessionId) return [];
   const cursor = full ? 0 : state.cursorsBySession.get(sessionId) || 0;
   try {
     const data = await request(
       `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}`,
+      { signal, timeoutMs },
     );
     const existing = full ? [] : state.messagesBySession.get(sessionId) || [];
     const messages = full ? data.messages : [...existing, ...data.messages];
@@ -1736,6 +1790,13 @@ function renderMessage(message, toolResults) {
             click: () =>
               retrySafe ? retryMessage(message) : checkDelivery(message),
           },
+        }),
+        document.createTextNode(' · '),
+        node('button', {
+          className: 'message-retry',
+          type: 'button',
+          text: 'Delete',
+          on: { click: () => discardFailedMessage(message) },
         }),
       );
     } else if (
@@ -2178,13 +2239,9 @@ function startEvents() {
   };
   eventSource.addEventListener('ready', live);
   eventSource.addEventListener('heartbeat', live);
-  eventSource.addEventListener('change', async () => {
+  eventSource.addEventListener('change', () => {
     live();
-    await Promise.all([
-      refreshWorkspaces(),
-      state.route.workspaceId ? loadSessions(state.route.workspaceId) : Promise.resolve(),
-      state.route.sessionId ? refreshMessages(state.route.sessionId) : Promise.resolve(),
-    ]);
+    liveRefresh.schedule();
   });
   eventSource.addEventListener('locked', async (event) => {
     let code = 'device_locked';
@@ -2224,23 +2281,27 @@ function startEvents() {
   }, 1_000);
   state.activityTimer = setInterval(() => {
     if (document.hidden || !state.auth || !state.shell) return;
-    request('/api/auth/touch', { method: 'POST', body: {}, csrf: true }).catch(
-      (error) => {
-        if (
-          error.status === 401 ||
-          error.status === 423 ||
-          error.code === 'device_revoked'
-        ) {
-          handleRuntimeError(error);
-        }
-      },
-    );
+    request('/api/auth/touch', {
+      method: 'POST',
+      body: {},
+      csrf: true,
+      timeoutMs: LIVE_REFRESH_REQUEST_MS,
+    }).catch((error) => {
+      if (
+        error.status === 401 ||
+        error.status === 423 ||
+        error.code === 'device_revoked'
+      ) {
+        handleRuntimeError(error);
+      }
+    });
   }, ACTIVITY_HEARTBEAT_MS);
 }
 
 function stopEvents() {
   state.eventSource?.close();
   state.eventSource = null;
+  liveRefresh.stop();
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   if (state.activityTimer) clearInterval(state.activityTimer);
   state.heartbeatTimer = null;
@@ -2684,6 +2745,7 @@ async function revealApplication() {
         method: 'POST',
         body: {},
         csrf: true,
+        timeoutMs: RESUME_REQUEST_MS,
       }).catch(() => {});
       renderLock();
     } else {
@@ -2692,6 +2754,7 @@ async function revealApplication() {
           method: 'POST',
           body: {},
           csrf: true,
+          timeoutMs: RESUME_REQUEST_MS,
         });
         if (
           document.hidden ||

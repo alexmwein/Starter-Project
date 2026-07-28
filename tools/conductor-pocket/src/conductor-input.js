@@ -17,6 +17,19 @@ const COMPOSER_CLASSES = [
   'ProseMirror',
   'composer-tiptap-editor',
 ];
+const SEND_CLASSES = [
+  'ml-1',
+  'bg-foreground',
+  'hover:bg-foreground/80',
+];
+const NON_SEND_CLASSES = [
+  'bg-foreground/50',
+  'cursor-not-allowed',
+  'hover:bg-muted',
+  'border',
+];
+const QUEUED_EDIT_MARKER = 'Editing queued message';
+const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
 const MAX_MESSAGE_BYTES = 16 * 1024;
 const MAX_CHUNK_UTF16 = 256;
 const MIN_PHYSICAL_IDLE_SECONDS = 1;
@@ -326,6 +339,20 @@ function acquireInputLease() {
   };
 }
 
+function waitForInputIdle(timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    try {
+      acquireInputLease();
+      return true;
+    } catch (error) {
+      if (error?.pocketCode !== 'user_input_active') throw error;
+    }
+    delay(0.1);
+  } while (Date.now() < deadline);
+  return false;
+}
+
 function assertInputLease(lease) {
   const snapshot = physicalInputSnapshot();
   if (
@@ -417,7 +444,6 @@ function prepareInput(message) {
       ...eventPair(source, KEY_A, $.kCGEventFlagMaskCommand),
       ...eventPair(source, KEY_DELETE),
     ],
-    submitEvents: eventPair(source, KEY_RETURN),
     operations,
   };
 }
@@ -429,7 +455,56 @@ function focusedDraft(process) {
   return normalizedDraft(focusedElement.value());
 }
 
-function validateComposerOwnership(process, expectedDraft) {
+function hasDescendantStaticText(element, expectedText, depth = 0) {
+  if (depth > 4) return false;
+  for (const child of childElements(element)) {
+    let staticText = false;
+    try {
+      staticText = child.role() === 'AXStaticText';
+    } catch {
+      // Keep walking descendants even when one attribute is unavailable.
+    }
+    if (staticText) {
+      try {
+        if (child.name() === expectedText) return true;
+      } catch {
+        // Try the value independently.
+      }
+      try {
+        if (child.value() === expectedText) return true;
+      } catch {
+        // Continue into any exposed descendants.
+      }
+    }
+    if (hasDescendantStaticText(child, expectedText, depth + 1)) return true;
+  }
+  return false;
+}
+
+function assertNotQueuedEditMode(process) {
+  const main = webAreaRootElements(process)[2];
+  const mainElements = childElements(main);
+  const composers = mainElements.filter((candidate) => {
+    try {
+      return candidate.description() === 'composer';
+    } catch {
+      return false;
+    }
+  });
+  if (composers.length !== 1) fail('send_unavailable');
+  if (
+    hasDescendantStaticText(main, QUEUED_EDIT_MARKER) ||
+    hasDescendantStaticText(
+      composers[0],
+      QUEUED_EDIT_PLACEHOLDER,
+    )
+  ) {
+    fail('send_unavailable');
+  }
+}
+
+function resolveComposerSend(process, expectedDraft) {
+  assertNotQueuedEditMode(process);
   const mainElements = childElements(webAreaRootElements(process)[2]);
   const composers = mainElements.filter((candidate) => {
     try {
@@ -438,9 +513,10 @@ function validateComposerOwnership(process, expectedDraft) {
       return false;
     }
   });
-  if (composers.length !== 1) fail('composer_focus_changed');
+  if (composers.length !== 1) fail('send_unavailable');
 
-  const textAreas = childElements(composers[0]).filter((candidate) => {
+  const composerElements = childElements(composers[0]);
+  const textAreas = composerElements.filter((candidate) => {
     try {
       const classes = candidate.attributes
         .byName('AXDOMClassList')
@@ -456,7 +532,30 @@ function validateComposerOwnership(process, expectedDraft) {
       return false;
     }
   });
-  if (textAreas.length !== 1) fail('composer_focus_changed');
+  if (textAreas.length !== 1) fail('send_unavailable');
+
+  const buttons = composerElements.filter((candidate) => {
+    try {
+      const classes = candidate.attributes
+        .byName('AXDOMClassList')
+        .value();
+      const pressActions = candidate
+        .actions()
+        .filter((action) => action.name() === 'AXPress');
+      return (
+        candidate.role() === 'AXButton' &&
+        candidate.enabled() === true &&
+        Array.isArray(classes) &&
+        SEND_CLASSES.every((name) => classes.includes(name)) &&
+        NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
+        pressActions.length === 1
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (buttons.length !== 1) fail('send_unavailable');
+  return buttons[0];
 }
 
 function waitForExactDraft(pid, expectedDraft) {
@@ -468,6 +567,22 @@ function waitForExactDraft(pid, expectedDraft) {
     delay(0.02);
   }
   fail('composer_update_failed');
+}
+
+function waitForComposerSend(pid, expectedDraft, inputLease) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    assertInputLease(inputLease);
+    const process = validateFocusedComposer(pid, expectedDraft);
+    validateRoute(process);
+    const refreshed = validateFocusedComposer(pid, expectedDraft);
+    try {
+      return resolveComposerSend(refreshed, expectedDraft);
+    } catch (error) {
+      if (error?.pocketCode !== 'send_unavailable') throw error;
+    }
+    delay(0.02);
+  }
+  fail('send_unavailable');
 }
 
 function typeAndSendMessage(pid) {
@@ -503,6 +618,7 @@ function typeAndSendMessage(pid) {
     assertSessionUnlocked();
     let process = validateFocusedComposer(pid);
     validateRoute(process);
+    assertNotQueuedEditMode(process);
     process = validateFocusedComposer(pid);
     const draftReadStartedAt = Date.now();
     const currentDraft = focusedDraft(process);
@@ -547,19 +663,17 @@ function typeAndSendMessage(pid) {
     assertInputLease(inputLease);
     process = validateFocusedComposer(pid, message);
     validateRoute(process);
-    validateComposerOwnership(process, message);
+    waitForComposerSend(pid, message, inputLease);
     process = validateFocusedComposer(pid, message);
     validateRoute(process);
-    validateComposerOwnership(process, message);
+    process = validateFocusedComposer(pid, message);
+    const sendButton = resolveComposerSend(process, message);
     assertInputLease(inputLease);
     assertSessionUnlocked();
     pressInvokedAt = Date.now();
-    postToConductor(
-      pid,
-      inputLease,
-      prepared.submitEvents,
-      exactDraftExposedAt,
-    );
+    sendButton.actions.byName('AXPress').perform();
+    assertSessionUnlocked();
+    assertInputLease(inputLease);
     return `pressed:${pressInvokedAt}`;
   } catch (error) {
     const possibleExposureAt = Number(
@@ -610,6 +724,10 @@ function run(argv) {
     validateRoute(process);
     validateFocusedComposer(pid);
     return 'ready';
+  }
+  if (operation === 'input-check') {
+    assertSessionUnlocked();
+    return waitForInputIdle() ? 'ready' : 'busy';
   }
   if (operation === 'type-and-send') return typeAndSendMessage(pid);
   fail('invalid_operation');

@@ -1,10 +1,12 @@
-const CACHE = 'conductor-pocket-shell-v9';
+const CACHE = 'conductor-pocket-shell-v10';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-trusted-device-1',
-  '/app.js?v=0.2.0-trusted-device-1',
-  '/delivery-receipts.js?v=0.2.0-trusted-device-1',
+  '/app.css?v=0.2.0-fast-reliable-20260728',
+  '/app.js?v=0.2.0-fast-reliable-20260728',
+  '/delivery-receipts.js?v=0.2.0-fast-reliable-20260728',
+  '/http.js?v=0.2.0-fast-reliable-20260728',
+  '/live-refresh.js?v=0.2.0-fast-reliable-20260728',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -14,6 +16,8 @@ const SHELL_PATHS = new Set([
   '/app.css',
   '/app.js',
   '/delivery-receipts.js',
+  '/http.js',
+  '/live-refresh.js',
   '/icon.svg',
   '/manifest.webmanifest',
 ]);
@@ -21,6 +25,8 @@ const VERSIONED_SHELL_PATHS = new Set([
   '/app.css',
   '/app.js',
   '/delivery-receipts.js',
+  '/http.js',
+  '/live-refresh.js',
 ]);
 
 function fetchAndCache(request) {
