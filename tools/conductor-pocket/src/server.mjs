@@ -39,6 +39,7 @@ const staticFiles = new Map([
     '/delivery-receipts.js',
     ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
   ],
+  ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
   [
     '/live-refresh.js',
@@ -1137,6 +1138,7 @@ async function serveStatic(
         pathname === '/service-worker.js' ||
         pathname === '/app.js' ||
         pathname === '/delivery-receipts.js' ||
+        pathname === '/app-update.js' ||
         pathname === '/' ||
         pathname === '/index.html'
           ? 'no-cache'
