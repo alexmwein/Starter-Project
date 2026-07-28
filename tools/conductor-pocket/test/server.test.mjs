@@ -267,6 +267,13 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
   assert.equal(applicationScript.status, 200);
   assert.equal(applicationScript.headers['cache-control'], 'no-cache');
 
+  const richTextScript = await get(port, { pathname: '/rich-text.js' });
+  assert.equal(richTextScript.status, 200);
+  assert.equal(
+    richTextScript.headers['content-type'],
+    'text/javascript; charset=utf-8',
+  );
+
   const compressedScript = await get(port, {
     pathname: '/app.js',
     headers: { 'Accept-Encoding': 'gzip, br' },
@@ -1934,6 +1941,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const refreshPreloadVersion = document.match(
     /rel="modulepreload" href="\/live-refresh\.js\?v=([^"]+)"/,
   )?.[1];
+  const richTextPreloadVersion = document.match(
+    /rel="modulepreload" href="\/rich-text\.js\?v=([^"]+)"/,
+  )?.[1];
   const cachedAppVersion = serviceWorker.match(
     /'\/app\.js\?v=([^']+)'/,
   )?.[1];
@@ -1958,6 +1968,12 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const cachedRefreshVersion = serviceWorker.match(
     /'\/live-refresh\.js\?v=([^']+)'/,
   )?.[1];
+  const richTextVersion = application.match(
+    /from '\.\/rich-text\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedRichTextVersion = serviceWorker.match(
+    /'\/rich-text\.js\?v=([^']+)'/,
+  )?.[1];
 
   assert.ok(appVersion);
   assert.equal(cssVersion, appVersion);
@@ -1972,6 +1988,30 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(refreshPreloadVersion, appVersion);
   assert.equal(refreshVersion, appVersion);
   assert.equal(cachedRefreshVersion, appVersion);
+  assert.equal(richTextPreloadVersion, appVersion);
+  assert.equal(richTextVersion, appVersion);
+  assert.equal(cachedRichTextVersion, appVersion);
+});
+
+test('assistant messages preserve rich semantics and speaker context', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const assistantStart = source.indexOf(
+    "if (message.kind === 'assistant')",
+  );
+  const userStart = source.indexOf(
+    "if (message.kind === 'user'",
+    assistantStart,
+  );
+  const assistantRenderer = source.slice(assistantStart, userStart);
+
+  assert.ok(assistantStart >= 0);
+  assert.ok(userStart > assistantStart);
+  assert.match(assistantRenderer, /className: 'sr-only'/);
+  assert.match(assistantRenderer, /text: 'Conductor replied:'[\s\S]*renderRichText\(document, message\.text\)/);
+  assert.doesNotMatch(assistantRenderer, /aria-label/);
 });
 
 test('remembered Tailnet access keeps the privacy shield without background auto-lock', async () => {
