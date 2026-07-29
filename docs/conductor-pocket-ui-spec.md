@@ -232,6 +232,15 @@ Haptics: not reliably available in iOS web. Do not simulate or fake them.
   search field on top, then "Recent" chats across ALL workspaces sorted by
   last activity, each row showing workspace name in `mono-micro` + status
   glyph + unread badge. One tap jumps anywhere. On desktop this is ⌘K.
+- **Transcript swipe-right**: a deliberate rightward swipe across transcript
+  body copy opens that exact same switcher sheet. The gesture ignores links,
+  controls, selections, code, and horizontally scrollable tables; vertical
+  reading gestures remain scrolling. The first 24px stays reserved for the
+  native iOS edge-swipe Back gesture.
+- **Switcher failures**: cached chats stay usable, while a compact inline
+  warning says they could not be refreshed and offers Retry. With no cache,
+  the warning replaces the empty-search state; transport errors must never
+  masquerade as “No matches.”
 - **Nav bar** (all screens): height 52px + safe-area top. Leading: back
   chevron. Center: `headline` title + optional `footnote` subtitle. Trailing:
   contextual glyph (gear on root, squares elsewhere). Background `bg/canvas`
@@ -749,6 +758,16 @@ default I am asserting, not something specified upstream - confirm (§12).
 - Cold launch (installed, cached) to painted last-transcript: < 600ms on
   iPhone 17 Pro Max.
 - Tap-to-pressed feedback: < 80ms. Route push: < 350ms total.
+- A previously opened chat paints from memory before IndexedDB or network
+  work. Revalidation is incremental from its cursor, stale requests are
+  aborted on a newer route, and snapshot persistence is outside the paint
+  path.
+- Large JSON responses use Brotli when supported. Collapsed activity does
+  not create hidden Markdown DOM until expansion.
+- Shell revisions are checked on launch, foreground, and while connected.
+  Reload waits for foreground-safe state, no active delivery or security
+  operation, and an exact durable copy of any visible draft. A service worker
+  never treats a silent or suspended page as permission to navigate it.
 - Streaming append: no frame > 8ms scripting on mid-tier; chunk batching
   ≥ 60ms windows (don't render per-token).
 - Total asset weight (no external assets): < 300KB gzipped app shell.

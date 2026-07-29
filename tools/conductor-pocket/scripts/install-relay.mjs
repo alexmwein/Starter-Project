@@ -5,7 +5,10 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { configRevision, loadConfig } from '../src/config.mjs';
-import { APP_VERSION } from '../src/constants.mjs';
+import {
+  APP_VERSION,
+  SHELL_REVISION,
+} from '../src/constants.mjs';
 import { withOperationLock } from '../src/operation-lock.mjs';
 import {
   bootoutIfLoaded,
@@ -116,6 +119,7 @@ async function waitForRelay(
   {
     expectedVersion = APP_VERSION,
     expectedRevision = configRevision(config),
+    expectedShellRevision = SHELL_REVISION,
   } = {},
 ) {
   const url = `http://127.0.0.1:${config.port}/api/health`;
@@ -134,6 +138,8 @@ async function waitForRelay(
         if (
           body?.ok === true &&
           (!expectedVersion || body.version === expectedVersion) &&
+          (!expectedShellRevision ||
+            body.shellRevision === expectedShellRevision) &&
           (!expectedRevision || body.configRevision === expectedRevision)
         ) {
           return body;
@@ -249,6 +255,7 @@ async function install() {
           await waitForRelay(config, {
             expectedVersion: null,
             expectedRevision: null,
+            expectedShellRevision: null,
           });
         }
       }

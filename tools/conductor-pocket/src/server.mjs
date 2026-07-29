@@ -6,12 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
   brotliCompress,
+  brotliCompressSync,
   constants as zlibConstants,
 } from 'node:zlib';
 import {
   APP_NAME,
   APP_VERSION,
   MAX_JSON_BODY_BYTES,
+  SHELL_REVISION,
   SSE_HEARTBEAT_MS,
 } from './constants.mjs';
 import { configRevision, getVerificationCode } from './config.mjs';
@@ -49,6 +51,10 @@ const staticFiles = new Map([
   [
     '/transcript-focus.js',
     ['transcript-focus.js', 'text/javascript; charset=utf-8'],
+  ],
+  [
+    '/swipe-navigation.js',
+    ['swipe-navigation.js', 'text/javascript; charset=utf-8'],
   ],
   ['/icon.svg', ['icon.svg', 'image/svg+xml']],
   ['/manifest.webmanifest', ['manifest.webmanifest', 'application/manifest+json']],
@@ -114,11 +120,27 @@ function securityHeaders(config, { api = false } = {}) {
 }
 
 function sendJson(response, status, value, config, extraHeaders = {}) {
-  const body = JSON.stringify(value);
+  let body = Buffer.from(JSON.stringify(value));
+  const compressed =
+    body.length >= 1024 &&
+    acceptsBrotli(response.req);
+  if (compressed) {
+    body = brotliCompressSync(body, {
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: 4,
+      },
+    });
+  }
   response.writeHead(status, {
     ...securityHeaders(config, { api: true }),
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
+    'Content-Length': body.length,
+    ...(compressed
+      ? {
+          'Content-Encoding': 'br',
+          Vary: 'Accept-Encoding',
+        }
+      : {}),
     ...extraHeaders,
   });
   response.end(body);
@@ -584,6 +606,7 @@ export function createPocketServer({
             ok: true,
             app: APP_NAME,
             version: APP_VERSION,
+            shellRevision: SHELL_REVISION,
             configRevision: configRevision(config),
           },
           config,
@@ -707,6 +730,7 @@ export function createPocketServer({
           `event: ready\ndata: ${JSON.stringify({
             type: 'ready',
             at: new Date().toISOString(),
+            shellRevision: SHELL_REVISION,
           })}\n\n`,
         );
         clients.add(response);

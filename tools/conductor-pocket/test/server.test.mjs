@@ -4,7 +4,10 @@ import http from 'node:http';
 import test from 'node:test';
 import { brotliDecompressSync } from 'node:zlib';
 import { createConfig } from '../src/config.mjs';
-import { SESSION_COOKIE } from '../src/constants.mjs';
+import {
+  SESSION_COOKIE,
+  SHELL_REVISION,
+} from '../src/constants.mjs';
 import { sha256 } from '../src/encoding.mjs';
 import { HttpError } from '../src/errors.mjs';
 import {
@@ -22,7 +25,7 @@ function createWatcher() {
   };
 }
 
-function createServer(config) {
+function createServer(config, { database = {} } = {}) {
   return createPocketServer({
     configStore: { value: config },
     security: {
@@ -37,7 +40,7 @@ function createServer(config) {
         };
       },
     },
-    database: {},
+    database,
     watcher: createWatcher(),
     transport: {
       async doctor() {
@@ -46,6 +49,41 @@ function createServer(config) {
     },
   });
 }
+
+test('large API responses use Brotli when the phone accepts it', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const workspaces = Array.from({ length: 80 }, (_, index) => ({
+    id: `workspace-${index}`,
+    name: `Workspace ${index} with enough repeated metadata to compress`,
+    branch: `feature/fast-pocket-${index}`,
+  }));
+  const server = createServer(config, {
+    database: {
+      listWorkspaces() {
+        return workspaces;
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await get(port, {
+    pathname: '/api/workspaces',
+    headers: { 'Accept-Encoding': 'gzip, br' },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-encoding'], 'br');
+  assert.equal(response.headers.vary, 'Accept-Encoding');
+  assert.deepEqual(
+    JSON.parse(
+      brotliDecompressSync(response.rawBody).toString('utf8'),
+    ),
+    { workspaces },
+  );
+});
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -258,6 +296,7 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
   const health = await get(port, { pathname: '/api/health' });
   assert.equal(health.status, 200);
   assert.equal(health.headers['cache-control'], 'no-store, max-age=0');
+  assert.equal(JSON.parse(health.body).shellRevision, SHELL_REVISION);
   assert.match(
     JSON.parse(health.body).configRevision,
     /^[A-Za-z0-9_-]{43}$/,
@@ -1920,6 +1959,9 @@ test('service worker handles only Pocket shell paths and Pocket-owned caches', a
     source,
     /matchAll\(\{ type: 'window', includeUncontrolled: true \}\)/,
   );
+  assert.match(source, /type: 'shell-activated'/);
+  assert.doesNotMatch(source, /client\.navigate\(/);
+  assert.doesNotMatch(source, /setTimeout\(/);
   assert.match(
     source,
     /event\.waitUntil\([\s\S]*self\.clients\.claim\(\)[\s\S]*\)/,
@@ -1935,7 +1977,14 @@ test('service worker handles only Pocket shell paths and Pocket-owned caches', a
 });
 
 test('Pocket shell asset versions remain consistent across the rollout', async () => {
-  const [application, document, serviceWorker] = await Promise.all([
+  const [
+    application,
+    document,
+    serviceWorker,
+    constants,
+    installer,
+    cli,
+  ] = await Promise.all([
     fs.readFile(
       new URL('../public/app.js', import.meta.url),
       'utf8',
@@ -1946,6 +1995,18 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
     ),
     fs.readFile(
       new URL('../public/service-worker.js', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(
+      new URL('../src/constants.mjs', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(
+      new URL('../scripts/install-relay.mjs', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(
+      new URL('../src/cli.mjs', import.meta.url),
       'utf8',
     ),
   ]);
@@ -1972,6 +2033,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   )?.[1];
   const transcriptFocusPreloadVersion = document.match(
     /rel="modulepreload" href="\/transcript-focus\.js\?v=([^"]+)"/,
+  )?.[1];
+  const swipeNavigationPreloadVersion = document.match(
+    /rel="modulepreload" href="\/swipe-navigation\.js\?v=([^"]+)"/,
   )?.[1];
   const cachedAppVersion = serviceWorker.match(
     /'\/app\.js\?v=([^']+)'/,
@@ -2015,6 +2079,24 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const cachedTranscriptFocusVersion = serviceWorker.match(
     /'\/transcript-focus\.js\?v=([^']+)'/,
   )?.[1];
+  const swipeNavigationVersion = application.match(
+    /from '\.\/swipe-navigation\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedSwipeNavigationVersion = serviceWorker.match(
+    /'\/swipe-navigation\.js\?v=([^']+)'/,
+  )?.[1];
+  const documentRevision = document.match(
+    /name="conductor-pocket-shell-revision" content="([^"]+)"/,
+  )?.[1];
+  const clientRevision = application.match(
+    /const CLIENT_SHELL_REVISION = '([^']+)'/,
+  )?.[1];
+  const workerRevision = serviceWorker.match(
+    /const SHELL_REVISION = '([^']+)'/,
+  )?.[1];
+  const serverRevision = constants.match(
+    /export const SHELL_REVISION = '([^']+)'/,
+  )?.[1];
 
   assert.ok(appVersion);
   assert.equal(cssVersion, appVersion);
@@ -2038,6 +2120,21 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(transcriptFocusPreloadVersion, appVersion);
   assert.equal(transcriptFocusVersion, appVersion);
   assert.equal(cachedTranscriptFocusVersion, appVersion);
+  assert.equal(swipeNavigationPreloadVersion, appVersion);
+  assert.equal(swipeNavigationVersion, appVersion);
+  assert.equal(cachedSwipeNavigationVersion, appVersion);
+  assert.equal(documentRevision, appVersion);
+  assert.equal(clientRevision, appVersion);
+  assert.equal(workerRevision, appVersion);
+  assert.equal(serverRevision, appVersion);
+  assert.match(
+    installer,
+    /expectedShellRevision = SHELL_REVISION[\s\S]*body\.shellRevision === expectedShellRevision/,
+  );
+  assert.match(
+    cli,
+    /expectedShellRevision = SHELL_REVISION[\s\S]*body\.shellRevision === expectedShellRevision/,
+  );
 });
 
 test('Pocket applies app updates only when foreground state is safe', async () => {
@@ -2062,7 +2159,8 @@ test('Pocket applies app updates only when foreground state is safe', async () =
   assert.doesNotMatch(predicate, /!state\.shell/);
   assert.match(predicate, /location\.hash/);
   assert.match(predicate, /overlayOpen: overlayRoot\.childElementCount > 0/);
-  assert.match(predicate, /composerValue: state\.shell\?\.composer\.field\.value/);
+  assert.match(predicate, /composerValue/);
+  assert.match(predicate, /persistedComposerValue/);
   assert.match(predicate, /deliveries: state\.optimistic/);
   assert.match(
     source,
@@ -2090,8 +2188,10 @@ test('Pocket applies app updates only when foreground state is safe', async () =
   );
   assert.match(
     source,
-    /eventSource\.addEventListener\('ready'[\s\S]*checkForUpdate\(\{ force: true \}\)/,
+    /eventSource\.addEventListener\('ready'[\s\S]*serverRevision[\s\S]*checkForUpdate\(\{ force: true \}\)/,
   );
+  assert.match(source, /getServerRevision:[\s\S]*\/api\/health/);
+  assert.match(source, /reload: reloadForShellRevision/);
   assert.match(
     source,
     /setInterval\([\s\S]*appUpdateCoordinator\.checkForUpdate\(\)[\s\S]*APP_UPDATE_CHECK_INTERVAL_MS/,
@@ -2193,10 +2293,21 @@ test('Pocket navigation paints cached routes before live refreshes finish', asyn
   assert.ok(switcherStart >= 0);
   assert.ok(connectionSheetStart > switcherStart);
   assert.doesNotMatch(switcherBlock, /await loadRecentSessions\(\)/);
-  assert.match(
-    switcherBlock,
-    /openSheet\([\s\S]*void loadRecentSessions\(\)\.then\(render\)/,
+  const refreshStart = switcherBlock.indexOf(
+    'const pending = loadRecentSessions()',
   );
+  const cachedPaint = switcherBlock.indexOf('render();', refreshStart);
+  const sheetPaint = switcherBlock.indexOf('openSheet(', cachedPaint);
+  const trailingPaint = switcherBlock.indexOf(
+    'void pending.then(render)',
+    sheetPaint,
+  );
+  assert.ok(refreshStart >= 0);
+  assert.ok(cachedPaint > refreshStart);
+  assert.ok(sheetPaint > cachedPaint);
+  assert.ok(trailingPaint > sheetPaint);
+  assert.match(switcherBlock, /state\.recentSessionsError/);
+  assert.match(source, /Recent chats are unavailable|Couldn’t refresh recent chats/);
 });
 
 test('the application wires bounded, cancellable live refreshes and wake requests', async () => {
@@ -2213,9 +2324,12 @@ test('the application wires bounded, cancellable live refreshes and wake request
   );
   assert.match(
     source,
-    /eventSource\.addEventListener\('change', \(\) => \{[\s\S]*liveRefresh\.schedule\(\)/,
+    /eventSource\.addEventListener\('change', \(\) => \{[\s\S]*transcriptRefresh\.schedule\(\)[\s\S]*metadataRefresh\.schedule\(\)/,
   );
-  assert.match(source, /function stopEvents\(\)[\s\S]*liveRefresh\.stop\(\)/);
+  assert.match(
+    source,
+    /function stopEvents\(\)[\s\S]*transcriptRefresh\.stop\(\)[\s\S]*metadataRefresh\.stop\(\)/,
+  );
   assert.match(source, /const RESUME_REQUEST_MS = 6 \* 1000/);
   assert.match(
     source,

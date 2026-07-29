@@ -488,7 +488,7 @@ test('large-database queries keep the indexed sent and cancellation predicates',
   );
   assert.match(
     source,
-    /SELECT rowid[\s\S]*WHERE session_id = \?[\s\S]*ORDER BY rowid DESC[\s\S]*LIMIT 1/,
+    /SELECT MAX\(rowid\) AS row_id[\s\S]*INDEXED BY idx_session_messages_cancelled_at[\s\S]*cancelled_at IS NULL[\s\S]*UNION ALL[\s\S]*cancelled_at IS NOT NULL/,
   );
 });
 

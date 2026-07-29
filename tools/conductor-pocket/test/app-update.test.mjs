@@ -33,13 +33,26 @@ function coordinatorOptions(serviceWorker, overrides = {}) {
   };
 }
 
-test('idle gates may update while sensitive and unsent states remain blocked', () => {
+test('idle gates may update while sensitive operations remain blocked', () => {
   assert.equal(appUpdateReloadIsSafe(), true);
   assert.equal(appUpdateReloadIsSafe({ originRetired: true }), false);
   assert.equal(appUpdateReloadIsSafe({ sensitiveOperations: 1 }), false);
   assert.equal(appUpdateReloadIsSafe({ pairing: true }), false);
   assert.equal(appUpdateReloadIsSafe({ overlayOpen: true }), false);
-  assert.equal(appUpdateReloadIsSafe({ composerValue: 'unsent draft' }), false);
+  assert.equal(
+    appUpdateReloadIsSafe({
+      composerValue: 'persisted draft',
+      persistedComposerValue: 'persisted draft',
+    }),
+    true,
+  );
+  assert.equal(
+    appUpdateReloadIsSafe({
+      composerValue: 'visible but not durable',
+      persistedComposerValue: '',
+    }),
+    false,
+  );
   assert.equal(
     appUpdateReloadIsSafe({ deliveries: [{ delivery: 'delivering' }] }),
     false,
@@ -52,6 +65,83 @@ test('idle gates may update while sensitive and unsent states remain blocked', (
     appUpdateReloadIsSafe({ deliveries: [{ delivery: 'failed' }] }),
     true,
   );
+});
+
+test('a server shell revision catches an already-claimed stale document', async () => {
+  const serviceWorker = fakeServiceWorker({ id: 'already-new-controller' });
+  const reloads = [];
+  const coordinator = createAppUpdateCoordinator(
+    coordinatorOptions(serviceWorker, {
+      clientRevision: 'shell-old',
+      getServerRevision: async () => 'shell-new',
+      reload: (revision) => reloads.push(revision),
+    }),
+  );
+  coordinator.start();
+
+  assert.equal(await coordinator.checkForUpdate({ force: true }), true);
+  assert.deepEqual(reloads, ['shell-new']);
+});
+
+test('the current server shell revision does not reload', async () => {
+  const serviceWorker = fakeServiceWorker({ id: 'controller' });
+  let reloads = 0;
+  const coordinator = createAppUpdateCoordinator(
+    coordinatorOptions(serviceWorker, {
+      clientRevision: 'shell-current',
+      getServerRevision: async () => 'shell-current',
+      reload: () => {
+        reloads += 1;
+      },
+    }),
+  );
+  coordinator.start();
+
+  assert.equal(await coordinator.checkForUpdate({ force: true }), true);
+  assert.equal(reloads, 0);
+});
+
+test('a shell revision waits for an active delivery and keeps its revision', () => {
+  const serviceWorker = fakeServiceWorker({ id: 'controller' });
+  let safe = false;
+  const reloads = [];
+  const coordinator = createAppUpdateCoordinator(
+    coordinatorOptions(serviceWorker, {
+      clientRevision: 'shell-old',
+      canReload: () => safe,
+      reload: (revision) => reloads.push(revision),
+    }),
+  );
+  coordinator.start();
+
+  assert.equal(coordinator.serverRevision('shell-new'), true);
+  assert.deepEqual(reloads, []);
+  safe = true;
+  assert.equal(coordinator.stateChanged(), true);
+  assert.deepEqual(reloads, ['shell-new']);
+});
+
+test('a failed server revision check remains retryable', async () => {
+  const serviceWorker = fakeServiceWorker({ id: 'controller' });
+  let attempts = 0;
+  const reloads = [];
+  const coordinator = createAppUpdateCoordinator(
+    coordinatorOptions(serviceWorker, {
+      clientRevision: 'shell-old',
+      getServerRevision: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('relay_unreachable');
+        return 'shell-new';
+      },
+      reload: (revision) => reloads.push(revision),
+    }),
+  );
+  coordinator.start();
+
+  assert.equal(await coordinator.checkForUpdate({ force: true }), false);
+  assert.equal(await coordinator.checkForUpdate(), true);
+  assert.equal(attempts, 2);
+  assert.deepEqual(reloads, ['shell-new']);
 });
 
 test('the first service worker claim is ignored and a later replacement reloads once', () => {

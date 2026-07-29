@@ -71,3 +71,73 @@ export function createLiveRefreshCoordinator({
     flush: drain,
   };
 }
+
+export function createSessionMessageRequestCoordinator() {
+  const activeBySession = new Map();
+  const generationBySession = new Map();
+
+  async function run({
+    sessionId,
+    full = false,
+    signal,
+    load,
+    commit,
+  }) {
+    if (
+      typeof sessionId !== 'string' ||
+      sessionId.length === 0 ||
+      typeof load !== 'function' ||
+      typeof commit !== 'function'
+    ) {
+      throw new TypeError('invalid_session_message_request');
+    }
+
+    const active = activeBySession.get(sessionId);
+    if (active && !active.signal?.aborted) {
+      if (active.full === full || (active.full && !full)) {
+        return active.promise;
+      }
+      // A full baseline supersedes an incremental request. Its generation
+      // prevents the older response from committing if it resolves later.
+    }
+
+    const generation = (generationBySession.get(sessionId) || 0) + 1;
+    generationBySession.set(sessionId, generation);
+    const operation = (async () => {
+      const result = await load();
+      if (
+        signal?.aborted ||
+        generationBySession.get(sessionId) !== generation
+      ) {
+        return undefined;
+      }
+      return commit(result);
+    })();
+    const record = {
+      full,
+      signal,
+      promise: operation,
+    };
+    activeBySession.set(sessionId, record);
+
+    try {
+      return await operation;
+    } finally {
+      if (activeBySession.get(sessionId) === record) {
+        activeBySession.delete(sessionId);
+      }
+    }
+  }
+
+  function reset() {
+    activeBySession.clear();
+    for (const [sessionId, generation] of generationBySession) {
+      generationBySession.set(sessionId, generation + 1);
+    }
+  }
+
+  return {
+    run,
+    reset,
+  };
+}
