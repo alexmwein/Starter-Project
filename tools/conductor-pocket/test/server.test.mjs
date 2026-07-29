@@ -273,6 +273,14 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
     richTextScript.headers['content-type'],
     'text/javascript; charset=utf-8',
   );
+  const transcriptFocusScript = await get(port, {
+    pathname: '/transcript-focus.js',
+  });
+  assert.equal(transcriptFocusScript.status, 200);
+  assert.equal(
+    transcriptFocusScript.headers['content-type'],
+    'text/javascript; charset=utf-8',
+  );
   const appUpdateScript = await get(port, { pathname: '/app-update.js' });
   assert.equal(appUpdateScript.status, 200);
   assert.equal(appUpdateScript.headers['cache-control'], 'no-cache');
@@ -1962,6 +1970,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const richTextPreloadVersion = document.match(
     /rel="modulepreload" href="\/rich-text\.js\?v=([^"]+)"/,
   )?.[1];
+  const transcriptFocusPreloadVersion = document.match(
+    /rel="modulepreload" href="\/transcript-focus\.js\?v=([^"]+)"/,
+  )?.[1];
   const cachedAppVersion = serviceWorker.match(
     /'\/app\.js\?v=([^']+)'/,
   )?.[1];
@@ -1998,6 +2009,12 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const cachedRichTextVersion = serviceWorker.match(
     /'\/rich-text\.js\?v=([^']+)'/,
   )?.[1];
+  const transcriptFocusVersion = application.match(
+    /from '\.\/transcript-focus\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedTranscriptFocusVersion = serviceWorker.match(
+    /'\/transcript-focus\.js\?v=([^']+)'/,
+  )?.[1];
 
   assert.ok(appVersion);
   assert.equal(cssVersion, appVersion);
@@ -2018,6 +2035,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(richTextPreloadVersion, appVersion);
   assert.equal(richTextVersion, appVersion);
   assert.equal(cachedRichTextVersion, appVersion);
+  assert.equal(transcriptFocusPreloadVersion, appVersion);
+  assert.equal(transcriptFocusVersion, appVersion);
+  assert.equal(cachedTranscriptFocusVersion, appVersion);
 });
 
 test('Pocket applies app updates only when foreground state is safe', async () => {
@@ -2095,7 +2115,10 @@ test('assistant messages preserve rich semantics and speaker context', async () 
   assert.ok(assistantStart >= 0);
   assert.ok(userStart > assistantStart);
   assert.match(assistantRenderer, /className: 'sr-only'/);
-  assert.match(assistantRenderer, /text: 'Conductor replied:'[\s\S]*renderRichText\(document, message\.text\)/);
+  assert.match(
+    assistantRenderer,
+    /'Conductor progress:'[\s\S]*'Conductor replied:'[\s\S]*renderRichText\(document, message\.text\)/,
+  );
   assert.doesNotMatch(assistantRenderer, /aria-label/);
 });
 

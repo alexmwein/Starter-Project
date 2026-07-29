@@ -1,20 +1,24 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-auto-update-20260728';
+} from './delivery-receipts.js?v=0.2.0-focused-turns-20260728';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-auto-update-20260728';
-import { fetchJson } from './http.js?v=0.2.0-auto-update-20260728';
+} from './app-update.js?v=0.2.0-focused-turns-20260728';
+import { fetchJson } from './http.js?v=0.2.0-focused-turns-20260728';
 import {
   createLiveRefreshCoordinator,
-} from './live-refresh.js?v=0.2.0-auto-update-20260728';
+} from './live-refresh.js?v=0.2.0-focused-turns-20260728';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-auto-update-20260728';
+} from './rich-text.js?v=0.2.0-focused-turns-20260728';
+import {
+  activityLabel,
+  buildFocusedTranscript,
+} from './transcript-focus.js?v=0.2.0-focused-turns-20260728';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -57,6 +61,7 @@ const state = {
   hiddenAt: null,
   visibilityEpoch: 0,
   seenMessageIds: new Set(),
+  expandedActivities: new Set(),
 };
 
 const liveRefresh = createLiveRefreshCoordinator({
@@ -1614,6 +1619,7 @@ function updateNavSubtitle(element, fallback) {
 }
 
 async function openSession(sessionId, { workspaceId = state.route.workspaceId, push = true } = {}) {
+  if (state.route.sessionId !== sessionId) state.expandedActivities.clear();
   state.route = { view: 'transcript', workspaceId, sessionId };
   persistRoute();
   if (push) history.pushState({ pocketRoute: state.route }, '', '/');
@@ -1724,11 +1730,9 @@ function renderTranscript() {
     ...(state.messagesBySession.get(state.route.sessionId) || []),
     ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
   ];
-  const toolResults = new Map(
-    messages
-      .filter((message) => message.kind === 'tool-result' && message.toolCallId)
-      .map((message) => [message.toolCallId, message]),
-  );
+  const { entries, toolResults } = buildFocusedTranscript(messages, {
+    sessionStatus: session?.status || 'unknown',
+  });
   const existingNodes = new Map(
     [...messageList.children].map((element) => [
       element.dataset.messageId,
@@ -1737,14 +1741,8 @@ function renderTranscript() {
   );
   const fragment = document.createDocumentFragment();
   let previousVisibleMessage = null;
-  for (const message of messages) {
-    if (
-      message.kind === 'tool-result' ||
-      message.kind === 'status' ||
-      (message.kind === 'agent-error' && message.retrying)
-    ) {
-      continue;
-    }
+  for (const message of entries) {
+    if (message.kind === 'agent-error' && message.retrying) continue;
     const messageId = String(message.id);
     const renderKey = messageRenderKey(message, toolResults);
     let rendered = existingNodes.get(messageId);
@@ -1804,11 +1802,29 @@ function isMessageContinuation(previous, message) {
   ) {
     return true;
   }
-  return ['assistant', 'tool', 'agent-error'].includes(previous.kind) &&
-    ['assistant', 'tool', 'agent-error'].includes(message.kind);
+  return ['assistant', 'activity', 'tool', 'agent-error'].includes(previous.kind) &&
+    ['assistant', 'activity', 'tool', 'agent-error'].includes(message.kind);
 }
 
 function messageRenderKey(message, toolResults) {
+  if (message.kind === 'activity') {
+    return JSON.stringify([
+      message.kind,
+      message.id,
+      message.running,
+      message.messageCount,
+      message.toolCount,
+      state.expandedActivities.has(message.id),
+      message.items.map((item) => [
+        item.id,
+        item.text,
+        item.resolvedState ||
+          (item.kind === 'tool'
+            ? toolResults.get(item.toolCallId)?.state || item.state
+            : item.state),
+      ]),
+    ]);
+  }
   const toolResult =
     message.kind === 'tool' ? toolResults.get(message.toolCallId) : null;
   return JSON.stringify([
@@ -1853,15 +1869,21 @@ function renderBanner(container) {
 }
 
 function renderMessage(message, toolResults) {
+  if (message.kind === 'activity') {
+    return renderActivity(message, toolResults);
+  }
   if (message.kind === 'assistant') {
     const profile = richTextProfile(message.text);
     const item = node('li', {
-      className: `message assistant is-${profile.density}`,
+      className: `message assistant ${message.importance === 'progress' ? 'progress' : 'primary'} is-${profile.density}`,
     });
     item.append(
       node('span', {
         className: 'sr-only',
-        text: 'Conductor replied:',
+        text:
+          message.importance === 'progress'
+            ? 'Conductor progress:'
+            : 'Conductor replied:',
       }),
       renderRichText(document, message.text),
     );
@@ -1924,7 +1946,7 @@ function renderMessage(message, toolResults) {
   }
   if (message.kind === 'tool') {
     const result = toolResults.get(message.toolCallId);
-    const stateValue = result?.state || message.state;
+    const stateValue = message.resolvedState || result?.state || message.state;
     const failed = stateValue === 'failed';
     const details = node('details', {
       className: `tool-card ${failed ? 'failed' : stateValue === 'running' ? 'running' : 'completed'}`,
@@ -1971,6 +1993,62 @@ function renderMessage(message, toolResults) {
     ]);
   }
   return null;
+}
+
+function renderActivity(activity, toolResults) {
+  const expanded = state.expandedActivities.has(activity.id);
+  const label = activityLabel(activity);
+  const accessibleLabel = `${label}${activity.running ? ', Working' : ''}`;
+  const detailsId = `activity-${String(activity.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+  const itemList = node('ul', {
+    className: 'activity-items',
+    id: detailsId,
+    hidden: !expanded,
+  });
+
+  for (const item of activity.items) {
+    const rendered = renderMessage(item, toolResults);
+    if (rendered) itemList.append(rendered);
+  }
+
+  const card = node('div', {
+    className: `activity-card${expanded ? ' is-expanded' : ''}${activity.running ? ' is-running' : ''}`,
+  });
+  const action = node('button', {
+    className: 'activity-summary',
+    type: 'button',
+    'aria-expanded': String(expanded),
+    'aria-controls': detailsId,
+    'aria-label': `${expanded ? 'Collapse' : 'Expand'} ${accessibleLabel}`,
+  }, [
+    activity.running
+      ? node('span', { className: 'status-dot working' })
+      : icon('squares'),
+    node('span', { className: 'activity-label', text: label }),
+    node('span', {
+      className: 'activity-state',
+      text: activity.running ? 'Working' : '',
+    }),
+    icon('chevronDown', 'activity-chevron'),
+  ]);
+
+  action.addEventListener('click', () => {
+    const nextExpanded = !state.expandedActivities.has(activity.id);
+    if (nextExpanded) state.expandedActivities.add(activity.id);
+    else state.expandedActivities.delete(activity.id);
+    card.classList.toggle('is-expanded', nextExpanded);
+    itemList.hidden = !nextExpanded;
+    action.setAttribute('aria-expanded', String(nextExpanded));
+    action.setAttribute(
+      'aria-label',
+      `${nextExpanded ? 'Collapse' : 'Expand'} ${accessibleLabel}`,
+    );
+  });
+
+  card.append(action, itemList);
+  return node('li', {
+    className: 'message activity',
+  }, card);
 }
 
 function renderAgentStatus(container, session, messages = []) {

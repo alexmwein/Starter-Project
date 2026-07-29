@@ -245,6 +245,123 @@ test('database adapter exposes sanitized chat events without tool payloads', asy
     '2026-01-01T00:00:03Z',
     null,
   );
+  insert.run(
+    'tool-failed-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-call-failed-1',
+            name: 'private_failed_tool',
+            input: { token: 'private failed input' },
+          },
+        ],
+      },
+    }),
+    '2026-01-01T00:00:03Z',
+    null,
+  );
+  insert.run(
+    'tool-failed-result-1',
+    'assistant',
+    JSON.stringify({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool-call-failed-1',
+            is_error: true,
+            content: 'private root failure output',
+          },
+        ],
+      },
+    }),
+    '2026-01-01T00:00:03Z',
+    null,
+  );
+  insert.run(
+    'nested-text-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: 'spawn-research-1',
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: 'Duplicated nested research should never be a main message.',
+          },
+        ],
+      },
+    }),
+    '2026-01-01T00:00:04Z',
+    null,
+  );
+  insert.run(
+    'nested-malformed-error-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: 'spawn-research-1',
+      is_error: true,
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: 'PRIVATE_NESTED_MALFORMED_ERROR_TEXT',
+          },
+        ],
+      },
+    }),
+    '2026-01-01T00:00:04Z',
+    null,
+  );
+  insert.run(
+    'nested-failure-1',
+    'assistant',
+    JSON.stringify({
+      type: 'user',
+      parent_tool_use_id: 'spawn-research-1',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'nested-call-1',
+            is_error: true,
+            content: 'private nested failure output',
+          },
+        ],
+      },
+    }),
+    '2026-01-01T00:00:05Z',
+    null,
+  );
+  insert.run(
+    'assistant-final-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'This is the finished answer.' }],
+      },
+    }),
+    '2026-01-01T00:00:06Z',
+    null,
+  );
+  insert.run(
+    'turn-result-1',
+    'assistant',
+    JSON.stringify({
+      type: 'result',
+      is_error: false,
+    }),
+    '2026-01-01T00:00:07Z',
+    null,
+  );
   writable.close();
 
   const database = new ConductorDatabase(dbPath);
@@ -260,9 +377,47 @@ test('database adapter exposes sanitized chat events without tool payloads', asy
     result.messages.some((message) => message.name === 'Read Secret File'),
     true,
   );
+  assert.equal(
+    result.messages.some(
+      (message) =>
+        message.text ===
+        'Duplicated nested research should never be a main message.',
+    ),
+    false,
+  );
+  assert.equal(
+    result.messages.some(
+      (message) =>
+        message.kind === 'agent-error' &&
+        message.code === 'background_action_failed',
+    ),
+    true,
+  );
+  assert.equal(
+    result.messages.some(
+      (message) =>
+        message.kind === 'tool-failure' &&
+        message.code === 'tool_action_failed',
+    ),
+    true,
+  );
+  assert.equal(
+    result.messages.some(
+      (message) =>
+        message.kind === 'turn-result' && message.state === 'complete',
+    ),
+    true,
+  );
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('must-not-leak'), false);
   assert.equal(serialized.includes('highly sensitive output'), false);
+  assert.equal(serialized.includes('private nested failure output'), false);
+  assert.equal(serialized.includes('private root failure output'), false);
+  assert.equal(serialized.includes('private failed input'), false);
+  assert.equal(
+    serialized.includes('PRIVATE_NESTED_MALFORMED_ERROR_TEXT'),
+    false,
+  );
 });
 
 test('workspace routes use the visible Conductor name instead of the folder codename', async (context) => {
@@ -334,6 +489,86 @@ test('large-database queries keep the indexed sent and cancellation predicates',
   assert.match(
     source,
     /SELECT rowid[\s\S]*WHERE session_id = \?[\s\S]*ORDER BY rowid DESC[\s\S]*LIMIT 1/,
+  );
+});
+
+test('nested deep-research rows are filtered before the visible limit', async (context) => {
+  const { database, insert } = await createConfirmationFixture(context);
+  insert.run(
+    'root-progress',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Root progress' }] },
+    }),
+    '2026-01-01T00:00:01Z',
+    null,
+    null,
+  );
+  for (let index = 0; index < 600; index += 1) {
+    insert.run(
+      `nested-replay-${index}`,
+      'session-1',
+      'assistant',
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: 'spawn-deep-research',
+        message: {
+          content: [{ type: 'text', text: `Nested replay ${index}` }],
+        },
+      }),
+      '2026-01-01T00:00:02Z',
+      null,
+      null,
+    );
+  }
+  for (let index = 0; index < 600; index += 1) {
+    insert.run(
+      `root-status-${index}`,
+      'session-1',
+      'assistant',
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+      }),
+      '2026-01-01T00:00:02Z',
+      null,
+      null,
+    );
+  }
+  insert.run(
+    'root-final',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Root final' }] },
+    }),
+    '2026-01-01T00:00:03Z',
+    null,
+    null,
+  );
+  insert.run(
+    'root-result',
+    'session-1',
+    'assistant',
+    JSON.stringify({ type: 'result', is_error: false }),
+    '2026-01-01T00:00:04Z',
+    null,
+    null,
+  );
+
+  const result = database.listMessages('session-1', { limit: 3 });
+  assert.deepEqual(
+    result.messages.map((message) => message.kind),
+    ['assistant', 'assistant', 'turn-result'],
+  );
+  assert.deepEqual(
+    result.messages
+      .filter((message) => message.kind === 'assistant')
+      .map((message) => message.text),
+    ['Root progress', 'Root final'],
   );
 });
 

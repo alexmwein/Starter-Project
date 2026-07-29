@@ -330,6 +330,28 @@ summary text; card border-left 2px `status/down`.
 Expansion state is per-message and not persisted; reopening a chat shows all
 collapsed.
 
+### 4.8 Turn importance (transcript)
+
+Pocket mirrors Conductor's focused transcript hierarchy instead of rendering
+every agent event at equal weight.
+
+- `turn_id` groups one agent turn.
+- The last root-agent text event before a successful terminal `result` is the
+  prominent answer. It keeps full Markdown and `text/primary`.
+- Earlier root-agent text and successful root tool calls collapse into one
+  full-width muted disclosure such as `7 tool calls, 2 messages`.
+- Expanding the disclosure reveals intermediate prose in the compact
+  `text/secondary` treatment and the existing tool cards from §4.7.
+- A working turn has no manufactured final answer. Its current activity stays
+  compact and shows the working state until the terminal result arrives.
+- Nested sub-agent text (`parent_tool_use_id` present) never enters the main
+  transcript. This prevents deep-research history replays from obscuring the
+  root answer.
+- Failed tools, agent errors, blocked states, and required actions always
+  remain visible outside the collapsed activity disclosure.
+- The disclosure has a 44px tap target, `aria-expanded`, and an accessible
+  `Expand/Collapse N tool calls, M messages` label. Expansion is not persisted.
+
 ---
 
 ## 5. Surfaces
