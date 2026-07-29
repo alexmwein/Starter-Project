@@ -227,6 +227,10 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
+    /const MAX_PRE_TRANSCRIPT_CONTROLS = 1/,
+  );
+  assert.match(
+    inputHelper,
     /const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8/,
   );
   assert.match(
@@ -239,11 +243,11 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function composerSendContext[\s\S]*tabGroupCount !== 1[\s\S]*mainRoles\[index\] === 'AXGroup'[\s\S]*transcriptBoundaryIndex = index[\s\S]*transcriptBoundaryIndex < 0[\s\S]*mainElements\.slice\(\s*transcriptBoundaryIndex \+ 1,\s*composerIndex \+ 1[\s\S]*contextElements\.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS \+ 1[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN/,
+    /function composerSendContext[\s\S]*tabGroupCount !== 1[\s\S]*mainRoles\[index\] === 'AXGroup'[\s\S]*transcriptBoundaryIndex = index[\s\S]*mainRoles\[index\] !== 'AXPopUpButton'[\s\S]*candidateChildren\.length !== 0[\s\S]*pressActionCount !== 1[\s\S]*transcriptBoundaryIndex < 0[\s\S]*MAX_PRE_TRANSCRIPT_CONTROLS[\s\S]*mainElements\.slice\(\s*transcriptBoundaryIndex \+ 1,\s*composerIndex \+ 1[\s\S]*contextElements\.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS \+ 1[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN/,
   );
   assert.match(
     inputHelper,
-    /function hasStaticTextInBoundedTree[\s\S]*budget\.remaining <= 0[\s\S]*role = element\.role\(\)[\s\S]*role === 'AXStaticText'[\s\S]*!nameReadable && !valueReadable[\s\S]*fail\('send_unavailable'\)[\s\S]*hasStaticTextInBoundedTree\(child, expectedText, budget\)[\s\S]*function assertNotQueuedEditMode[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*contextElements\.some\([\s\S]*QUEUED_EDIT_MARKER[\s\S]*hasStaticTextInBoundedTree\(\s*composer,\s*QUEUED_EDIT_PLACEHOLDER[\s\S]*fail\('send_unavailable'\)/,
+    /function hasStaticTextInBoundedTree[\s\S]*budget\.remaining <= 0[\s\S]*role = element\.role\(\)[\s\S]*role === 'AXStaticText'[\s\S]*!nameReadable \|\| !valueReadable[\s\S]*fail\('send_unavailable'\)[\s\S]*hasStaticTextInBoundedTree\(child, expectedTexts, budget\)[\s\S]*function assertNotQueuedEditMode[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*contextElements\.slice\(0, -1\)\.some\([\s\S]*\[QUEUED_EDIT_MARKER\][\s\S]*hasStaticTextInBoundedTree\(\s*composer,\s*\[QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER\][\s\S]*fail\('send_unavailable'\)/,
   );
   assert.doesNotMatch(
     inputHelper,
@@ -410,19 +414,31 @@ globalThis.__routeLeaseTest = {
     sessionOrdinal: 2,
   };
   const makeNode = ({
+    actionNames = [],
     role = 'AXGroup',
     description = '',
     name = '',
     value = false,
     classes = [],
     children = [],
+    throwOnChildren = false,
     throwOnName = false,
+    throwOnValue = false,
   } = {}) => {
     let retired = false;
     const assertLive = () => {
       if (retired) throw new Error('stale AX node used');
     };
     return {
+      actions() {
+        assertLive();
+        return actionNames.map((actionName) => ({
+          name() {
+            assertLive();
+            return actionName;
+          },
+        }));
+      },
       attributes: {
         byName(attributeName) {
           assertLive();
@@ -453,10 +469,12 @@ globalThis.__routeLeaseTest = {
       },
       uiElements() {
         assertLive();
+        if (throwOnChildren) throw new Error('children must stay opaque');
         return children;
       },
       value() {
         assertLive();
+        if (throwOnValue) throw new Error('value unavailable');
         return value;
       },
     };
@@ -596,9 +614,14 @@ globalThis.__routeLeaseTest = {
   assert.doesNotThrow(() => assertRouteLease(process, hintedLease));
 
   const makeGuardTree = ({
-    directMarker = false,
+    directMarker = '',
     highFanoutContext = false,
+    includePopup = true,
+    popupActionNames = ['AXPress', 'AXShowMenu'],
+    popupChildCount = 0,
+    popupRole = 'AXPopUpButton',
     transcriptChildCount = 0,
+    transcriptThrows = false,
   } = {}) => {
     const guardNode = (options) => makeNode(options);
     const composer = guardNode({
@@ -612,11 +635,20 @@ globalThis.__routeLeaseTest = {
         { length: transcriptChildCount },
         () => guardNode(),
       ),
+      throwOnChildren: transcriptThrows,
     });
     const firstContext = directMarker
       ? guardNode({
           role: 'AXStaticText',
-          name: 'Editing queued message',
+          name:
+            directMarker === 'name'
+              ? 'Editing queued message'
+              : 'not the marker',
+          throwOnValue: directMarker === 'unreadable-value',
+          value:
+            directMarker === 'value'
+              ? 'Editing queued message'
+              : 'not the marker',
         })
       : guardNode({
           children: Array.from(
@@ -624,10 +656,22 @@ globalThis.__routeLeaseTest = {
             () => guardNode(),
           ),
         });
+    const preTranscript = includePopup
+      ? [
+          guardNode({
+            actionNames: popupActionNames,
+            children: Array.from(
+              { length: popupChildCount },
+              () => guardNode(),
+            ),
+            role: popupRole,
+          }),
+        ]
+      : [];
     const guardMain = guardNode({
       children: [
         guardNode({ role: 'AXTabGroup' }),
-        guardNode({ role: 'AXPopUpButton' }),
+        ...preTranscript,
         transcript,
         firstContext,
         guardNode(),
@@ -652,11 +696,31 @@ globalThis.__routeLeaseTest = {
     assert.equal(guardContext.contextElements.length, 5);
   }
 
-  state.webArea = makeGuardTree({ directMarker: true }).webArea;
-  assert.throws(
-    () => assertNotQueuedEditMode(process),
-    (error) => error?.pocketCode === 'send_unavailable',
-  );
+  state.webArea = makeGuardTree({ includePopup: false }).webArea;
+  assert.doesNotThrow(() => composerSendContext(process));
+
+  state.webArea = makeGuardTree({ transcriptThrows: true }).webArea;
+  assert.doesNotThrow(() => composerSendContext(process));
+
+  for (const options of [
+    { popupRole: 'AXButton' },
+    { popupChildCount: 1 },
+    { popupActionNames: [] },
+  ]) {
+    state.webArea = makeGuardTree(options).webArea;
+    assert.throws(
+      () => composerSendContext(process),
+      (error) => error?.pocketCode === 'send_unavailable',
+    );
+  }
+
+  for (const directMarker of ['name', 'value', 'unreadable-value']) {
+    state.webArea = makeGuardTree({ directMarker }).webArea;
+    assert.throws(
+      () => assertNotQueuedEditMode(process),
+      (error) => error?.pocketCode === 'send_unavailable',
+    );
+  }
 
   state.webArea = makeGuardTree({ highFanoutContext: true }).webArea;
   assert.throws(
