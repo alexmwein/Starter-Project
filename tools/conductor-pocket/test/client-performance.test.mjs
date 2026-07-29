@@ -79,6 +79,43 @@ test('collapsed activity defers hidden Markdown DOM until expansion', async () =
   );
 });
 
+test('background failure bursts paint one counted lazy disclosure', async () => {
+  const source = await applicationSource();
+  const renderTranscript = functionSource(
+    source,
+    'function renderTranscript',
+    'function isMessageContinuation',
+  );
+  const renderKey = functionSource(
+    source,
+    'function messageRenderKey',
+    'function renderBanner',
+  );
+  const renderMessage = functionSource(
+    source,
+    'function renderMessage',
+    'function renderActivity',
+  );
+  const renderActivity = functionSource(
+    source,
+    'function renderActivity',
+    'function renderAgentStatus',
+  );
+
+  assert.match(renderKey, /message\.backgroundErrorCount[\s\S]*expanded/);
+  assert.match(renderKey, /item\.occurrenceCount/);
+  assert.match(
+    renderTranscript,
+    /announcementId = `\$\{messageId\}:background-errors`[\s\S]*seenMessageIds\.add\(announcementId\)/,
+  );
+  assert.match(
+    renderMessage,
+    /occurrenceCount > 1[\s\S]*background actions failed[\s\S]*private action details/,
+  );
+  assert.match(renderActivity, /hasErrors[\s\S]*icon\('warn'\)/);
+  assert.match(renderActivity, /if \(expanded\) populateItems\(\)/);
+});
+
 test('streaming transcript and metadata refresh on separate schedules', async () => {
   const source = await applicationSource();
   assert.match(

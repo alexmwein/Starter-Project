@@ -1,28 +1,28 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-fast-copy-20260729';
+} from './delivery-receipts.js?v=0.2.0-compact-errors-20260729';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-fast-copy-20260729';
-import { fetchJson } from './http.js?v=0.2.0-fast-copy-20260729';
+} from './app-update.js?v=0.2.0-compact-errors-20260729';
+import { fetchJson } from './http.js?v=0.2.0-compact-errors-20260729';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-fast-copy-20260729';
+} from './live-refresh.js?v=0.2.0-compact-errors-20260729';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-fast-copy-20260729';
+} from './rich-text.js?v=0.2.0-compact-errors-20260729';
 import {
   activityLabel,
   buildFocusedTranscript,
-} from './transcript-focus.js?v=0.2.0-fast-copy-20260729';
+} from './transcript-focus.js?v=0.2.0-compact-errors-20260729';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-fast-copy-20260729';
+} from './swipe-navigation.js?v=0.2.0-compact-errors-20260729';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -43,7 +43,7 @@ const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-fast-copy-20260729';
+const CLIENT_SHELL_REVISION = '0.2.0-compact-errors-20260729';
 
 const state = {
   auth: null,
@@ -2071,6 +2071,15 @@ function renderTranscript() {
         );
       }
     }
+    if (message.kind === 'activity' && message.backgroundErrorCount > 0) {
+      const announcementId = `${messageId}:background-errors`;
+      if (!state.seenMessageIds.has(announcementId)) {
+        announce(
+          `${activityLabel(message)}. Private action details stay on your Mac.`,
+        );
+        state.seenMessageIds.add(announcementId);
+      }
+    }
     rendered.classList.toggle(
       'is-continuation',
       isMessageContinuation(previousVisibleMessage, message),
@@ -2123,11 +2132,16 @@ function messageRenderKey(message, toolResults) {
       message.running,
       message.messageCount,
       message.toolCount,
+      message.backgroundErrorCount,
       expanded,
       expanded
         ? message.items.map((item) => [
             item.id,
             item.text,
+            item.occurrenceCount,
+            item.code,
+            item.title,
+            item.guidance,
             item.resolvedState ||
               (item.kind === 'tool'
                 ? toolResults.get(item.toolCallId)?.state || item.state
@@ -2303,12 +2317,21 @@ function renderMessage(message, toolResults) {
     return node('li', { className: 'message tool' }, details);
   }
   if (message.kind === 'agent-error') {
+    const occurrenceCount = Number(message.occurrenceCount) || 1;
+    const groupedBackgroundFailure =
+      message.code === 'background_action_failed' && occurrenceCount > 1;
+    const title = groupedBackgroundFailure
+      ? `${occurrenceCount} background actions failed`
+      : message.title;
+    const guidance = groupedBackgroundFailure
+      ? 'Pocket grouped these repeated failures. They do not by themselves stop the main turn; open it on your Mac only if you need the private action details.'
+      : message.guidance;
     return node('li', { className: 'message agent-error' }, [
       node('div', { className: `agent-error-row ${message.severity}` }, [
         icon('warn'),
         node('div', { className: 'agent-error-copy' }, [
-          node('strong', { className: 'agent-error-title', text: message.title }),
-          node('p', { text: message.guidance }),
+          node('strong', { className: 'agent-error-title', text: title }),
+          node('p', { text: guidance }),
           node('code', { className: 'agent-error-code', text: message.code }),
         ]),
       ]),
@@ -2319,6 +2342,7 @@ function renderMessage(message, toolResults) {
 
 function renderActivity(activity, toolResults) {
   const expanded = state.expandedActivities.has(activity.id);
+  const hasErrors = activity.backgroundErrorCount > 0;
   const label = activityLabel(activity);
   const accessibleLabel = `${label}${activity.running ? ', Working' : ''}`;
   const detailsId = `activity-${String(activity.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -2338,7 +2362,7 @@ function renderActivity(activity, toolResults) {
   if (expanded) populateItems();
 
   const card = node('div', {
-    className: `activity-card${expanded ? ' is-expanded' : ''}${activity.running ? ' is-running' : ''}`,
+    className: `activity-card${expanded ? ' is-expanded' : ''}${activity.running ? ' is-running' : ''}${hasErrors ? ' has-errors' : ''}`,
   });
   const action = node('button', {
     className: 'activity-summary',
@@ -2347,9 +2371,11 @@ function renderActivity(activity, toolResults) {
     'aria-controls': detailsId,
     'aria-label': `${expanded ? 'Collapse' : 'Expand'} ${accessibleLabel}`,
   }, [
-    activity.running
-      ? node('span', { className: 'status-dot working' })
-      : icon('squares'),
+    hasErrors
+      ? icon('warn')
+      : activity.running
+        ? node('span', { className: 'status-dot working' })
+        : icon('squares'),
     node('span', { className: 'activity-label', text: label }),
     node('span', {
       className: 'activity-state',

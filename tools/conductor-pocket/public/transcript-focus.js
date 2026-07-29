@@ -5,6 +5,14 @@ function isRootMessage(message) {
   return !message.parentToolUseId;
 }
 
+function isBackgroundFailure(message) {
+  return (
+    message.kind === 'agent-error' &&
+    message.code === 'background_action_failed' &&
+    Boolean(message.parentToolUseId)
+  );
+}
+
 function numericRowId(message) {
   const value = Number(message.rowId);
   return Number.isFinite(value) ? value : 0;
@@ -91,6 +99,7 @@ function activityEntry(turnId, firstMessage) {
     items: [],
     messageCount: 0,
     toolCount: 0,
+    backgroundErrorCount: 0,
     running: false,
   };
 }
@@ -114,9 +123,26 @@ export function buildFocusedTranscript(
       .filter((message) => message.kind === 'tool' && message.toolCallId)
       .map((message) => message.toolCallId),
   );
+  const backgroundFailuresByTurn = new Map();
+  for (const message of messages) {
+    if (!message.turnId || !isBackgroundFailure(message)) continue;
+    const existing = backgroundFailuresByTurn.get(message.turnId);
+    if (existing) {
+      if (existing.ids.has(message.id)) continue;
+      existing.ids.add(message.id);
+      existing.count += 1;
+    } else {
+      backgroundFailuresByTurn.set(message.turnId, {
+        count: 1,
+        ids: new Set([message.id]),
+        representative: message,
+      });
+    }
+  }
   const finalRows = completedTurns(messages, sessionStatus);
   const activeTurn = activeTurnId(messages, sessionStatus);
   const entries = [];
+  const emittedBackgroundFailureTurns = new Set();
   let activity = null;
 
   const flushActivity = () => {
@@ -169,6 +195,23 @@ export function buildFocusedTranscript(
       continue;
     }
 
+    if (isBackgroundFailure(message) && message.turnId) {
+      if (emittedBackgroundFailureTurns.has(message.turnId)) continue;
+      const group = backgroundFailuresByTurn.get(message.turnId);
+      if (!group) continue;
+      if (!activity || activity.turnId !== message.turnId) {
+        flushActivity();
+        activity = activityEntry(message.turnId, message);
+      }
+      activity.backgroundErrorCount = group.count;
+      activity.items.push({
+        ...group.representative,
+        occurrenceCount: group.count,
+      });
+      emittedBackgroundFailureTurns.add(message.turnId);
+      continue;
+    }
+
     if (message.kind === 'tool-failure') {
       if (message.toolCallId && toolCallIds.has(message.toolCallId)) continue;
       flushActivity();
@@ -208,6 +251,15 @@ function countPhrase(count, singular, plural) {
 
 export function activityLabel(activity) {
   const parts = [];
+  if (activity.backgroundErrorCount > 0) {
+    parts.push(
+      countPhrase(
+        activity.backgroundErrorCount,
+        'background failure',
+        'background failures',
+      ),
+    );
+  }
   if (activity.toolCount > 0) {
     parts.push(countPhrase(activity.toolCount, 'tool call', 'tool calls'));
   }

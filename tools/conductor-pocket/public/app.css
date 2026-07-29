@@ -1087,6 +1087,14 @@ button:active {
   color: var(--copper);
 }
 
+.activity-card.has-errors .activity-summary > .icon {
+  color: var(--down);
+}
+
+.activity-card.has-errors .activity-label {
+  color: var(--text-primary);
+}
+
 .activity-chevron {
   width: 16px;
   height: 16px;

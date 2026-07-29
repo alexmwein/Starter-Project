@@ -127,7 +127,7 @@ test('a terminal marker promotes the newest root answer on the next refresh', ()
   );
 });
 
-test('nested research prose is suppressed while failures always punch through', () => {
+test('nested research prose is suppressed while failures stay visibly compact', () => {
   const { entries } = buildFocusedTranscript(
     [
       user('question', 1, 'turn-research'),
@@ -152,6 +152,7 @@ test('nested research prose is suppressed while failures always punch through', 
         id: 'background-error',
         rowId: 5,
         kind: 'agent-error',
+        code: 'background_action_failed',
         title: 'Background action failed',
         turnId: 'turn-research',
         parentToolUseId: 'spawn-1',
@@ -162,13 +163,145 @@ test('nested research prose is suppressed while failures always punch through', 
 
   assert.deepEqual(
     entries.map((entry) => entry.kind),
-    ['user', 'tool', 'agent-error'],
+    ['user', 'tool', 'activity'],
   );
   assert.equal(entries[1].resolvedState, 'failed');
+  assert.equal(entries[2].backgroundErrorCount, 1);
+  assert.equal(activityLabel(entries[2]), '1 background failure');
   assert.equal(
     entries.some((entry) => entry.text === 'nested replay'),
     false,
   );
+});
+
+test('repeated background failures collapse into one counted activity item', () => {
+  const backgroundFailures = Array.from({ length: 20 }, (_, index) => ({
+    id: `background-error-${index + 1}`,
+    rowId: index + 3,
+    kind: 'agent-error',
+    code: 'background_action_failed',
+    severity: 'error',
+    title: 'Background action failed',
+    guidance:
+      'A background Conductor action failed. Open the turn on your Mac for full details.',
+    turnId: 'turn-research',
+    parentToolUseId: `spawn-${index + 1}`,
+  }));
+  const rootFailure = {
+    id: 'root-error',
+    rowId: 24,
+    kind: 'agent-error',
+    code: 'usage_limit',
+    severity: 'error',
+    title: 'Account limit reached',
+    turnId: 'turn-research',
+    parentToolUseId: null,
+  };
+  const { entries } = buildFocusedTranscript(
+    [
+      user('question', 1, 'turn-research'),
+      assistant('root progress', 2, 'turn-research'),
+      ...backgroundFailures,
+      { ...backgroundFailures[0] },
+      {
+        id: 'nested-result',
+        rowId: 23,
+        kind: 'turn-result',
+        state: 'failed',
+        turnId: 'turn-research',
+        parentToolUseId: 'spawn-research',
+      },
+      rootFailure,
+    ],
+    { sessionStatus: 'working' },
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => entry.kind),
+    ['user', 'activity', 'agent-error'],
+  );
+  const activity = entries[1];
+  assert.equal(activity.backgroundErrorCount, 20);
+  assert.equal(activity.running, true);
+  assert.equal(activity.items.length, 2);
+  assert.equal(activity.items[1].kind, 'agent-error');
+  assert.equal(activity.items[1].occurrenceCount, 20);
+  assert.equal(
+    activityLabel(activity),
+    '20 background failures, 1 message',
+  );
+  assert.equal(entries[2].id, 'root-error');
+});
+
+test('background failure groups preserve a completed turn’s final answer', () => {
+  const backgroundFailures = Array.from({ length: 3 }, (_, index) => ({
+    id: `complete-background-${index + 1}`,
+    rowId: index + 3,
+    kind: 'agent-error',
+    code: 'background_action_failed',
+    turnId: 'turn-complete',
+    parentToolUseId: `spawn-${index + 1}`,
+  }));
+  const { entries } = buildFocusedTranscript(
+    [
+      user('question', 1, 'turn-complete'),
+      assistant('progress', 2, 'turn-complete'),
+      ...backgroundFailures,
+      assistant('final answer', 6, 'turn-complete'),
+      {
+        id: 'complete-result',
+        rowId: 7,
+        kind: 'turn-result',
+        state: 'complete',
+        turnId: 'turn-complete',
+      },
+    ],
+    { sessionStatus: 'idle' },
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.text || null]),
+    [
+      ['user', 'question'],
+      ['activity', null],
+      ['assistant', 'final answer'],
+    ],
+  );
+  assert.equal(entries[1].backgroundErrorCount, 3);
+  assert.equal(entries[2].importance, 'primary');
+});
+
+test('unscoped and root failures remain standalone', () => {
+  const failures = [
+    {
+      id: 'root-background',
+      kind: 'agent-error',
+      code: 'background_action_failed',
+      turnId: 'turn-root',
+      parentToolUseId: null,
+    },
+    {
+      id: 'unknown-turn-background',
+      kind: 'agent-error',
+      code: 'background_action_failed',
+      turnId: null,
+      parentToolUseId: 'spawn-1',
+    },
+    {
+      id: 'nested-provider-error',
+      kind: 'agent-error',
+      code: 'provider_unavailable',
+      turnId: 'turn-root',
+      parentToolUseId: 'spawn-2',
+    },
+  ];
+
+  const { entries } = buildFocusedTranscript(failures);
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    failures.map((failure) => failure.id),
+  );
+  assert.equal(entries.every((entry) => entry.kind === 'agent-error'), true);
 });
 
 test('markerless turns remain progress even when a later turn starts', () => {
