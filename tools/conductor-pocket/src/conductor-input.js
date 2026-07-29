@@ -30,6 +30,7 @@ const NON_SEND_CLASSES = [
 ];
 const QUEUED_EDIT_MARKER = 'Editing queued message';
 const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
+const MAX_PRE_TRANSCRIPT_CONTROLS = 1;
 const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8;
 const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
 const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
@@ -729,7 +730,7 @@ function focusedDraft(process) {
   return normalizedDraft(focusedElement.value());
 }
 
-function hasStaticTextInBoundedTree(element, expectedText, budget) {
+function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
   if (budget.remaining <= 0) fail('send_unavailable');
   budget.remaining -= 1;
   let role;
@@ -744,18 +745,18 @@ function hasStaticTextInBoundedTree(element, expectedText, budget) {
     try {
       const elementName = element.name();
       nameReadable = true;
-      if (elementName === expectedText) return true;
+      if (expectedTexts.includes(elementName)) return true;
     } catch {
       // Try the value independently.
     }
     try {
       const elementValue = element.value();
       valueReadable = true;
-      if (elementValue === expectedText) return true;
+      if (expectedTexts.includes(elementValue)) return true;
     } catch {
       // Fail below unless the name was independently readable.
     }
-    if (!nameReadable && !valueReadable) fail('send_unavailable');
+    if (!nameReadable || !valueReadable) fail('send_unavailable');
   }
 
   let children;
@@ -768,7 +769,7 @@ function hasStaticTextInBoundedTree(element, expectedText, budget) {
     fail('send_unavailable');
   }
   for (const child of children) {
-    if (hasStaticTextInBoundedTree(child, expectedText, budget)) return true;
+    if (hasStaticTextInBoundedTree(child, expectedTexts, budget)) return true;
   }
   return false;
 }
@@ -821,15 +822,22 @@ function composerSendContext(process) {
       break;
     }
     let candidateChildren;
+    let pressActionCount;
     try {
       candidateChildren = mainElements[index].uiElements();
+      pressActionCount = mainElements[index]
+        .actions()
+        .filter((action) => action.name() === 'AXPress')
+        .length;
     } catch {
       fail('send_unavailable');
     }
     if (
+      mainRoles[index] !== 'AXPopUpButton' ||
       !candidateChildren ||
       typeof candidateChildren.length !== 'number' ||
-      candidateChildren.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN
+      candidateChildren.length !== 0 ||
+      pressActionCount !== 1
     ) {
       fail('send_unavailable');
     }
@@ -837,7 +845,7 @@ function composerSendContext(process) {
   if (
     transcriptBoundaryIndex < 0 ||
     transcriptBoundaryIndex - tabGroupIndex - 1 >
-      MAX_QUEUED_EDIT_CONTEXT_SIBLINGS
+      MAX_PRE_TRANSCRIPT_CONTROLS
   ) {
     fail('send_unavailable');
   }
@@ -874,12 +882,16 @@ function assertNotQueuedEditMode(process) {
   const { composer, contextElements } = composerSendContext(process);
   const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
   if (
-    contextElements.some((candidate) =>
-      hasStaticTextInBoundedTree(candidate, QUEUED_EDIT_MARKER, budget)
+    contextElements.slice(0, -1).some((candidate) =>
+      hasStaticTextInBoundedTree(
+        candidate,
+        [QUEUED_EDIT_MARKER],
+        budget,
+      )
     ) ||
     hasStaticTextInBoundedTree(
       composer,
-      QUEUED_EDIT_PLACEHOLDER,
+      [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
       budget,
     )
   ) {
