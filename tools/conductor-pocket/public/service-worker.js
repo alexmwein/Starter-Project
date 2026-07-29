@@ -1,15 +1,17 @@
-const CACHE = 'conductor-pocket-shell-v14';
+const SHELL_REVISION = '0.2.0-fast-pocket-20260729';
+const CACHE = 'conductor-pocket-shell-v15';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-focused-turns-20260728',
-  '/app.js?v=0.2.0-focused-turns-20260728',
-  '/delivery-receipts.js?v=0.2.0-focused-turns-20260728',
-  '/app-update.js?v=0.2.0-focused-turns-20260728',
-  '/http.js?v=0.2.0-focused-turns-20260728',
-  '/live-refresh.js?v=0.2.0-focused-turns-20260728',
-  '/rich-text.js?v=0.2.0-focused-turns-20260728',
-  '/transcript-focus.js?v=0.2.0-focused-turns-20260728',
+  '/app.css?v=0.2.0-fast-pocket-20260729',
+  '/app.js?v=0.2.0-fast-pocket-20260729',
+  '/delivery-receipts.js?v=0.2.0-fast-pocket-20260729',
+  '/app-update.js?v=0.2.0-fast-pocket-20260729',
+  '/http.js?v=0.2.0-fast-pocket-20260729',
+  '/live-refresh.js?v=0.2.0-fast-pocket-20260729',
+  '/rich-text.js?v=0.2.0-fast-pocket-20260729',
+  '/transcript-focus.js?v=0.2.0-fast-pocket-20260729',
+  '/swipe-navigation.js?v=0.2.0-fast-pocket-20260729',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -24,6 +26,7 @@ const SHELL_PATHS = new Set([
   '/live-refresh.js',
   '/rich-text.js',
   '/transcript-focus.js',
+  '/swipe-navigation.js',
   '/icon.svg',
   '/manifest.webmanifest',
 ]);
@@ -36,6 +39,7 @@ const VERSIONED_SHELL_PATHS = new Set([
   '/live-refresh.js',
   '/rich-text.js',
   '/transcript-focus.js',
+  '/swipe-navigation.js',
 ]);
 
 function fetchAndCache(request) {
@@ -58,22 +62,29 @@ self.addEventListener('install', (event) => {
 });
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    Promise.all([
-      caches
-        .keys()
-        .then((keys) =>
-          Promise.all(
-            keys
-              .filter(
-                (key) =>
-                  key.startsWith('conductor-pocket-shell-') &&
-                  key !== CACHE,
-              )
-              .map((key) => caches.delete(key)),
-          ),
-        ),
-      self.clients.claim(),
-    ]),
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter(
+            (key) =>
+              key.startsWith('conductor-pocket-shell-') &&
+              key !== CACHE,
+          )
+          .map((key) => caches.delete(key)),
+      );
+      await self.clients.claim();
+      const windows = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+      for (const client of windows) {
+        client.postMessage({
+          type: 'shell-activated',
+          revision: SHELL_REVISION,
+        });
+      }
+    })(),
   );
 });
 

@@ -558,16 +558,16 @@ export class ConductorDatabase {
         LIMIT ?
       `),
       maxRowId: this.#db.prepare(`
-        SELECT COALESCE(
-          (
-            SELECT rowid
-            FROM session_messages
-            WHERE session_id = ?
-            ORDER BY rowid DESC
-            LIMIT 1
-          ),
-          0
-        ) AS row_id
+        SELECT COALESCE(MAX(row_id), 0) AS row_id
+        FROM (
+          SELECT MAX(rowid) AS row_id
+          FROM session_messages INDEXED BY idx_session_messages_cancelled_at
+          WHERE session_id = ? AND cancelled_at IS NULL
+          UNION ALL
+          SELECT MAX(rowid) AS row_id
+          FROM session_messages INDEXED BY idx_session_messages_cancelled_at
+          WHERE session_id = ? AND cancelled_at IS NOT NULL
+        )
       `),
       exactUserMessageAfter: this.#db.prepare(`
         SELECT
@@ -682,7 +682,9 @@ export class ConductorDatabase {
   }
 
   getSessionMessageCursor(sessionId) {
-    return Number(this.#statements.maxRowId.get(sessionId).row_id);
+    return Number(
+      this.#statements.maxRowId.get(sessionId, sessionId).row_id,
+    );
   }
 
   findExactUserMessageAfter(sessionId, afterRowId, exactContent) {

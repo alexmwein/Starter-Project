@@ -1,24 +1,28 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-focused-turns-20260728';
+} from './delivery-receipts.js?v=0.2.0-fast-pocket-20260729';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-focused-turns-20260728';
-import { fetchJson } from './http.js?v=0.2.0-focused-turns-20260728';
+} from './app-update.js?v=0.2.0-fast-pocket-20260729';
+import { fetchJson } from './http.js?v=0.2.0-fast-pocket-20260729';
 import {
   createLiveRefreshCoordinator,
-} from './live-refresh.js?v=0.2.0-focused-turns-20260728';
+  createSessionMessageRequestCoordinator,
+} from './live-refresh.js?v=0.2.0-fast-pocket-20260729';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-focused-turns-20260728';
+} from './rich-text.js?v=0.2.0-fast-pocket-20260729';
 import {
   activityLabel,
   buildFocusedTranscript,
-} from './transcript-focus.js?v=0.2.0-focused-turns-20260728';
+} from './transcript-focus.js?v=0.2.0-fast-pocket-20260729';
+import {
+  isRecentChatsSwipe,
+} from './swipe-navigation.js?v=0.2.0-fast-pocket-20260729';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -27,6 +31,7 @@ const AWAY_LOCK_MS = 5 * 60 * 1000;
 const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
 const RESUME_REQUEST_MS = 6 * 1000;
 const LIVE_REFRESH_DEBOUNCE_MS = 100;
+const METADATA_REFRESH_DEBOUNCE_MS = 800;
 const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
 const APP_UPDATE_CHECK_INTERVAL_MS = 30 * 1000;
 const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
@@ -38,6 +43,7 @@ const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
+const CLIENT_SHELL_REVISION = '0.2.0-fast-pocket-20260729';
 
 const state = {
   auth: null,
@@ -51,9 +57,14 @@ const state = {
   workspaces: [],
   workspacesLoaded: false,
   recentSessions: [],
+  recentSessionsLoad: 'idle',
+  recentSessionsError: null,
+  recentSessionsRequestGeneration: 0,
   sessionsByWorkspace: new Map(),
   messagesBySession: new Map(),
   cursorsBySession: new Map(),
+  messageBaselinesBySession: new Set(),
+  sessionOpenController: null,
   route: { view: 'workspaces', workspaceId: null, sessionId: null },
   optimistic: [],
   searchQuery: '',
@@ -64,22 +75,43 @@ const state = {
   expandedActivities: new Set(),
 };
 
-const liveRefresh = createLiveRefreshCoordinator({
+const sessionMessageRequests = createSessionMessageRequestCoordinator();
+
+function resetSessionMessageState() {
+  state.sessionOpenController?.abort();
+  state.sessionOpenController = null;
+  sessionMessageRequests.reset();
+  state.messagesBySession.clear();
+  state.cursorsBySession.clear();
+  state.messageBaselinesBySession.clear();
+}
+
+const transcriptRefresh = createLiveRefreshCoordinator({
   delayMs: LIVE_REFRESH_DEBOUNCE_MS,
   async run({ signal }) {
-    const workspaceId = state.route.workspaceId;
     const sessionId = state.route.sessionId;
+    const requestOptions = {
+      signal,
+      timeoutMs: LIVE_REFRESH_REQUEST_MS,
+    };
+    if (sessionId) await refreshMessages(sessionId, requestOptions);
+  },
+  onError: handleRuntimeError,
+});
+
+const metadataRefresh = createLiveRefreshCoordinator({
+  delayMs: METADATA_REFRESH_DEBOUNCE_MS,
+  async run({ signal }) {
+    const workspaceId = state.route.workspaceId;
     const requestOptions = {
       signal,
       timeoutMs: LIVE_REFRESH_REQUEST_MS,
     };
     await Promise.all([
       refreshWorkspaces(requestOptions),
+      loadRecentSessions(requestOptions),
       workspaceId
         ? loadSessions(workspaceId, requestOptions)
-        : Promise.resolve(),
-      sessionId
-        ? refreshMessages(sessionId, requestOptions)
         : Promise.resolve(),
     ]);
   },
@@ -467,8 +499,7 @@ async function bootstrap() {
 function renderLock({ errorMessage = '' } = {}) {
   stopEvents();
   state.shell = null;
-  state.messagesBySession.clear();
-  state.cursorsBySession.clear();
+  resetSessionMessageState();
   state.optimistic = [];
   state.seenMessageIds.clear();
   const action = node('button', {
@@ -565,9 +596,11 @@ function renderSignedOut() {
   state.csrfToken = null;
   state.workspaces = [];
   state.recentSessions = [];
+  state.recentSessionsLoad = 'idle';
+  state.recentSessionsError = null;
+  state.recentSessionsRequestGeneration += 1;
   state.sessionsByWorkspace.clear();
-  state.messagesBySession.clear();
-  state.cursorsBySession.clear();
+  resetSessionMessageState();
   state.optimistic = [];
   state.seenMessageIds.clear();
   gateView({
@@ -704,15 +737,21 @@ function loadDrafts() {
 }
 
 function draftFor(sessionId) {
+  if (!sessionId) return '';
   return loadDrafts()[sessionId] || '';
 }
 
 function saveDraft(sessionId, value) {
-  if (!sessionId) return;
-  const drafts = loadDrafts();
-  if (value) drafts[sessionId] = value.slice(0, 16 * 1024);
-  else delete drafts[sessionId];
-  localStorage.setItem('cp:drafts:v1', JSON.stringify(drafts));
+  if (!sessionId) return false;
+  try {
+    const drafts = loadDrafts();
+    if (value) drafts[sessionId] = value.slice(0, 16 * 1024);
+    else delete drafts[sessionId];
+    localStorage.setItem('cp:drafts:v1', JSON.stringify(drafts));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 let cacheDatabasePromise;
@@ -1201,6 +1240,7 @@ function ensureShell() {
     latestButton.hidden = distance < 120;
     transcriptNav.root.classList.toggle('is-scrolled', transcriptScroll.scrollTop > 1);
   });
+  installRecentChatsSwipe(transcriptScroll);
 
   state.shell = {
     root,
@@ -1220,6 +1260,68 @@ function ensureShell() {
   appUpdateCoordinator?.stateChanged();
   renderWorkspacePanel();
   renderSessionsPanel();
+}
+
+function installRecentChatsSwipe(element) {
+  let start = null;
+  const reset = () => {
+    start = null;
+  };
+  element.addEventListener(
+    'touchstart',
+    (event) => {
+      const touch = event.touches[0];
+      const blockedTarget =
+        event.target instanceof Element
+          ? event.target.closest(
+              'a, button, input, textarea, select, summary, details, pre, code, table, [contenteditable="true"], [role="button"]',
+            )
+          : null;
+      if (
+        state.route.view !== 'transcript' ||
+        overlayRoot.childElementCount > 0 ||
+        event.touches.length !== 1 ||
+        !touch ||
+        touch.clientX < 24 ||
+        blockedTarget
+      ) {
+        reset();
+        return;
+      }
+      start = {
+        x: touch.clientX,
+        y: touch.clientY,
+        at: event.timeStamp,
+      };
+    },
+    { passive: true },
+  );
+  element.addEventListener(
+    'touchend',
+    (event) => {
+      const touch = event.changedTouches[0];
+      const candidate = start;
+      reset();
+      if (
+        !candidate ||
+        !touch ||
+        window.getSelection()?.toString() ||
+        !isRecentChatsSwipe({
+          startX: candidate.x,
+          startY: candidate.y,
+          endX: touch.clientX,
+          endY: touch.clientY,
+          durationMs: event.timeStamp - candidate.at,
+          viewportWidth: window.innerWidth,
+        })
+      ) {
+        return;
+      }
+      void openSwitcher();
+    },
+    { passive: true },
+  );
+  element.addEventListener('touchcancel', reset, { passive: true });
 }
 
 function createPanelNav({ backLabel, onBack, onSwitcher, titleClick }) {
@@ -1329,21 +1431,54 @@ async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
     const data = await request('/api/workspaces', { signal, timeoutMs });
     state.workspaces = data.workspaces;
     state.workspacesLoaded = true;
-    await cacheSet('workspaces', state.workspaces);
     renderWorkspacePanel();
+    void cacheSet('workspaces', state.workspaces);
   } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') return;
     handleRuntimeError(error);
   }
 }
 
-async function loadRecentSessions() {
+async function loadRecentSessions({ signal, timeoutMs = 0 } = {}) {
+  const generation = state.recentSessionsRequestGeneration + 1;
+  state.recentSessionsRequestGeneration = generation;
+  state.recentSessionsLoad = 'loading';
+  state.recentSessionsError = null;
   try {
-    const data = await request('/api/sessions/recent?limit=100');
+    const data = await request('/api/sessions/recent?limit=100', {
+      signal,
+      timeoutMs,
+    });
+    if (generation !== state.recentSessionsRequestGeneration) {
+      return { ok: false, superseded: true };
+    }
     state.recentSessions = data.sessions;
-    await cacheSet('recent-sessions', data.sessions);
-  } catch {
+    state.recentSessionsLoad = 'ready';
+    void cacheSet('recent-sessions', data.sessions);
+    return { ok: true, cached: false };
+  } catch (error) {
+    if (generation !== state.recentSessionsRequestGeneration) {
+      return { ok: false, superseded: true };
+    }
+    if (signal?.aborted || error?.name === 'AbortError') {
+      state.recentSessionsLoad =
+        state.recentSessions.length > 0 ? 'ready' : 'idle';
+      return { ok: false, aborted: true };
+    }
     const cached = await cacheGet('recent-sessions');
+    if (generation !== state.recentSessionsRequestGeneration) {
+      return { ok: false, superseded: true };
+    }
     if (Array.isArray(cached)) state.recentSessions = cached;
+    state.recentSessionsLoad = 'error';
+    state.recentSessionsError =
+      state.recentSessions.length > 0
+        ? 'Couldn’t refresh recent chats. Showing saved chats.'
+        : 'Recent chats are unavailable. Check the Mac connection and try again.';
+    return {
+      ok: false,
+      cached: state.recentSessions.length > 0,
+    };
   }
 }
 
@@ -1351,10 +1486,18 @@ async function loadSessions(
   workspaceId,
   { signal, timeoutMs = 0 } = {},
 ) {
-  const cached = await cacheGet(`sessions:${workspaceId}`);
-  if (Array.isArray(cached) && !state.sessionsByWorkspace.has(workspaceId)) {
-    state.sessionsByWorkspace.set(workspaceId, cached);
-    renderSessionsPanel();
+  if (state.sessionsByWorkspace.has(workspaceId)) {
+    if (state.route.workspaceId === workspaceId) renderSessionsPanel();
+  } else {
+    void cacheGet(`sessions:${workspaceId}`).then((cached) => {
+      if (
+        Array.isArray(cached) &&
+        !state.sessionsByWorkspace.has(workspaceId)
+      ) {
+        state.sessionsByWorkspace.set(workspaceId, cached);
+        if (state.route.workspaceId === workspaceId) renderSessionsPanel();
+      }
+    });
   }
   try {
     const data = await request(
@@ -1362,10 +1505,15 @@ async function loadSessions(
       { signal, timeoutMs },
     );
     state.sessionsByWorkspace.set(workspaceId, data.sessions);
-    await cacheSet(`sessions:${workspaceId}`, data.sessions);
-    renderSessionsPanel();
+    if (state.route.workspaceId === workspaceId) renderSessionsPanel();
+    void cacheSet(`sessions:${workspaceId}`, data.sessions);
+    return data.sessions;
   } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') {
+      return sessionsFor(workspaceId);
+    }
     handleRuntimeError(error);
+    return sessionsFor(workspaceId);
   }
 }
 
@@ -1619,6 +1767,13 @@ function updateNavSubtitle(element, fallback) {
 }
 
 async function openSession(sessionId, { workspaceId = state.route.workspaceId, push = true } = {}) {
+  state.sessionOpenController?.abort();
+  const controller = new AbortController();
+  state.sessionOpenController = controller;
+  const isCurrent = () =>
+    !controller.signal.aborted &&
+    state.route.sessionId === sessionId &&
+    state.route.workspaceId === workspaceId;
   if (state.route.sessionId !== sessionId) state.expandedActivities.clear();
   state.route = { view: 'transcript', workspaceId, sessionId };
   persistRoute();
@@ -1626,19 +1781,43 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
   updateRoutePanels();
   renderWorkspacePanel();
   renderSessionsPanel();
-  const cached = await cacheGet(`messages:${sessionId}`);
-  if (cached?.messages && !state.messagesBySession.has(sessionId)) {
-    state.messagesBySession.set(sessionId, cached.messages);
-    state.cursorsBySession.set(sessionId, cached.cursor || 0);
-    renderTranscript();
-  }
   const composer = state.shell.composer;
   composer.field.value = draftFor(sessionId);
   composer.resize();
   renderComposerState();
-  await refreshMessages(sessionId, { full: true });
+  const hasMemorySnapshot = state.messagesBySession.has(sessionId);
+  const hasLiveBaseline =
+    state.messageBaselinesBySession.has(sessionId);
+  renderTranscript();
+
+  if (hasMemorySnapshot && hasLiveBaseline) {
+    await refreshMessages(sessionId, {
+      signal: controller.signal,
+    });
+  } else {
+    const cachedSnapshot = cacheGet(`messages:${sessionId}`).then((cached) => {
+      if (
+        cached?.messages &&
+        isCurrent() &&
+        !state.messagesBySession.has(sessionId)
+      ) {
+        state.messagesBySession.set(sessionId, cached.messages);
+        state.cursorsBySession.set(sessionId, cached.cursor || 0);
+        renderTranscript();
+      }
+    });
+    const networkSnapshot = refreshMessages(sessionId, {
+      full: true,
+      signal: controller.signal,
+    });
+    await Promise.allSettled([cachedSnapshot, networkSnapshot]);
+  }
+  if (!isCurrent()) return;
   state.connectionProbe = null;
   renderTranscript();
+  if (state.sessionOpenController === controller) {
+    state.sessionOpenController = null;
+  }
 }
 
 async function refreshMessages(
@@ -1646,24 +1825,52 @@ async function refreshMessages(
   { full = false, signal, timeoutMs = 0 } = {},
 ) {
   if (!sessionId) return [];
-  const cursor = full ? 0 : state.cursorsBySession.get(sessionId) || 0;
+  const effectiveFull =
+    full || !state.messageBaselinesBySession.has(sessionId);
   try {
-    const data = await request(
-      `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}`,
-      { signal, timeoutMs },
-    );
-    const existing = full ? [] : state.messagesBySession.get(sessionId) || [];
-    const messages = full ? data.messages : [...existing, ...data.messages];
-    state.messagesBySession.set(sessionId, dedupeMessages(messages));
-    state.cursorsBySession.set(sessionId, data.cursor);
-    const reconciled = reconcileOptimistic(sessionId);
-    await cacheSet(`messages:${sessionId}`, {
-      cursor: data.cursor,
-      messages: state.messagesBySession.get(sessionId).slice(-50),
+    return await sessionMessageRequests.run({
+      sessionId,
+      full: effectiveFull,
+      signal,
+      load: async () => {
+        const cursor = effectiveFull
+          ? 0
+          : state.cursorsBySession.get(sessionId) || 0;
+        const data = await request(
+          `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}`,
+          { signal, timeoutMs },
+        );
+        return { cursor, data };
+      },
+      commit: ({ cursor, data }) => {
+        const currentCursor = state.cursorsBySession.get(sessionId) || 0;
+        const responseCursor = Math.max(0, Number(data.cursor) || 0);
+        if (effectiveFull && responseCursor < currentCursor) {
+          return [];
+        }
+        const existing = effectiveFull
+          ? []
+          : state.messagesBySession.get(sessionId) || [];
+        const messages = effectiveFull
+          ? data.messages
+          : [...existing, ...data.messages];
+        const nextCursor = Math.max(cursor, currentCursor, responseCursor);
+        state.messagesBySession.set(sessionId, dedupeMessages(messages));
+        state.cursorsBySession.set(sessionId, nextCursor);
+        if (effectiveFull) {
+          state.messageBaselinesBySession.add(sessionId);
+        }
+        const reconciled = reconcileOptimistic(sessionId);
+        if (state.route.sessionId === sessionId) renderTranscript();
+        void cacheSet(`messages:${sessionId}`, {
+          cursor: nextCursor,
+          messages: state.messagesBySession.get(sessionId).slice(-50),
+        });
+        return reconciled;
+      },
     });
-    if (state.route.sessionId === sessionId) renderTranscript();
-    return reconciled;
   } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') return [];
     handleRuntimeError(error);
     return [];
   }
@@ -1808,21 +2015,24 @@ function isMessageContinuation(previous, message) {
 
 function messageRenderKey(message, toolResults) {
   if (message.kind === 'activity') {
+    const expanded = state.expandedActivities.has(message.id);
     return JSON.stringify([
       message.kind,
       message.id,
       message.running,
       message.messageCount,
       message.toolCount,
-      state.expandedActivities.has(message.id),
-      message.items.map((item) => [
-        item.id,
-        item.text,
-        item.resolvedState ||
-          (item.kind === 'tool'
-            ? toolResults.get(item.toolCallId)?.state || item.state
-            : item.state),
-      ]),
+      expanded,
+      expanded
+        ? message.items.map((item) => [
+            item.id,
+            item.text,
+            item.resolvedState ||
+              (item.kind === 'tool'
+                ? toolResults.get(item.toolCallId)?.state || item.state
+                : item.state),
+          ])
+        : null,
     ]);
   }
   const toolResult =
@@ -2006,10 +2216,14 @@ function renderActivity(activity, toolResults) {
     hidden: !expanded,
   });
 
-  for (const item of activity.items) {
-    const rendered = renderMessage(item, toolResults);
-    if (rendered) itemList.append(rendered);
+  function populateItems() {
+    if (itemList.childElementCount > 0) return;
+    for (const item of activity.items) {
+      const rendered = renderMessage(item, toolResults);
+      if (rendered) itemList.append(rendered);
+    }
   }
+  if (expanded) populateItems();
 
   const card = node('div', {
     className: `activity-card${expanded ? ' is-expanded' : ''}${activity.running ? ' is-running' : ''}`,
@@ -2036,6 +2250,7 @@ function renderActivity(activity, toolResults) {
     const nextExpanded = !state.expandedActivities.has(activity.id);
     if (nextExpanded) state.expandedActivities.add(activity.id);
     else state.expandedActivities.delete(activity.id);
+    if (nextExpanded) populateItems();
     card.classList.toggle('is-expanded', nextExpanded);
     itemList.hidden = !nextExpanded;
     action.setAttribute('aria-expanded', String(nextExpanded));
@@ -2090,6 +2305,8 @@ function renderComposerState() {
   const { field, send, reason, draftNote } = state.shell.composer;
   const hasText = field.value.trim().length > 0;
   const down = state.connection === 'offline';
+  const draftSaved =
+    !hasText || draftFor(state.route.sessionId) === field.value;
   send.hidden = down;
   reason.hidden = !down;
   if (down) {
@@ -2100,8 +2317,14 @@ function renderComposerState() {
   }
   send.disabled = !hasText;
   send.classList.toggle('unverified', hasText && !state.connectionProbe);
-  draftNote.hidden = !(down && hasText);
-  draftNote.textContent = down && hasText ? 'Draft saved on this phone' : '';
+  draftNote.hidden = !(hasText && (down || !draftSaved));
+  draftNote.classList.toggle('is-error', !draftSaved);
+  draftNote.textContent =
+    hasText && !draftSaved
+      ? 'Keep this app open — this draft couldn’t be saved'
+      : down && hasText
+        ? 'Draft saved on this phone'
+        : '';
 }
 
 async function sendCurrentMessage() {
@@ -2433,14 +2656,22 @@ function startEvents() {
       renderConnectionState();
     }
   };
-  eventSource.addEventListener('ready', () => {
+  eventSource.addEventListener('ready', (event) => {
     live();
+    try {
+      appUpdateCoordinator?.serverRevision(
+        JSON.parse(event.data).shellRevision,
+      );
+    } catch {
+      // The periodic health check remains the update fallback.
+    }
     void appUpdateCoordinator?.checkForUpdate({ force: true });
   });
   eventSource.addEventListener('heartbeat', live);
   eventSource.addEventListener('change', () => {
     live();
-    liveRefresh.schedule();
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
   });
   eventSource.addEventListener('locked', async (event) => {
     let code = 'device_locked';
@@ -2500,7 +2731,8 @@ function startEvents() {
 function stopEvents() {
   state.eventSource?.close();
   state.eventSource = null;
-  liveRefresh.stop();
+  transcriptRefresh.stop();
+  metadataRefresh.stop();
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   if (state.activityTimer) clearInterval(state.activityTimer);
   state.heartbeatTimer = null;
@@ -2580,16 +2812,59 @@ async function openSwitcher() {
     const sessions = state.recentSessions.filter((session) =>
       `${session.title} ${session.workspaceName}`.toLowerCase().includes(query),
     );
-    sessions.forEach((session) => list.append(sessionRow(session, { crossWorkspace: true })));
-    if (!sessions.length) {
+    if (state.recentSessionsError) {
       list.append(
-        node('li', { className: 'empty-state' }, [
-          node('h2', { text: `No matches for “${search.value.trim()}”` }),
+        node('li', {
+          className: 'switcher-notice is-error',
+          role: 'alert',
+        }, [
+          icon('warn'),
+          node('span', { text: state.recentSessionsError }),
+          node('button', {
+            className: 'text-button',
+            type: 'button',
+            text: 'Retry',
+            on: {
+              click: () => {
+                const pending = loadRecentSessions();
+                render();
+                void pending.then(render);
+              },
+            },
+          }),
         ]),
       );
     }
+    sessions.forEach((session) => list.append(sessionRow(session, { crossWorkspace: true })));
+    if (!sessions.length) {
+      if (
+        state.recentSessionsLoad === 'loading' &&
+        !state.recentSessionsError
+      ) {
+        list.append(
+          node('li', {
+            className: 'switcher-notice',
+            role: 'status',
+          }, [
+            node('span', { className: 'status-dot working' }),
+            node('span', { text: 'Loading recent chats…' }),
+          ]),
+        );
+      } else if (!state.recentSessionsError) {
+        list.append(
+          node('li', { className: 'empty-state' }, [
+            node('h2', {
+              text: query
+                ? `No matches for “${search.value.trim()}”`
+                : 'No recent chats yet',
+            }),
+          ]),
+        );
+      }
+    }
   };
   search.addEventListener('input', render);
+  const pending = loadRecentSessions();
   render();
   openSheet(
     'Recent chats',
@@ -2600,7 +2875,7 @@ async function openSwitcher() {
     ]),
     { className: 'switcher' },
   );
-  void loadRecentSessions().then(render);
+  void pending.then(render);
 }
 
 async function openConnectionSheet() {
@@ -2814,7 +3089,7 @@ function confirmClearCache() {
           click: async () => {
             try {
               await clearTranscriptCache();
-              state.messagesBySession.clear();
+              resetSessionMessageState();
               closeOverlay();
               await startApplication();
             } catch (error) {
@@ -2988,16 +3263,38 @@ async function revealApplication() {
 }
 
 function currentAppUpdateReloadIsSafe() {
+  const composerValue = state.shell?.composer.field?.value || '';
+  const persistedComposerValue = draftFor(state.route.sessionId);
+  let retired = originRetired;
+  try {
+    retired =
+      retired ||
+      localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
+  } catch {
+    retired = true;
+  }
   return appUpdateReloadIsSafe({
-    originRetired:
-      originRetired ||
-      localStorage.getItem(ORIGIN_RETIRED_KEY) === '1',
+    originRetired: retired,
     sensitiveOperations: appUpdateSensitiveOperations,
     pairing: new URLSearchParams(location.hash.slice(1)).has('pair'),
     overlayOpen: overlayRoot.childElementCount > 0,
-    composerValue: state.shell?.composer.field.value || '',
+    composerValue,
+    persistedComposerValue,
     deliveries: state.optimistic,
   });
+}
+
+function reloadForShellRevision(revision) {
+  const target = new URL(location.href);
+  target.pathname = '/';
+  target.search = '';
+  target.searchParams.set(
+    'appRevision',
+    typeof revision === 'string' && revision
+      ? revision
+      : `${CLIENT_SHELL_REVISION}-${Date.now()}`,
+  );
+  location.replace(`${target.pathname}${target.search}${target.hash}`);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -3027,13 +3324,32 @@ if ('serviceWorker' in navigator) {
   appUpdateCoordinator = createAppUpdateCoordinator({
     serviceWorker: navigator.serviceWorker,
     getRegistration: getServiceWorkerRegistration,
+    clientRevision: CLIENT_SHELL_REVISION,
+    getServerRevision: async () => {
+      const { response, payload } = await fetchJson('/api/health', {
+        timeoutMs: LIVE_REFRESH_REQUEST_MS,
+      });
+      if (!response.ok || typeof payload.shellRevision !== 'string') {
+        throw new Error('shell_revision_unavailable');
+      }
+      return payload.shellRevision;
+    },
     canCheck: () =>
       !originRetired &&
       localStorage.getItem(ORIGIN_RETIRED_KEY) !== '1',
     canReload: currentAppUpdateReloadIsSafe,
-    reload: () => location.reload(),
+    reload: reloadForShellRevision,
     isHidden: () => document.hidden,
     checkIntervalMs: APP_UPDATE_CHECK_INTERVAL_MS,
+  });
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (
+      event.data?.type !== 'shell-activated' ||
+      typeof event.data.revision !== 'string'
+    ) {
+      return;
+    }
+    appUpdateCoordinator.serverRevision(event.data.revision);
   });
   appUpdateCoordinator.start();
   void appUpdateCoordinator.checkForUpdate({ force: true });

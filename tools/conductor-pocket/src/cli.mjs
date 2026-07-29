@@ -23,6 +23,7 @@ import {
   DEFAULT_PORT,
   REAUTHENTICATION_MODE_FACE_ID,
   REAUTHENTICATION_MODE_TAILSCALE_SESSION,
+  SHELL_REVISION,
 } from './constants.mjs';
 import { ConductorDatabase, DatabaseWatcher } from './conductor-db.mjs';
 import { SecurityManager } from './security.mjs';
@@ -247,6 +248,7 @@ async function healthStatus(
   origin,
   version = APP_VERSION,
   expectedRevision = null,
+  expectedShellRevision = SHELL_REVISION,
 ) {
   try {
     const response = await fetch(`${origin}/api/health`, {
@@ -258,12 +260,20 @@ async function healthStatus(
       ok:
         body?.ok === true &&
         body.version === version &&
+        (!expectedShellRevision ||
+          body.shellRevision === expectedShellRevision) &&
         (!expectedRevision || body.configRevision === expectedRevision),
       version: body?.version || null,
+      shellRevision: body?.shellRevision || null,
       configRevision: body?.configRevision || null,
     };
   } catch {
-    return { ok: false, version: null, configRevision: null };
+    return {
+      ok: false,
+      version: null,
+      shellRevision: null,
+      configRevision: null,
+    };
   }
 }
 
@@ -286,6 +296,7 @@ async function waitForInstalledRelay(config) {
       if (
         body?.ok === true &&
         body.version === APP_VERSION &&
+        body.shellRevision === SHELL_REVISION &&
         body.configRevision === expectedRevision
       ) {
         return;
@@ -521,6 +532,7 @@ async function pair(options) {
             if (
               body?.ok === true &&
               body.version === APP_VERSION &&
+              body.shellRevision === SHELL_REVISION &&
               body.configRevision === configRevision(rotated.config)
             ) {
               healthy = true;
@@ -715,6 +727,7 @@ async function doctor(options) {
       loopback,
       privateHttps,
       expectedVersion: APP_VERSION,
+      expectedShellRevision: SHELL_REVISION,
       expectedRevision,
       reason:
         loopback.ok && privateHttps.ok

@@ -376,6 +376,36 @@ button:active {
   list-style: none;
 }
 
+.switcher-notice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 52px;
+  margin: 4px var(--screen-gutter) 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+
+.switcher-notice > .icon,
+.switcher-notice > .status-dot {
+  width: 16px;
+  height: 16px;
+}
+
+.switcher-notice.is-error > .icon {
+  color: var(--down);
+}
+
+.switcher-notice .text-button {
+  min-width: 44px;
+  padding: 8px 0 8px 8px;
+  font-size: 0.8125rem;
+}
+
 .data-row {
   position: relative;
   display: grid;
@@ -1287,6 +1317,10 @@ button:active {
   color: var(--text-secondary);
   font-size: 0.75rem;
   line-height: 1rem;
+}
+
+.draft-note.is-error {
+  color: var(--down);
 }
 
 .latest-button {

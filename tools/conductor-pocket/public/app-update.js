@@ -7,6 +7,7 @@ export function appUpdateReloadIsSafe({
   pairing = false,
   overlayOpen = false,
   composerValue = '',
+  persistedComposerValue = '',
   deliveries = [],
 } = {}) {
   if (
@@ -15,7 +16,8 @@ export function appUpdateReloadIsSafe({
     pairing ||
     overlayOpen ||
     typeof composerValue !== 'string' ||
-    composerValue.length > 0 ||
+    typeof persistedComposerValue !== 'string' ||
+    composerValue !== persistedComposerValue ||
     !Array.isArray(deliveries)
   ) {
     return false;
@@ -54,6 +56,8 @@ export function createAppUpdateCoordinator({
   canCheck = () => true,
   canReload,
   reload,
+  clientRevision = null,
+  getServerRevision = null,
   isHidden = () => false,
   now = () => Date.now(),
   checkIntervalMs = DEFAULT_CHECK_INTERVAL_MS,
@@ -66,6 +70,9 @@ export function createAppUpdateCoordinator({
     typeof canCheck !== 'function' ||
     typeof canReload !== 'function' ||
     typeof reload !== 'function' ||
+    (clientRevision !== null && typeof clientRevision !== 'string') ||
+    (getServerRevision !== null &&
+      typeof getServerRevision !== 'function') ||
     typeof isHidden !== 'function' ||
     !Number.isFinite(checkIntervalMs) ||
     checkIntervalMs < 0
@@ -75,6 +82,7 @@ export function createAppUpdateCoordinator({
 
   let observedController = serviceWorker.controller || null;
   let updatePending = false;
+  let pendingRevision = null;
   let reloadStarted = false;
   let checkInFlight = null;
   let lastCheckAt = Number.NEGATIVE_INFINITY;
@@ -92,7 +100,7 @@ export function createAppUpdateCoordinator({
     if (!safe) return false;
     reloadStarted = true;
     try {
-      reload();
+      reload(pendingRevision);
       return true;
     } catch {
       reloadStarted = false;
@@ -118,6 +126,21 @@ export function createAppUpdateCoordinator({
     observeController();
   }
 
+  function serverRevision(revision) {
+    if (
+      !clientRevision ||
+      typeof revision !== 'string' ||
+      revision.length === 0 ||
+      revision === clientRevision
+    ) {
+      return false;
+    }
+    updatePending = true;
+    pendingRevision = revision;
+    applyIfSafe();
+    return true;
+  }
+
   async function checkForUpdate({ force = false } = {}) {
     try {
       if (!canCheck() || isHidden()) return false;
@@ -136,7 +159,15 @@ export function createAppUpdateCoordinator({
         if (!registration || typeof registration.update !== 'function') {
           return false;
         }
-        await registration.update();
+        const revisionCheck = getServerRevision
+          ? Promise.resolve()
+              .then(() => getServerRevision())
+              .then((revision) => serverRevision(revision))
+          : Promise.resolve(false);
+        await Promise.all([
+          registration.update(),
+          revisionCheck,
+        ]);
         observeController();
         applyIfSafe();
         return true;
@@ -175,6 +206,7 @@ export function createAppUpdateCoordinator({
     started = false;
     serviceWorker.removeEventListener('controllerchange', onControllerChange);
     updatePending = false;
+    pendingRevision = null;
     reloadStarted = false;
   }
 
@@ -183,6 +215,7 @@ export function createAppUpdateCoordinator({
     stop,
     foreground,
     stateChanged,
+    serverRevision,
     checkForUpdate,
   };
 }
