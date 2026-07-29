@@ -1,28 +1,28 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-fast-pocket-20260729';
+} from './delivery-receipts.js?v=0.2.0-fast-copy-20260729';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-fast-pocket-20260729';
-import { fetchJson } from './http.js?v=0.2.0-fast-pocket-20260729';
+} from './app-update.js?v=0.2.0-fast-copy-20260729';
+import { fetchJson } from './http.js?v=0.2.0-fast-copy-20260729';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-fast-pocket-20260729';
+} from './live-refresh.js?v=0.2.0-fast-copy-20260729';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-fast-pocket-20260729';
+} from './rich-text.js?v=0.2.0-fast-copy-20260729';
 import {
   activityLabel,
   buildFocusedTranscript,
-} from './transcript-focus.js?v=0.2.0-fast-pocket-20260729';
+} from './transcript-focus.js?v=0.2.0-fast-copy-20260729';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-fast-pocket-20260729';
+} from './swipe-navigation.js?v=0.2.0-fast-copy-20260729';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -43,7 +43,7 @@ const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-fast-pocket-20260729';
+const CLIENT_SHELL_REVISION = '0.2.0-fast-copy-20260729';
 
 const state = {
   auth: null,
@@ -126,6 +126,7 @@ const ICONS = {
   checkDouble: 'i-check-double',
   chevronDown: 'i-chevron-down',
   close: 'i-close',
+  copy: 'i-copy',
   faceid: 'i-faceid',
   gear: 'i-gear',
   laptop: 'i-laptop',
@@ -194,6 +195,106 @@ function announce(message) {
   requestAnimationFrame(() => {
     announcer.textContent = message;
   });
+}
+
+function legacyCopyText(text) {
+  const field = node('textarea', {
+    className: 'clipboard-proxy',
+    value: text,
+    readOnly: true,
+    'aria-hidden': 'true',
+  });
+  document.body.append(field);
+  try {
+    field.focus({ preventScroll: true });
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    return (
+      typeof document.execCommand === 'function' &&
+      document.execCommand('copy')
+    );
+  } finally {
+    field.remove();
+  }
+}
+
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Older standalone Safari builds can expose the API but reject it.
+    }
+  }
+  if (!legacyCopyText(text)) throw new Error('clipboard_unavailable');
+}
+
+function copyControl(
+  text,
+  {
+    label,
+    className,
+    compact = false,
+  },
+) {
+  const labelNode = node('span', {
+    className: compact ? 'copy-control-label sr-only' : 'copy-control-label',
+    text: label,
+  });
+  const control = node('button', {
+    className,
+    type: 'button',
+    'aria-label': label,
+  }, [icon('copy'), labelNode]);
+  control.addEventListener('click', async () => {
+    if (control.disabled) return;
+    control.disabled = true;
+    try {
+      await writeClipboardText(text);
+      control.classList.remove('is-failed');
+      control.classList.add('is-copied');
+      control.setAttribute('aria-label', 'Copied');
+      labelNode.textContent = 'Copied';
+      control.replaceChildren(icon('check'), labelNode);
+      announce('Copied to clipboard');
+    } catch {
+      control.classList.remove('is-copied');
+      control.classList.add('is-failed');
+      control.setAttribute('aria-label', 'Copy failed');
+      labelNode.textContent = 'Copy failed';
+      control.replaceChildren(icon('warn'), labelNode);
+      announce('Copy failed. Touch and hold the text to select it.');
+    } finally {
+      control.disabled = false;
+      window.setTimeout(() => {
+        if (!control.isConnected) return;
+        control.classList.remove('is-copied', 'is-failed');
+        control.setAttribute('aria-label', label);
+        labelNode.textContent = label;
+        control.replaceChildren(icon('copy'), labelNode);
+      }, 1_600);
+    }
+  });
+  return control;
+}
+
+function addCodeCopyControls(content) {
+  for (const pre of content.querySelectorAll('pre')) {
+    const code = pre.querySelector('code');
+    if (!code) continue;
+    const wrapper = node('div', { className: 'code-block' });
+    pre.replaceWith(wrapper);
+    wrapper.append(
+      pre,
+      copyControl(code.textContent, {
+        label: 'Copy code',
+        className: 'code-copy-button',
+        compact: true,
+      }),
+    );
+  }
+  return content;
 }
 
 function formatRelative(value) {
@@ -2084,6 +2185,9 @@ function renderMessage(message, toolResults) {
   }
   if (message.kind === 'assistant') {
     const profile = richTextProfile(message.text);
+    const content = addCodeCopyControls(
+      renderRichText(document, message.text),
+    );
     const item = node('li', {
       className: `message assistant ${message.importance === 'progress' ? 'progress' : 'primary'} is-${profile.density}`,
     });
@@ -2095,8 +2199,16 @@ function renderMessage(message, toolResults) {
             ? 'Conductor progress:'
             : 'Conductor replied:',
       }),
-      renderRichText(document, message.text),
+      content,
     );
+    if (message.importance !== 'progress') {
+      item.append(
+        copyControl(message.text, {
+          label: 'Copy response',
+          className: 'message-copy-button',
+        }),
+      );
+    }
     return item;
   }
   if (message.kind === 'user' || message.kind === 'optimistic') {

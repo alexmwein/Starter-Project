@@ -674,6 +674,9 @@ button:active {
   color: var(--text-primary);
   font-size: 1rem;
   line-height: 1.5rem;
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .message.assistant.is-brief {
@@ -825,14 +828,90 @@ button:active {
   background: var(--inset);
 }
 
+.message.assistant .code-block {
+  position: relative;
+  max-width: 100%;
+  margin: 6px 0 8px;
+}
+
+.message.assistant .code-block pre {
+  margin: 0;
+}
+
 .message.assistant pre code {
   display: block;
   min-width: max-content;
-  padding: 12px;
+  padding: 12px 56px 12px 12px;
   font-family: var(--font-mono);
   font-size: 0.8125rem;
   line-height: 1.1875rem;
   white-space: pre;
+}
+
+.code-copy-button {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--inset) 88%, transparent);
+  color: var(--text-secondary);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.code-copy-button .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.code-copy-button.is-copied {
+  color: var(--live);
+}
+
+.code-copy-button.is-failed {
+  color: var(--down);
+}
+
+.message-copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  margin: -2px 0 -10px -8px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.message-copy-button .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.message-copy-button.is-copied {
+  color: var(--live);
+}
+
+.message-copy-button.is-failed {
+  color: var(--down);
+}
+
+.clipboard-proxy {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .message.assistant .table-scroll {
