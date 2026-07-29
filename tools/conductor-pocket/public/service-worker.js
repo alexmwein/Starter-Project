@@ -1,17 +1,17 @@
-const SHELL_REVISION = '0.2.0-fast-pocket-20260729';
-const CACHE = 'conductor-pocket-shell-v15';
+const SHELL_REVISION = '0.2.0-fast-copy-20260729';
+const CACHE = 'conductor-pocket-shell-v16';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-fast-pocket-20260729',
-  '/app.js?v=0.2.0-fast-pocket-20260729',
-  '/delivery-receipts.js?v=0.2.0-fast-pocket-20260729',
-  '/app-update.js?v=0.2.0-fast-pocket-20260729',
-  '/http.js?v=0.2.0-fast-pocket-20260729',
-  '/live-refresh.js?v=0.2.0-fast-pocket-20260729',
-  '/rich-text.js?v=0.2.0-fast-pocket-20260729',
-  '/transcript-focus.js?v=0.2.0-fast-pocket-20260729',
-  '/swipe-navigation.js?v=0.2.0-fast-pocket-20260729',
+  '/app.css?v=0.2.0-fast-copy-20260729',
+  '/app.js?v=0.2.0-fast-copy-20260729',
+  '/delivery-receipts.js?v=0.2.0-fast-copy-20260729',
+  '/app-update.js?v=0.2.0-fast-copy-20260729',
+  '/http.js?v=0.2.0-fast-copy-20260729',
+  '/live-refresh.js?v=0.2.0-fast-copy-20260729',
+  '/rich-text.js?v=0.2.0-fast-copy-20260729',
+  '/transcript-focus.js?v=0.2.0-fast-copy-20260729',
+  '/swipe-navigation.js?v=0.2.0-fast-copy-20260729',
   '/icon.svg',
   '/manifest.webmanifest',
 ];

@@ -58,24 +58,40 @@ on getMainGroup()
 	return missing value
 end getMainGroup
 
-on getWorkspaceContainer()
-	set sidebarGroup to getSidebarGroup()
+on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
+	set matchingRoutes to {}
 	tell application "System Events"
-		set sidebarElements to UI elements of sidebarGroup
-		repeat with candidate in sidebarElements
+		try
+			set sidebarElements to UI elements of sidebarGroup
+		on error
+			return missing value
+		end try
+		set sidebarChildCount to count of sidebarElements
+		repeat with containerIndex from 1 to sidebarChildCount
+			set workspaceContainer to item containerIndex of sidebarElements
 			try
-				set candidateChildren to UI elements of candidate
-				repeat with childElement in candidateChildren
-					try
-						if (role of childElement as text) is "AXLink" then return candidate
-					end try
+				set workspaceElements to UI elements of workspaceContainer
+				set containerChildCount to count of workspaceElements
+				repeat with linkIndex from 1 to containerChildCount
+					set candidate to item linkIndex of workspaceElements
+					if (role of candidate as text) is "AXLink" then
+						set candidateName to name of candidate as text
+						if my workspaceMatches(workspaceName, candidateName) then
+							set containerOffset to containerIndex - 1
+							set linkOffset to linkIndex - 1
+							copy {candidate, containerOffset, linkOffset, sidebarChildCount, containerChildCount} to end of matchingRoutes
+						end if
+					end if
 				end repeat
+			on error
+				return missing value
 			end try
 		end repeat
 	end tell
-	return missing value
-end getWorkspaceContainer
+	if (count of matchingRoutes) is not 1 then return missing value
+	return item 1 of matchingRoutes
+end getWorkspaceRoute
 
 on getSessionTabs()
 	set mainGroup to getMainGroup()
@@ -144,24 +160,19 @@ on getTextArea()
 	return my getTextAreaFromComposer(getComposerGroup())
 end getTextArea
 
-on workspaceIsSelected(workspaceName)
-	set workspaceContainer to getWorkspaceContainer()
-	if workspaceContainer is missing value then return false
+on workspaceLinkIsSelected(workspaceLink, workspaceName)
+	if workspaceLink is missing value then return false
 	tell application "System Events"
-		repeat with candidate in UI elements of workspaceContainer
-			try
-				if (role of candidate as text) is "AXLink" then
-					set candidateName to name of candidate as text
-					if my workspaceMatches(workspaceName, candidateName) then
-						set candidateClasses to value of attribute "AXDOMClassList" of candidate
-						return candidateClasses contains "bg-sidebar-accent"
-					end if
-				end if
-			end try
-		end repeat
+		try
+			if (role of workspaceLink as text) is not "AXLink" then return false
+			set candidateName to name of workspaceLink as text
+			if my workspaceMatches(workspaceName, candidateName) is false then return false
+			set candidateClasses to value of attribute "AXDOMClassList" of workspaceLink
+			return candidateClasses contains "bg-sidebar-accent"
+		end try
 	end tell
 	return false
-end workspaceIsSelected
+end workspaceLinkIsSelected
 
 on sessionIsSelected(sessionTitle, sessionOrdinal)
 	tell application "System Events"
@@ -178,14 +189,15 @@ on sessionIsSelected(sessionTitle, sessionOrdinal)
 	return false
 end sessionIsSelected
 
-on commitAndPressMessage(textArea, inputScriptPath, conductorPid)
+on commitAndPressMessage(textArea, inputScriptPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
 		set focused of textArea to true
 	end tell
 	delay 0.05
+	set routeEnvironment to "POCKET_WORKSPACE_CONTAINER_INDEX=" & (workspaceContainerIndex as text) & " POCKET_WORKSPACE_LINK_INDEX=" & (workspaceLinkIndex as text) & " POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT=" & (sidebarChildCount as text) & " POCKET_WORKSPACE_CONTAINER_CHILD_COUNT=" & (containerChildCount as text)
 	try
-		set helperResult to do shell script "/usr/bin/env POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+		set helperResult to do shell script "/usr/bin/env " & routeEnvironment & " POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error errorText
 		if errorText contains "draft_conflict" then return "draft_conflict"
 		if errorText contains "composer_focus_changed" then return "composer_focus_changed"
@@ -254,23 +266,16 @@ if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_act
 if inputReadiness is "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
 if inputReadiness is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
 
-set workspaceContainer to getWorkspaceContainer()
-if workspaceContainer is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
-set workspaceLink to missing value
+set sidebarGroup to getSidebarGroup()
+if sidebarGroup is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
+set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
+if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
+set workspaceLink to item 1 of workspaceRoute
+set workspaceContainerIndex to item 2 of workspaceRoute
+set workspaceLinkIndex to item 3 of workspaceRoute
+set sidebarChildCount to item 4 of workspaceRoute
+set containerChildCount to item 5 of workspaceRoute
 tell application "System Events"
-	set workspaceElements to UI elements of workspaceContainer
-	repeat with candidate in workspaceElements
-		try
-			if (role of candidate as text) is "AXLink" then
-				set candidateName to name of candidate as text
-				if my workspaceMatches(workspaceName, candidateName) then
-					set workspaceLink to candidate
-					exit repeat
-				end if
-			end if
-		end try
-	end repeat
-	if workspaceLink is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 	set workspaceClasses to value of attribute "AXDOMClassList" of workspaceLink
 	set routeAlreadySelected to false
 	if workspaceClasses contains "bg-sidebar-accent" then
@@ -307,16 +312,32 @@ end if
 
 if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
+if routeAlreadySelected is false then
+	set sidebarGroup to getSidebarGroup()
+	if sidebarGroup is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
+	set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
+	if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
+	set workspaceLink to item 1 of workspaceRoute
+	set workspaceContainerIndex to item 2 of workspaceRoute
+	set workspaceLinkIndex to item 3 of workspaceRoute
+	set sidebarChildCount to item 4 of workspaceRoute
+	set containerChildCount to item 5 of workspaceRoute
+end if
+
 set stableRouteChecks to 0
-repeat with waitIndex from 1 to 50
-	delay 0.1
-	if my workspaceIsSelected(workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
-		set stableRouteChecks to stableRouteChecks + 1
-		if stableRouteChecks is 3 then exit repeat
-	else
-		set stableRouteChecks to 0
-	end if
-end repeat
+if routeAlreadySelected is true then
+	set stableRouteChecks to 3
+else
+	repeat with waitIndex from 1 to 50
+		delay 0.1
+		if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
+			set stableRouteChecks to stableRouteChecks + 1
+			if stableRouteChecks is 3 then exit repeat
+		else
+			set stableRouteChecks to 0
+		end if
+	end repeat
+end if
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
 set textArea to missing value
@@ -337,10 +358,10 @@ tell application "System Events"
 	end considering
 end tell
 
-if my workspaceIsSelected(workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
+if my workspaceLinkIsSelected(workspaceLink, workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
-set commitResult to my commitAndPressMessage(textArea, inputScriptPath, conductorPid)
+set commitResult to my commitAndPressMessage(textArea, inputScriptPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
 if commitResult is "draft_conflict" then
 	set latestTextArea to getTextArea()
 	if latestTextArea is missing value then return "{\"ok\":false,\"code\":\"composer_unavailable\"}"

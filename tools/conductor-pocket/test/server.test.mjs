@@ -2217,7 +2217,11 @@ test('assistant messages preserve rich semantics and speaker context', async () 
   assert.match(assistantRenderer, /className: 'sr-only'/);
   assert.match(
     assistantRenderer,
-    /'Conductor progress:'[\s\S]*'Conductor replied:'[\s\S]*renderRichText\(document, message\.text\)/,
+    /'Conductor progress:'[\s\S]*'Conductor replied:'/,
+  );
+  assert.match(
+    assistantRenderer,
+    /addCodeCopyControls\([\s\S]*renderRichText\(document, message\.text\)/,
   );
   assert.doesNotMatch(assistantRenderer, /aria-label/);
 });

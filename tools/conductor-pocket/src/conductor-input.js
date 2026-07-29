@@ -30,6 +30,9 @@ const NON_SEND_CLASSES = [
 ];
 const QUEUED_EDIT_MARKER = 'Editing queued message';
 const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
+const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8;
+const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
+const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
 const MAX_MESSAGE_BYTES = 16 * 1024;
 const MAX_CHUNK_UTF16 = 256;
 const MIN_PHYSICAL_IDLE_SECONDS = 1;
@@ -148,7 +151,20 @@ function webAreaRootElements(process) {
   return rootElements;
 }
 
-function validateRoute(process) {
+function routeElements(element) {
+  try {
+    const elements = element.uiElements();
+    if (!elements || typeof elements.length !== 'number') {
+      fail('route_changed');
+    }
+    return elements;
+  } catch (error) {
+    if (error?.pocketCode === 'route_changed') throw error;
+    fail('route_changed');
+  }
+}
+
+function routeTarget() {
   const workspaceName = environmentValue('POCKET_WORKSPACE_NAME');
   const sessionTitle = environmentValue('POCKET_SESSION_TITLE');
   const sessionOrdinal = Number(environmentValue('POCKET_SESSION_ORDINAL'));
@@ -162,52 +178,310 @@ function validateRoute(process) {
   ) {
     fail('route_changed');
   }
-
-  const rootElements = webAreaRootElements(process);
-
-  const sidebarElements = childElements(rootElements[1]);
-  let workspaceSelected = false;
-  for (const candidate of sidebarElements) {
-    for (const child of childElements(candidate)) {
-      if (child.role() !== 'AXLink') continue;
-      const candidateName = child.name();
-      if (!workspaceMatches(workspaceName, candidateName)) continue;
-      const classes = child.attributes.byName('AXDOMClassList').value();
-      workspaceSelected =
-        Array.isArray(classes) && classes.includes('bg-sidebar-accent');
-      break;
+  const hintValues = [
+    environmentValue('POCKET_WORKSPACE_CONTAINER_INDEX'),
+    environmentValue('POCKET_WORKSPACE_LINK_INDEX'),
+    environmentValue('POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT'),
+    environmentValue('POCKET_WORKSPACE_CONTAINER_CHILD_COUNT'),
+  ];
+  const hintProvided = hintValues.some((value) => value !== null);
+  let workspaceHint = null;
+  if (hintProvided) {
+    if (hintValues.some((value) => value === null)) {
+      fail('route_changed');
     }
-    if (workspaceSelected) break;
+    const [
+      containerIndex,
+      linkIndex,
+      sidebarChildCount,
+      containerChildCount,
+    ] = hintValues.map(Number);
+    if (
+      !Number.isSafeInteger(containerIndex) ||
+      containerIndex < 0 ||
+      !Number.isSafeInteger(linkIndex) ||
+      linkIndex < 0 ||
+      !Number.isSafeInteger(sidebarChildCount) ||
+      sidebarChildCount <= 0 ||
+      !Number.isSafeInteger(containerChildCount) ||
+      containerChildCount <= 0
+    ) {
+      fail('route_changed');
+    }
+    workspaceHint = {
+      containerChildCount,
+      path: [containerIndex, linkIndex],
+      sidebarChildCount,
+    };
   }
-  if (!workspaceSelected) fail('route_changed');
+  return {
+    sessionOrdinal,
+    sessionTitle,
+    workspaceHint,
+    workspaceName,
+  };
+}
 
-  let sessionTabs = [];
-  for (const candidate of childElements(rootElements[2])) {
-    if (candidate.role() !== 'AXTabGroup') continue;
-    for (const tabGroupChild of childElements(candidate)) {
-      if (tabGroupChild.role() === 'AXRadioButton') {
-        sessionTabs.push(tabGroupChild);
-      } else {
-        sessionTabs = sessionTabs.concat(
-          childElements(tabGroupChild).filter(
-            (element) => element.role() === 'AXRadioButton',
-          ),
-        );
+function routeRole(element) {
+  try {
+    return element.role();
+  } catch {
+    fail('route_changed');
+  }
+}
+
+function routeName(element) {
+  try {
+    return element.name();
+  } catch {
+    fail('route_changed');
+  }
+}
+
+function routeClasses(element) {
+  try {
+    const classes = element.attributes.byName('AXDOMClassList').value();
+    if (!Array.isArray(classes)) fail('route_changed');
+    return classes;
+  } catch (error) {
+    if (error?.pocketCode === 'route_changed') throw error;
+    fail('route_changed');
+  }
+}
+
+function routeSelected(element) {
+  try {
+    return Boolean(element.value());
+  } catch {
+    fail('route_changed');
+  }
+}
+
+function sessionRadioTopology(tabGroup) {
+  const topology = [];
+  const tabChildren = routeElements(tabGroup);
+  for (
+    let childIndex = 0;
+    childIndex < tabChildren.length;
+    childIndex += 1
+  ) {
+    const tabChild = tabChildren[childIndex];
+    if (routeRole(tabChild) === 'AXRadioButton') {
+      topology.push({
+        element: tabChild,
+        name: routeName(tabChild),
+        path: [childIndex],
+        selected: routeSelected(tabChild),
+      });
+      continue;
+    }
+    const nestedChildren = routeElements(tabChild);
+    for (
+      let nestedIndex = 0;
+      nestedIndex < nestedChildren.length;
+      nestedIndex += 1
+    ) {
+      const nested = nestedChildren[nestedIndex];
+      if (routeRole(nested) !== 'AXRadioButton') continue;
+      topology.push({
+        element: nested,
+        name: routeName(nested),
+        path: [childIndex, nestedIndex],
+        selected: routeSelected(nested),
+      });
+    }
+  }
+  return topology;
+}
+
+function acquireRouteLease(process, target = routeTarget()) {
+  const rootElements = webAreaRootElements(process);
+  const sidebarElements = routeElements(rootElements[1]);
+  let workspace;
+  if (target.workspaceHint) {
+    const {
+      containerChildCount,
+      path,
+      sidebarChildCount,
+    } = target.workspaceHint;
+    if (
+      !Array.isArray(path) ||
+      path.length !== 2 ||
+      sidebarElements.length !== sidebarChildCount
+    ) {
+      fail('route_changed');
+    }
+    const container = sidebarElements[path[0]];
+    if (!container) fail('route_changed');
+    const links = routeElements(container);
+    const link = links[path[1]];
+    if (
+      links.length !== containerChildCount ||
+      !link ||
+      routeRole(link) !== 'AXLink' ||
+      !workspaceMatches(target.workspaceName, routeName(link)) ||
+      !routeClasses(link).includes('bg-sidebar-accent')
+    ) {
+      fail('route_changed');
+    }
+    workspace = {
+      containerChildCount,
+      path: path.slice(),
+    };
+  } else {
+    const workspaceCandidates = [];
+    for (
+      let containerIndex = 0;
+      containerIndex < sidebarElements.length;
+      containerIndex += 1
+    ) {
+      const links = routeElements(sidebarElements[containerIndex]);
+      for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+        const link = links[linkIndex];
+        if (routeRole(link) !== 'AXLink') continue;
+        if (!workspaceMatches(target.workspaceName, routeName(link))) continue;
+        workspaceCandidates.push({
+          classes: routeClasses(link),
+          containerChildCount: links.length,
+          path: [containerIndex, linkIndex],
+        });
       }
     }
-    break;
+    if (
+      workspaceCandidates.length !== 1 ||
+      !workspaceCandidates[0].classes.includes('bg-sidebar-accent')
+    ) {
+      fail('route_changed');
+    }
+    workspace = workspaceCandidates[0];
   }
 
-  let matchedCount = 0;
-  for (const candidate of sessionTabs) {
-    if (candidate.name() !== `Close chat ${sessionTitle}`) continue;
-    matchedCount += 1;
-    if (matchedCount === sessionOrdinal) {
-      if (!Boolean(candidate.value())) fail('route_changed');
-      return;
+  const mainElements = routeElements(rootElements[2]);
+  let tabGroupIndex = -1;
+  for (let index = 0; index < mainElements.length; index += 1) {
+    if (routeRole(mainElements[index]) !== 'AXTabGroup') continue;
+    if (tabGroupIndex >= 0) fail('route_changed');
+    tabGroupIndex = index;
+  }
+  if (tabGroupIndex < 0) fail('route_changed');
+
+  const sessionName = `Close chat ${target.sessionTitle}`;
+  const sessionTopology = sessionRadioTopology(
+    mainElements[tabGroupIndex],
+  );
+  const matchingSessions = sessionTopology.filter(
+    (entry) => entry.name === sessionName,
+  );
+  if (matchingSessions.length < target.sessionOrdinal) {
+    fail('route_changed');
+  }
+  const targetSession = matchingSessions[target.sessionOrdinal - 1];
+  if (
+    !targetSession.selected ||
+    sessionTopology.filter((entry) => entry.selected).length !== 1
+  ) {
+    fail('route_changed');
+  }
+
+  return Object.freeze({
+    mainChildCount: mainElements.length,
+    sessionName,
+    sessionOrdinal: target.sessionOrdinal,
+    sessionTopology: Object.freeze(
+      sessionTopology.map((entry) =>
+        Object.freeze({
+          name: entry.name,
+          path: Object.freeze(entry.path.slice()),
+        }),
+      ),
+    ),
+    sidebarChildCount: sidebarElements.length,
+    tabGroupIndex,
+    targetSessionPath: Object.freeze(targetSession.path.slice()),
+    workspaceContainerChildCount: workspace.containerChildCount,
+    workspaceName: target.workspaceName,
+    workspacePath: Object.freeze(workspace.path.slice()),
+  });
+}
+
+function sameRoutePath(left, right) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function assertRouteLease(process, lease) {
+  if (
+    !lease ||
+    typeof lease.workspaceName !== 'string' ||
+    !Array.isArray(lease.workspacePath) ||
+    !Array.isArray(lease.targetSessionPath) ||
+    !Array.isArray(lease.sessionTopology)
+  ) {
+    fail('route_changed');
+  }
+
+  const rootElements = webAreaRootElements(process);
+  const sidebarElements = routeElements(rootElements[1]);
+  if (sidebarElements.length !== lease.sidebarChildCount) {
+    fail('route_changed');
+  }
+  const workspaceContainer =
+    sidebarElements[lease.workspacePath[0]];
+  if (!workspaceContainer) fail('route_changed');
+  const workspaceLinks = routeElements(workspaceContainer);
+  if (
+    workspaceLinks.length !== lease.workspaceContainerChildCount
+  ) {
+    fail('route_changed');
+  }
+  const workspaceLink = workspaceLinks[lease.workspacePath[1]];
+  if (
+    !workspaceLink ||
+    routeRole(workspaceLink) !== 'AXLink' ||
+    !workspaceMatches(lease.workspaceName, routeName(workspaceLink)) ||
+    !routeClasses(workspaceLink).includes('bg-sidebar-accent')
+  ) {
+    fail('route_changed');
+  }
+
+  const mainElements = routeElements(rootElements[2]);
+  if (mainElements.length !== lease.mainChildCount) {
+    fail('route_changed');
+  }
+  const tabGroup = mainElements[lease.tabGroupIndex];
+  if (!tabGroup || routeRole(tabGroup) !== 'AXTabGroup') {
+    fail('route_changed');
+  }
+  const currentTopology = sessionRadioTopology(tabGroup);
+  if (currentTopology.length !== lease.sessionTopology.length) {
+    fail('route_changed');
+  }
+  for (let index = 0; index < currentTopology.length; index += 1) {
+    const current = currentTopology[index];
+    const expected = lease.sessionTopology[index];
+    if (
+      current.name !== expected.name ||
+      !sameRoutePath(current.path, expected.path)
+    ) {
+      fail('route_changed');
     }
   }
-  fail('route_changed');
+  const matchingSessions = currentTopology.filter(
+    (entry) => entry.name === lease.sessionName,
+  );
+  if (matchingSessions.length < lease.sessionOrdinal) {
+    fail('route_changed');
+  }
+  const targetSession = matchingSessions[lease.sessionOrdinal - 1];
+  if (
+    !sameRoutePath(targetSession.path, lease.targetSessionPath) ||
+    !targetSession.selected ||
+    currentTopology.filter((entry) => entry.selected).length !== 1
+  ) {
+    fail('route_changed');
+  }
 }
 
 function validateFocusedComposer(pid, expectedDraft = null) {
@@ -455,67 +729,168 @@ function focusedDraft(process) {
   return normalizedDraft(focusedElement.value());
 }
 
-function hasDescendantStaticText(element, expectedText, depth = 0) {
-  if (depth > 4) return false;
-  for (const child of childElements(element)) {
-    let staticText = false;
+function hasStaticTextInBoundedTree(element, expectedText, budget) {
+  if (budget.remaining <= 0) fail('send_unavailable');
+  budget.remaining -= 1;
+  let role;
+  try {
+    role = element.role();
+  } catch {
+    fail('send_unavailable');
+  }
+  if (role === 'AXStaticText') {
+    let nameReadable = false;
+    let valueReadable = false;
     try {
-      staticText = child.role() === 'AXStaticText';
+      const elementName = element.name();
+      nameReadable = true;
+      if (elementName === expectedText) return true;
     } catch {
-      // Keep walking descendants even when one attribute is unavailable.
+      // Try the value independently.
     }
-    if (staticText) {
-      try {
-        if (child.name() === expectedText) return true;
-      } catch {
-        // Try the value independently.
-      }
-      try {
-        if (child.value() === expectedText) return true;
-      } catch {
-        // Continue into any exposed descendants.
-      }
+    try {
+      const elementValue = element.value();
+      valueReadable = true;
+      if (elementValue === expectedText) return true;
+    } catch {
+      // Fail below unless the name was independently readable.
     }
-    if (hasDescendantStaticText(child, expectedText, depth + 1)) return true;
+    if (!nameReadable && !valueReadable) fail('send_unavailable');
+  }
+
+  let children;
+  try {
+    children = element.uiElements();
+  } catch {
+    fail('send_unavailable');
+  }
+  if (!children || typeof children.length !== 'number') {
+    fail('send_unavailable');
+  }
+  for (const child of children) {
+    if (hasStaticTextInBoundedTree(child, expectedText, budget)) return true;
   }
   return false;
 }
 
-function assertNotQueuedEditMode(process) {
+function composerSendContext(process) {
   const main = webAreaRootElements(process)[2];
   const mainElements = childElements(main);
-  const composers = mainElements.filter((candidate) => {
+  let composer = null;
+  let composerIndex = -1;
+  let tabGroupCount = 0;
+  let tabGroupIndex = -1;
+  const mainRoles = [];
+  for (let index = 0; index < mainElements.length; index += 1) {
+    const candidate = mainElements[index];
+    let role;
+    let description;
     try {
-      return candidate.description() === 'composer';
+      role = candidate.role();
+      description = candidate.description();
     } catch {
-      return false;
+      fail('send_unavailable');
     }
-  });
-  if (composers.length !== 1) fail('send_unavailable');
+    mainRoles.push(role);
+    if (role === 'AXTabGroup') {
+      tabGroupCount += 1;
+      tabGroupIndex = index;
+    }
+    if (description !== 'composer') continue;
+    if (composer) fail('send_unavailable');
+    composer = candidate;
+    composerIndex = index;
+  }
   if (
-    hasDescendantStaticText(main, QUEUED_EDIT_MARKER) ||
-    hasDescendantStaticText(
-      composers[0],
+    !composer ||
+    tabGroupCount !== 1 ||
+    tabGroupIndex < 0 ||
+    tabGroupIndex >= composerIndex - 1
+  ) {
+    fail('send_unavailable');
+  }
+
+  let transcriptBoundaryIndex = -1;
+  for (
+    let index = tabGroupIndex + 1;
+    index < composerIndex;
+    index += 1
+  ) {
+    if (mainRoles[index] === 'AXGroup') {
+      transcriptBoundaryIndex = index;
+      break;
+    }
+    let candidateChildren;
+    try {
+      candidateChildren = mainElements[index].uiElements();
+    } catch {
+      fail('send_unavailable');
+    }
+    if (
+      !candidateChildren ||
+      typeof candidateChildren.length !== 'number' ||
+      candidateChildren.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN
+    ) {
+      fail('send_unavailable');
+    }
+  }
+  if (
+    transcriptBoundaryIndex < 0 ||
+    transcriptBoundaryIndex - tabGroupIndex - 1 >
+      MAX_QUEUED_EDIT_CONTEXT_SIBLINGS
+  ) {
+    fail('send_unavailable');
+  }
+
+  const contextElements = mainElements.slice(
+    transcriptBoundaryIndex + 1,
+    composerIndex + 1,
+  );
+  if (
+    contextElements.length < 1 ||
+    contextElements.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS + 1
+  ) {
+    fail('send_unavailable');
+  }
+  for (const candidate of contextElements.slice(0, -1)) {
+    let candidateChildren;
+    try {
+      candidateChildren = candidate.uiElements();
+    } catch {
+      fail('send_unavailable');
+    }
+    if (
+      !candidateChildren ||
+      typeof candidateChildren.length !== 'number' ||
+      candidateChildren.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN
+    ) {
+      fail('send_unavailable');
+    }
+  }
+  return { composer, contextElements };
+}
+
+function assertNotQueuedEditMode(process) {
+  const { composer, contextElements } = composerSendContext(process);
+  const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
+  if (
+    contextElements.some((candidate) =>
+      hasStaticTextInBoundedTree(candidate, QUEUED_EDIT_MARKER, budget)
+    ) ||
+    hasStaticTextInBoundedTree(
+      composer,
       QUEUED_EDIT_PLACEHOLDER,
+      budget,
     )
   ) {
     fail('send_unavailable');
   }
+  return composer;
 }
 
 function resolveComposerSend(process, expectedDraft) {
-  assertNotQueuedEditMode(process);
-  const mainElements = childElements(webAreaRootElements(process)[2]);
-  const composers = mainElements.filter((candidate) => {
-    try {
-      return candidate.description() === 'composer';
-    } catch {
-      return false;
-    }
-  });
-  if (composers.length !== 1) fail('send_unavailable');
-
-  const composerElements = childElements(composers[0]);
+  const composer = assertNotQueuedEditMode(process);
+  const composerElements = childElements(composer);
   const textAreas = composerElements.filter((candidate) => {
     try {
       const classes = candidate.attributes
@@ -558,10 +933,10 @@ function resolveComposerSend(process, expectedDraft) {
   return buttons[0];
 }
 
-function waitForExactDraft(pid, expectedDraft) {
+function waitForExactDraft(pid, expectedDraft, routeLease) {
   for (let attempt = 0; attempt < 75; attempt += 1) {
     const process = validateFocusedComposer(pid);
-    validateRoute(process);
+    assertRouteLease(process, routeLease);
     const refreshed = validateFocusedComposer(pid);
     if (focusedDraft(refreshed) === expectedDraft) return;
     delay(0.02);
@@ -569,11 +944,16 @@ function waitForExactDraft(pid, expectedDraft) {
   fail('composer_update_failed');
 }
 
-function waitForComposerSend(pid, expectedDraft, inputLease) {
+function waitForComposerSend(
+  pid,
+  expectedDraft,
+  inputLease,
+  routeLease,
+) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     assertInputLease(inputLease);
     const process = validateFocusedComposer(pid, expectedDraft);
-    validateRoute(process);
+    assertRouteLease(process, routeLease);
     const refreshed = validateFocusedComposer(pid, expectedDraft);
     try {
       return resolveComposerSend(refreshed, expectedDraft);
@@ -611,13 +991,14 @@ function typeAndSendMessage(pid) {
   // Allocate and round-trip every event before clearing an owned draft.
   const prepared = prepareInput(message);
   let inputLease = null;
+  let routeLease = null;
   let exactDraftExposedAt = 0;
   let pressInvokedAt = 0;
   try {
     inputLease = acquireInputLease();
     assertSessionUnlocked();
     let process = validateFocusedComposer(pid);
-    validateRoute(process);
+    routeLease = acquireRouteLease(process);
     assertNotQueuedEditMode(process);
     process = validateFocusedComposer(pid);
     const draftReadStartedAt = Date.now();
@@ -630,16 +1011,16 @@ function typeAndSendMessage(pid) {
 
       if (currentDraft !== '') {
         process = validateFocusedComposer(pid, currentDraft);
-        validateRoute(process);
+        assertRouteLease(process, routeLease);
         validateFocusedComposer(pid, currentDraft);
         postToConductor(pid, inputLease, prepared.clearEvents);
-        waitForExactDraft(pid, '');
+        waitForExactDraft(pid, '', routeLease);
       }
 
       let committedPrefix = '';
       for (const operation of prepared.operations) {
         process = validateFocusedComposer(pid, committedPrefix);
-        validateRoute(process);
+        assertRouteLease(process, routeLease);
         validateFocusedComposer(pid, committedPrefix);
         const nextPrefix = committedPrefix + operation.text;
         const possibleExposureAt =
@@ -654,7 +1035,7 @@ function typeAndSendMessage(pid) {
           exactDraftExposedAt = possibleExposureAt;
         }
         committedPrefix = nextPrefix;
-        waitForExactDraft(pid, committedPrefix);
+        waitForExactDraft(pid, committedPrefix, routeLease);
         if (operation.backing) Number(operation.backing.length);
       }
     }
@@ -662,12 +1043,13 @@ function typeAndSendMessage(pid) {
     if (exactDraftExposedAt <= 0) fail('draft_changed');
     assertInputLease(inputLease);
     process = validateFocusedComposer(pid, message);
-    validateRoute(process);
-    waitForComposerSend(pid, message, inputLease);
+    assertRouteLease(process, routeLease);
+    waitForComposerSend(pid, message, inputLease, routeLease);
     process = validateFocusedComposer(pid, message);
-    validateRoute(process);
+    assertRouteLease(process, routeLease);
     process = validateFocusedComposer(pid, message);
     const sendButton = resolveComposerSend(process, message);
+    assertRouteLease(process, routeLease);
     assertInputLease(inputLease);
     assertSessionUnlocked();
     pressInvokedAt = Date.now();
@@ -721,7 +1103,9 @@ function run(argv) {
   if (operation === 'route-check') {
     assertSessionUnlocked();
     const process = validateFocusedComposer(pid);
-    validateRoute(process);
+    const routeLease = acquireRouteLease(process);
+    const refreshed = validateFocusedComposer(pid);
+    assertRouteLease(refreshed, routeLease);
     validateFocusedComposer(pid);
     return 'ready';
   }
