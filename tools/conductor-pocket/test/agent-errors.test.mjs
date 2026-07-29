@@ -176,6 +176,24 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
     }),
     '2026-01-01T00:00:04Z',
   );
+  insert.run(
+    'error-5',
+    JSON.stringify({
+      type: 'stream_error',
+      content: 'Service unavailable PRIVATE_STREAM_DETAIL',
+    }),
+    '2026-01-01T00:00:05Z',
+  );
+  insert.run(
+    'error-6',
+    JSON.stringify({
+      type: 'system',
+      status: 'permission_denied',
+      parent_tool_use_id: 'spawn-private',
+      content: 'PRIVATE_NESTED_PERMISSION_DETAIL',
+    }),
+    '2026-01-01T00:00:06Z',
+  );
   const database = new ConductorDatabase(dbPath);
   context.after(async () => {
     database.close();
@@ -185,13 +203,24 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
 
   const result = database.listMessages('session-1');
   assert.deepEqual(
-    result.messages.map((message) => message.code),
+    result.messages
+      .filter((message) => message.kind === 'agent-error')
+      .map((message) => message.code),
     [
       'provider_auth_required',
       'model_unavailable',
       'permission_required',
       'provider_reconnecting',
+      'provider_unavailable',
+      'permission_required',
     ],
+  );
+  assert.equal(
+    result.messages.some(
+      (message) =>
+        message.kind === 'turn-result' && message.state === 'failed',
+    ),
+    true,
   );
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE_AUTH_RESPONSE'), false);
@@ -199,4 +228,6 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
   assert.equal(serialized.includes('PRIVATE_MODEL_IDENTIFIER'), false);
   assert.equal(serialized.includes('PRIVATE_PERMISSION_DETAIL'), false);
   assert.equal(serialized.includes('PRIVATE_RETRY_DETAIL'), false);
+  assert.equal(serialized.includes('PRIVATE_STREAM_DETAIL'), false);
+  assert.equal(serialized.includes('PRIVATE_NESTED_PERMISSION_DETAIL'), false);
 });

@@ -46,6 +46,10 @@ const staticFiles = new Map([
     ['live-refresh.js', 'text/javascript; charset=utf-8'],
   ],
   ['/rich-text.js', ['rich-text.js', 'text/javascript; charset=utf-8']],
+  [
+    '/transcript-focus.js',
+    ['transcript-focus.js', 'text/javascript; charset=utf-8'],
+  ],
   ['/icon.svg', ['icon.svg', 'image/svg+xml']],
   ['/manifest.webmanifest', ['manifest.webmanifest', 'application/manifest+json']],
   ['/service-worker.js', ['service-worker.js', 'text/javascript; charset=utf-8']],

@@ -1,14 +1,15 @@
-const CACHE = 'conductor-pocket-shell-v13';
+const CACHE = 'conductor-pocket-shell-v14';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-auto-update-20260728',
-  '/app.js?v=0.2.0-auto-update-20260728',
-  '/delivery-receipts.js?v=0.2.0-auto-update-20260728',
-  '/app-update.js?v=0.2.0-auto-update-20260728',
-  '/http.js?v=0.2.0-auto-update-20260728',
-  '/live-refresh.js?v=0.2.0-auto-update-20260728',
-  '/rich-text.js?v=0.2.0-auto-update-20260728',
+  '/app.css?v=0.2.0-focused-turns-20260728',
+  '/app.js?v=0.2.0-focused-turns-20260728',
+  '/delivery-receipts.js?v=0.2.0-focused-turns-20260728',
+  '/app-update.js?v=0.2.0-focused-turns-20260728',
+  '/http.js?v=0.2.0-focused-turns-20260728',
+  '/live-refresh.js?v=0.2.0-focused-turns-20260728',
+  '/rich-text.js?v=0.2.0-focused-turns-20260728',
+  '/transcript-focus.js?v=0.2.0-focused-turns-20260728',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -22,6 +23,7 @@ const SHELL_PATHS = new Set([
   '/http.js',
   '/live-refresh.js',
   '/rich-text.js',
+  '/transcript-focus.js',
   '/icon.svg',
   '/manifest.webmanifest',
 ]);
@@ -33,6 +35,7 @@ const VERSIONED_SHELL_PATHS = new Set([
   '/http.js',
   '/live-refresh.js',
   '/rich-text.js',
+  '/transcript-focus.js',
 ]);
 
 function fetchAndCache(request) {

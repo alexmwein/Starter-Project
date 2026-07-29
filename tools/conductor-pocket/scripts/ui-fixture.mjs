@@ -187,6 +187,7 @@ const messages = [
     createdAt: at(9),
     sentAt: at(9),
     queued: false,
+    turnId: 'turn-private-relay',
   },
   {
     id: 'm-2',
@@ -196,6 +197,7 @@ const messages = [
       'Yes. The right shape is a private companion, not another model client. Conductor stays the source of truth on your Mac, while this phone becomes a secure window into the same workspaces and sessions.',
     createdAt: at(8),
     model: 'gpt-5.6-sol',
+    turnId: 'turn-private-relay',
   },
   {
     id: 'm-3',
@@ -205,6 +207,7 @@ const messages = [
     name: 'Inspect Conductor Database',
     state: 'completed',
     createdAt: at(7),
+    turnId: 'turn-private-relay',
   },
   {
     id: 'm-4',
@@ -213,6 +216,7 @@ const messages = [
     toolCallId: 'tool-1',
     state: 'completed',
     createdAt: at(7),
+    turnId: 'turn-private-relay',
   },
   {
     id: 'm-5',
@@ -222,31 +226,70 @@ const messages = [
       'The relay now has three hard boundaries:\n\n- it reads the Conductor database in read-only mode\n- it accepts traffic only through private Tailscale Serve\n- every unlock requires the phone passkey and Face ID\n\n```text\nphone → tailnet HTTPS → loopback relay → Conductor\n```\n\nNothing is copied to a public host.',
     createdAt: at(5),
     model: 'gpt-5.6-sol',
+    turnId: 'turn-private-relay',
+  },
+  {
+    id: 'm-5-result',
+    rowId: 6,
+    kind: 'turn-result',
+    state: 'complete',
+    createdAt: at(5),
+    turnId: 'turn-private-relay',
   },
   {
     id: 'm-6',
-    rowId: 6,
+    rowId: 7,
     kind: 'user',
     text: 'Will the two-way sync actually be fast?',
     createdAt: at(3),
     sentAt: at(3),
     queued: false,
+    turnId: 'turn-speed',
   },
   {
     id: 'm-7',
-    rowId: 7,
+    rowId: 8,
     kind: 'assistant',
     text:
       '## What makes it fast\n**New transcript rows** should appear in hundreds of milliseconds.\n1. Pocket watches the local Conductor database.\n2. Phone sends use the real `Conductor` composer.\n   - delivery is confirmed against the exact Conductor row\n3. Your *account and model* stay exactly where you configured them.\n\n> **Pocket rule:** keep the Mac as the source of truth.\n\n- [x] Private Tailnet transport\n- [x] Safe Markdown\n- [ ] Faster than mind reading\n- Plain mixed-list item keeps its bullet\n\n| Surface | Behavior |\n| --- | :---: |\n| Short reply | Compact |\n| Long answer | Comfortable |\n\nRead the [security notes](https://example.com/security) when you want the full model.\n\nNames like MAX_RETRY_COUNT stay untouched, and 2 * 3 * 4 remains readable.',
     createdAt: at(1),
     model: 'gpt-5.6-sol',
+    turnId: 'turn-speed',
+  },
+  {
+    id: 'm-7-result',
+    rowId: 9,
+    kind: 'turn-result',
+    state: 'complete',
+    createdAt: at(1),
+    turnId: 'turn-speed',
+  },
+  {
+    id: 'm-8',
+    rowId: 10,
+    kind: 'user',
+    text: 'Make deep research easier to scan on my phone.',
+    createdAt: at(0.7),
+    sentAt: at(0.7),
+    queued: false,
+    turnId: 'turn-focused-transcript',
+  },
+  {
+    id: 'm-9',
+    rowId: 11,
+    kind: 'assistant',
+    text:
+      'I’m mapping the intermediate research updates separately from the final answer.',
+    createdAt: at(0.4),
+    model: 'gpt-5.6-sol',
+    turnId: 'turn-focused-transcript',
   },
 ];
 
 const errorMessages = [
   {
-    id: 'm-8',
-    rowId: 8,
+    id: 'm-error-tool',
+    rowId: 12,
     kind: 'tool',
     toolCallId: 'tool-error-1',
     name: 'Publish GitHub Branch',
@@ -255,8 +298,8 @@ const errorMessages = [
     turnId: 'turn-error',
   },
   {
-    id: 'm-9',
-    rowId: 9,
+    id: 'm-error-result',
+    rowId: 13,
     kind: 'tool-result',
     toolCallId: 'tool-error-1',
     state: 'failed',
@@ -264,8 +307,8 @@ const errorMessages = [
     turnId: 'turn-error',
   },
   {
-    id: 'm-10',
-    rowId: 10,
+    id: 'm-error-agent',
+    rowId: 14,
     kind: 'agent-error',
     code: 'usage_limit',
     severity: 'error',

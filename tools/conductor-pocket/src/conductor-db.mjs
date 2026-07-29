@@ -31,6 +31,74 @@ function toolLabel(name) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+const VISIBLE_TRANSCRIPT_EVENT_SQL = `
+  (
+    role = 'user'
+    OR CASE
+      WHEN json_valid(content) = 1 THEN (
+        (
+          json_extract(content, '$.parent_tool_use_id') IS NULL
+          AND (
+            json_extract(content, '$.type')
+              IN ('assistant', 'user', 'result', 'error', 'stream_error')
+            OR (
+              json_extract(content, '$.type') = 'system'
+              AND COALESCE(
+                json_extract(content, '$.subtype'),
+                json_extract(content, '$.status')
+              )
+                IN ('permission_denied', 'api_retry')
+            )
+          )
+        )
+        OR json_extract(content, '$.type') IN ('error', 'stream_error')
+        OR (
+          json_extract(content, '$.type') = 'result'
+          AND json_extract(content, '$.is_error') = 1
+        )
+        OR (
+          json_extract(content, '$.type') = 'system'
+          AND COALESCE(
+            json_extract(content, '$.subtype'),
+            json_extract(content, '$.status')
+          )
+            IN ('permission_denied', 'api_retry')
+        )
+        OR (
+          json_extract(content, '$.type') = 'user'
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(
+              CASE
+                WHEN json_type(content, '$.message.content') = 'array'
+                  THEN json_extract(content, '$.message.content')
+                ELSE '[]'
+              END
+            ) AS event_item
+            WHERE json_extract(
+              CASE
+                WHEN json_valid(event_item.value) = 1
+                  THEN event_item.value
+                ELSE '{}'
+              END,
+              '$.type'
+            ) = 'tool_result'
+              AND json_extract(
+                CASE
+                  WHEN json_valid(event_item.value) = 1
+                    THEN event_item.value
+                  ELSE '{}'
+                END,
+                '$.is_error'
+              ) = 1
+          )
+        )
+      )
+      ELSE 0
+    END
+  )
+`;
+
 const AGENT_ERROR_COPY = {
   provider_reconnecting: {
     severity: 'warning',
@@ -119,7 +187,8 @@ export function classifyAgentError(event) {
       ...AGENT_ERROR_COPY.permission_required,
     };
   }
-  const isProviderError = event.type === 'error';
+  const isProviderError =
+    event.type === 'error' || event.type === 'stream_error';
   const isFailedResult = event.type === 'result' && event.is_error === true;
   if (!isProviderError && !isFailedResult) return null;
 
@@ -178,12 +247,17 @@ function parseAssistantRow(row) {
         sentAt: row.sent_at,
         cancelledAt: row.cancelled_at,
         queued: row.sent_at == null && row.cancelled_at == null,
+        turnId: row.turn_id || null,
       },
     ];
   }
 
   const event = parseJson(row.content);
   if (!event || typeof event !== 'object') return [];
+  const parentToolUseId =
+    typeof event.parent_tool_use_id === 'string' && event.parent_tool_use_id
+      ? event.parent_tool_use_id
+      : null;
 
   if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
     const messages = [];
@@ -199,6 +273,7 @@ function parseAssistantRow(row) {
           createdAt: row.created_at,
           model: row.model || null,
           turnId: row.turn_id || null,
+          parentToolUseId,
         });
       } else if (item.type === 'tool_use') {
         messages.push({
@@ -210,6 +285,7 @@ function parseAssistantRow(row) {
           state: 'running',
           createdAt: row.created_at,
           turnId: row.turn_id || null,
+          parentToolUseId,
         });
       }
     }
@@ -219,18 +295,81 @@ function parseAssistantRow(row) {
   if (event.type === 'user' && Array.isArray(event.message?.content)) {
     return event.message.content.flatMap((item, index) => {
       if (!item || item.type !== 'tool_result') return [];
+      if (parentToolUseId && item.is_error) {
+        return [
+          {
+            id: `background-failure:${row.turn_id || 'unknown'}:${item.tool_use_id || row.id}`,
+            rowId: row.row_id,
+            kind: 'agent-error',
+            code: 'background_action_failed',
+            severity: 'error',
+            title: 'Background action failed',
+            guidance:
+              'A background Conductor action failed. Open the turn on your Mac for full details.',
+            retrying: false,
+            createdAt: row.created_at,
+            turnId: row.turn_id || null,
+            parentToolUseId,
+          },
+        ];
+      }
+      const toolResult = {
+        id: `${row.id}:${index}`,
+        rowId: row.row_id,
+        kind: 'tool-result',
+        toolCallId: item.tool_use_id || null,
+        state: item.is_error ? 'failed' : 'completed',
+        createdAt: row.created_at,
+        turnId: row.turn_id || null,
+        parentToolUseId,
+      };
+      if (!item.is_error) return [toolResult];
       return [
+        toolResult,
         {
-          id: `${row.id}:${index}`,
+          id: `tool-failure:${row.turn_id || 'unknown'}:${item.tool_use_id || row.id}`,
           rowId: row.row_id,
-          kind: 'tool-result',
+          kind: 'tool-failure',
           toolCallId: item.tool_use_id || null,
-          state: item.is_error ? 'failed' : 'completed',
+          code: 'tool_action_failed',
+          severity: 'error',
+          title: 'Tool action failed',
+          guidance:
+            'A Conductor action failed. Open the turn on your Mac for full details.',
+          retrying: false,
           createdAt: row.created_at,
           turnId: row.turn_id || null,
         },
       ];
     });
+  }
+
+  if (event.type === 'result') {
+    const agentError = classifyAgentError(event);
+    return [
+      ...(agentError
+        ? [
+            {
+              id: `${row.id}:error`,
+              rowId: row.row_id,
+              kind: 'agent-error',
+              ...agentError,
+              createdAt: row.created_at,
+              turnId: row.turn_id || null,
+              parentToolUseId,
+            },
+          ]
+        : []),
+      {
+        id: `${row.id}:result`,
+        rowId: row.row_id,
+        kind: 'turn-result',
+        state: event.is_error ? 'failed' : 'complete',
+        createdAt: row.created_at,
+        turnId: row.turn_id || null,
+        parentToolUseId,
+      },
+    ];
   }
 
   const agentError = classifyAgentError(event);
@@ -243,6 +382,7 @@ function parseAssistantRow(row) {
         ...agentError,
         createdAt: row.created_at,
         turnId: row.turn_id || null,
+        parentToolUseId,
       },
     ];
   }
@@ -258,6 +398,8 @@ function parseAssistantRow(row) {
         kind: 'status',
         label: status || subtype.replaceAll('_', ' '),
         createdAt: row.created_at,
+        turnId: row.turn_id || null,
+        parentToolUseId,
       },
     ];
   }
@@ -394,6 +536,7 @@ export class ConductorDatabase {
           turn_id
         FROM session_messages
         WHERE session_id = ? AND cancelled_at IS NULL
+          AND ${VISIBLE_TRANSCRIPT_EVENT_SQL}
         ORDER BY rowid DESC
         LIMIT ?
       `),
@@ -410,6 +553,7 @@ export class ConductorDatabase {
           turn_id
         FROM session_messages
         WHERE session_id = ? AND cancelled_at IS NULL AND rowid > ?
+          AND ${VISIBLE_TRANSCRIPT_EVENT_SQL}
         ORDER BY rowid
         LIMIT ?
       `),
