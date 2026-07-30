@@ -91,6 +91,31 @@ function resolvedToolState(message, toolResults) {
   return toolResults.get(message.toolCallId)?.state || message.state || 'running';
 }
 
+function repeatedFailedBashTurns(messages, toolResults) {
+  const toolCallIdsByTurn = new Map();
+  for (const message of messages) {
+    if (
+      message.kind !== 'tool' ||
+      message.name !== 'Bash' ||
+      !message.turnId ||
+      !message.toolCallId ||
+      !isRootMessage(message) ||
+      toolResults.get(message.toolCallId)?.state !== 'failed'
+    ) {
+      continue;
+    }
+    if (!toolCallIdsByTurn.has(message.turnId)) {
+      toolCallIdsByTurn.set(message.turnId, new Set());
+    }
+    toolCallIdsByTurn.get(message.turnId).add(message.toolCallId);
+  }
+  return new Set(
+    [...toolCallIdsByTurn.entries()]
+      .filter(([, toolCallIds]) => toolCallIds.size > 1)
+      .map(([turnId]) => turnId),
+  );
+}
+
 function activityEntry(turnId, firstMessage) {
   return {
     id: `activity:${turnId}:${firstMessage.id}`,
@@ -99,6 +124,8 @@ function activityEntry(turnId, firstMessage) {
     items: [],
     messageCount: 0,
     toolCount: 0,
+    failedToolCount: 0,
+    failedToolNames: [],
     backgroundErrorCount: 0,
     running: false,
   };
@@ -141,6 +168,7 @@ export function buildFocusedTranscript(
   }
   const finalRows = completedTurns(messages, sessionStatus);
   const activeTurn = activeTurnId(messages, sessionStatus);
+  const compactBashFailureTurns = repeatedFailedBashTurns(messages, toolResults);
   const entries = [];
   const emittedBackgroundFailureTurns = new Set();
   let activity = null;
@@ -156,11 +184,27 @@ export function buildFocusedTranscript(
       flushActivity();
       activity = activityEntry(message.turnId, message);
     }
-    activity.items.push(message);
+    const previousItem = activity.items.at(-1);
+    if (
+      message.compactFailure === true &&
+      previousItem?.compactFailure === true &&
+      previousItem.name === message.name
+    ) {
+      previousItem.occurrenceCount =
+        (Number(previousItem.occurrenceCount) || 1) + 1;
+    } else {
+      activity.items.push(message);
+    }
     if (message.kind === 'assistant') activity.messageCount += 1;
     if (message.kind === 'tool') {
       activity.toolCount += 1;
-      if (resolvedToolState(message, toolResults) === 'running') {
+      const state = resolvedToolState(message, toolResults);
+      if (message.compactFailure === true && state === 'failed') {
+        activity.failedToolCount += 1;
+        if (!activity.failedToolNames.includes(message.name)) {
+          activity.failedToolNames.push(message.name);
+        }
+      } else if (state === 'running') {
         activity.running = true;
       }
     }
@@ -187,8 +231,20 @@ export function buildFocusedTranscript(
     if (message.kind === 'tool' && message.turnId && isRootMessage(message)) {
       const state = resolvedToolState(message, toolResults);
       if (state === 'failed') {
-        flushActivity();
-        entries.push({ ...message, resolvedState: state });
+        if (
+          message.name === 'Bash' &&
+          compactBashFailureTurns.has(message.turnId)
+        ) {
+          appendActivity({
+            ...message,
+            resolvedState: state,
+            compactFailure: true,
+            occurrenceCount: 1,
+          });
+        } else {
+          flushActivity();
+          entries.push({ ...message, resolvedState: state });
+        }
       } else {
         appendActivity({ ...message, resolvedState: state });
       }
@@ -251,6 +307,28 @@ function countPhrase(count, singular, plural) {
 
 export function activityLabel(activity) {
   const parts = [];
+  if (activity.failedToolCount > 0) {
+    const failedToolNames = Array.isArray(activity.failedToolNames)
+      ? activity.failedToolNames.filter(Boolean)
+      : [];
+    if (failedToolNames.length === 1) {
+      parts.push(
+        countPhrase(
+          activity.failedToolCount,
+          `${failedToolNames[0]} failure`,
+          `${failedToolNames[0]} failures`,
+        ),
+      );
+    } else {
+      parts.push(
+        countPhrase(
+          activity.failedToolCount,
+          'failed action',
+          'failed actions',
+        ),
+      );
+    }
+  }
   if (activity.backgroundErrorCount > 0) {
     parts.push(
       countPhrase(
@@ -260,8 +338,12 @@ export function activityLabel(activity) {
       ),
     );
   }
-  if (activity.toolCount > 0) {
-    parts.push(countPhrase(activity.toolCount, 'tool call', 'tool calls'));
+  const remainingToolCount =
+    activity.toolCount - (Number(activity.failedToolCount) || 0);
+  if (remainingToolCount > 0) {
+    parts.push(
+      countPhrase(remainingToolCount, 'tool call', 'tool calls'),
+    );
   }
   if (activity.messageCount > 0) {
     parts.push(countPhrase(activity.messageCount, 'message', 'messages'));

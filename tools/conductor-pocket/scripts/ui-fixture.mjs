@@ -287,28 +287,33 @@ const messages = [
 ];
 
 const errorMessages = [
-  {
-    id: 'm-error-tool',
-    rowId: 12,
-    kind: 'tool',
-    toolCallId: 'tool-error-1',
-    name: 'Publish GitHub Branch',
-    state: 'running',
-    createdAt: at(0.8),
-    turnId: 'turn-error',
-  },
-  {
-    id: 'm-error-result',
-    rowId: 13,
-    kind: 'tool-result',
-    toolCallId: 'tool-error-1',
-    state: 'failed',
-    createdAt: at(0.7),
-    turnId: 'turn-error',
-  },
+  ...Array.from({ length: 20 }, (_, index) => {
+    const rowId = 12 + index * 2;
+    return [
+      {
+        id: `m-bash-error-${index + 1}`,
+        rowId,
+        kind: 'tool',
+        toolCallId: `bash-error-${index + 1}`,
+        name: 'Bash',
+        state: 'running',
+        createdAt: at(0.8 - index / 1_000),
+        turnId: 'turn-error',
+      },
+      {
+        id: `m-bash-result-${index + 1}`,
+        rowId: rowId + 1,
+        kind: 'tool-result',
+        toolCallId: `bash-error-${index + 1}`,
+        state: 'failed',
+        createdAt: at(0.7 - index / 1_000),
+        turnId: 'turn-error',
+      },
+    ];
+  }).flat(),
   ...Array.from({ length: 20 }, (_, index) => ({
     id: `m-background-error-${index + 1}`,
-    rowId: 14 + index,
+    rowId: 52 + index,
     kind: 'agent-error',
     code: 'background_action_failed',
     severity: 'error',
@@ -322,7 +327,7 @@ const errorMessages = [
   })),
   {
     id: 'm-error-agent',
-    rowId: 34,
+    rowId: 72,
     kind: 'agent-error',
     code: 'usage_limit',
     severity: 'error',

@@ -1,5 +1,5 @@
 const SHELL_REVISION = '0.2.0-compact-errors-20260729';
-const CACHE = 'conductor-pocket-shell-v17';
+const CACHE = 'conductor-pocket-shell-v18';
 const SHELL = [
   '/',
   '/index.html',

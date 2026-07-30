@@ -174,6 +174,223 @@ test('nested research prose is suppressed while failures stay visibly compact', 
   );
 });
 
+test('repeated failed Bash calls collapse into one counted activity disclosure', () => {
+  const failedBashCalls = Array.from({ length: 20 }, (_, index) => {
+    const rowId = index * 2 + 3;
+    return [
+      {
+        id: `bash-${index + 1}`,
+        rowId,
+        kind: 'tool',
+        toolCallId: `bash-call-${index + 1}`,
+        name: 'Bash',
+        state: 'running',
+        turnId: 'turn-bash-failures',
+      },
+      {
+        id: `bash-result-${index + 1}`,
+        rowId: rowId + 1,
+        kind: 'tool-result',
+        toolCallId: `bash-call-${index + 1}`,
+        state: 'failed',
+        turnId: 'turn-bash-failures',
+      },
+    ];
+  }).flat();
+  const { entries } = buildFocusedTranscript(
+    [
+      user('question', 1, 'turn-bash-failures'),
+      assistant('checking', 2, 'turn-bash-failures'),
+      ...failedBashCalls,
+      assistant('final answer', 43, 'turn-bash-failures'),
+      {
+        id: 'bash-turn-result',
+        rowId: 44,
+        kind: 'turn-result',
+        state: 'complete',
+        turnId: 'turn-bash-failures',
+      },
+    ],
+    { sessionStatus: 'idle' },
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.text || null]),
+    [
+      ['user', 'question'],
+      ['activity', null],
+      ['assistant', 'final answer'],
+    ],
+  );
+  const activity = entries[1];
+  assert.equal(activity.failedToolCount, 20);
+  assert.equal(activity.toolCount, 20);
+  assert.equal(activity.items.length, 2);
+  assert.equal(activity.items[1].name, 'Bash');
+  assert.equal(activity.items[1].occurrenceCount, 20);
+  assert.equal(
+    activityLabel(activity),
+    '20 Bash failures, 1 message',
+  );
+});
+
+test('isolated and non-Bash tool failures stay standalone', () => {
+  const { entries } = buildFocusedTranscript([
+    user('question', 1, 'turn-isolated-failures'),
+    {
+      id: 'single-bash',
+      rowId: 2,
+      kind: 'tool',
+      toolCallId: 'single-bash-call',
+      name: 'Bash',
+      state: 'running',
+      turnId: 'turn-isolated-failures',
+    },
+    {
+      id: 'single-bash-result',
+      rowId: 3,
+      kind: 'tool-result',
+      toolCallId: 'single-bash-call',
+      state: 'failed',
+      turnId: 'turn-isolated-failures',
+    },
+    {
+      id: 'failed-edit',
+      rowId: 4,
+      kind: 'tool',
+      toolCallId: 'failed-edit-call',
+      name: 'Edit',
+      state: 'running',
+      turnId: 'turn-isolated-failures',
+    },
+    {
+      id: 'failed-edit-result',
+      rowId: 5,
+      kind: 'tool-result',
+      toolCallId: 'failed-edit-call',
+      state: 'failed',
+      turnId: 'turn-isolated-failures',
+    },
+  ]);
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.name || null]),
+    [
+      ['user', null],
+      ['tool', 'Bash'],
+      ['tool', 'Edit'],
+    ],
+  );
+  assert.equal(entries[1].resolvedState, 'failed');
+  assert.equal(entries[2].resolvedState, 'failed');
+});
+
+test('repeated Bash compaction preserves meaningful errors in scan order', () => {
+  const { entries } = buildFocusedTranscript(
+    [
+      user('question', 1, 'turn-ordered-failures'),
+      {
+        id: 'ordered-bash-1',
+        rowId: 2,
+        kind: 'tool',
+        toolCallId: 'ordered-bash-call-1',
+        name: 'Bash',
+        state: 'running',
+        turnId: 'turn-ordered-failures',
+      },
+      {
+        id: 'ordered-bash-result-1',
+        rowId: 3,
+        kind: 'tool-result',
+        toolCallId: 'ordered-bash-call-1',
+        state: 'failed',
+        turnId: 'turn-ordered-failures',
+      },
+      {
+        id: 'ordered-account-error',
+        rowId: 4,
+        kind: 'agent-error',
+        code: 'usage_limit',
+        title: 'Account limit reached',
+        turnId: 'turn-ordered-failures',
+      },
+      {
+        id: 'ordered-bash-2',
+        rowId: 5,
+        kind: 'tool',
+        toolCallId: 'ordered-bash-call-2',
+        name: 'Bash',
+        state: 'running',
+        turnId: 'turn-ordered-failures',
+      },
+      {
+        id: 'ordered-bash-result-2',
+        rowId: 6,
+        kind: 'tool-result',
+        toolCallId: 'ordered-bash-call-2',
+        state: 'failed',
+        turnId: 'turn-ordered-failures',
+      },
+      assistant('final answer', 7, 'turn-ordered-failures'),
+      {
+        id: 'ordered-result',
+        rowId: 8,
+        kind: 'turn-result',
+        state: 'complete',
+        turnId: 'turn-ordered-failures',
+      },
+    ],
+    { sessionStatus: 'idle' },
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.id]),
+    [
+      ['user', 'question'],
+      ['activity', 'activity:turn-ordered-failures:ordered-bash-1'],
+      ['agent-error', 'ordered-account-error'],
+      ['activity', 'activity:turn-ordered-failures:ordered-bash-2'],
+      ['assistant', 'final answer'],
+    ],
+  );
+  assert.equal(entries[1].failedToolCount, 1);
+  assert.equal(entries[3].failedToolCount, 1);
+});
+
+test('duplicate Bash rows for one tool call do not trigger burst compaction', () => {
+  const duplicate = {
+    id: 'duplicate-bash',
+    rowId: 2,
+    kind: 'tool',
+    toolCallId: 'duplicate-bash-call',
+    name: 'Bash',
+    state: 'running',
+    turnId: 'turn-duplicate-bash',
+  };
+  const { entries } = buildFocusedTranscript([
+    user('question', 1, 'turn-duplicate-bash'),
+    duplicate,
+    { ...duplicate, id: 'duplicate-bash-replay', rowId: 3 },
+    {
+      id: 'duplicate-bash-result',
+      rowId: 4,
+      kind: 'tool-result',
+      toolCallId: 'duplicate-bash-call',
+      state: 'failed',
+      turnId: 'turn-duplicate-bash',
+    },
+  ]);
+
+  assert.deepEqual(
+    entries.map((entry) => entry.kind),
+    ['user', 'tool', 'tool'],
+  );
+  assert.equal(
+    entries.some((entry) => entry.kind === 'activity'),
+    false,
+  );
+});
+
 test('repeated background failures collapse into one counted activity item', () => {
   const backgroundFailures = Array.from({ length: 20 }, (_, index) => ({
     id: `background-error-${index + 1}`,
