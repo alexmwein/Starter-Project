@@ -171,6 +171,7 @@ export function buildFocusedTranscript(
   const compactBashFailureTurns = repeatedFailedBashTurns(messages, toolResults);
   const entries = [];
   const emittedBackgroundFailureTurns = new Set();
+  const emittedCompactBashToolCalls = new Set();
   let activity = null;
 
   const flushActivity = () => {
@@ -235,6 +236,8 @@ export function buildFocusedTranscript(
           message.name === 'Bash' &&
           compactBashFailureTurns.has(message.turnId)
         ) {
+          if (emittedCompactBashToolCalls.has(message.toolCallId)) continue;
+          emittedCompactBashToolCalls.add(message.toolCallId);
           appendActivity({
             ...message,
             resolvedState: state,

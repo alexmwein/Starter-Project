@@ -1,17 +1,17 @@
-const SHELL_REVISION = '0.2.0-compact-errors-20260729';
+const SHELL_REVISION = '0.2.0-bash-errors-20260730';
 const CACHE = 'conductor-pocket-shell-v18';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-compact-errors-20260729',
-  '/app.js?v=0.2.0-compact-errors-20260729',
-  '/delivery-receipts.js?v=0.2.0-compact-errors-20260729',
-  '/app-update.js?v=0.2.0-compact-errors-20260729',
-  '/http.js?v=0.2.0-compact-errors-20260729',
-  '/live-refresh.js?v=0.2.0-compact-errors-20260729',
-  '/rich-text.js?v=0.2.0-compact-errors-20260729',
-  '/transcript-focus.js?v=0.2.0-compact-errors-20260729',
-  '/swipe-navigation.js?v=0.2.0-compact-errors-20260729',
+  '/app.css?v=0.2.0-bash-errors-20260730',
+  '/app.js?v=0.2.0-bash-errors-20260730',
+  '/delivery-receipts.js?v=0.2.0-bash-errors-20260730',
+  '/app-update.js?v=0.2.0-bash-errors-20260730',
+  '/http.js?v=0.2.0-bash-errors-20260730',
+  '/live-refresh.js?v=0.2.0-bash-errors-20260730',
+  '/rich-text.js?v=0.2.0-bash-errors-20260730',
+  '/transcript-focus.js?v=0.2.0-bash-errors-20260730',
+  '/swipe-navigation.js?v=0.2.0-bash-errors-20260730',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
