@@ -2071,7 +2071,10 @@ function renderTranscript() {
         );
       }
     }
-    if (message.kind === 'activity' && message.backgroundErrorCount > 0) {
+    if (
+      message.kind === 'activity' &&
+      (message.backgroundErrorCount > 0 || message.failedToolCount > 0)
+    ) {
       const announcementId = `${messageId}:background-errors`;
       if (!state.seenMessageIds.has(announcementId)) {
         announce(
@@ -2132,6 +2135,8 @@ function messageRenderKey(message, toolResults) {
       message.running,
       message.messageCount,
       message.toolCount,
+      message.failedToolCount,
+      message.failedToolNames,
       message.backgroundErrorCount,
       expanded,
       expanded
@@ -2139,6 +2144,7 @@ function messageRenderKey(message, toolResults) {
             item.id,
             item.text,
             item.occurrenceCount,
+            item.compactFailure,
             item.code,
             item.title,
             item.guidance,
@@ -2284,6 +2290,8 @@ function renderMessage(message, toolResults) {
     const result = toolResults.get(message.toolCallId);
     const stateValue = message.resolvedState || result?.state || message.state;
     const failed = stateValue === 'failed';
+    const occurrenceCount = Number(message.occurrenceCount) || 1;
+    const groupedFailure = failed && occurrenceCount > 1;
     const details = node('details', {
       className: `tool-card ${failed ? 'failed' : stateValue === 'running' ? 'running' : 'completed'}`,
       open: failed,
@@ -2301,7 +2309,9 @@ function renderMessage(message, toolResults) {
           stateValue === 'running'
             ? 'Running'
             : failed
-              ? 'Failed'
+              ? groupedFailure
+                ? `${occurrenceCount} failed`
+                : 'Failed'
               : 'Done',
       }),
       icon('chevronDown', 'chevron'),
@@ -2309,7 +2319,9 @@ function renderMessage(message, toolResults) {
     const detail = node('div', {
       className: 'tool-details',
       text:
-        failed
+        groupedFailure
+          ? `Pocket grouped ${occurrenceCount} repeated ${message.name} failures. Sensitive inputs and full output stay on your Mac.`
+          : failed
           ? 'This action failed. Sensitive inputs and full output stay on your Mac.'
           : 'Full tool inputs and outputs stay on the Mac.',
     });
@@ -2342,7 +2354,8 @@ function renderMessage(message, toolResults) {
 
 function renderActivity(activity, toolResults) {
   const expanded = state.expandedActivities.has(activity.id);
-  const hasErrors = activity.backgroundErrorCount > 0;
+  const hasErrors =
+    activity.backgroundErrorCount > 0 || activity.failedToolCount > 0;
   const label = activityLabel(activity);
   const accessibleLabel = `${label}${activity.running ? ', Working' : ''}`;
   const detailsId = `activity-${String(activity.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
