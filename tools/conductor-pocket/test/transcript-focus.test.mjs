@@ -357,7 +357,7 @@ test('repeated Bash compaction preserves meaningful errors in scan order', () =>
   assert.equal(entries[3].failedToolCount, 1);
 });
 
-test('duplicate Bash rows for one tool call do not trigger burst compaction', () => {
+test('duplicate Bash rows do not inflate a real repeated-failure burst', () => {
   const duplicate = {
     id: 'duplicate-bash',
     rowId: 2,
@@ -379,16 +379,33 @@ test('duplicate Bash rows for one tool call do not trigger burst compaction', ()
       state: 'failed',
       turnId: 'turn-duplicate-bash',
     },
+    {
+      id: 'distinct-bash',
+      rowId: 5,
+      kind: 'tool',
+      toolCallId: 'distinct-bash-call',
+      name: 'Bash',
+      state: 'running',
+      turnId: 'turn-duplicate-bash',
+    },
+    {
+      id: 'distinct-bash-result',
+      rowId: 6,
+      kind: 'tool-result',
+      toolCallId: 'distinct-bash-call',
+      state: 'failed',
+      turnId: 'turn-duplicate-bash',
+    },
   ]);
 
   assert.deepEqual(
     entries.map((entry) => entry.kind),
-    ['user', 'tool', 'tool'],
+    ['user', 'activity'],
   );
-  assert.equal(
-    entries.some((entry) => entry.kind === 'activity'),
-    false,
-  );
+  assert.equal(entries[1].failedToolCount, 2);
+  assert.equal(entries[1].toolCount, 2);
+  assert.equal(entries[1].items.length, 1);
+  assert.equal(entries[1].items[0].occurrenceCount, 2);
 });
 
 test('repeated background failures collapse into one counted activity item', () => {

@@ -1,28 +1,28 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-compact-errors-20260729';
+} from './delivery-receipts.js?v=0.2.0-bash-errors-20260730';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-compact-errors-20260729';
-import { fetchJson } from './http.js?v=0.2.0-compact-errors-20260729';
+} from './app-update.js?v=0.2.0-bash-errors-20260730';
+import { fetchJson } from './http.js?v=0.2.0-bash-errors-20260730';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-compact-errors-20260729';
+} from './live-refresh.js?v=0.2.0-bash-errors-20260730';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-compact-errors-20260729';
+} from './rich-text.js?v=0.2.0-bash-errors-20260730';
 import {
   activityLabel,
   buildFocusedTranscript,
-} from './transcript-focus.js?v=0.2.0-compact-errors-20260729';
+} from './transcript-focus.js?v=0.2.0-bash-errors-20260730';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-compact-errors-20260729';
+} from './swipe-navigation.js?v=0.2.0-bash-errors-20260730';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -43,7 +43,7 @@ const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-compact-errors-20260729';
+const CLIENT_SHELL_REVISION = '0.2.0-bash-errors-20260730';
 
 const state = {
   auth: null,
