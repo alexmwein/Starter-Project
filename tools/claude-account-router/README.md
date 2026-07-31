@@ -70,9 +70,18 @@ claude-acct best
 claude-acct next
 ```
 
-Manual selection remains available for diagnostics, but normal Conductor
-launches call the read-only usage helper and choose the best account
-automatically.
+Manual selection remains available for diagnostics and applies to exactly the
+next Conductor Claude launch. After that one launch, Conductor queries
+subscription usage and again chooses the best non-draining account
+automatically. This changes only the isolated Claude login profile; it does not
+change Conductor's selected agent, model, workspace, or existing chats.
+
+An expired access token no longer makes an otherwise authenticated profile
+disappear. At the launch boundary, the router delegates refresh to Conductor's
+official Claude binary, verifies that the rotated credential was persisted,
+then ranks the account using refreshed usage. It never calls the OAuth token
+endpoint directly, never kills a refresh transaction on a timer, and refuses
+to refresh a profile currently owned by a direct Claude process.
 
 By default, Claude Switcher marks an account as draining at 90% of its
 five-hour allocation or 95% of its seven-day allocation. It waits for each
@@ -80,8 +89,12 @@ chat to finish its active turn, stops only the idle Claude child using that
 account, and lets the next message resume on the healthiest account.
 
 When a running chat hits a limit, the watcher stops only that capped Claude
-process. Conductor's next retry or message starts the same session through the
-best available account. Other Claude and Codex chats remain running.
+process and quarantines that login for six hours, preventing stale cached usage
+from immediately selecting it again. Conductor's next retry or message starts
+the same session through the best available account. Other Claude and Codex
+chats remain running. If every login is draining, quarantined, or unable to
+refresh safely, the launcher fails closed with a clear error instead of
+silently relaunching the last capped account.
 
 If a profile says `login required`:
 
@@ -89,9 +102,9 @@ If a profile says `login required`:
 claude-acct login ACCOUNT
 ```
 
-The router intentionally requires a non-expired profile access token before it
-will select an account. This prevents a stale pre-router refresh token from
-invalidating a still-running legacy Claude chat during the one-time migration.
+Keychain logout tombstones and Keychain access errors are authoritative: the
+router never revives a stale on-disk token behind them. A genuinely new profile
+can be created with the same `claude-acct login ACCOUNT` recovery command.
 
 `claude-acct global-use` exists only for legacy terminal workflows. It refuses
 to rewrite the shared Keychain while any Claude process is running.

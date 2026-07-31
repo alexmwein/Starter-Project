@@ -13,6 +13,7 @@ PROFILE_ROOT="${CLAUDE_PROFILE_ROOT:-$HOME/.claude-profiles}"
 GLOBAL_CONFIG="${CLAUDE_GLOBAL_CONFIG:-$HOME/.claude}"
 BACKUP_ROOT="${CLAUDE_ACCOUNT_BACKUP_ROOT:-$HOME/.claude-account-router-backups}"
 CONDUCTOR_BIN_DIR="${CONDUCTOR_BIN_DIR:-$HOME/Library/Application Support/com.conductor.app/bin}"
+CONDUCTOR_AGENT_ROOT="${CONDUCTOR_CLAUDE_AGENT_ROOT:-$(dirname "$CONDUCTOR_BIN_DIR")/agent-binaries/claude}"
 CONDUCTOR_CLAUDE_LINK="$CONDUCTOR_BIN_DIR/claude"
 CONDUCTOR_ROUTER_TARGET="$CONDUCTOR_BIN_DIR/claude-router-target"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.alexweinstein.claude-switcher.plist"
@@ -20,8 +21,53 @@ LEGACY_LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.alexweinstein.claude-account
 stamp="$(date +%Y%m%d-%H%M%S)"
 backup="$BACKUP_ROOT/$stamp"
 
-mkdir -p "$TARGET_BIN" "$DISCOVERY_BIN" "$STORE" "$PROFILE_ROOT" "$GLOBAL_CONFIG/projects" "$backup"
+mkdir -p "$TARGET_BIN" "$DISCOVERY_BIN" "$STORE" "$PROFILE_ROOT" "$GLOBAL_CONFIG/projects" "$backup" "$CONDUCTOR_BIN_DIR"
 chmod 700 "$TARGET_BIN" "$DISCOVERY_BIN" "$STORE" "$PROFILE_ROOT" "$BACKUP_ROOT" "$backup"
+
+# Resolve a direct Claude binary before changing Conductor's stable link. This
+# repairs partial installs where the stable link points at our wrapper but the
+# saved router target has disappeared, without ever selecting the wrapper as
+# its own downstream executable.
+resolved_claude="$(python3 - "$CONDUCTOR_CLAUDE_LINK" "$CONDUCTOR_AGENT_ROOT" "$CONDUCTOR_ROUTER_TARGET" "${CONDUCTOR_CLAUDE_BIN:-}" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+stable, agent_root, saved_target, explicit = sys.argv[1:]
+candidates = []
+if explicit:
+    candidates = [Path(explicit)]
+else:
+    versioned = []
+    for path in Path(agent_root).glob("*/claude"):
+        try:
+            versioned.append((path.stat().st_mtime, path))
+        except OSError:
+            pass
+    candidates.extend(
+        path for _, path in sorted(versioned, key=lambda item: item[0], reverse=True)
+    )
+    candidates.extend(
+        (Path(stable), Path(saved_target), Path("/opt/homebrew/bin/claude"))
+    )
+for candidate in candidates:
+    try:
+        resolved = Path(os.path.realpath(candidate))
+        if (
+            candidate.is_file()
+            and os.access(candidate, os.X_OK)
+            and resolved.name != "conductor-claude"
+        ):
+            print(resolved)
+            raise SystemExit(0)
+    except OSError:
+        pass
+raise SystemExit(1)
+PY
+)" || {
+  echo "install: no direct Conductor Claude executable found; leaving Conductor unchanged" >&2
+  exit 1
+}
 
 for name in claude-acct claude-acct-run claude-acct-usage.py conductor-claude claude-rate-limit-watch.py claude-switcher; do
   if [ -e "$TARGET_BIN/$name" ]; then
@@ -34,22 +80,11 @@ ln -sfn "$TARGET_BIN/claude-switcher" "$DISCOVERY_BIN/claude-switcher"
 # Conductor caches its executable-path setting in the running sidecar. Route
 # the live bundled symlink through the launcher so future Claude processes use
 # the router immediately, without restarting Conductor or unrelated chats.
-if [ -L "$CONDUCTOR_CLAUDE_LINK" ] || [ -e "$CONDUCTOR_CLAUDE_LINK" ]; then
-  if [ "$(readlink "$CONDUCTOR_CLAUDE_LINK" 2>/dev/null || true)" != "$TARGET_BIN/conductor-claude" ]; then
-    resolved_claude="$(python3 - "$CONDUCTOR_CLAUDE_LINK" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(sys.argv[1]))
-PY
-)"
-    printf '%s\n' "$resolved_claude" > "$backup/conductor-claude-original-target.txt"
-    ln -sfn "$resolved_claude" "$CONDUCTOR_ROUTER_TARGET"
-  fi
-  if [ -x "$CONDUCTOR_ROUTER_TARGET" ]; then
-    ln -sfn "$TARGET_BIN/conductor-claude" "$CONDUCTOR_CLAUDE_LINK"
-  fi
-fi
+readlink "$CONDUCTOR_CLAUDE_LINK" > "$backup/conductor-claude-previous-link.txt" 2>/dev/null || true
+readlink "$CONDUCTOR_ROUTER_TARGET" > "$backup/conductor-router-previous-link.txt" 2>/dev/null || true
+printf '%s\n' "$resolved_claude" > "$backup/conductor-claude-original-target.txt"
+ln -sfn "$resolved_claude" "$CONDUCTOR_ROUTER_TARGET"
+ln -sfn "$TARGET_BIN/conductor-claude" "$CONDUCTOR_CLAUDE_LINK"
 
 for snapshot in "$STORE"/*.json; do
   [ -e "$snapshot" ] || continue

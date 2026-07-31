@@ -53,13 +53,14 @@ Commands:
   claude-switcher status          show policy, watcher health, and usage
   claude-switcher accounts        list authenticated account profiles
   claude-switcher switch          immediately select the healthiest account
-  claude-switcher use ACCOUNT     manually select an account for diagnostics
+  claude-switcher use ACCOUNT     use an account for the next launch only
   claude-switcher repair          restart the background watcher
   claude-switcher help            show this help
 
 Environment:
   CLAUDE_SWITCHER_FIVE_HOUR_DRAIN  default 90
   CLAUDE_SWITCHER_SEVEN_DAY_DRAIN  default 95
+  CLAUDE_SWITCHER_QUARANTINE_SECONDS default 21600 (six hours)
 HELP
     ;;
   *)

@@ -12,7 +12,9 @@ profile by conductor-claude.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import math
 import os
 import re
 import signal
@@ -20,6 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -49,6 +52,15 @@ STATE_FILE = Path(
         "CLAUDE_RATE_LIMIT_STATE", STORE / ".rate-limit-watcher-state.json"
     )
 )
+QUARANTINE_FILE = Path(
+    os.environ.get(
+        "CLAUDE_ACCOUNT_QUARANTINE_FILE", STORE / ".quarantined-accounts.json"
+    )
+)
+ROUTER_LOCK = STORE / ".router.lock"
+QUARANTINE_SECONDS = int(
+    os.environ.get("CLAUDE_SWITCHER_QUARANTINE_SECONDS", str(6 * 60 * 60))
+)
 SESSION_PATTERN = re.compile(
     r"--(?:session-id|resume)\s+"
     r"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"
@@ -75,6 +87,55 @@ def save_state(state: dict[str, str]) -> None:
     os.replace(temporary, STATE_FILE)
 
 
+@contextmanager
+def router_lock():
+    STORE.mkdir(parents=True, exist_ok=True)
+    STORE.chmod(0o700)
+    with ROUTER_LOCK.open("a+") as handle:
+        ROUTER_LOCK.chmod(0o600)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def quarantine_account(name: str, reason: str) -> bool:
+    """Prevent a just-failed account from winning the immediate retry."""
+
+    with router_lock():
+        try:
+            entries = json.loads(QUARANTINE_FILE.read_text())
+        except FileNotFoundError:
+            entries = {}
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"cannot update quarantine state: {error}", file=sys.stderr)
+            return False
+        if not isinstance(entries, dict):
+            print("cannot update quarantine state: expected an object", file=sys.stderr)
+            return False
+        existing = entries.get(name) or {}
+        try:
+            existing_until = float(existing.get("until") or 0)
+        except (AttributeError, TypeError, ValueError):
+            existing_until = 0
+        now = time.time()
+        entries[name] = {
+            "observed_at": now,
+            "until": max(existing_until, now + QUARANTINE_SECONDS),
+            "reason": reason,
+        }
+        QUARANTINE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        QUARANTINE_FILE.parent.chmod(0o700)
+        temporary = QUARANTINE_FILE.with_name(
+            f"{QUARANTINE_FILE.name}.tmp.{os.getpid()}"
+        )
+        temporary.write_text(json.dumps(entries, sort_keys=True))
+        temporary.chmod(0o600)
+        os.replace(temporary, QUARANTINE_FILE)
+    return True
+
+
 def parse_process_start(value: str) -> datetime | None:
     try:
         parsed = datetime.strptime(value.strip(), "%a %b %d %H:%M:%S %Y")
@@ -90,7 +151,7 @@ def process_account(pid: int) -> str | None:
         text=True,
         check=False,
     )
-    match = re.search(r"(?:^| )CLAUDE_CONFIG_DIR=([^ ]+)", result.stdout)
+    match = re.search(r"(?:^|\s)CLAUDE_CONFIG_DIR=(\S+)", result.stdout)
     if not match:
         return None
     config_dir = Path(match.group(1))
@@ -110,12 +171,15 @@ def active_claude_sessions() -> dict[str, tuple[int, datetime | None, str | None
     )
     sessions: dict[str, tuple[int, datetime | None, str | None]] = {}
     for row in result.stdout.splitlines():
-        if "/agent-binaries/claude/" not in row:
-            continue
         match = PS_PATTERN.match(row)
         if not match:
             continue
         pid, _, started, command = match.groups()
+        if (
+            "/com.conductor.app/agent-binaries/claude/" not in command
+            and "/com.conductor.app/bin/claude" not in command
+        ):
+            continue
         session = SESSION_PATTERN.search(command)
         if session:
             numeric_pid = int(pid)
@@ -146,6 +210,8 @@ def latest_rate_limit(path: Path) -> str | None:
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
                     continue
                 if (
                     event.get("type") == "assistant"
@@ -184,13 +250,34 @@ def account_usage() -> dict[str, tuple[float, float]]:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
         return {}
+    if not isinstance(payload, dict):
+        return {}
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, list):
+        return {}
     usage = {}
-    for row in payload.get("accounts", []):
+    for row in accounts:
+        if not isinstance(row, dict):
+            continue
         entry = row.get("usage") or {}
+        if not isinstance(entry, dict):
+            continue
         five_hour = entry.get("five_hour")
         seven_day = entry.get("seven_day")
-        if row.get("authenticated") and five_hour is not None:
-            usage[row["name"]] = (float(five_hour), float(seven_day or 0))
+        name = row.get("name")
+        try:
+            five_hour = float(five_hour)
+            seven_day = float(seven_day or 0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            row.get("authenticated") is True
+            and isinstance(name, str)
+            and name
+            and math.isfinite(five_hour)
+            and math.isfinite(seven_day)
+        ):
+            usage[name] = (five_hour, seven_day)
     return usage
 
 
@@ -202,17 +289,21 @@ def draining_accounts() -> set[str]:
     }
 
 
-def session_is_idle(session_id: str) -> bool:
+def session_status(session_id: str) -> str | None:
     if not CONDUCTOR_DB.exists():
-        return False
+        return None
     try:
         with sqlite3.connect(f"file:{CONDUCTOR_DB}?mode=ro", uri=True) as database:
             row = database.execute(
                 "select status from sessions where id = ?", (session_id,)
             ).fetchone()
-        return bool(row and row[0] == "idle")
+        return row[0] if row and isinstance(row[0], str) else None
     except sqlite3.Error:
-        return False
+        return None
+
+
+def session_is_idle(session_id: str) -> bool:
+    return session_status(session_id) == "idle"
 
 
 def scan(
@@ -228,6 +319,8 @@ def scan(
             and account in draining
             and session_is_idle(session_id)
         ):
+            if not quarantine_account(account, "usage drain threshold"):
+                continue
             try:
                 os.kill(pid, signal.SIGHUP)
                 stopped.append((session_id, pid, f"{account} reached drain threshold"))
@@ -250,10 +343,16 @@ def scan(
             and process_start
             and event_time.astimezone() >= process_start - timedelta(seconds=2)
         )
-        state[session_id] = event_timestamp
-
         if initialize or not is_current_process_event:
+            state[session_id] = event_timestamp
             continue
+        # Full command paths identify the expected binary, while the database
+        # proves the session belongs to Conductor rather than an unrelated CLI.
+        if session_status(session_id) is None:
+            continue
+        if not account or not quarantine_account(account, "hard session limit"):
+            continue
+        state[session_id] = event_timestamp
         try:
             os.kill(pid, signal.SIGHUP)
             stopped.append((session_id, pid, "hard session limit"))

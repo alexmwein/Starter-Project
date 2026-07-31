@@ -14,10 +14,12 @@ account="$1"
 shift
 
 case "$account" in
-  *[!A-Za-z0-9@._-]*|'') usage ;;
+  ''|.*|-*|*[!A-Za-z0-9@._-]*) usage ;;
 esac
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 export CLAUDE_ACCOUNT_OVERRIDE="$account"
-export CONDUCTOR_CLAUDE_BIN="${CLAUDE_BIN:-/opt/homebrew/bin/claude}"
+if [ -n "${CLAUDE_BIN:-}" ]; then
+  export CONDUCTOR_CLAUDE_BIN="$CLAUDE_BIN"
+fi
 exec "$script_dir/conductor-claude" "$@"
