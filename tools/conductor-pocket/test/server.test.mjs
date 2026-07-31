@@ -222,6 +222,27 @@ function postMessage(
   });
 }
 
+function composerRetryResult(
+  draft,
+  inputCounters = Array.from(
+    { length: 16 },
+    (_, index) => index,
+  ).join(','),
+) {
+  return {
+    ok: false,
+    code: 'composer_changed_pre_send',
+    safeToRetry: true,
+    retryCertificate: Buffer.from(
+      JSON.stringify({
+        draftBase64: Buffer.from(draft, 'utf8').toString('base64'),
+        inputCounters,
+      }),
+      'utf8',
+    ).toString('base64'),
+  };
+}
+
 function postDeliveryStatus(
   port,
   {
@@ -688,6 +709,220 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
   assert.equal(rejectedSends, 1);
 });
 
+test('a certified composer rerender retries once inside the same send', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Pocket certified retry';
+  const retryDraft = 'Pocket cert';
+  const inputCounters = Array.from(
+    { length: 16 },
+    (_, index) => index + 10,
+  ).join(',');
+  const rows = [];
+  const calls = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 40;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send(options) {
+        calls.push(options);
+        if (calls.length === 1) {
+          return composerRetryResult(retryDraft, inputCounters);
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'retried-user-row',
+          rowId: 41,
+          text: message,
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'certified_composer_retry_key',
+    message,
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'certified_composer_retry_key',
+    message,
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(repeated.status, 200);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].replaceDraft, true);
+  assert.equal(calls[1].expectedMacDraft, retryDraft);
+  assert.equal(calls[1].expectedInputCounters, inputCounters);
+  assert.ok(calls[1].timeoutMs >= 1_000);
+  assert.ok(calls[1].timeoutMs <= 45_000);
+});
+
+test('a certified composer retry is bounded once and restores the phone draft', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 50;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return composerRetryResult('Test');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'bounded_composer_retry_key',
+  });
+
+  assert.equal(response.status, 502);
+  assert.equal(sends, 2);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'composer_changed_pre_send',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
+test('a new user row blocks a certified composer retry', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let firstAttemptFinished = false;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 60;
+      },
+      listUserMessagesAfter() {
+        return firstAttemptFinished
+          ? [
+              {
+                id: 'manual-user-row',
+                rowId: 61,
+                text: 'Manual message',
+                createdAt: new Date().toISOString(),
+              },
+            ]
+          : [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        firstAttemptFinished = true;
+        return composerRetryResult('Test');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'blocked_composer_retry_key',
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
 test('an idempotency key remains bound to the exact send body across safe retries', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -883,6 +1118,80 @@ test('an ambiguous UI result is confirmed by the exact new Conductor row', async
   assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
     state: 'unknown',
   });
+});
+
+test('send canonicalizes outer whitespace before transport, confirmation, and idempotency', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const canonical = 'Pocket dictated\nline two';
+  const rows = [];
+  const transported = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 0;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send({ message }) {
+        transported.push(message);
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'trimmed-user-row',
+          rowId: 1,
+          text: canonical,
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: false,
+          code: 'send_not_confirmed',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'trimmed_dictation_key',
+    message: '  Pocket dictated\r\nline two \n',
+  });
+  const repeated = await postMessage(port, {
+    idempotencyKey: 'trimmed_dictation_key',
+    message: canonical,
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(transported, [canonical]);
 });
 
 test('delivery status recovers a late exact row without resending or exposing content', async (context) => {
@@ -1484,6 +1793,7 @@ test('an interruption before Pocket owns the full composer fails fast and is ret
   assert.deepEqual(JSON.parse(response.body).error, {
     code: 'user_input_active',
     retrySafe: true,
+    definitelyUnsent: true,
   });
   assert.equal(queriedAfterInterruption, false);
   assert.ok(Date.now() - startedAt < 1_000);
@@ -1567,6 +1877,7 @@ test('an interrupted pre-send attempt is retryable only after Conductor stays un
   assert.deepEqual(JSON.parse(first.body).error, {
     code: 'user_input_active',
     retrySafe: true,
+    definitelyUnsent: true,
   });
   assert.equal(retry.status, 503);
   assert.equal(sends, 2);
@@ -1678,6 +1989,67 @@ test('ambiguous-send attribution retries database reads and rejects interference
   });
   assert.equal(recovered, exact);
   assert.ok(reads >= 3);
+
+  let gapRead = 0;
+  const gapReads = [[exact], [], [exact], [exact]];
+  const recoveredAcrossGap = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        const result =
+          gapReads[Math.min(gapRead, gapReads.length - 1)];
+        gapRead += 1;
+        return result;
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 100,
+    pollMs: 1,
+    recheckMs: 1,
+  });
+  assert.equal(recoveredAcrossGap, exact);
+  assert.equal(gapRead, 4);
+
+  const replacement = {
+    ...exact,
+    id: 'user-2',
+    rowId: 12,
+  };
+  let replacementRead = 0;
+  const replacementReads = [
+    [exact],
+    [],
+    [replacement],
+    [replacement],
+  ];
+  const rejectedReplacement = await waitForExactUserMessage({
+    database: {
+      listUserMessagesAfter() {
+        const result =
+          replacementReads[
+            Math.min(
+              replacementRead,
+              replacementReads.length - 1,
+            )
+          ];
+        replacementRead += 1;
+        return result;
+      },
+    },
+    sessionId: 'session-1',
+    afterRowId: 10,
+    exactContent: 'Exact',
+    pressedAt,
+    composerOwned: true,
+    timeoutMs: 100,
+    pollMs: 1,
+    recheckMs: 1,
+  });
+  assert.equal(rejectedReplacement, null);
+  assert.equal(replacementRead, 3);
 
   const eventTimestampedJustBeforePress = {
     ...exact,

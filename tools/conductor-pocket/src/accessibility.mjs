@@ -7,10 +7,11 @@ import { normalizeText } from './encoding.mjs';
 const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(new URL('./conductor-send.applescript', import.meta.url));
 const inputScriptPath = fileURLToPath(new URL('./conductor-input.js', import.meta.url));
+const PHYSICAL_INPUT_COUNTER_COUNT = 16;
 const safeToRetryCodes = new Set([
   'accessibility_disabled',
+  'composer_changed_pre_send',
   'composer_unavailable',
-  'composer_update_failed',
   'conductor_not_running',
   'conductor_window_unavailable',
   'draft_conflict',
@@ -47,6 +48,18 @@ export function parseResult(stdout) {
         typeof result.composerOwned !== 'boolean')
     ) {
       throw new Error('Missing ambiguous-send attribution');
+    }
+    if (
+      result.code === 'composer_changed_pre_send' &&
+      (result.ok ||
+        typeof result.retryCertificate !== 'string' ||
+        result.retryCertificate.length === 0 ||
+        result.retryCertificate.length > 48 * 1024 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+          result.retryCertificate,
+        ))
+    ) {
+      throw new Error('Missing composer retry certificate');
     }
     if (!result.ok && safeToRetryCodes.has(result.code)) {
       result.safeToRetry = true;
@@ -91,6 +104,8 @@ export class AccessibilityTransport {
     message,
     replaceDraft = false,
     expectedMacDraft,
+    expectedInputCounters = null,
+    timeoutMs = 45_000,
   }) {
     const normalized = normalizeText(message);
     if (!normalized.trim()) {
@@ -121,6 +136,34 @@ export class AccessibilityTransport {
     ) {
       return Promise.resolve(safeToRetry('draft_recheck_required'));
     }
+    if (
+      expectedInputCounters !== null &&
+      (typeof expectedInputCounters !== 'string' ||
+        expectedInputCounters.split(',').length !==
+          PHYSICAL_INPUT_COUNTER_COUNT ||
+        expectedInputCounters
+          .split(',')
+          .some(
+            (counter) =>
+              !/^(?:0|[1-9][0-9]*)$/.test(counter) ||
+              !Number.isSafeInteger(Number(counter)),
+          ))
+    ) {
+      return Promise.resolve({
+        ok: false,
+        code: 'automation_invalid_response',
+      });
+    }
+    if (
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs < 1_000 ||
+      timeoutMs > 45_000
+    ) {
+      return Promise.resolve({
+        ok: false,
+        code: 'automation_invalid_response',
+      });
+    }
     const task = () =>
       this.#run({
         operation: 'send',
@@ -130,6 +173,8 @@ export class AccessibilityTransport {
         message: normalized,
         replaceDraft,
         expectedMacDraft: normalizedExpectedDraft || '',
+        expectedInputCounters: expectedInputCounters || '',
+        timeoutMs,
       });
     this.#queue = this.#queue.then(task, task);
     return this.#queue;
@@ -143,12 +188,14 @@ export class AccessibilityTransport {
     message = '',
     replaceDraft = false,
     expectedMacDraft = '',
+    expectedInputCounters = '',
+    timeoutMs = 45_000,
   }) {
     const attemptStartedAt = Date.now();
     try {
       const { stdout } = await execFileAsync('/usr/bin/osascript', [scriptPath], {
         encoding: 'utf8',
-        timeout: 45_000,
+        timeout: timeoutMs,
         maxBuffer: 64 * 1024,
         env: {
           ...process.env,
@@ -174,6 +221,7 @@ export class AccessibilityTransport {
             expectedMacDraft,
             'utf8',
           ).toString('base64'),
+          POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
       return parseResult(stdout);

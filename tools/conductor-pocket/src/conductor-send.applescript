@@ -200,15 +200,15 @@ on commitAndPressMessage(textArea, inputScriptPath, conductorPid, workspaceConta
 		set helperResult to do shell script "/usr/bin/env " & routeEnvironment & " POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error errorText
 		if errorText contains "draft_conflict" then return "draft_conflict"
-		if errorText contains "composer_focus_changed" then return "composer_focus_changed"
 		if errorText contains "session_locked" then return "session_locked"
-		return "composer_update_failed"
+		return "automation_failed"
 	end try
 	if helperResult starts with "pressed:" then return helperResult
 	if helperResult starts with "ambiguous:" then return helperResult
 	if helperResult starts with "interrupted:" then return helperResult
+	if helperResult starts with "retryable:" then return helperResult
 	if helperResult is "session_locked" then return helperResult
-	return "composer_update_failed"
+	return "automation_failed"
 end commitAndPressMessage
 
 on waitForInputIdle(inputScriptPath, conductorPid)
@@ -260,6 +260,7 @@ set sessionOrdinal to (system attribute "POCKET_SESSION_ORDINAL") as integer
 set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")
 set replaceDraft to (system attribute "POCKET_REPLACE_DRAFT") is "true"
 set expectedDraft to my decodeBase64(system attribute "POCKET_EXPECTED_DRAFT_BASE64")
+set retryInputCounters to system attribute "POCKET_EXPECTED_INPUT_COUNTERS"
 
 set inputReadiness to my waitForInputIdle(inputScriptPath, conductorPid)
 if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
@@ -281,9 +282,11 @@ tell application "System Events"
 	if workspaceClasses contains "bg-sidebar-accent" then
 		set routeAlreadySelected to my sessionIsSelected(sessionTitle, sessionOrdinal)
 	else
-		perform action "AXPress" of workspaceLink
+		if retryInputCounters is "" then perform action "AXPress" of workspaceLink
 	end if
 end tell
+
+if retryInputCounters is not "" and routeAlreadySelected is false then return "{\"ok\":false,\"code\":\"user_input_active\"}"
 
 set sessionFound to routeAlreadySelected
 if sessionFound is false then
@@ -325,19 +328,15 @@ if routeAlreadySelected is false then
 end if
 
 set stableRouteChecks to 0
-if routeAlreadySelected is true then
-	set stableRouteChecks to 3
-else
-	repeat with waitIndex from 1 to 50
-		delay 0.1
-		if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
-			set stableRouteChecks to stableRouteChecks + 1
-			if stableRouteChecks is 3 then exit repeat
-		else
-			set stableRouteChecks to 0
-		end if
-	end repeat
-end if
+repeat with waitIndex from 1 to 50
+	delay 0.1
+	if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
+		set stableRouteChecks to stableRouteChecks + 1
+		if stableRouteChecks is 3 then exit repeat
+	else
+		set stableRouteChecks to 0
+	end if
+end repeat
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
 set textArea to missing value
@@ -379,8 +378,11 @@ else if commitResult starts with "ambiguous:" then
 else if commitResult starts with "interrupted:" then
 	set pressedAt to text 13 thru -1 of commitResult
 	return "{\"ok\":false,\"code\":\"send_interrupted\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":false}"
+else if commitResult starts with "retryable:" then
+	set retryCertificate to text 11 thru -1 of commitResult
+	return "{\"ok\":false,\"code\":\"composer_changed_pre_send\",\"retryCertificate\":\"" & retryCertificate & "\"}"
 else if commitResult is "session_locked" then
 	return "{\"ok\":false,\"code\":\"session_locked\"}"
 else
-	return "{\"ok\":false,\"code\":\"composer_update_failed\"}"
+	return "{\"ok\":false,\"code\":\"automation_failed\"}"
 end if

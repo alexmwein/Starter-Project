@@ -58,6 +58,13 @@ const PHYSICAL_INPUT_EVENT_TYPES = [
 const KEY_A = 0;
 const KEY_DELETE = 51;
 const KEY_RETURN = 36;
+const CERTIFIABLE_PRE_SEND_CODES = [
+  'composer_focus_changed',
+  'composer_update_failed',
+  'draft_changed',
+  'route_changed',
+  'send_unavailable',
+];
 
 function fail(code) {
   const error = new Error(code);
@@ -86,6 +93,12 @@ function decodeBase64Environment(name) {
   const value = ObjC.unwrap(decoded);
   if (!isWellFormed(value)) fail('invalid_encoding');
   return value;
+}
+
+function encodeBase64(value) {
+  const data = $(value).dataUsingEncoding($.NSUTF8StringEncoding);
+  if (!data) fail('invalid_encoding');
+  return ObjC.unwrap(data.base64EncodedStringWithOptions(0));
 }
 
 function workspaceMatches(workspaceName, candidateName) {
@@ -485,7 +498,7 @@ function assertRouteLease(process, lease) {
   }
 }
 
-function validateFocusedComposer(pid, expectedDraft = null) {
+function validatedConductorProcess(pid) {
   assertSessionUnlocked();
   const conductor = $.NSRunningApplication.runningApplicationWithProcessIdentifier(
     pid,
@@ -500,12 +513,23 @@ function validateFocusedComposer(pid, expectedDraft = null) {
   if (!process.exists() || Number(process.unixId()) !== pid || !process.frontmost()) {
     fail('invalid_target_process');
   }
-  const focusedElement = process.attributes
-    .byName('AXFocusedUIElement')
-    .value();
-  const classes = focusedElement.attributes
-    .byName('AXDOMClassList')
-    .value();
+  return process;
+}
+
+function validateFocusedComposer(pid, expectedDraft = null) {
+  const process = validatedConductorProcess(pid);
+  let focusedElement;
+  let classes;
+  try {
+    focusedElement = process.attributes
+      .byName('AXFocusedUIElement')
+      .value();
+    classes = focusedElement.attributes
+      .byName('AXDOMClassList')
+      .value();
+  } catch {
+    fail('composer_focus_changed');
+  }
   if (
     focusedElement.role() !== 'AXTextArea' ||
     !Array.isArray(classes) ||
@@ -582,6 +606,27 @@ function sameCounters(left, right) {
     left.length === right.length &&
     left.every((value, index) => value === right[index])
   );
+}
+
+function expectedInputCounters() {
+  const encoded = environmentValue('POCKET_EXPECTED_INPUT_COUNTERS');
+  if (encoded === null || encoded === '') return null;
+  const counters = encoded.split(',');
+  if (
+    counters.length !== PHYSICAL_INPUT_EVENT_TYPES.length ||
+    counters.some((counter) => !/^(?:0|[1-9][0-9]*)$/.test(counter))
+  ) {
+    fail('user_input_active');
+  }
+  const parsed = counters.map(Number);
+  if (
+    parsed.some(
+      (counter) => !Number.isSafeInteger(counter) || counter < 0,
+    )
+  ) {
+    fail('user_input_active');
+  }
+  return parsed;
 }
 
 function physicalInputSnapshot() {
@@ -724,10 +769,14 @@ function prepareInput(message) {
 }
 
 function focusedDraft(process) {
-  const focusedElement = process.attributes
-    .byName('AXFocusedUIElement')
-    .value();
-  return normalizedDraft(focusedElement.value());
+  try {
+    const focusedElement = process.attributes
+      .byName('AXFocusedUIElement')
+      .value();
+    return normalizedDraft(focusedElement.value());
+  } catch {
+    fail('composer_focus_changed');
+  }
 }
 
 function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
@@ -900,6 +949,81 @@ function assertNotQueuedEditMode(process) {
   return composer;
 }
 
+function uniqueComposerDraft(process) {
+  const composer = assertNotQueuedEditMode(process);
+  const textAreas = childElements(composer).filter((candidate) => {
+    try {
+      const classes = candidate.attributes
+        .byName('AXDOMClassList')
+        .value();
+      return (
+        candidate.role() === 'AXTextArea' &&
+        Array.isArray(classes) &&
+        COMPOSER_CLASSES.every((name) => classes.includes(name))
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (textAreas.length !== 1) fail('send_unavailable');
+  return normalizedDraft(textAreas[0].value());
+}
+
+function certifyPreSendRetry({
+  error,
+  pid,
+  inputLease,
+  routeLease,
+  lastProvenPrefix,
+  lastAttemptedPrefix,
+  message,
+}) {
+  const trackedPrefixes = [
+    lastProvenPrefix,
+    lastAttemptedPrefix,
+  ].filter(
+    (prefix, index, values) =>
+      typeof prefix === 'string' &&
+      prefix !== message &&
+      (prefix === '' || message.startsWith(prefix)) &&
+      values.indexOf(prefix) === index,
+  );
+  if (
+    !CERTIFIABLE_PRE_SEND_CODES.includes(error?.pocketCode) ||
+    !inputLease ||
+    !routeLease ||
+    trackedPrefixes.length === 0
+  ) {
+    return null;
+  }
+  try {
+    assertInputLease(inputLease);
+    let process = validatedConductorProcess(pid);
+    assertRouteLease(process, routeLease);
+    const firstDraft = uniqueComposerDraft(process);
+    assertInputLease(inputLease);
+    process = validatedConductorProcess(pid);
+    assertRouteLease(process, routeLease);
+    const secondDraft = uniqueComposerDraft(process);
+    assertRouteLease(process, routeLease);
+    assertInputLease(inputLease);
+    if (
+      firstDraft !== secondDraft ||
+      !trackedPrefixes.includes(firstDraft)
+    ) {
+      return null;
+    }
+    return encodeBase64(
+      JSON.stringify({
+        draftBase64: encodeBase64(firstDraft),
+        inputCounters: inputLease.inputCounters.join(','),
+      }),
+    );
+  } catch {
+    return null;
+  }
+}
+
 function resolveComposerSend(process, expectedDraft) {
   const composer = assertNotQueuedEditMode(process);
   const composerElements = childElements(composer);
@@ -999,15 +1123,27 @@ function typeAndSendMessage(pid) {
   ) {
     fail('invalid_message');
   }
+  const carriedInputCounters = expectedInputCounters();
 
   // Allocate and round-trip every event before clearing an owned draft.
   const prepared = prepareInput(message);
   let inputLease = null;
   let routeLease = null;
+  let lastProvenPrefix = null;
+  let lastAttemptedPrefix = null;
   let exactDraftExposedAt = 0;
   let pressInvokedAt = 0;
   try {
     inputLease = acquireInputLease();
+    if (
+      carriedInputCounters &&
+      !sameCounters(
+        inputLease.inputCounters,
+        carriedInputCounters,
+      )
+    ) {
+      fail('user_input_active');
+    }
     assertSessionUnlocked();
     let process = validateFocusedComposer(pid);
     routeLease = acquireRouteLease(process);
@@ -1020,6 +1156,7 @@ function typeAndSendMessage(pid) {
     } else {
       if (!replaceDraft && currentDraft !== '') fail('draft_conflict');
       if (replaceDraft && currentDraft !== expectedDraft) fail('draft_conflict');
+      if (currentDraft === '') lastProvenPrefix = '';
 
       if (currentDraft !== '') {
         process = validateFocusedComposer(pid, currentDraft);
@@ -1027,6 +1164,7 @@ function typeAndSendMessage(pid) {
         validateFocusedComposer(pid, currentDraft);
         postToConductor(pid, inputLease, prepared.clearEvents);
         waitForExactDraft(pid, '', routeLease);
+        lastProvenPrefix = '';
       }
 
       let committedPrefix = '';
@@ -1043,11 +1181,14 @@ function typeAndSendMessage(pid) {
           operation.events,
           possibleExposureAt,
         );
+        lastAttemptedPrefix = nextPrefix;
         if (possibleExposureAt > 0) {
           exactDraftExposedAt = possibleExposureAt;
         }
+        waitForExactDraft(pid, nextPrefix, routeLease);
         committedPrefix = nextPrefix;
-        waitForExactDraft(pid, committedPrefix, routeLease);
+        lastProvenPrefix = nextPrefix;
+        lastAttemptedPrefix = null;
         if (operation.backing) Number(operation.backing.length);
       }
     }
@@ -1096,6 +1237,16 @@ function typeAndSendMessage(pid) {
     }
     if (inputInterrupted) return `interrupted:${attemptStartedAt}`;
     if (error?.pocketCode === 'session_locked') return 'session_locked';
+    const retryCertificate = certifyPreSendRetry({
+      error,
+      pid,
+      inputLease,
+      routeLease,
+      lastProvenPrefix,
+      lastAttemptedPrefix,
+      message,
+    });
+    if (retryCertificate) return `retryable:${retryCertificate}`;
     throw error;
   }
 }
