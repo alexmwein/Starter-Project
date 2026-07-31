@@ -38,6 +38,8 @@ const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
+const SEND_AUTOMATION_RETRY_BUDGET_MS = 45_000;
+const PHYSICAL_INPUT_COUNTER_COUNT = 16;
 const brotliCompressAsync = promisify(brotliCompress);
 const staticAssetCache = new Map();
 
@@ -84,6 +86,7 @@ const errorStatuses = new Map([
   ['workspace_not_visible', 503],
   ['session_not_visible', 503],
   ['composer_unavailable', 503],
+  ['composer_changed_pre_send', 502],
   ['composer_update_failed', 502],
   ['conductor_not_running', 503],
   ['conductor_window_unavailable', 503],
@@ -97,6 +100,7 @@ const errorStatuses = new Map([
   ['automation_timeout', 504],
   ['automation_failed', 502],
   ['automation_invalid_response', 502],
+  ['session_route_changed', 409],
 ]);
 
 function securityHeaders(config, { api = false } = {}) {
@@ -242,6 +246,7 @@ export async function waitForExactUserMessage({
       : sha256(message.text) === exactContentHash);
   const earliestCreatedAt = pressedAt - SEND_EVENT_TIMESTAMP_SKEW_MS;
   const deadline = Date.now() + Math.max(0, timeoutMs);
+  let candidateIdentity = null;
   do {
     try {
       const messages = database.listUserMessagesAfter(
@@ -264,11 +269,25 @@ export async function waitForExactUserMessage({
         ) {
           return null;
         }
+        if (
+          candidateIdentity &&
+          (match.id !== candidateIdentity.id ||
+            match.rowId !== candidateIdentity.rowId)
+        ) {
+          return null;
+        }
+        candidateIdentity ||= { id: match.id, rowId: match.rowId };
         await delay(Math.max(0, recheckMs));
         const rechecked = database.listUserMessagesAfter(
           sessionId,
           afterRowId,
         );
+        if (rechecked.length === 0) {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) return null;
+          await delay(Math.min(Math.max(1, pollMs), remaining));
+          continue;
+        }
         const recheckedMatch = rechecked[0];
         const recheckedCreatedAt = Date.parse(recheckedMatch?.createdAt);
         if (
@@ -557,6 +576,96 @@ function attachmentWorkspace(route) {
     throw new HttpError(409, 'workspace_sandbox_unsupported');
   }
   return route.workspacePath;
+}
+
+function decodeCanonicalBase64(value, maxBytes) {
+  if (
+    typeof value !== 'string' ||
+    value.length > Math.ceil(maxBytes / 3) * 4 + 4 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (
+    decoded.length > maxBytes ||
+    decoded.toString('base64') !== value
+  ) {
+    return null;
+  }
+  return decoded;
+}
+
+function parseComposerRetryCertificate(result, message) {
+  const encoded = decodeCanonicalBase64(
+    result?.retryCertificate,
+    MAX_MESSAGE_BYTES * 2,
+  );
+  if (!encoded) return null;
+  let certificate;
+  try {
+    certificate = JSON.parse(encoded.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (
+    !certificate ||
+    Array.isArray(certificate) ||
+    Object.keys(certificate).sort().join(',') !==
+      'draftBase64,inputCounters' ||
+    typeof certificate.inputCounters !== 'string'
+  ) {
+    return null;
+  }
+  const draftBytes = decodeCanonicalBase64(
+    certificate.draftBase64,
+    MAX_MESSAGE_BYTES,
+  );
+  if (!draftBytes) return null;
+  const draft = draftBytes.toString('utf8');
+  if (
+    !draft.isWellFormed() ||
+    !Buffer.from(draft, 'utf8').equals(draftBytes) ||
+    normalizeText(draft) !== draft ||
+    draft.includes('\0') ||
+    /[\u0001-\u0009\u000b-\u001f\u007f]/.test(draft) ||
+    draft === message ||
+    (draft !== '' && !message.startsWith(draft))
+  ) {
+    return null;
+  }
+  const counters = certificate.inputCounters.split(',');
+  if (
+    counters.length !== PHYSICAL_INPUT_COUNTER_COUNT ||
+    counters.some((counter) => !/^(?:0|[1-9][0-9]*)$/.test(counter)) ||
+    counters.some((counter) => !Number.isSafeInteger(Number(counter)))
+  ) {
+    return null;
+  }
+  return {
+    draft,
+    inputCounters: counters.join(','),
+  };
+}
+
+function sameSessionRoute(expected, current, { attachments = false } = {}) {
+  if (
+    !current ||
+    current.id !== expected.id ||
+    current.workspaceName !== expected.workspaceName ||
+    current.title !== expected.title ||
+    current.titleOrdinal !== expected.titleOrdinal
+  ) {
+    return false;
+  }
+  if (!attachments) return true;
+  try {
+    return attachmentWorkspace(current) === attachmentWorkspace(expected);
+  } catch {
+    return false;
+  }
 }
 
 class ConnectionProbe {
@@ -1040,7 +1149,7 @@ export function createPocketServer({
         const route = database.getSessionRoute(sessionMessages[0]);
         if (!route) throw new HttpError(404, 'session_not_found');
         const key = `${auth.device.id}:${idempotencyKey(request)}`;
-        const normalizedMessage = normalizeText(body.message);
+        const normalizedMessage = normalizeText(body.message).trim();
         if (hasAttachmentMentionSyntax(normalizedMessage)) {
           throw new HttpError(400, 'message_invalid');
         }
@@ -1097,6 +1206,34 @@ export function createPocketServer({
               }
               const beforeRowId =
                 database.getSessionMessageCursor(route.id);
+              let attachmentsRetained = false;
+              let attachmentsReleased = false;
+              const markDefinitelyUnsent = async () => {
+                deliveryDefinitelyUnsent = true;
+                if (
+                  !attachmentsRetained ||
+                  attachmentsReleased ||
+                  selectedAttachments.length === 0
+                ) {
+                  return;
+                }
+                attachmentsReleased = true;
+                try {
+                  await attachmentManager.releaseAfterUnsent(
+                    selectedAttachments.map(({ id }) => id),
+                    {
+                      deviceId: auth.device.id,
+                      sessionId: route.id,
+                      workspacePath: attachmentWorkspace(route),
+                    },
+                  );
+                } catch {
+                  recordAudit({
+                    traceId,
+                    phase: 'attachment-release-failed',
+                  });
+                }
+              };
               if (selectedAttachments.length > 0) {
                 const currentRoute = database.getSessionRoute(route.id);
                 if (
@@ -1114,10 +1251,29 @@ export function createPocketServer({
                     workspacePath: attachmentWorkspace(route),
                   },
                 );
+                attachmentsRetained = true;
               }
-              const sendOutcome = await (async () => {
+              let certifiedPreSend = false;
+              try {
+                const automationDeadline =
+                  Date.now() + SEND_AUTOMATION_RETRY_BUDGET_MS;
+                let attributionBaseline = beforeRowId;
+                const recordTransport = (sendResult, attempt) => {
+                  recordAudit({
+                    traceId,
+                    phase: 'transport',
+                    attempt,
+                    ok: sendResult.ok === true,
+                    code: sendResult.code,
+                    composerOwned:
+                      typeof sendResult.composerOwned === 'boolean'
+                        ? sendResult.composerOwned
+                        : null,
+                    elapsedMs: Date.now() - sendStartedAt,
+                  });
+                };
                 deliveryTransportStarted = true;
-                const sendResult = await transport.send({
+                let sendResult = await transport.send({
                   workspaceName: route.workspaceName,
                   sessionTitle: route.title,
                   sessionOrdinal: route.titleOrdinal,
@@ -1125,39 +1281,185 @@ export function createPocketServer({
                   replaceDraft,
                   expectedMacDraft,
                 });
-                recordAudit({
-                  traceId,
-                  phase: 'transport',
-                  ok: sendResult.ok === true,
-                  code: sendResult.code,
-                  composerOwned:
-                    typeof sendResult.composerOwned === 'boolean'
-                      ? sendResult.composerOwned
-                      : null,
-                  elapsedMs: Date.now() - sendStartedAt,
-                });
+                recordTransport(sendResult, 1);
+                if (
+                  !sendResult.ok &&
+                  sendResult.code === 'composer_changed_pre_send'
+                ) {
+                  const certificate = parseComposerRetryCertificate(
+                    sendResult,
+                    deliveryMessage,
+                  );
+                  if (!certificate) {
+                    sendResult = {
+                      ok: false,
+                      code: 'automation_invalid_response',
+                    };
+                  } else {
+                    certifiedPreSend = true;
+                    const definitelyUnsentResult = (code) => ({
+                      ok: false,
+                      code,
+                      safeToRetry: true,
+                    });
+                    const retryTimeoutMs =
+                      automationDeadline - Date.now();
+                    if (retryTimeoutMs < 1_000) {
+                      sendResult = definitelyUnsentResult(
+                        'composer_changed_pre_send',
+                      );
+                    } else {
+                      let noUserRows = false;
+                      try {
+                        noUserRows =
+                          database.listUserMessagesAfter(
+                            route.id,
+                            beforeRowId,
+                          ).length === 0;
+                      } catch {
+                        // A database read failure cannot prove a safe retry boundary.
+                      }
+                      if (!noUserRows) {
+                        sendResult =
+                          definitelyUnsentResult('user_input_active');
+                      } else {
+                        security.assertOrigin(request);
+                        const retryAuth = security.session(request, {
+                          requireUnlocked: true,
+                          requireCsrf: true,
+                          touch: false,
+                        });
+                        if (retryAuth.device.id !== auth.device.id) {
+                          throw new HttpError(401, 'device_revoked');
+                        }
+                        const retryRoute =
+                          database.getSessionRoute(route.id);
+                        if (
+                          !sameSessionRoute(route, retryRoute, {
+                            attachments:
+                              selectedAttachments.length > 0,
+                          })
+                        ) {
+                          sendResult = definitelyUnsentResult(
+                            'session_route_changed',
+                          );
+                        } else {
+                          const retryBeforeRowId =
+                            database.getSessionMessageCursor(route.id);
+                          let retryBoundaryClear = false;
+                          try {
+                            retryBoundaryClear =
+                              Number.isSafeInteger(retryBeforeRowId) &&
+                              retryBeforeRowId >= beforeRowId &&
+                              database.listUserMessagesAfter(
+                                route.id,
+                                beforeRowId,
+                              ).length === 0;
+                          } catch {
+                            // Fail closed if the second user-row scan is unreadable.
+                          }
+                          if (!retryBoundaryClear) {
+                            sendResult =
+                              definitelyUnsentResult(
+                                'user_input_active',
+                              );
+                          } else {
+                            security.assertOrigin(request);
+                            const finalRetryAuth =
+                              security.session(request, {
+                                requireUnlocked: true,
+                                requireCsrf: true,
+                                touch: false,
+                              });
+                            if (
+                              finalRetryAuth.device.id !==
+                              auth.device.id
+                            ) {
+                              throw new HttpError(
+                                401,
+                                'device_revoked',
+                              );
+                            }
+                            const finalRetryRoute =
+                              database.getSessionRoute(route.id);
+                            if (
+                              !sameSessionRoute(
+                                route,
+                                finalRetryRoute,
+                                {
+                                  attachments:
+                                    selectedAttachments.length > 0,
+                                },
+                              )
+                            ) {
+                              sendResult = definitelyUnsentResult(
+                                'session_route_changed',
+                              );
+                            } else {
+                              const remainingRetryMs =
+                                automationDeadline - Date.now();
+                              if (remainingRetryMs < 1_000) {
+                                sendResult =
+                                  definitelyUnsentResult(
+                                    'composer_changed_pre_send',
+                                  );
+                              } else {
+                                attributionBaseline =
+                                  retryBeforeRowId;
+                                sendResult = await transport.send({
+                                  workspaceName:
+                                    finalRetryRoute.workspaceName,
+                                  sessionTitle:
+                                    finalRetryRoute.title,
+                                  sessionOrdinal:
+                                    finalRetryRoute.titleOrdinal,
+                                  message: deliveryMessage,
+                                  replaceDraft: true,
+                                  expectedMacDraft:
+                                    certificate.draft,
+                                  expectedInputCounters:
+                                    certificate.inputCounters,
+                                  timeoutMs: Math.min(
+                                    45_000,
+                                    remainingRetryMs,
+                                  ),
+                                });
+                                recordTransport(sendResult, 2);
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
                 if (
                   !sendResult.ok &&
                   sendResult.code === 'send_interrupted' &&
                   sendResult.composerOwned === false
                 ) {
-                  return {
+                  const interruptedResult = {
                     ok: false,
                     code: 'user_input_active',
                     safeToRetry: true,
                   };
+                  await markDefinitelyUnsent();
+                  return interruptedResult;
                 }
                 if (
                   !sendResult.ok &&
                   sendResult.code !== 'send_not_confirmed' &&
                   sendResult.code !== 'send_interrupted'
                 ) {
+                  if (sendResult.safeToRetry === true) {
+                    await markDefinitelyUnsent();
+                  }
                   return sendResult;
                 }
                 const confirmed = await waitForExactUserMessage({
                   database,
                   sessionId: route.id,
-                  afterRowId: beforeRowId,
+                  afterRowId: attributionBaseline,
                   exactContent: deliveryMessage,
                   pressedAt: sendResult.pressedAt,
                   composerOwned: sendResult.composerOwned,
@@ -1175,21 +1477,23 @@ export function createPocketServer({
                     try {
                       const rows = database.listUserMessagesAfter(
                         route.id,
-                        beforeRowId,
+                        attributionBaseline,
                       );
                       if (rows.length === 0) {
-                        return {
+                        const interruptedResult = {
                           ok: false,
                           code: 'user_input_active',
                           safeToRetry: true,
                         };
+                        await markDefinitelyUnsent();
+                        return interruptedResult;
                       }
                     } catch {
                       // Any unreadable or interfering row keeps the result ambiguous.
                     }
                     return {
                       ...sendNotConfirmedResult({
-                        baselineCursor: beforeRowId,
+                        baselineCursor: attributionBaseline,
                         contentHash: sha256(deliveryMessage),
                         pressedAt: sendResult.pressedAt,
                         composerOwned: sendResult.composerOwned,
@@ -1200,37 +1504,29 @@ export function createPocketServer({
                   }
                   if (!sendResult.ok) {
                     return sendNotConfirmedResult({
-                      baselineCursor: beforeRowId,
+                      baselineCursor: attributionBaseline,
                       contentHash: sha256(deliveryMessage),
                       pressedAt: sendResult.pressedAt,
                       composerOwned: sendResult.composerOwned,
                     });
                   }
                   return sendNotConfirmedResult({
-                    baselineCursor: beforeRowId,
+                    baselineCursor: attributionBaseline,
                     contentHash: sha256(deliveryMessage),
                     pressedAt: sendResult.pressedAt,
                     composerOwned: sendResult.composerOwned,
                   });
                 }
-                return databaseDeliveryResult(confirmed, beforeRowId);
-              })();
-              if (
-                selectedAttachments.length > 0 &&
-                !sendOutcome.ok &&
-                sendOutcome.safeToRetry === true
-              ) {
-                deliveryDefinitelyUnsent = true;
-                await attachmentManager.releaseAfterUnsent(
-                  selectedAttachments.map(({ id }) => id),
-                  {
-                    deviceId: auth.device.id,
-                    sessionId: route.id,
-                    workspacePath: attachmentWorkspace(route),
-                  },
+                return databaseDeliveryResult(
+                  confirmed,
+                  attributionBaseline,
                 );
+              } catch (error) {
+                if (certifiedPreSend) {
+                  await markDefinitelyUnsent();
+                }
+                throw error;
               }
-              return sendOutcome;
             }),
         );
         recordAudit({
@@ -1259,6 +1555,9 @@ export function createPocketServer({
               error: {
                 code: result.code,
                 retrySafe: result.safeToRetry === true,
+                ...(result.safeToRetry === true
+                  ? { definitelyUnsent: true }
+                  : {}),
               },
             },
             config,

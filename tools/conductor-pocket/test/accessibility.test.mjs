@@ -83,6 +83,33 @@ test('only structured pre-send automation failures are marked safe to retry', ()
   });
   assert.deepEqual(
     parseResult(
+      '{"ok":false,"code":"composer_changed_pre_send","retryCertificate":"e30="}',
+    ),
+    {
+      ok: false,
+      code: 'composer_changed_pre_send',
+      retryCertificate: 'e30=',
+      safeToRetry: true,
+    },
+  );
+  assert.deepEqual(
+    parseResult(
+      '{"ok":false,"code":"composer_changed_pre_send"}',
+    ),
+    {
+      ok: false,
+      code: 'automation_invalid_response',
+    },
+  );
+  assert.deepEqual(
+    parseResult('{"ok":false,"code":"composer_update_failed"}'),
+    {
+      ok: false,
+      code: 'composer_update_failed',
+    },
+  );
+  assert.deepEqual(
+    parseResult(
       '{"ok":false,"code":"send_not_confirmed","pressedAt":1785093000000,"composerOwned":true}',
     ),
     {
@@ -326,10 +353,24 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     inputHelper,
     /if \(inputInterrupted\) return `interrupted:\$\{attemptStartedAt\}`/,
   );
+  assert.match(
+    inputHelper,
+    /function certifyPreSendRetry[\s\S]*trackedPrefixes = \[[\s\S]*lastProvenPrefix[\s\S]*lastAttemptedPrefix[\s\S]*CERTIFIABLE_PRE_SEND_CODES\.includes\(error\?\.pocketCode\)[\s\S]*assertInputLease\(inputLease\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*!trackedPrefixes\.includes\(firstDraft\)[\s\S]*inputCounters: inputLease\.inputCounters\.join\(','\)/,
+  );
+  assert.match(
+    inputHelper,
+    /carriedInputCounters[\s\S]*sameCounters\(\s*inputLease\.inputCounters,\s*carriedInputCounters[\s\S]*fail\('user_input_active'\)/,
+  );
+  assert.match(
+    inputHelper,
+    /if \(pressInvokedAt > 0 \|\| exactDraftExposedAt > 0\)[\s\S]*return `ambiguous:[\s\S]*certifyPreSendRetry/,
+  );
   assert.match(source, /POCKET_OPERATION=type-and-send/);
   assert.match(source, /commitResult starts with "pressed:"/);
   assert.match(source, /commitResult starts with "ambiguous:"/);
   assert.match(source, /commitResult starts with "interrupted:"/);
+  assert.match(source, /commitResult starts with "retryable:"/);
+  assert.match(source, /composer_changed_pre_send/);
   assert.match(source, /send_interrupted/);
   assert.match(
     source,
@@ -377,7 +418,15 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     source,
-    /set stableRouteChecks to 0[\s\S]*if routeAlreadySelected is true then[\s\S]*set stableRouteChecks to 3[\s\S]*else[\s\S]*repeat with waitIndex from 1 to 50[\s\S]*workspaceLinkIsSelected\(workspaceLink, workspaceName\)[\s\S]*set stableRouteChecks to stableRouteChecks \+ 1[\s\S]*if stableRouteChecks is 3 then exit repeat/,
+    /set stableRouteChecks to 0[\s\S]*repeat with waitIndex from 1 to 50[\s\S]*workspaceLinkIsSelected\(workspaceLink, workspaceName\)[\s\S]*set stableRouteChecks to stableRouteChecks \+ 1[\s\S]*if stableRouteChecks is 3 then exit repeat/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if routeAlreadySelected is true then[\s\S]*set stableRouteChecks to 3/,
+  );
+  assert.match(
+    source,
+    /if retryInputCounters is not "" and routeAlreadySelected is false then return "\{\\"ok\\":false,\\"code\\":\\"user_input_active\\"\}"/,
   );
   assert.match(
     source,
