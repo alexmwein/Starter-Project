@@ -1,9 +1,14 @@
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { createConfig } from '../src/config.mjs';
+import { parseAttachmentMessage } from '../src/attachment-markup.mjs';
 import { createPocketServer } from '../src/server.mjs';
 
 const port = Number(process.env.POCKET_UI_PORT || 4320);
 const fixtureMode = process.env.POCKET_UI_MODE || 'unlocked';
+const fixtureWorkspacePath =
+  process.env.POCKET_UI_WORKSPACE ||
+  fileURLToPath(new URL('../../../', import.meta.url));
 const now = Date.now();
 const at = (minutesAgo) => new Date(now - minutesAgo * 60_000).toISOString();
 
@@ -354,6 +359,9 @@ const watcher = {
 };
 
 const database = {
+  listLocalWorkspacePaths() {
+    return [fixtureWorkspacePath];
+  },
   listWorkspaces() {
     return fixtureMode === 'empty' ? [] : workspaces;
   },
@@ -376,7 +384,31 @@ const database = {
       status: session.status,
       agentType: session.agentType,
       model: session.model,
+      workspacePath: fixtureWorkspacePath,
+      sandboxProvider: null,
     };
+  },
+  getSessionMessageCursor(sessionId) {
+    if (sessionId !== 's-pocket') return 0;
+    return messages.at(-1)?.rowId || 0;
+  },
+  listUserMessagesAfter(sessionId, afterRowId) {
+    if (sessionId !== 's-pocket') return [];
+    return messages.filter(
+      (message) =>
+        message.kind === 'user' &&
+        message.rowId > Number(afterRowId || 0),
+    );
+  },
+  resolveSessionAttachment(sessionId, attachmentId) {
+    if (sessionId !== 's-pocket') return null;
+    for (const message of messages) {
+      const attachment = message.attachments?.find(
+        ({ id }) => id === attachmentId,
+      );
+      if (attachment) return attachment;
+    }
+    return null;
   },
   listMessages(sessionId, { after = 0 } = {}) {
     if (!recentSessions.some((candidate) => candidate.id === sessionId)) return null;
@@ -500,16 +532,24 @@ const transport = {
     if (fixtureMode === 'sendfail') {
       return { ok: false, code: 'send_failed' };
     }
+    const parsed = parseAttachmentMessage(message);
+    const pressedAt = Date.now();
     messages.push({
       id: `m-${messages.length + 1}`,
-      rowId: messages.length + 1,
+      rowId: (messages.at(-1)?.rowId || 0) + 1,
       kind: 'user',
-      text: message,
-      createdAt: new Date().toISOString(),
-      sentAt: new Date().toISOString(),
+      text: parsed.text,
+      attachments: parsed.attachments,
+      createdAt: new Date(pressedAt).toISOString(),
+      sentAt: new Date(pressedAt).toISOString(),
       queued: false,
     });
-    return { ok: true, code: 'sent' };
+    return {
+      ok: true,
+      code: 'sent',
+      pressedAt,
+      composerOwned: true,
+    };
   },
 };
 

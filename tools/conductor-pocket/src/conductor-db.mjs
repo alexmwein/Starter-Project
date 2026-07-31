@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { DB_POLL_MS } from './constants.mjs';
+import {
+  parseAttachmentMessage,
+  validAttachmentId,
+} from './attachment-markup.mjs';
 
 function workspaceDisplayName(row) {
   return (
@@ -235,14 +239,18 @@ export function classifyAgentError(event) {
   return { code, ...AGENT_ERROR_COPY[code] };
 }
 
-function parseAssistantRow(row) {
+function parseAssistantRow(row, { cleanAttachments = false } = {}) {
   if (row.role === 'user') {
+    const parsed = parseAttachmentMessage(row.content);
     return [
       {
         id: row.id,
         rowId: row.row_id,
         kind: 'user',
-        text: row.content,
+        text: cleanAttachments ? parsed.text : row.content,
+        attachments: cleanAttachments
+          ? parsed.attachments.map(({ id, name }) => ({ id, name }))
+          : [],
         createdAt: row.created_at,
         sentAt: row.sent_at,
         cancelledAt: row.cancelled_at,
@@ -417,6 +425,17 @@ export class ConductorDatabase {
     this.#db = new DatabaseSync(dbPath, { readOnly: true });
     this.#db.exec('PRAGMA query_only = ON; PRAGMA busy_timeout = 1000;');
     this.#statements = {
+      localWorkspacePaths: this.#db.prepare(`
+        SELECT DISTINCT workspace_path
+        FROM workspaces
+        WHERE workspace_path IS NOT NULL
+          AND TRIM(workspace_path) != ''
+          AND (
+            sandbox_provider IS NULL
+            OR TRIM(sandbox_provider) = ''
+            OR LOWER(TRIM(sandbox_provider)) = 'local'
+          )
+      `),
       workspaces: this.#db.prepare(`
         SELECT
           w.id,
@@ -513,6 +532,8 @@ export class ConductorDatabase {
             w.placeholder_branch_name,
             w.branch,
             w.directory_name,
+            w.workspace_path,
+            w.sandbox_provider,
             ROW_NUMBER() OVER (
               PARTITION BY s.workspace_id, s.title
               ORDER BY s.created_at, s.id
@@ -608,6 +629,16 @@ export class ConductorDatabase {
         ORDER BY rowid
         LIMIT 100
       `),
+      attachmentMessages: this.#db.prepare(`
+        SELECT content
+        FROM session_messages
+        WHERE session_id = ?
+          AND role = 'user'
+          AND cancelled_at IS NULL
+          AND instr(content, ?) > 0
+        ORDER BY rowid DESC
+        LIMIT 100
+      `),
     };
   }
 
@@ -634,6 +665,17 @@ export class ConductorDatabase {
     }));
   }
 
+  listLocalWorkspacePaths() {
+    return this.#statements.localWorkspacePaths
+      .all()
+      .map((row) => row.workspace_path)
+      .filter(
+        (workspacePath) =>
+          typeof workspacePath === 'string' &&
+          path.isAbsolute(workspacePath),
+      );
+  }
+
   listSessions(workspaceId) {
     return this.#statements.sessions.all(workspaceId).map((row) => ({
       id: row.id,
@@ -641,6 +683,15 @@ export class ConductorDatabase {
       title: row.title || 'Untitled chat',
       agentType: row.agent_type || 'unknown',
       model: row.model || null,
+      workspacePath:
+        typeof row.workspace_path === 'string'
+          ? row.workspace_path
+          : null,
+      sandboxProvider:
+        typeof row.sandbox_provider === 'string' &&
+        row.sandbox_provider.trim()
+          ? row.sandbox_provider.trim()
+          : null,
       status: row.status || 'unknown',
       unreadCount: Number(row.unread_count || 0),
       queuedCount: Number(row.queued_count || 0),
@@ -678,6 +729,15 @@ export class ConductorDatabase {
       status: row.status || 'unknown',
       agentType: row.agent_type || 'unknown',
       model: row.model || null,
+      workspacePath:
+        typeof row.workspace_path === 'string'
+          ? row.workspace_path
+          : null,
+      sandboxProvider:
+        typeof row.sandbox_provider === 'string' &&
+        row.sandbox_provider.trim()
+          ? row.sandbox_provider.trim()
+          : null,
     };
   }
 
@@ -705,6 +765,20 @@ export class ConductorDatabase {
       .flatMap(parseAssistantRow);
   }
 
+  resolveSessionAttachment(sessionId, attachmentId) {
+    if (!validAttachmentId(attachmentId)) return null;
+    const rows = this.#statements.attachmentMessages.all(
+      sessionId,
+      attachmentId,
+    );
+    for (const row of rows) {
+      const attachment = parseAttachmentMessage(row.content)
+        .attachments.find(({ id }) => id === attachmentId);
+      if (attachment) return attachment;
+    }
+    return null;
+  }
+
   listMessages(sessionId, { after = 0, limit = 500 } = {}) {
     if (!this.getSessionRoute(sessionId)) return null;
     const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 1000));
@@ -715,7 +789,9 @@ export class ConductorDatabase {
     } else {
       rows = this.#statements.latestMessages.all(sessionId, safeLimit).reverse();
     }
-    const messages = rows.flatMap(parseAssistantRow);
+    const messages = rows.flatMap((row) =>
+      parseAssistantRow(row, { cleanAttachments: true }),
+    );
     const cursor =
       rows.length > 0
         ? Number(rows.at(-1).row_id)

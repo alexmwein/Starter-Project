@@ -13,9 +13,18 @@ import {
   APP_NAME,
   APP_VERSION,
   MAX_JSON_BODY_BYTES,
+  MAX_MESSAGE_BYTES,
   SHELL_REVISION,
   SSE_HEARTBEAT_MS,
 } from './constants.mjs';
+import {
+  AttachmentManager,
+  readImageUpload,
+} from './attachments.mjs';
+import {
+  composeAttachmentMessage,
+  hasAttachmentMentionSyntax,
+} from './attachment-markup.mjs';
 import { configRevision, getVerificationCode } from './config.mjs';
 import { normalizeText, sha256 } from './encoding.mjs';
 import { HttpError, asHttpError } from './errors.mjs';
@@ -43,6 +52,10 @@ const staticFiles = new Map([
   ],
   ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
+  [
+    '/image-attachments.js',
+    ['image-attachments.js', 'text/javascript; charset=utf-8'],
+  ],
   [
     '/live-refresh.js',
     ['live-refresh.js', 'text/javascript; charset=utf-8'],
@@ -94,7 +107,7 @@ function securityHeaders(config, { api = false } = {}) {
     "font-src 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    "img-src 'self' data:",
+    "img-src 'self' blob: data:",
     "object-src 'none'",
     "script-src 'self'",
     "style-src 'self'",
@@ -144,6 +157,16 @@ function sendJson(response, status, value, config, extraHeaders = {}) {
     ...extraHeaders,
   });
   response.end(body);
+}
+
+function sendImage(response, image, config, { head = false } = {}) {
+  response.writeHead(200, {
+    ...securityHeaders(config, { api: true }),
+    'Content-Type': image.contentType,
+    'Content-Length': image.body.length,
+    'Content-Disposition': 'inline; filename="image.jpg"',
+  });
+  response.end(head ? undefined : image.body);
 }
 
 async function readJson(request) {
@@ -507,10 +530,33 @@ function sendFingerprint({
   message,
   replaceDraft,
   expectedMacDraft,
+  attachments = [],
 }) {
   return sha256(
-    JSON.stringify([message, replaceDraft, expectedMacDraft]),
+    JSON.stringify([
+      message,
+      replaceDraft,
+      expectedMacDraft,
+      attachments.map(({ id, digest }) => [id, digest]),
+    ]),
   );
+}
+
+function attachmentWorkspace(route) {
+  if (
+    !route ||
+    typeof route.workspacePath !== 'string' ||
+    !path.isAbsolute(route.workspacePath)
+  ) {
+    throw new HttpError(503, 'workspace_path_unavailable');
+  }
+  if (
+    route.sandboxProvider != null &&
+    String(route.sandboxProvider).trim().toLowerCase() !== 'local'
+  ) {
+    throw new HttpError(409, 'workspace_sandbox_unsupported');
+  }
+  return route.workspacePath;
 }
 
 class ConnectionProbe {
@@ -554,6 +600,7 @@ export function createPocketServer({
   watcher,
   transport,
   audit = () => {},
+  attachmentManager = new AttachmentManager(),
 }) {
   const idempotency = new IdempotencyStore();
   const probe = new ConnectionProbe(transport);
@@ -581,6 +628,15 @@ export function createPocketServer({
     return pending;
   }
 
+  function localAttachmentWorkspacePaths() {
+    try {
+      const values = database.listLocalWorkspacePaths?.();
+      return Array.isArray(values) ? values : [];
+    } catch {
+      return [];
+    }
+  }
+
   const unsubscribe = watcher.subscribe((event) => {
     const payload = `event: change\ndata: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) {
@@ -591,11 +647,22 @@ export function createPocketServer({
       }
     }
   });
+  queueMicrotask(() => {
+    void attachmentManager
+      .sweepWorkspaces?.(localAttachmentWorkspacePaths())
+      ?.catch?.(() => {
+        recordAudit({ phase: 'attachment-sweep-failed' });
+      });
+  });
 
   const server = http.createServer(async (request, response) => {
     const config = configStore.value;
+    let requestPathname = null;
+    let deliveryTransportStarted = false;
+    let deliveryDefinitelyUnsent = false;
     try {
       const requestUrl = new URL(request.url || '/', config.publicOrigin);
+      requestPathname = requestUrl.pathname;
       assertHost(request, config);
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/health') {
@@ -815,10 +882,128 @@ export function createPocketServer({
         requestUrl.pathname,
         /^\/api\/sessions\/([^/]+)\/messages$/,
       );
+      const sessionAttachments = pathMatch(
+        requestUrl.pathname,
+        /^\/api\/sessions\/([^/]+)\/attachments$/,
+      );
+      const sessionAttachment = pathMatch(
+        requestUrl.pathname,
+        /^\/api\/sessions\/([^/]+)\/attachments\/([^/]+)$/,
+      );
       const deliveryStatus = pathMatch(
         requestUrl.pathname,
         /^\/api\/sessions\/([^/]+)\/delivery-status$/,
       );
+      if (request.method === 'POST' && sessionAttachments) {
+        security.assertOrigin(request);
+        const auth = security.session(request, {
+          requireUnlocked: true,
+          requireCsrf: true,
+        });
+        const route = database.getSessionRoute(sessionAttachments[0]);
+        if (!route) throw new HttpError(404, 'session_not_found');
+        const workspacePath = attachmentWorkspace(route);
+        const key = `${auth.device.id}:${idempotencyKey(request)}`;
+        attachmentManager.assertUploadAllowed(auth.device.id);
+        const upload = await readImageUpload(request);
+        try {
+          security.assertOrigin(request);
+          const currentAuth = security.session(request, {
+            requireUnlocked: true,
+            requireCsrf: true,
+            touch: false,
+          });
+          if (currentAuth.device.id !== auth.device.id) {
+            throw new HttpError(401, 'device_revoked');
+          }
+          const currentRoute = database.getSessionRoute(route.id);
+          if (
+            !currentRoute ||
+            attachmentWorkspace(currentRoute) !== workspacePath
+          ) {
+            throw new HttpError(409, 'session_route_changed');
+          }
+          const attachment = await attachmentManager.upload({
+            key,
+            deviceId: auth.device.id,
+            sessionId: route.id,
+            workspacePath,
+            workspacePaths: localAttachmentWorkspacePaths(),
+            upload,
+          });
+          recordAudit({
+            phase: 'attachment-uploaded',
+            bytes: attachment.bytes,
+            width: attachment.width,
+            height: attachment.height,
+          });
+          return sendJson(
+            response,
+            201,
+            { attachment },
+            config,
+          );
+        } finally {
+          await upload.cleanup();
+        }
+      }
+      if (
+        (request.method === 'GET' || request.method === 'HEAD') &&
+        sessionAttachment
+      ) {
+        const auth = security.session(request, {
+          requireUnlocked: true,
+          touch: false,
+        });
+        const route = database.getSessionRoute(sessionAttachment[0]);
+        if (!route) throw new HttpError(404, 'session_not_found');
+        const workspacePath = attachmentWorkspace(route);
+        const referencedAttachment =
+          database.resolveSessionAttachment?.(
+            route.id,
+            sessionAttachment[1],
+          ) || null;
+        const requestedVariant =
+          requestUrl.searchParams.get('variant') || 'full';
+        if (!['full', 'thumbnail'].includes(requestedVariant)) {
+          throw new HttpError(400, 'attachment_variant_invalid');
+        }
+        const image = await attachmentManager.read(
+          sessionAttachment[1],
+          {
+            deviceId: auth.device.id,
+            sessionId: route.id,
+            workspacePath,
+            referencedAttachment,
+            variant: requestedVariant,
+          },
+        );
+        return sendImage(response, image, config, {
+          head: request.method === 'HEAD',
+        });
+      }
+      if (request.method === 'DELETE' && sessionAttachment) {
+        security.assertOrigin(request);
+        const auth = security.session(request, {
+          requireUnlocked: true,
+          requireCsrf: true,
+        });
+        const route = database.getSessionRoute(sessionAttachment[0]);
+        if (!route) throw new HttpError(404, 'session_not_found');
+        attachmentWorkspace(route);
+        const removed = await attachmentManager.remove(
+          sessionAttachment[1],
+          {
+            deviceId: auth.device.id,
+            sessionId: route.id,
+            workspacePath: route.workspacePath,
+          },
+        );
+        if (!removed) throw new HttpError(404, 'attachment_not_found');
+        response.writeHead(204, securityHeaders(config, { api: true }));
+        response.end();
+        return;
+      }
       if (request.method === 'POST' && deliveryStatus) {
         security.assertOrigin(request);
         const auth = security.session(request, {
@@ -856,15 +1041,41 @@ export function createPocketServer({
         if (!route) throw new HttpError(404, 'session_not_found');
         const key = `${auth.device.id}:${idempotencyKey(request)}`;
         const normalizedMessage = normalizeText(body.message);
+        if (hasAttachmentMentionSyntax(normalizedMessage)) {
+          throw new HttpError(400, 'message_invalid');
+        }
+        const attachmentIds =
+          body.attachments == null ? [] : body.attachments;
+        const attachmentWorkspacePath =
+          Array.isArray(attachmentIds) && attachmentIds.length > 0
+            ? attachmentWorkspace(route)
+            : route.workspacePath;
+        const selectedAttachments =
+          await attachmentManager.resolveForSend(
+            attachmentIds,
+            {
+              deviceId: auth.device.id,
+              sessionId: route.id,
+              workspacePath: attachmentWorkspacePath,
+            },
+          );
+        const deliveryMessage = composeAttachmentMessage(
+          normalizedMessage,
+          selectedAttachments,
+        );
+        if (Buffer.byteLength(deliveryMessage, 'utf8') > MAX_MESSAGE_BYTES) {
+          throw new HttpError(413, 'message_too_large');
+        }
         const replaceDraft = body.replaceDraft === true;
         const expectedMacDraft =
           typeof body.expectedMacDraft === 'string'
             ? normalizeText(body.expectedMacDraft)
             : null;
         const fingerprint = sendFingerprint({
-          message: normalizedMessage,
+          message: deliveryMessage,
           replaceDraft,
           expectedMacDraft,
+          attachments: selectedAttachments,
         });
         const traceId = randomUUID();
         const sendStartedAt = Date.now();
@@ -884,104 +1095,142 @@ export function createPocketServer({
               if (currentAuth.device.id !== auth.device.id) {
                 throw new HttpError(401, 'device_revoked');
               }
-              const beforeRowId = database.getSessionMessageCursor(route.id);
-              const sendResult = await transport.send({
-                workspaceName: route.workspaceName,
-                sessionTitle: route.title,
-                sessionOrdinal: route.titleOrdinal,
-                message: normalizedMessage,
-                replaceDraft,
-                expectedMacDraft,
-              });
-              recordAudit({
-                traceId,
-                phase: 'transport',
-                ok: sendResult.ok === true,
-                code: sendResult.code,
-                composerOwned:
-                  typeof sendResult.composerOwned === 'boolean'
-                    ? sendResult.composerOwned
-                    : null,
-                elapsedMs: Date.now() - sendStartedAt,
-              });
-              if (
-                !sendResult.ok &&
-                sendResult.code === 'send_interrupted' &&
-                sendResult.composerOwned === false
-              ) {
-                return {
-                  ok: false,
-                  code: 'user_input_active',
-                  safeToRetry: true,
-                };
+              const beforeRowId =
+                database.getSessionMessageCursor(route.id);
+              if (selectedAttachments.length > 0) {
+                const currentRoute = database.getSessionRoute(route.id);
+                if (
+                  !currentRoute ||
+                  attachmentWorkspace(currentRoute) !==
+                    attachmentWorkspace(route)
+                ) {
+                  throw new HttpError(409, 'session_route_changed');
+                }
+                await attachmentManager.retainForSend(
+                  selectedAttachments.map(({ id }) => id),
+                  {
+                    deviceId: auth.device.id,
+                    sessionId: route.id,
+                    workspacePath: attachmentWorkspace(route),
+                  },
+                );
               }
-              if (
-                !sendResult.ok &&
-                sendResult.code !== 'send_not_confirmed' &&
-                sendResult.code !== 'send_interrupted'
-              ) {
-                return sendResult;
-              }
-              const confirmed = await waitForExactUserMessage({
-                database,
-                sessionId: route.id,
-                afterRowId: beforeRowId,
-                exactContent: normalizedMessage,
-                pressedAt: sendResult.pressedAt,
-                composerOwned: sendResult.composerOwned,
-                timeoutMs:
-                  sendResult.code === 'send_interrupted'
-                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-                    : SEND_CONFIRMATION_TIMEOUT_MS,
-                attributionWindowMs:
-                  sendResult.code === 'send_interrupted'
-                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-                    : SEND_ATTRIBUTION_WINDOW_MS,
-              });
-              if (!confirmed) {
-                if (sendResult.code === 'send_interrupted') {
-                  try {
-                    const rows = database.listUserMessagesAfter(
-                      route.id,
-                      beforeRowId,
-                    );
-                    if (rows.length === 0) {
-                      return {
-                        ok: false,
-                        code: 'user_input_active',
-                        safeToRetry: true,
-                      };
-                    }
-                  } catch {
-                    // Any unreadable or interfering row keeps the result ambiguous.
-                  }
+              const sendOutcome = await (async () => {
+                deliveryTransportStarted = true;
+                const sendResult = await transport.send({
+                  workspaceName: route.workspaceName,
+                  sessionTitle: route.title,
+                  sessionOrdinal: route.titleOrdinal,
+                  message: deliveryMessage,
+                  replaceDraft,
+                  expectedMacDraft,
+                });
+                recordAudit({
+                  traceId,
+                  phase: 'transport',
+                  ok: sendResult.ok === true,
+                  code: sendResult.code,
+                  composerOwned:
+                    typeof sendResult.composerOwned === 'boolean'
+                      ? sendResult.composerOwned
+                      : null,
+                  elapsedMs: Date.now() - sendStartedAt,
+                });
+                if (
+                  !sendResult.ok &&
+                  sendResult.code === 'send_interrupted' &&
+                  sendResult.composerOwned === false
+                ) {
                   return {
-                    ...sendNotConfirmedResult({
-                      baselineCursor: beforeRowId,
-                      contentHash: sha256(normalizedMessage),
-                      pressedAt: sendResult.pressedAt,
-                      composerOwned: sendResult.composerOwned,
-                      attributionWindowMs:
-                        SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS,
-                    }),
+                    ok: false,
+                    code: 'user_input_active',
+                    safeToRetry: true,
                   };
                 }
-                if (!sendResult.ok) {
+                if (
+                  !sendResult.ok &&
+                  sendResult.code !== 'send_not_confirmed' &&
+                  sendResult.code !== 'send_interrupted'
+                ) {
+                  return sendResult;
+                }
+                const confirmed = await waitForExactUserMessage({
+                  database,
+                  sessionId: route.id,
+                  afterRowId: beforeRowId,
+                  exactContent: deliveryMessage,
+                  pressedAt: sendResult.pressedAt,
+                  composerOwned: sendResult.composerOwned,
+                  timeoutMs:
+                    sendResult.code === 'send_interrupted'
+                      ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                      : SEND_CONFIRMATION_TIMEOUT_MS,
+                  attributionWindowMs:
+                    sendResult.code === 'send_interrupted'
+                      ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                      : SEND_ATTRIBUTION_WINDOW_MS,
+                });
+                if (!confirmed) {
+                  if (sendResult.code === 'send_interrupted') {
+                    try {
+                      const rows = database.listUserMessagesAfter(
+                        route.id,
+                        beforeRowId,
+                      );
+                      if (rows.length === 0) {
+                        return {
+                          ok: false,
+                          code: 'user_input_active',
+                          safeToRetry: true,
+                        };
+                      }
+                    } catch {
+                      // Any unreadable or interfering row keeps the result ambiguous.
+                    }
+                    return {
+                      ...sendNotConfirmedResult({
+                        baselineCursor: beforeRowId,
+                        contentHash: sha256(deliveryMessage),
+                        pressedAt: sendResult.pressedAt,
+                        composerOwned: sendResult.composerOwned,
+                        attributionWindowMs:
+                          SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS,
+                      }),
+                    };
+                  }
+                  if (!sendResult.ok) {
+                    return sendNotConfirmedResult({
+                      baselineCursor: beforeRowId,
+                      contentHash: sha256(deliveryMessage),
+                      pressedAt: sendResult.pressedAt,
+                      composerOwned: sendResult.composerOwned,
+                    });
+                  }
                   return sendNotConfirmedResult({
                     baselineCursor: beforeRowId,
-                    contentHash: sha256(normalizedMessage),
+                    contentHash: sha256(deliveryMessage),
                     pressedAt: sendResult.pressedAt,
                     composerOwned: sendResult.composerOwned,
                   });
                 }
-                return sendNotConfirmedResult({
-                  baselineCursor: beforeRowId,
-                  contentHash: sha256(normalizedMessage),
-                  pressedAt: sendResult.pressedAt,
-                  composerOwned: sendResult.composerOwned,
-                });
+                return databaseDeliveryResult(confirmed, beforeRowId);
+              })();
+              if (
+                selectedAttachments.length > 0 &&
+                !sendOutcome.ok &&
+                sendOutcome.safeToRetry === true
+              ) {
+                deliveryDefinitelyUnsent = true;
+                await attachmentManager.releaseAfterUnsent(
+                  selectedAttachments.map(({ id }) => id),
+                  {
+                    deviceId: auth.device.id,
+                    sessionId: route.id,
+                    workspacePath: attachmentWorkspace(route),
+                  },
+                );
               }
-              return databaseDeliveryResult(confirmed, beforeRowId);
+              return sendOutcome;
             }),
         );
         recordAudit({
@@ -1050,6 +1299,13 @@ export function createPocketServer({
             localPurgeCompleted: body.localPurgeCompleted,
           },
         );
+        try {
+          await attachmentManager.purgeDevice?.(revokeDevice[0], {
+            workspacePaths: localAttachmentWorkspacePaths(),
+          });
+        } catch {
+          recordAudit({ phase: 'attachment-device-purge-failed' });
+        }
         return sendJson(
           response,
           200,
@@ -1078,7 +1334,19 @@ export function createPocketServer({
       sendJson(
         response,
         handled.status,
-        { error: { code: handled.code } },
+        {
+          error: {
+            code: handled.code,
+            ...(request.method === 'POST' &&
+            /^\/api\/sessions\/[^/]+\/messages$/.test(
+              requestPathname || '',
+            ) &&
+            (!deliveryTransportStarted ||
+              deliveryDefinitelyUnsent)
+              ? { definitelyUnsent: true }
+              : {}),
+          },
+        },
         configStore.value,
       );
     }
@@ -1087,6 +1355,7 @@ export function createPocketServer({
   server.on('close', () => {
     unsubscribe();
     watcher.stop();
+    attachmentManager.stop?.();
     for (const client of clients) client.end();
     clients.clear();
   });

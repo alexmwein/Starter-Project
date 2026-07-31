@@ -65,6 +65,8 @@ test('idle gates may update while sensitive operations remain blocked', () => {
     appUpdateReloadIsSafe({ deliveries: [{ delivery: 'failed' }] }),
     true,
   );
+  assert.equal(appUpdateReloadIsSafe({ attachmentCount: 1 }), false);
+  assert.equal(appUpdateReloadIsSafe({ attachmentCount: -1 }), false);
 });
 
 test('a server shell revision catches an already-claimed stale document', async () => {

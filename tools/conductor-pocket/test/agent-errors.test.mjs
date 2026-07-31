@@ -66,6 +66,8 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
       placeholder_branch_name TEXT,
       branch TEXT,
       directory_name TEXT,
+      workspace_path TEXT,
+      sandbox_provider TEXT,
       state TEXT,
       unread INTEGER,
       pinned_at TEXT,

@@ -3,11 +3,16 @@ import os from 'node:os';
 
 export const APP_NAME = 'Conductor Pocket';
 export const APP_VERSION = '0.2.0';
-export const SHELL_REVISION = '0.2.0-bash-errors-20260730';
+export const SHELL_REVISION = '0.2.0-images-20260730';
 export const DEFAULT_PORT = 4317;
 export const LOOPBACK_HOST = '127.0.0.1';
 export const MAX_MESSAGE_BYTES = 16 * 1024;
 export const MAX_JSON_BODY_BYTES = 256 * 1024;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
+export const MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
+export const MAX_IMAGE_OUTPUT_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGE_DIMENSION = 2560;
+export const MAX_IMAGE_PIXELS = 52_000_000;
 export const SESSION_COOKIE = '__Host-cp_session';
 export const PAIR_COOKIE = '__Host-cp_pair';
 export const DEFAULT_DATA_DIR = path.join(os.homedir(), '.config', 'conductor-pocket');

@@ -536,7 +536,10 @@ test('a send rechecks the durable lock immediately before touching Conductor', a
   });
   assert.equal(response.status, 423);
   assert.deepEqual(JSON.parse(response.body), {
-    error: { code: 'device_locked' },
+    error: {
+      code: 'device_locked',
+      definitelyUnsent: true,
+    },
   });
   assert.equal(sessionChecks, 2);
   assert.equal(cursorReads, 0);
@@ -755,6 +758,7 @@ test('an idempotency key remains bound to the exact send body across safe retrie
   assert.equal(changedReplacement.status, 409);
   assert.deepEqual(JSON.parse(changedMessage.body).error, {
     code: 'idempotency_key_reused',
+    definitelyUnsent: true,
   });
   assert.equal(exactRetry.status, 503);
   assert.equal(sends, 2);
@@ -2022,6 +2026,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const httpPreloadVersion = document.match(
     /rel="modulepreload" href="\/http\.js\?v=([^"]+)"/,
   )?.[1];
+  const imageAttachmentsPreloadVersion = document.match(
+    /rel="modulepreload" href="\/image-attachments\.js\?v=([^"]+)"/,
+  )?.[1];
   const appUpdatePreloadVersion = document.match(
     /rel="modulepreload" href="\/app-update\.js\?v=([^"]+)"/,
   )?.[1];
@@ -2057,6 +2064,12 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   )?.[1];
   const cachedHttpVersion = serviceWorker.match(
     /'\/http\.js\?v=([^']+)'/,
+  )?.[1];
+  const imageAttachmentsVersion = application.match(
+    /from '\.\/image-attachments\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedImageAttachmentsVersion = serviceWorker.match(
+    /'\/image-attachments\.js\?v=([^']+)'/,
   )?.[1];
   const cachedAppUpdateVersion = serviceWorker.match(
     /'\/app-update\.js\?v=([^']+)'/,
@@ -2108,6 +2121,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(httpPreloadVersion, appVersion);
   assert.equal(httpVersion, appVersion);
   assert.equal(cachedHttpVersion, appVersion);
+  assert.equal(imageAttachmentsPreloadVersion, appVersion);
+  assert.equal(imageAttachmentsVersion, appVersion);
+  assert.equal(cachedImageAttachmentsVersion, appVersion);
   assert.equal(appUpdatePreloadVersion, appVersion);
   assert.equal(appUpdateVersion, appVersion);
   assert.equal(cachedAppUpdateVersion, appVersion);
@@ -2162,6 +2178,10 @@ test('Pocket applies app updates only when foreground state is safe', async () =
   assert.match(predicate, /composerValue/);
   assert.match(predicate, /persistedComposerValue/);
   assert.match(predicate, /deliveries: state\.optimistic/);
+  assert.match(
+    predicate,
+    /attachmentCount: unsafeAttachmentOperationCount\(\)/,
+  );
   assert.match(
     source,
     /createServiceWorkerRegistrationGetter\(\{[\s\S]*serviceWorker: navigator\.serviceWorker/,

@@ -1,28 +1,38 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-bash-errors-20260730';
+} from './delivery-receipts.js?v=0.2.0-images-20260730';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-bash-errors-20260730';
-import { fetchJson } from './http.js?v=0.2.0-bash-errors-20260730';
+} from './app-update.js?v=0.2.0-images-20260730';
+import { fetchJson } from './http.js?v=0.2.0-images-20260730';
+import {
+  attachmentMessageByteLength,
+  imageErrorCopy,
+  imageErrorIsRetryable,
+  imageMediaType,
+  imageSelectionError,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENT_MESSAGE_BYTES,
+  prepareImageForUpload,
+} from './image-attachments.js?v=0.2.0-images-20260730';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-bash-errors-20260730';
+} from './live-refresh.js?v=0.2.0-images-20260730';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-bash-errors-20260730';
+} from './rich-text.js?v=0.2.0-images-20260730';
 import {
   activityLabel,
   buildFocusedTranscript,
-} from './transcript-focus.js?v=0.2.0-bash-errors-20260730';
+} from './transcript-focus.js?v=0.2.0-images-20260730';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-bash-errors-20260730';
+} from './swipe-navigation.js?v=0.2.0-images-20260730';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -40,10 +50,13 @@ const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
 const CACHE_PURGE_CHANNEL = 'conductor-pocket-cache-purge-v1';
 const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
 const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
+const ATTACHMENT_DRAFTS_KEY = 'cp:attachment-drafts:v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-bash-errors-20260730';
+const CLIENT_SHELL_REVISION = '0.2.0-images-20260730';
+const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
+const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
 const state = {
   auth: null,
@@ -67,6 +80,8 @@ const state = {
   sessionOpenController: null,
   route: { view: 'workspaces', workspaceId: null, sessionId: null },
   optimistic: [],
+  attachmentsBySession: loadAttachmentDrafts(),
+  attachmentSendIntents: new Set(),
   searchQuery: '',
   shell: null,
   hiddenAt: null,
@@ -74,6 +89,10 @@ const state = {
   seenMessageIds: new Set(),
   expandedActivities: new Set(),
 };
+
+let activeImageUploads = 0;
+const pendingImageUploads = [];
+let imagePreparationQueue = Promise.resolve();
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
 
@@ -133,6 +152,7 @@ const ICONS = {
   branch: 'i-branch',
   lock: 'i-lock',
   phone: 'i-phone',
+  photo: 'i-photo',
   plus: 'i-plus',
   refresh: 'i-refresh',
   search: 'i-search',
@@ -693,6 +713,7 @@ function renderLock({ errorMessage = '' } = {}) {
 
 function renderSignedOut() {
   stopEvents();
+  clearAttachmentState();
   state.auth = null;
   state.csrfToken = null;
   state.workspaces = [];
@@ -855,6 +876,502 @@ function saveDraft(sessionId, value) {
   }
 }
 
+function safeAttachmentId(value) {
+  return (
+    typeof value === 'string' &&
+    value.length >= 6 &&
+    value.length <= 64 &&
+    /^[A-Za-z0-9_-]+$/.test(value)
+  );
+}
+
+function normalizeAttachmentMetadata(value) {
+  const source =
+    typeof value === 'string'
+      ? { id: value }
+      : value && typeof value === 'object'
+        ? value
+        : null;
+  if (!source || !safeAttachmentId(source.id)) return null;
+  const attachment = { id: source.id };
+  const mediaType = String(source.mediaType || source.mimeType || '').toLowerCase();
+  if (['image/jpeg', 'image/png', 'image/heic', 'image/heif'].includes(mediaType)) {
+    attachment.mediaType = mediaType;
+  }
+  if (Number.isSafeInteger(source.width) && source.width > 0 && source.width <= 20_000) {
+    attachment.width = source.width;
+  }
+  if (Number.isSafeInteger(source.height) && source.height > 0 && source.height <= 20_000) {
+    attachment.height = source.height;
+  }
+  return attachment;
+}
+
+function loadAttachmentDrafts() {
+  const result = new Map();
+  try {
+    const saved = JSON.parse(localStorage.getItem(ATTACHMENT_DRAFTS_KEY));
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return result;
+    for (const [sessionId, values] of Object.entries(saved)) {
+      if (
+        !sessionId ||
+        sessionId.length > 200 ||
+        !Array.isArray(values)
+      ) {
+        continue;
+      }
+      const attachments = values
+        .slice(0, MAX_ATTACHMENTS_PER_MESSAGE * 2)
+        .map(normalizeAttachmentMetadata)
+        .filter(Boolean)
+        .map((attachment) => ({
+          ...attachment,
+          localId: `restored:${attachment.id}`,
+          state: 'ready',
+          restored: true,
+        }));
+      if (attachments.length > 0) result.set(sessionId, attachments);
+    }
+  } catch {
+    // Invalid or unavailable local storage means there are no restorable photos.
+  }
+  return result;
+}
+
+function persistAttachmentDrafts() {
+  try {
+    const saved = {};
+    for (const [sessionId, values] of state.attachmentsBySession) {
+      const ready = values
+        .filter((item) => item.state === 'ready')
+        .map(normalizeAttachmentMetadata)
+        .filter(Boolean);
+      if (ready.length > 0) saved[sessionId] = ready;
+    }
+    localStorage.setItem(ATTACHMENT_DRAFTS_KEY, JSON.stringify(saved));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function attachmentsFor(sessionId) {
+  return sessionId
+    ? state.attachmentsBySession.get(sessionId) || []
+    : [];
+}
+
+function unsafeAttachmentOperationCount() {
+  let count = 0;
+  for (const items of state.attachmentsBySession.values()) {
+    count += items.filter(
+      (item) => item.state !== 'ready' || item.uploadInFlight,
+    ).length;
+  }
+  return count;
+}
+
+function attachmentPreviewUrl(
+  sessionId,
+  attachmentId,
+  { thumbnail = false } = {},
+) {
+  const base = `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}`;
+  return thumbnail ? `${base}?variant=thumbnail` : base;
+}
+
+function releaseAttachmentPreview(item) {
+  if (!item?.previewUrl) return;
+  URL.revokeObjectURL(item.previewUrl);
+  item.previewUrl = null;
+}
+
+function releaseAttachmentResources(item) {
+  if (!item) return;
+  item.controller?.abort();
+  item.controller = null;
+  item.file = null;
+  item.preparedBlob = null;
+  item.preparePromise = null;
+  item.uploadPromise = null;
+  item.uploadInFlight = false;
+}
+
+function releaseAllAttachmentPreviews() {
+  for (const items of state.attachmentsBySession.values()) {
+    for (const item of items) {
+      item.removed = true;
+      releaseAttachmentResources(item);
+      releaseAttachmentPreview(item);
+    }
+  }
+  for (const message of state.optimistic) {
+    for (const attachment of message.attachments || []) {
+      releaseAttachmentPreview(attachment);
+    }
+  }
+}
+
+function clearAttachmentState() {
+  releaseAllAttachmentPreviews();
+  state.attachmentsBySession.clear();
+  state.attachmentSendIntents.clear();
+}
+
+function attachmentStateChanged(sessionId, { persist = true } = {}) {
+  if (persist) persistAttachmentDrafts();
+  if (state.route.sessionId === sessionId) {
+    renderComposerAttachments();
+    renderComposerState();
+  }
+  appUpdateCoordinator?.stateChanged();
+}
+
+function pumpImageUploads() {
+  while (
+    activeImageUploads < MAX_CONCURRENT_IMAGE_UPLOADS &&
+    pendingImageUploads.length > 0
+  ) {
+    const next = pendingImageUploads.shift();
+    activeImageUploads += 1;
+    Promise.resolve()
+      .then(next.task)
+      .then(next.resolve, next.reject)
+      .finally(() => {
+        activeImageUploads -= 1;
+        pumpImageUploads();
+      });
+  }
+}
+
+function enqueueImageUpload(task) {
+  return new Promise((resolve, reject) => {
+    pendingImageUploads.push({ task, resolve, reject });
+    pumpImageUploads();
+  });
+}
+
+function prepareAttachmentItem(item) {
+  if (item.preparedBlob) {
+    return Promise.resolve({ blob: item.preparedBlob });
+  }
+  if (item.preparePromise) return item.preparePromise;
+  const preparation = imagePreparationQueue.then(
+    () => prepareImageForUpload(item.file),
+    () => prepareImageForUpload(item.file),
+  );
+  imagePreparationQueue = preparation.then(
+    () => undefined,
+    () => undefined,
+  );
+  const tracked = preparation
+    .then((prepared) => {
+      if (!item.removed) {
+        item.preparedBlob = prepared.blob;
+        if (prepared.blob !== item.file) {
+          releaseAttachmentPreview(item);
+          item.previewUrl = URL.createObjectURL(prepared.blob);
+        }
+      }
+      return prepared;
+    })
+    .finally(() => {
+      if (item.preparePromise === tracked) item.preparePromise = null;
+    });
+  item.preparePromise = tracked;
+  return tracked;
+}
+
+async function uploadAttachmentItem(sessionId, item) {
+  if (item.removed) return false;
+  item.errorCode = null;
+  item.state = 'preparing';
+  attachmentStateChanged(sessionId, { persist: false });
+  let uploadTimeout = null;
+  let uploadTimedOut = false;
+  try {
+    const prepared = await prepareAttachmentItem(item);
+    if (item.removed) return false;
+    item.state = 'uploading';
+    item.controller = new AbortController();
+    uploadTimeout = setTimeout(() => {
+      uploadTimedOut = true;
+      item.controller?.abort();
+    }, IMAGE_UPLOAD_TIMEOUT_MS);
+    attachmentStateChanged(sessionId, { persist: false });
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: item.controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type':
+            prepared.blob.type || imageMediaType(item.file) || 'application/octet-stream',
+          'X-CSRF-Token': state.csrfToken,
+          'Idempotency-Key': item.uploadKey,
+        },
+        body: prepared.blob,
+      },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.error?.code || `http_${response.status}`);
+      error.code = payload.error?.code || `http_${response.status}`;
+      error.status = response.status;
+      throw error;
+    }
+    const uploaded = normalizeAttachmentMetadata(payload.attachment);
+    if (!uploaded) {
+      const error = new Error('attachment_unavailable');
+      error.code = 'attachment_unavailable';
+      throw error;
+    }
+    if (item.removed) {
+      void deleteUploadedAttachment(sessionId, uploaded.id);
+      return false;
+    }
+    Object.assign(item, uploaded, {
+      state: 'ready',
+      restored: false,
+      controller: null,
+    });
+    releaseAttachmentPreview(item);
+    item.file = null;
+    item.preparedBlob = null;
+    item.preparePromise = null;
+    attachmentStateChanged(sessionId);
+    return true;
+  } catch (error) {
+    item.controller = null;
+    if (item.removed) return false;
+    if (error?.name === 'AbortError') {
+      if (!uploadTimedOut) return false;
+      error.code = 'image_upload_timeout';
+    }
+    item.state = 'failed';
+    item.errorCode =
+      error.code ||
+      (error instanceof TypeError
+        ? 'image_upload_failed'
+        : error.message) ||
+      'image_upload_failed';
+    attachmentStateChanged(sessionId, { persist: false });
+    if (error.status === 401 || error.status === 423) handleRuntimeError(error);
+    return false;
+  } finally {
+    if (uploadTimeout) clearTimeout(uploadTimeout);
+  }
+}
+
+function startAttachmentUpload(sessionId, item) {
+  if (item.removed || item.uploadInFlight) {
+    return item.uploadPromise || Promise.resolve(false);
+  }
+  item.uploadInFlight = true;
+  item.state = 'queued';
+  attachmentStateChanged(sessionId, { persist: false });
+  const operation = enqueueImageUpload(() =>
+    uploadAttachmentItem(sessionId, item),
+  );
+  const tracked = operation.finally(() => {
+    item.uploadInFlight = false;
+    if (item.uploadPromise === tracked) item.uploadPromise = null;
+  });
+  item.uploadPromise = tracked;
+  return tracked;
+}
+
+function retryAttachmentUpload(sessionId, item) {
+  if (item.state !== 'failed' || item.removed) return;
+  if (!item.file) {
+    announce('That photo expired. Remove it and choose it again.');
+    return;
+  }
+  if (
+    item.errorCode === 'attachment_unavailable' ||
+    item.errorCode === 'idempotency_key_reused'
+  ) {
+    item.id = null;
+    item.uploadKey = randomIdempotencyKey();
+  }
+  startAttachmentUpload(sessionId, item);
+  announce('Retrying photo upload');
+}
+
+async function deleteUploadedAttachment(sessionId, attachmentId) {
+  if (!safeAttachmentId(attachmentId)) return;
+  try {
+    await fetch(
+      attachmentPreviewUrl(sessionId, attachmentId),
+      {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          'X-CSRF-Token': state.csrfToken,
+        },
+      },
+    );
+  } catch {
+    // The server prunes abandoned staged uploads as a second line of cleanup.
+  }
+}
+
+function removeAttachment(sessionId, item) {
+  const sendWasQueued = state.attachmentSendIntents.delete(sessionId);
+  const current = attachmentsFor(sessionId);
+  const next = current.filter((candidate) => candidate !== item);
+  const uploadedId =
+    item.state === 'ready' && safeAttachmentId(item.id)
+      ? item.id
+      : null;
+  if (next.length > 0) state.attachmentsBySession.set(sessionId, next);
+  else state.attachmentsBySession.delete(sessionId);
+  item.removed = true;
+  releaseAttachmentResources(item);
+  releaseAttachmentPreview(item);
+  if (uploadedId) {
+    void deleteUploadedAttachment(sessionId, uploadedId);
+  }
+  attachmentStateChanged(sessionId);
+  if (sendWasQueued) {
+    announce('Automatic send canceled because the photos changed');
+  }
+}
+
+function addSelectedImages(sessionId, fileList) {
+  if (!sessionId || !fileList) return;
+  const attachmentDeliveryInFlight = state.optimistic.some(
+    (message) =>
+      message.sessionId === sessionId &&
+      ['delivering', 'confirming'].includes(message.delivery) &&
+      Array.isArray(message.draftAttachmentItems) &&
+      message.draftAttachmentItems.length > 0,
+  );
+  if (attachmentDeliveryInFlight) {
+    announce('Wait for the current photo message to finish first');
+    return;
+  }
+  const current = [...attachmentsFor(sessionId)];
+  let available = Math.max(
+    0,
+    MAX_ATTACHMENTS_PER_MESSAGE - current.length,
+  );
+  let rejectedCode = null;
+  let added = 0;
+  for (const file of Array.from(fileList)) {
+    if (available <= 0) {
+      rejectedCode ||= 'attachment_limit_exceeded';
+      break;
+    }
+    const selectionError = imageSelectionError(file);
+    if (selectionError) {
+      rejectedCode ||= selectionError;
+      continue;
+    }
+    const item = {
+      localId: `local:${randomIdempotencyKey()}`,
+      uploadKey: randomIdempotencyKey(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      state: 'queued',
+      errorCode: null,
+      removed: false,
+    };
+    current.push(item);
+    added += 1;
+    available -= 1;
+  }
+  if (current.length > 0) state.attachmentsBySession.set(sessionId, current);
+  if (added > 0) {
+    attachmentStateChanged(sessionId, { persist: false });
+    for (const item of current.slice(-added)) {
+      startAttachmentUpload(sessionId, item);
+    }
+    announce(
+      added === 1
+        ? 'Photo added and uploading'
+        : `${added} photos added and uploading`,
+    );
+  }
+  if (rejectedCode) announce(imageErrorCopy(rejectedCode));
+}
+
+function composerAttachmentStatus(item) {
+  if (item.state === 'failed') return imageErrorCopy(item.errorCode);
+  if (item.state === 'ready') return 'Ready';
+  if (item.state === 'preparing') return 'Preparing';
+  return 'Uploading';
+}
+
+function attachmentCanRetry(item) {
+  return (
+    Boolean(item?.file) &&
+    (imageErrorIsRetryable(item.errorCode) ||
+      item.errorCode === 'attachment_unavailable' ||
+      item.errorCode === 'idempotency_key_reused')
+  );
+}
+
+function renderComposerAttachments() {
+  const composer = state.shell?.composer;
+  if (!composer) return;
+  const sessionId = state.route.sessionId;
+  const attachments = attachmentsFor(sessionId);
+  composer.tray.replaceChildren();
+  composer.tray.hidden = attachments.length === 0;
+  for (const item of attachments) {
+    const source =
+      item.previewUrl ||
+      (safeAttachmentId(item.id)
+        ? attachmentPreviewUrl(sessionId, item.id, {
+            thumbnail: true,
+          })
+        : null);
+    const preview = source
+      ? node('img', {
+          className: 'composer-attachment-image',
+          src: source,
+          alt: '',
+          decoding: 'async',
+        })
+      : icon('photo');
+    const status = node('span', {
+      className: 'composer-attachment-status',
+      text: composerAttachmentStatus(item),
+    });
+    const tile = node('div', {
+      className: `composer-attachment is-${item.state}`,
+    }, [
+      preview,
+      status,
+      item.state === 'failed' && attachmentCanRetry(item)
+        ? node('button', {
+            className: 'composer-attachment-retry',
+            type: 'button',
+            'aria-label': `Retry photo. ${composerAttachmentStatus(item)}`,
+            on: {
+              click: () => retryAttachmentUpload(sessionId, item),
+            },
+          }, [icon('refresh')])
+        : null,
+      node('button', {
+        className: 'composer-attachment-remove',
+        type: 'button',
+        'aria-label': 'Remove photo',
+        on: {
+          click: () => removeAttachment(sessionId, item),
+        },
+      }, [icon('close')]),
+    ]);
+    composer.tray.append(tile);
+  }
+}
+
 let cacheDatabasePromise;
 let originRetired = localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
 const cachePurgeChannel =
@@ -1007,6 +1524,12 @@ function sanitizePendingDelivery(value) {
     kind: 'optimistic',
     sessionId: value.sessionId,
     text: value.text,
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments
+          .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+          .map(normalizeAttachmentMetadata)
+          .filter(Boolean)
+      : [],
     delivery,
     createdAt:
       typeof value.createdAt === 'string'
@@ -1041,12 +1564,33 @@ function pendingDeliverySnapshot() {
 
 function discardTerminalUnconfirmed() {
   const result = discardTerminalUnconfirmedDeliveries(state.optimistic);
+  for (const message of result.discarded) {
+    for (const attachment of message.attachments || []) {
+      releaseAttachmentPreview(attachment);
+    }
+    for (const item of message.draftAttachmentItems || []) {
+      releaseAttachmentResources(item);
+      releaseAttachmentPreview(item);
+    }
+    message.draftAttachmentItems = null;
+  }
   state.optimistic = result.remaining;
   return result.discarded;
 }
 
 function discardFailedMessage(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  for (const attachment of message.attachments || []) {
+    releaseAttachmentPreview(attachment);
+    if (safeAttachmentId(attachment.id)) {
+      void deleteUploadedAttachment(message.sessionId, attachment.id);
+    }
+  }
+  for (const item of message.draftAttachmentItems || []) {
+    releaseAttachmentResources(item);
+    releaseAttachmentPreview(item);
+  }
+  message.draftAttachmentItems = null;
   state.optimistic = state.optimistic.filter((item) => item !== message);
   void persistPendingDeliveries();
   renderTranscript();
@@ -1163,6 +1707,7 @@ async function purgeLocalData() {
   await assertOnlyRetiringWindow();
   localStorage.removeItem('cp:last-route:v1');
   localStorage.removeItem('cp:drafts:v1');
+  localStorage.removeItem(ATTACHMENT_DRAFTS_KEY);
   localStorage.removeItem(HIDDEN_AT_KEY);
   await clearTranscriptCache();
   if ('caches' in window) {
@@ -1450,6 +1995,27 @@ function createPanelNav({ backLabel, onBack, onSwitcher, titleClick }) {
 
 function createComposer() {
   const draftNote = node('div', { className: 'draft-note', hidden: true });
+  const tray = node('div', {
+    className: 'composer-attachments',
+    hidden: true,
+    'aria-label': 'Photos to send',
+  });
+  const imageInput = node('input', {
+    className: 'composer-image-input',
+    type: 'file',
+    accept: 'image/*',
+    multiple: true,
+    hidden: true,
+    'aria-label': 'Choose photos',
+  });
+  const picker = node('button', {
+    className: 'composer-image-button',
+    type: 'button',
+    'aria-label': 'Add photos',
+    on: {
+      click: () => imageInput.click(),
+    },
+  }, [icon('photo')]);
   const field = node('textarea', {
     className: 'composer-field',
     placeholder: 'Message',
@@ -1470,8 +2036,18 @@ function createComposer() {
     hidden: true,
     on: { click: openConnectionSheet },
   });
-  const inner = node('div', { className: 'composer-inner' }, [field, send, reason]);
-  const root = node('div', { className: 'composer-dock' }, [draftNote, inner]);
+  const inner = node('div', { className: 'composer-inner' }, [
+    picker,
+    imageInput,
+    field,
+    send,
+    reason,
+  ]);
+  const root = node('div', { className: 'composer-dock' }, [
+    draftNote,
+    tray,
+    inner,
+  ]);
   const observer = new ResizeObserver((entries) => {
     const entry = entries[0];
     const borderBox = Array.isArray(entry?.borderBoxSize)
@@ -1505,8 +2081,24 @@ function createComposer() {
       sendCurrentMessage();
     }
   });
+  imageInput.addEventListener('change', () => {
+    const files = Array.from(imageInput.files || []);
+    imageInput.value = '';
+    addSelectedImages(state.route.sessionId, files);
+  });
   send.addEventListener('click', sendCurrentMessage);
-  return { root, field, send, reason, draftNote, resize, observer };
+  return {
+    root,
+    field,
+    send,
+    reason,
+    draftNote,
+    tray,
+    picker,
+    imageInput,
+    resize,
+    observer,
+  };
 }
 
 function updateRoutePanels() {
@@ -1885,6 +2477,7 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
   const composer = state.shell.composer;
   composer.field.value = draftFor(sessionId);
   composer.resize();
+  renderComposerAttachments();
   renderComposerState();
   const hasMemorySnapshot = state.messagesBySession.has(sessionId);
   const hasLiveBaseline =
@@ -1994,6 +2587,11 @@ function reconcileOptimistic(sessionId) {
   );
   state.optimistic = result.remaining;
   if (result.reconciled.length > 0) {
+    for (const message of result.reconciled) {
+      for (const attachment of message.attachments || []) {
+        releaseAttachmentPreview(attachment);
+      }
+    }
     void persistPendingDeliveries();
   }
   return result.reconciled;
@@ -2161,6 +2759,19 @@ function messageRenderKey(message, toolResults) {
   return JSON.stringify([
     message.kind,
     message.text,
+    Array.isArray(message.attachments)
+      ? message.attachments.map((attachment) =>
+          typeof attachment === 'string'
+            ? attachment
+            : [
+                attachment?.id,
+                attachment?.mediaType,
+                attachment?.width,
+                attachment?.height,
+                Boolean(attachment?.previewUrl),
+              ],
+        )
+      : null,
     message.delivery,
     message.errorCode,
     message.kind === 'tool'
@@ -2199,6 +2810,98 @@ function renderBanner(container) {
   container.append(banner);
 }
 
+function messageAttachments(message) {
+  if (!Array.isArray(message.attachments)) return [];
+  return message.attachments
+    .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+    .map((value) => {
+      const attachment = normalizeAttachmentMetadata(value);
+      if (!attachment) return null;
+      if (value && typeof value === 'object' && value.previewUrl) {
+        attachment.previewUrl = value.previewUrl;
+      }
+      return attachment;
+    })
+    .filter(Boolean);
+}
+
+function openImagePreview(source, position, total) {
+  const fallback = node('div', {
+    className: 'image-preview-error',
+    hidden: true,
+  }, [
+    icon('photo'),
+    node('span', { text: 'Photo unavailable' }),
+  ]);
+  const image = node('img', {
+    className: 'image-preview-image',
+    src: source,
+    alt: total > 1 ? `Photo ${position} of ${total}` : 'Attached photo',
+    decoding: 'async',
+  });
+  image.addEventListener('error', () => {
+    image.hidden = true;
+    fallback.hidden = false;
+  });
+  openSheet(
+    total > 1 ? `Photo ${position} of ${total}` : 'Photo',
+    node('div', { className: 'image-preview-stage' }, [image, fallback]),
+    { className: 'image-preview' },
+  );
+}
+
+function renderUserImages(message, attachments) {
+  if (attachments.length === 0) return null;
+  const sessionId = message.sessionId || state.route.sessionId;
+  const grid = node('div', {
+    className: `user-image-grid count-${attachments.length}`,
+  });
+  attachments.forEach((attachment, index) => {
+    const fullSource =
+      attachment.previewUrl ||
+      attachmentPreviewUrl(sessionId, attachment.id);
+    const gridSource =
+      attachment.previewUrl ||
+      attachmentPreviewUrl(sessionId, attachment.id, {
+        thumbnail: true,
+      });
+    const unavailable = node('span', {
+      className: 'user-image-unavailable',
+      hidden: true,
+    }, [icon('photo'), document.createTextNode('Unavailable')]);
+    const image = node('img', {
+      className: 'user-image',
+      src: gridSource,
+      alt: '',
+      loading: 'lazy',
+      decoding: 'async',
+    });
+    image.addEventListener('error', () => {
+      image.hidden = true;
+      unavailable.hidden = false;
+    });
+    grid.append(
+      node('button', {
+        className: 'user-image-button',
+        type: 'button',
+        'aria-label':
+          attachments.length > 1
+            ? `Open photo ${index + 1} of ${attachments.length}`
+            : 'Open attached photo',
+        on: {
+          click: () =>
+            openImagePreview(
+              fullSource,
+              index + 1,
+              attachments.length,
+            ),
+        },
+      }, [image, unavailable]),
+    );
+  });
+  return grid;
+}
+
 function renderMessage(message, toolResults) {
   if (message.kind === 'activity') {
     return renderActivity(message, toolResults);
@@ -2232,6 +2935,9 @@ function renderMessage(message, toolResults) {
     return item;
   }
   if (message.kind === 'user' || message.kind === 'optimistic') {
+    const attachments = messageAttachments(message);
+    const messageText =
+      typeof message.text === 'string' ? message.text : '';
     const meta = node('div', { className: 'message-meta' });
     if (message.delivery === 'delivering') {
       meta.textContent = 'Delivering…';
@@ -2278,11 +2984,23 @@ function renderMessage(message, toolResults) {
         document.createTextNode(`Delivered ${formatTime(message.deliveredAt || message.sentAt || message.createdAt)}`),
       );
     }
+    const content = node('div', {
+      className: `user-content${attachments.length > 0 ? ' has-images' : ' text-only'}`,
+    });
+    const images = renderUserImages(message, attachments);
+    if (images) content.append(images);
+    if (messageText.trim()) {
+      content.append(
+        node('div', { className: 'user-bubble', text: messageText }),
+      );
+    }
     return node('li', {
       className: 'message user',
-      'aria-label': `You said ${message.text}`,
+      'aria-label': messageText.trim()
+        ? `You said ${messageText}`
+        : `You sent ${attachments.length === 1 ? 'a photo' : `${attachments.length} photos`}`,
     }, [
-      node('div', { className: 'user-bubble', text: message.text }),
+      content,
       meta,
     ]);
   }
@@ -2453,25 +3171,64 @@ function renderAgentStatus(container, session, messages = []) {
 
 function renderComposerState() {
   if (!state.shell) return;
-  const { field, send, reason, draftNote } = state.shell.composer;
+  const { field, send, reason, draftNote, picker } = state.shell.composer;
+  const sessionId = state.route.sessionId;
+  const attachments = attachmentsFor(sessionId);
   const hasText = field.value.trim().length > 0;
+  const hasAttachments = attachments.length > 0;
+  const hasFailedAttachment = attachments.some(
+    (item) => item.state === 'failed',
+  );
+  const sendQueued = state.attachmentSendIntents.has(sessionId);
+  field.readOnly = sendQueued;
   const down = state.connection === 'offline';
   const draftSaved =
     !hasText || draftFor(state.route.sessionId) === field.value;
   send.hidden = down;
   reason.hidden = !down;
+  picker.disabled =
+    down ||
+    sendQueued ||
+    !sessionId ||
+    attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE;
+  picker.setAttribute(
+    'aria-label',
+    attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE
+      ? 'Maximum of 4 photos added'
+      : 'Add photos',
+  );
   if (down) {
     reason.setAttribute('aria-label', "Can't send - Mac unreachable");
     reason.replaceChildren(icon('wifiOff'), document.createTextNode("Can't send"));
   } else {
     reason.removeAttribute('aria-label');
   }
-  send.disabled = !hasText;
-  send.classList.toggle('unverified', hasText && !state.connectionProbe);
-  draftNote.hidden = !(hasText && (down || !draftSaved));
+  send.disabled =
+    sendQueued ||
+    hasFailedAttachment ||
+    (!hasText && !hasAttachments);
+  send.classList.toggle(
+    'unverified',
+    (hasText || hasAttachments) && !state.connectionProbe,
+  );
+  send.classList.toggle('is-waiting', sendQueued);
+  send.setAttribute(
+    'aria-label',
+    sendQueued
+      ? 'Sending when photos are ready'
+      : hasFailedAttachment
+        ? 'Retry or remove failed photos before sending'
+        : 'Send message',
+  );
+  draftNote.hidden = !(
+    sendQueued ||
+    (hasText && (down || !draftSaved))
+  );
   draftNote.classList.toggle('is-error', !draftSaved);
   draftNote.textContent =
-    hasText && !draftSaved
+    sendQueued
+      ? 'Finishing your photos, then sending automatically…'
+      : hasText && !draftSaved
       ? 'Keep this app open — this draft couldn’t be saved'
       : down && hasText
         ? 'Draft saved on this phone'
@@ -2482,8 +3239,95 @@ async function sendCurrentMessage() {
   const sessionId = state.route.sessionId;
   const field = state.shell?.composer.field;
   if (!sessionId || !field) return;
-  const text = field.value.replace(/\r\n?/g, '\n');
-  if (!text.trim() || state.connection === 'offline') return;
+  let text = field.value.replace(/\r\n?/g, '\n');
+  let attachments = attachmentsFor(sessionId);
+  if (
+    (!text.trim() && attachments.length === 0) ||
+    state.connection === 'offline' ||
+    state.attachmentSendIntents.has(sessionId)
+  ) {
+    return;
+  }
+  if (attachments.some((item) => item.state === 'failed')) {
+    announce('Retry or remove the failed photo before sending');
+    return;
+  }
+  if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    announce('Remove photos until 4 remain before sending');
+    return;
+  }
+  const pending = attachments.filter(
+    (item) => item.state !== 'ready' && item.uploadPromise,
+  );
+  if (pending.length > 0) {
+    const queuedText = text;
+    const queuedAttachmentKeys = attachments.map(
+      (item) => item.localId || item.id,
+    );
+    state.attachmentSendIntents.add(sessionId);
+    renderComposerState();
+    announce(
+      pending.length === 1
+        ? 'Sending as soon as the photo is ready'
+        : 'Sending as soon as the photos are ready',
+    );
+    await Promise.allSettled(
+      pending.map((item) => item.uploadPromise),
+    );
+    if (!state.attachmentSendIntents.has(sessionId)) {
+      renderComposerState();
+      return;
+    }
+    state.attachmentSendIntents.delete(sessionId);
+    attachments = attachmentsFor(sessionId);
+    const currentAttachmentKeys = attachments.map(
+      (item) => item.localId || item.id,
+    );
+    if (
+      queuedAttachmentKeys.length !== currentAttachmentKeys.length ||
+      queuedAttachmentKeys.some(
+        (key, index) => key !== currentAttachmentKeys[index],
+      )
+    ) {
+      renderComposerState();
+      announce('Automatic send canceled because the photos changed');
+      return;
+    }
+    if (attachments.some((item) => item.state === 'failed')) {
+      renderComposerState();
+      announce('A photo failed to upload. Tap it to retry.');
+      return;
+    }
+    if (attachments.some((item) => item.state !== 'ready')) {
+      renderComposerState();
+      return;
+    }
+    text = queuedText;
+  }
+  const readyAttachments = attachments
+    .filter((item) => item.state === 'ready')
+    .map((item) => {
+      const metadata = normalizeAttachmentMetadata(item);
+      return metadata
+        ? {
+            ...metadata,
+            previewUrl: item.previewUrl || null,
+          }
+        : null;
+    })
+    .filter(Boolean);
+  if (
+    attachmentMessageByteLength(text, readyAttachments) >
+    MAX_ATTACHMENT_MESSAGE_BYTES
+  ) {
+    announce('Shorten the caption before sending');
+    renderComposerState();
+    return;
+  }
+  if (!text.trim() && readyAttachments.length === 0) {
+    renderComposerState();
+    return;
+  }
   const idempotencyKey = randomIdempotencyKey();
   const optimistic = {
     id: `optimistic:${randomIdempotencyKey()}`,
@@ -2492,6 +3336,8 @@ async function sendCurrentMessage() {
     kind: 'optimistic',
     sessionId,
     text,
+    attachments: readyAttachments,
+    draftAttachmentItems: attachments,
     delivery: 'delivering',
     createdAt: new Date().toISOString(),
   };
@@ -2505,11 +3351,98 @@ async function sendCurrentMessage() {
     announce('Message stayed in your draft because secure delivery storage was unavailable');
     return;
   }
-  field.value = '';
+  state.attachmentsBySession.delete(sessionId);
+  persistAttachmentDrafts();
+  if (state.route.sessionId === sessionId) field.value = '';
   saveDraft(sessionId, '');
-  state.shell.composer.resize();
+  state.shell?.composer.resize();
+  renderComposerAttachments();
   renderTranscript();
   await deliverOptimistic(optimistic, { deliveryIdentityPersisted: true });
+}
+
+function restoredAttachmentItems(optimistic, errorCode) {
+  const originals =
+    Array.isArray(optimistic.draftAttachmentItems) &&
+    optimistic.draftAttachmentItems.length > 0
+      ? optimistic.draftAttachmentItems
+      : (optimistic.attachments || []).map((attachment) => ({
+          ...attachment,
+          localId: `restored:${attachment.id}`,
+          state: 'ready',
+          restored: true,
+        }));
+  const unavailable = new Set([
+    'attachment_unavailable',
+    'session_route_changed',
+    'workspace_path_unavailable',
+    'workspace_sandbox_unsupported',
+  ]).has(errorCode);
+  return originals.map((item) => {
+    item.removed = false;
+    item.controller = null;
+    item.uploadInFlight = false;
+    item.uploadPromise = null;
+    if (unavailable) {
+      item.state = 'failed';
+      item.errorCode = 'attachment_unavailable';
+    } else {
+      item.state = 'ready';
+      item.errorCode = null;
+    }
+    return item;
+  });
+}
+
+async function restoreDefinitelyUnsentDraft(optimistic, error) {
+  const sessionId = optimistic.sessionId;
+  const restoredItems = restoredAttachmentItems(
+    optimistic,
+    error.code,
+  );
+  const currentItems = attachmentsFor(sessionId);
+  const seen = new Set();
+  const mergedItems = [...currentItems, ...restoredItems]
+    .filter((item) => {
+      const key = item.localId || item.id;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (mergedItems.length > 0) {
+    state.attachmentsBySession.set(sessionId, mergedItems);
+  }
+  optimistic.draftAttachmentItems = null;
+  state.optimistic = state.optimistic.filter(
+    (message) => message !== optimistic,
+  );
+
+  const existingDraft = draftFor(sessionId);
+  const recoveredText = optimistic.text || '';
+  const combinedDraft =
+    existingDraft && existingDraft !== recoveredText
+      ? `${recoveredText}${recoveredText ? '\n\n' : ''}${existingDraft}`
+      : recoveredText || existingDraft;
+  saveDraft(sessionId, combinedDraft);
+  if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+    state.shell.composer.field.value = combinedDraft;
+    state.shell.composer.resize();
+  }
+  persistAttachmentDrafts();
+  await persistPendingDeliveries();
+  renderComposerAttachments();
+  renderComposerState();
+  renderTranscript();
+  const photoUnavailable = restoredItems.some(
+    (item) => item.errorCode === 'attachment_unavailable',
+  );
+  announce(
+    photoUnavailable
+      ? 'Message was not sent. Your caption is restored; choose the expired photo again.'
+      : error.code === 'message_too_large'
+        ? 'Message was not sent. Your draft is restored; shorten it and try again.'
+        : 'Message was not sent. Your draft is restored.',
+  );
 }
 
 async function deliverOptimistic(
@@ -2559,6 +3492,9 @@ async function deliverOptimistic(
         },
         body: JSON.stringify({
           message: optimistic.text,
+          attachments: (optimistic.attachments || []).map(
+            (attachment) => attachment.id,
+          ),
           replaceDraft,
           expectedMacDraft: replaceDraft ? expectedMacDraft : undefined,
         }),
@@ -2571,6 +3507,8 @@ async function deliverOptimistic(
       error.status = result.status;
       error.draft = payload.error?.draft;
       error.retrySafe = payload.error?.retrySafe === true;
+      error.definitelyUnsent =
+        payload.error?.definitelyUnsent === true;
       throw error;
     }
     applyDeliveryReceipt(optimistic, payload);
@@ -2585,7 +3523,12 @@ async function deliverOptimistic(
     await persistence;
   } catch (error) {
     optimistic.errorCode = error.code;
-    if (error.code === 'draft_conflict') {
+    if (error.definitelyUnsent === true) {
+      await restoreDefinitelyUnsentDraft(optimistic, error);
+      if (error.status === 401 || error.status === 423) {
+        handleRuntimeError(error);
+      }
+    } else if (error.code === 'draft_conflict') {
       optimistic.delivery = 'failed';
       optimistic.retrySafe = true;
       await persistPendingDeliveries();
@@ -2624,6 +3567,14 @@ function applyDeliveryReceipt(message, receipt) {
     ? receipt.rowId
     : null;
   message.retrySafe = false;
+  for (const attachment of message.attachments || []) {
+    releaseAttachmentPreview(attachment);
+  }
+  for (const item of message.draftAttachmentItems || []) {
+    releaseAttachmentResources(item);
+    releaseAttachmentPreview(item);
+  }
+  message.draftAttachmentItems = null;
 }
 
 async function requestDeliveryStatus(message) {
@@ -3432,6 +4383,7 @@ function currentAppUpdateReloadIsSafe() {
     composerValue,
     persistedComposerValue,
     deliveries: state.optimistic,
+    attachmentCount: unsafeAttachmentOperationCount(),
   });
 }
 
