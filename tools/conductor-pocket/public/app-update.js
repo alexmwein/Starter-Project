@@ -9,6 +9,7 @@ export function appUpdateReloadIsSafe({
   composerValue = '',
   persistedComposerValue = '',
   deliveries = [],
+  attachmentCount = 0,
 } = {}) {
   if (
     originRetired ||
@@ -18,7 +19,9 @@ export function appUpdateReloadIsSafe({
     typeof composerValue !== 'string' ||
     typeof persistedComposerValue !== 'string' ||
     composerValue !== persistedComposerValue ||
-    !Array.isArray(deliveries)
+    !Array.isArray(deliveries) ||
+    !Number.isSafeInteger(attachmentCount) ||
+    attachmentCount !== 0
   ) {
     return false;
   }

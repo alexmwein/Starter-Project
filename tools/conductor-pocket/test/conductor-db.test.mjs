@@ -26,6 +26,8 @@ async function createConfirmationFixture(context) {
       placeholder_branch_name TEXT,
       branch TEXT,
       directory_name TEXT,
+      workspace_path TEXT,
+      sandbox_provider TEXT,
       state TEXT,
       unread INTEGER,
       pinned_at TEXT,
@@ -73,6 +75,8 @@ async function createConfirmationFixture(context) {
         placeholder_branch_name,
         branch,
         directory_name,
+        workspace_path,
+        sandbox_provider,
         state,
         unread,
         updated_at
@@ -86,6 +90,8 @@ async function createConfirmationFixture(context) {
         'folder-codename',
         'feature/pocket',
         'folder-codename',
+        '${directory.replaceAll("'", "''")}',
+        'local',
         'ready',
         0,
         '2026-01-01'
@@ -129,6 +135,8 @@ test('database adapter exposes sanitized chat events without tool payloads', asy
       placeholder_branch_name TEXT,
       branch TEXT,
       directory_name TEXT,
+      workspace_path TEXT,
+      sandbox_provider TEXT,
       state TEXT,
       unread INTEGER,
       pinned_at TEXT,
@@ -431,6 +439,8 @@ test('workspace routes use the visible Conductor name instead of the folder code
     database.getSessionRoute('session-1').workspaceName,
     'visible workspace name',
   );
+  assert.equal(database.listLocalWorkspacePaths().length, 1);
+  assert.equal(path.isAbsolute(database.listLocalWorkspacePaths()[0]), true);
 });
 
 test('cancelled rows stay hidden while the high-water cursor still fences them', async (context) => {

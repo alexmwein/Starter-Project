@@ -4,7 +4,11 @@ import fs from 'node:fs/promises';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import vm from 'node:vm';
-import { AccessibilityTransport, parseResult } from '../src/accessibility.mjs';
+import {
+  AccessibilityTransport,
+  mapAutomationError,
+  parseResult,
+} from '../src/accessibility.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -190,6 +194,27 @@ test('session lookup scans every radio button in the Conductor tab group', async
   assert.doesNotMatch(
     source,
     /return UI elements of item 1 of tabGroupChildren/,
+  );
+});
+
+test('a denied Accessibility permission is provably pre-send while unknown automation failures stay ambiguous', () => {
+  assert.deepEqual(
+    mapAutomationError({
+      stderr: 'Not authorized to send Apple events. (-1743)',
+    }),
+    {
+      ok: false,
+      code: 'accessibility_disabled',
+      safeToRetry: true,
+    },
+  );
+  assert.deepEqual(
+    mapAutomationError({ killed: true, signal: 'SIGTERM' }),
+    { ok: false, code: 'automation_timeout' },
+  );
+  assert.deepEqual(
+    mapAutomationError({ message: 'Unexpected automation failure' }),
+    { ok: false, code: 'automation_failed' },
   );
 });
 

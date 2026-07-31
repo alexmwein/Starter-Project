@@ -1,7 +1,8 @@
 # Conductor Pocket
 
 Conductor Pocket is a private, installable iPhone web app for reading and
-steering the Conductor chats that already run on this Mac.
+steering the Conductor chats that already run on this Mac, including sending
+photos from the iPhone's native Camera, Photos, or Files picker.
 
 It is deliberately not a second agent client:
 
@@ -11,6 +12,8 @@ It is deliberately not a second agent client:
 - Transcript reads use SQLite's read-only mode.
 - Sends go through Conductor's real on-screen composer and are acknowledged
   only after the exact new user-message row appears in Conductor's database.
+- Photos upload directly to this Mac, are normalized locally, and are attached
+  through Conductor's native workspace-attachment format.
 - No transcript, credential, or agent token is uploaded to a hosting service.
 
 ## What “live” means
@@ -30,6 +33,25 @@ keyboard or pointer input on the Mac aborts entry rather than risking text in
 the wrong app, so pause Mac input briefly while a phone message is being sent.
 Before offering a retry after an interruption, Pocket waits for Conductor's
 database; it retries only when no new user row appeared.
+
+Photo uploads use a separate, bounded path so they do not block text delivery.
+Pocket begins uploading as soon as a photo is selected, while the caption is
+still being typed. If Send is tapped before the upload finishes, that one tap
+is remembered and delivery begins automatically when every selected photo is
+ready. The actual Conductor send contains only short attachment references and
+the caption—not the image bytes—so a staged photo adds negligible typing time.
+The iPhone serializes expensive decode/resize work to avoid memory spikes,
+reuses the exact prepared bytes for a retry, and allows up to two prepared
+network uploads at once. A stalled transfer fails visibly after 45 seconds.
+Transcript grids use a private 640-pixel thumbnail and fetch the full image
+only when it is opened.
+
+Ready unsent photos survive relay updates and Mac restarts. A private,
+atomically updated `0600` ledger re-establishes the device, chat, workspace,
+expiry, quota, and upload-idempotency binding without storing the raw device
+ID, chat ID, workspace path, or upload key. Expired staged photos are removed
+by a background janitor, and revoking a phone removes that phone's remaining
+unsubmitted photos.
 
 The Mac login session must be unlocked and Conductor must have a visible
 window for phone sends. macOS removes locked apps from the Accessibility tree,
@@ -62,6 +84,11 @@ The production setup is defense in depth:
 10. Cached transcript snapshots stay in the PWA's device-local IndexedDB,
    render only after Pocket authorization, retain at most 50 events per visited
    chat, and can be cleared from Security & Devices.
+11. Image uploads are authenticated before their bodies are read, limited by
+    count, bytes, dimensions, rate, and private staged quota, and bound by the
+    Mac to the selected device, session, and workspace. The phone never
+    supplies a filesystem path. Restart-safe ownership ledgers and thumbnails
+    remain private on the Mac and are never exposed in the transcript API.
 
 See [SECURITY.md](./SECURITY.md) for trust boundaries and failure behavior.
 
@@ -240,6 +267,11 @@ only on loopback. Never use it for phone access.
 - Agent permission prompts remain Mac-only.
 - Stop, new-chat, and open-Conductor controls are absent because the relay
   cannot yet prove those capabilities safely.
-- Attachments are read-only metadata; phone uploads are not implemented.
+- Pocket accepts up to four JPEG, PNG, HEIC, or HEIF photos per message. Each
+  selected source is limited to 20 MiB on the upload path; the Mac emits a
+  metadata-free JPEG with a 2,560-pixel maximum edge.
+- Locally materialized images remain in the workspace because the Conductor
+  transcript refers to them. Removing one after delivery would break chat
+  history.
 - The Mac must not be asleep. A future Wake-on-LAN helper can improve this,
   but it is intentionally outside the security boundary of v1.

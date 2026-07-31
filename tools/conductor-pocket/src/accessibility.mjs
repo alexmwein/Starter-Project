@@ -57,7 +57,7 @@ export function parseResult(stdout) {
   }
 }
 
-function mapAutomationError(error) {
+export function mapAutomationError(error) {
   const details = `${error?.stderr || ''}\n${error?.message || ''}`.toLowerCase();
   if (
     details.includes('not authorized to send apple events') ||
@@ -65,7 +65,11 @@ function mapAutomationError(error) {
     details.includes('(-1743)') ||
     details.includes('(-25211)')
   ) {
-    return { ok: false, code: 'accessibility_disabled' };
+    return {
+      ok: false,
+      code: 'accessibility_disabled',
+      safeToRetry: true,
+    };
   }
   if (error?.killed || error?.signal === 'SIGTERM') {
     return { ok: false, code: 'automation_timeout' };
