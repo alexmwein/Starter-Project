@@ -1034,7 +1034,9 @@ test('workspace and stored-image symlinks fail closed', async (context) => {
   );
 });
 
-test('Mac normalization uses a pixel-only round trip that removes embedded metadata', async (context) => {
+test('Mac normalization uses a pixel-only round trip that removes embedded metadata', {
+  skip: process.platform !== 'darwin',
+}, async (context) => {
   const temporaryDirectory = await makeTemporaryDirectory(
     context,
     'pocket-normalize-',
