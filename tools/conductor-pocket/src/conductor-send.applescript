@@ -1,3 +1,13 @@
+property cachedWorkspaceName : missing value
+property cachedWorkspaceGroup : missing value
+property cachedWorkspaceRoute : missing value
+
+on clearWorkspaceRouteCache()
+	set my cachedWorkspaceName to missing value
+	set my cachedWorkspaceGroup to missing value
+	set my cachedWorkspaceRoute to missing value
+end clearWorkspaceRouteCache
+
 on workspaceMatches(workspaceName, candidateName)
 	if candidateName is workspaceName then return true
 	if candidateName starts with (workspaceName & " +") then return true
@@ -35,32 +45,94 @@ on getWebArea()
 end getWebArea
 
 on getSidebarGroup()
+	return my findSidebarGroup(my workspaceName)
+end getSidebarGroup
+
+on isMainGroup(candidate)
+	set tabGroupCount to 0
+	set composerCount to 0
+	tell application "System Events"
+		try
+			set candidateElements to UI elements of candidate
+		on error
+			return false
+		end try
+		repeat with childElement in candidateElements
+			try
+				if (role of childElement as text) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
+			end try
+			try
+				if (description of childElement as text) is "composer" then set composerCount to composerCount + 1
+			end try
+		end repeat
+	end tell
+	return tabGroupCount is 1 and composerCount is 1
+end isMainGroup
+
+on findSidebarGroup(workspaceName)
+	my clearWorkspaceRouteCache()
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
+	set matchingGroups to {}
+	set matchingRoutes to {}
 	tell application "System Events"
 		try
 			set rootElements to UI elements of webArea
-			if (count of rootElements) is greater than or equal to 2 then return item 2 of rootElements
+		on error
+			return missing value
 		end try
+		repeat with candidate in rootElements
+			if my isMainGroup(candidate) is false then
+				set workspaceRoute to my getWorkspaceRoute(workspaceName, candidate)
+				if workspaceRoute is not missing value then
+					copy candidate to end of matchingGroups
+					copy workspaceRoute to end of matchingRoutes
+				end if
+			end if
+		end repeat
 	end tell
-	return missing value
-end getSidebarGroup
+	if (count of matchingGroups) is not 1 then
+		my clearWorkspaceRouteCache()
+		return missing value
+	end if
+	set my cachedWorkspaceName to workspaceName
+	set my cachedWorkspaceGroup to item 1 of matchingGroups
+	set my cachedWorkspaceRoute to item 1 of matchingRoutes
+	return item 1 of matchingGroups
+end findSidebarGroup
 
 on getMainGroup()
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
+	set matchingGroups to {}
 	tell application "System Events"
 		try
 			set rootElements to UI elements of webArea
-			if (count of rootElements) is greater than or equal to 3 then return item 3 of rootElements
+		on error
+			return missing value
 		end try
+		repeat with candidate in rootElements
+			if my isMainGroup(candidate) then copy candidate to end of matchingGroups
+		end repeat
 	end tell
-	return missing value
+	if (count of matchingGroups) is not 1 then return missing value
+	return item 1 of matchingGroups
 end getMainGroup
 
 on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
+	set cachedName to my cachedWorkspaceName
+	set cachedGroup to my cachedWorkspaceGroup
+	set cachedRoute to my cachedWorkspaceRoute
+	if cachedName is not missing value and cachedGroup is not missing value and cachedRoute is not missing value then
+		if workspaceName is cachedName and sidebarGroup is cachedGroup then
+			my clearWorkspaceRouteCache()
+			return cachedRoute
+		end if
+		my clearWorkspaceRouteCache()
+	end if
 	set matchingRoutes to {}
+	set selectedWorkspaceCount to 0
 	tell application "System Events"
 		try
 			set sidebarElements to UI elements of sidebarGroup
@@ -76,6 +148,8 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 				repeat with linkIndex from 1 to containerChildCount
 					set candidate to item linkIndex of workspaceElements
 					if (role of candidate as text) is "AXLink" then
+						set candidateClasses to value of attribute "AXDOMClassList" of candidate
+						if candidateClasses contains "bg-sidebar-accent" then set selectedWorkspaceCount to selectedWorkspaceCount + 1
 						set candidateName to name of candidate as text
 						if my workspaceMatches(workspaceName, candidateName) then
 							set containerOffset to containerIndex - 1
@@ -89,7 +163,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 			end try
 		end repeat
 	end tell
-	if (count of matchingRoutes) is not 1 then return missing value
+	if (count of matchingRoutes) is not 1 or selectedWorkspaceCount is not 1 then return missing value
 	return item 1 of matchingRoutes
 end getWorkspaceRoute
 

@@ -161,7 +161,7 @@ function webAreaRootElements(process) {
     fail('route_changed');
   }
   const rootElements = childElements(webArea);
-  if (rootElements.length < 3) fail('route_changed');
+  if (rootElements.length < 2) fail('route_changed');
   return rootElements;
 }
 
@@ -252,6 +252,14 @@ function routeName(element) {
   }
 }
 
+function routeDescription(element) {
+  try {
+    return element.description();
+  } catch {
+    fail('route_changed');
+  }
+}
+
 function routeClasses(element) {
   try {
     const classes = element.attributes.byName('AXDOMClassList').value();
@@ -308,78 +316,138 @@ function sessionRadioTopology(tabGroup) {
   return topology;
 }
 
-function acquireRouteLease(process, target = routeTarget()) {
-  const rootElements = webAreaRootElements(process);
-  const sidebarElements = routeElements(rootElements[1]);
-  let workspace;
+function resolveMainRoot(rootElements) {
+  const candidates = [];
+  for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
+    const elements = routeElements(rootElements[rootIndex]);
+    let composerCount = 0;
+    let tabGroupCount = 0;
+    let tabGroupIndex = -1;
+    for (let index = 0; index < elements.length; index += 1) {
+      const element = elements[index];
+      if (routeRole(element) === 'AXTabGroup') {
+        tabGroupCount += 1;
+        tabGroupIndex = index;
+      }
+      if (routeDescription(element) === 'composer') {
+        composerCount += 1;
+      }
+    }
+    if (tabGroupCount !== 1) continue;
+    if (composerCount === 1) {
+      candidates.push({
+        elements,
+        rootIndex,
+        tabGroupIndex,
+      });
+    }
+  }
+  if (candidates.length !== 1) fail('route_changed');
+  return candidates[0];
+}
+
+function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
+  const candidates = [];
   if (target.workspaceHint) {
     const {
       containerChildCount,
       path,
       sidebarChildCount,
     } = target.workspaceHint;
-    if (
-      !Array.isArray(path) ||
-      path.length !== 2 ||
-      sidebarElements.length !== sidebarChildCount
-    ) {
+    if (!Array.isArray(path) || path.length !== 2) {
       fail('route_changed');
     }
-    const container = sidebarElements[path[0]];
-    if (!container) fail('route_changed');
-    const links = routeElements(container);
-    const link = links[path[1]];
-    if (
-      links.length !== containerChildCount ||
-      !link ||
-      routeRole(link) !== 'AXLink' ||
-      !workspaceMatches(target.workspaceName, routeName(link)) ||
-      !routeClasses(link).includes('bg-sidebar-accent')
-    ) {
-      fail('route_changed');
-    }
-    workspace = {
-      containerChildCount,
-      path: path.slice(),
-    };
-  } else {
-    const workspaceCandidates = [];
     for (
-      let containerIndex = 0;
-      containerIndex < sidebarElements.length;
-      containerIndex += 1
+      let rootIndex = 0;
+      rootIndex < rootElements.length;
+      rootIndex += 1
     ) {
-      const links = routeElements(sidebarElements[containerIndex]);
-      for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
-        const link = links[linkIndex];
-        if (routeRole(link) !== 'AXLink') continue;
-        if (!workspaceMatches(target.workspaceName, routeName(link))) continue;
-        workspaceCandidates.push({
-          classes: routeClasses(link),
-          containerChildCount: links.length,
-          path: [containerIndex, linkIndex],
-        });
+      if (rootIndex === excludedRootIndex) continue;
+      const sidebarElements = routeElements(rootElements[rootIndex]);
+      if (sidebarElements.length !== sidebarChildCount) continue;
+      const container = sidebarElements[path[0]];
+      if (!container) continue;
+      const links = routeElements(container);
+      const link = links[path[1]];
+      if (
+        links.length !== containerChildCount ||
+        !link ||
+        routeRole(link) !== 'AXLink' ||
+        !workspaceMatches(target.workspaceName, routeName(link))
+      ) {
+        continue;
+      }
+      const classes = routeClasses(link);
+      if (!classes.includes('bg-sidebar-accent')) continue;
+      candidates.push({
+        classes,
+        containerChildCount,
+        path: path.slice(),
+        rootIndex,
+        sidebarChildCount,
+      });
+    }
+  } else {
+    for (
+      let rootIndex = 0;
+      rootIndex < rootElements.length;
+      rootIndex += 1
+    ) {
+      if (rootIndex === excludedRootIndex) continue;
+      const sidebarElements = routeElements(rootElements[rootIndex]);
+      const rootMatches = [];
+      for (
+        let containerIndex = 0;
+        containerIndex < sidebarElements.length;
+        containerIndex += 1
+      ) {
+        const links = routeElements(sidebarElements[containerIndex]);
+        for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+          const link = links[linkIndex];
+          if (routeRole(link) !== 'AXLink') continue;
+          if (!workspaceMatches(target.workspaceName, routeName(link))) continue;
+          const classes = routeClasses(link);
+          rootMatches.push({
+            classes,
+            containerChildCount: links.length,
+            path: [containerIndex, linkIndex],
+            rootIndex,
+            sidebarChildCount: sidebarElements.length,
+          });
+        }
+      }
+      const selectedMatches = rootMatches.filter((candidate) =>
+        candidate.classes.includes('bg-sidebar-accent'),
+      );
+      if (
+        selectedMatches.length > 1 ||
+        (selectedMatches.length === 1 && rootMatches.length !== 1)
+      ) {
+        fail('route_changed');
+      }
+      if (selectedMatches.length === 1) {
+        candidates.push(selectedMatches[0]);
       }
     }
-    if (
-      workspaceCandidates.length !== 1 ||
-      !workspaceCandidates[0].classes.includes('bg-sidebar-accent')
-    ) {
-      fail('route_changed');
-    }
-    workspace = workspaceCandidates[0];
   }
-
-  const mainElements = routeElements(rootElements[2]);
-  let tabGroupIndex = -1;
-  for (let index = 0; index < mainElements.length; index += 1) {
-    if (routeRole(mainElements[index]) !== 'AXTabGroup') continue;
-    if (tabGroupIndex >= 0) fail('route_changed');
-    tabGroupIndex = index;
+  if (
+    candidates.length !== 1 ||
+    !candidates[0].classes.includes('bg-sidebar-accent')
+  ) {
+    fail('route_changed');
   }
-  if (tabGroupIndex < 0) fail('route_changed');
+  return candidates[0];
+}
 
+function acquireRouteLease(process, target = routeTarget()) {
+  const rootElements = webAreaRootElements(process);
   const sessionName = `Close chat ${target.sessionTitle}`;
+  const main = resolveMainRoot(rootElements);
+  const workspace = resolveWorkspaceRoot(rootElements, target, main.rootIndex);
+  if (main.rootIndex === workspace.rootIndex) fail('route_changed');
+  const mainElements = main.elements;
+  const tabGroupIndex = main.tabGroupIndex;
+
   const sessionTopology = sessionRadioTopology(
     mainElements[tabGroupIndex],
   );
@@ -399,6 +467,8 @@ function acquireRouteLease(process, target = routeTarget()) {
 
   return Object.freeze({
     mainChildCount: mainElements.length,
+    mainRootIndex: main.rootIndex,
+    rootCount: rootElements.length,
     sessionName,
     sessionOrdinal: target.sessionOrdinal,
     sessionTopology: Object.freeze(
@@ -409,7 +479,8 @@ function acquireRouteLease(process, target = routeTarget()) {
         }),
       ),
     ),
-    sidebarChildCount: sidebarElements.length,
+    sidebarChildCount: workspace.sidebarChildCount,
+    sidebarRootIndex: workspace.rootIndex,
     tabGroupIndex,
     targetSessionPath: Object.freeze(targetSession.path.slice()),
     workspaceContainerChildCount: workspace.containerChildCount,
@@ -431,36 +502,37 @@ function assertRouteLease(process, lease) {
     typeof lease.workspaceName !== 'string' ||
     !Array.isArray(lease.workspacePath) ||
     !Array.isArray(lease.targetSessionPath) ||
-    !Array.isArray(lease.sessionTopology)
+    !Array.isArray(lease.sessionTopology) ||
+    !Number.isSafeInteger(lease.rootCount) ||
+    lease.rootCount < 2 ||
+    !Number.isSafeInteger(lease.mainRootIndex) ||
+    lease.mainRootIndex < 0 ||
+    !Number.isSafeInteger(lease.sidebarRootIndex) ||
+    lease.sidebarRootIndex < 0 ||
+    lease.mainRootIndex >= lease.rootCount ||
+    lease.sidebarRootIndex >= lease.rootCount ||
+    lease.mainRootIndex === lease.sidebarRootIndex
   ) {
     fail('route_changed');
   }
 
   const rootElements = webAreaRootElements(process);
-  const sidebarElements = routeElements(rootElements[1]);
-  if (sidebarElements.length !== lease.sidebarChildCount) {
+  if (rootElements.length !== lease.rootCount) fail('route_changed');
+  const sidebarRoot = rootElements[lease.sidebarRootIndex];
+  if (!sidebarRoot || !rootElements[lease.mainRootIndex]) {
     fail('route_changed');
   }
-  const workspaceContainer =
-    sidebarElements[lease.workspacePath[0]];
-  if (!workspaceContainer) fail('route_changed');
-  const workspaceLinks = routeElements(workspaceContainer);
-  if (
-    workspaceLinks.length !== lease.workspaceContainerChildCount
-  ) {
-    fail('route_changed');
-  }
-  const workspaceLink = workspaceLinks[lease.workspacePath[1]];
-  if (
-    !workspaceLink ||
-    routeRole(workspaceLink) !== 'AXLink' ||
-    !workspaceMatches(lease.workspaceName, routeName(workspaceLink)) ||
-    !routeClasses(workspaceLink).includes('bg-sidebar-accent')
-  ) {
-    fail('route_changed');
-  }
-
-  const mainElements = routeElements(rootElements[2]);
+  resolveWorkspaceRoot([sidebarRoot], {
+    workspaceHint: {
+      containerChildCount: lease.workspaceContainerChildCount,
+      path: lease.workspacePath,
+      sidebarChildCount: lease.sidebarChildCount,
+    },
+    workspaceName: lease.workspaceName,
+  });
+  const main = resolveMainRoot(rootElements);
+  if (main.rootIndex !== lease.mainRootIndex) fail('route_changed');
+  const mainElements = main.elements;
   if (mainElements.length !== lease.mainChildCount) {
     fail('route_changed');
   }
@@ -824,8 +896,12 @@ function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
 }
 
 function composerSendContext(process) {
-  const main = webAreaRootElements(process)[2];
-  const mainElements = childElements(main);
+  let mainElements;
+  try {
+    mainElements = resolveMainRoot(webAreaRootElements(process)).elements;
+  } catch {
+    fail('send_unavailable');
+  }
   let composer = null;
   let composerIndex = -1;
   let tabGroupCount = 0;
@@ -1195,8 +1271,6 @@ function typeAndSendMessage(pid) {
 
     if (exactDraftExposedAt <= 0) fail('draft_changed');
     assertInputLease(inputLease);
-    process = validateFocusedComposer(pid, message);
-    assertRouteLease(process, routeLease);
     waitForComposerSend(pid, message, inputLease, routeLease);
     process = validateFocusedComposer(pid, message);
     assertRouteLease(process, routeLease);

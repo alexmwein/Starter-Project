@@ -390,7 +390,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     source,
-    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*if \(count of matchingRoutes\) is not 1 then return missing value/,
+    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*if \(count of matchingRoutes\) is not 1 or selectedWorkspaceCount is not 1 then return missing value/,
   );
   const initialWorkspaceLookup = source.indexOf(
     'set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)',
@@ -617,6 +617,7 @@ globalThis.__routeLeaseTest = {
         node({ role: 'AXButton' }),
         tabGroup,
         node({ role: 'AXGroup' }),
+        node({ description: 'composer' }),
       ],
     });
     const webArea = node({
