@@ -561,7 +561,7 @@
       </div>`;
 
     return `
-      <section class="page deliverables-page ${state.mobileReview ? "is-mobile-review" : ""}" aria-labelledby="deliverables-title">
+      <section class="page deliverables-page ${state.mobileReview ? "is-mobile-review" : ""}" aria-label="Deliverables workspace">
         <header class="page-heading">
           <div class="page-heading__copy">
             <span class="page-kicker">Assets &amp; approvals</span>
