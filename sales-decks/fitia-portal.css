@@ -108,10 +108,12 @@ textarea:focus-visible,
 
 .skip-link {
   position: fixed;
+  display: flex;
   top: 12px;
   left: 12px;
   z-index: 1000;
   padding: 10px 14px;
+  min-height: 44px;
   color: #090909;
   background: var(--fitia);
   border-radius: 8px;
@@ -119,6 +121,7 @@ textarea:focus-visible,
   font-weight: 700;
   transform: translateY(-160%);
   transition: transform 150ms ease;
+  align-items: center;
 }
 
 .skip-link:focus { transform: translateY(0); }
@@ -834,11 +837,17 @@ body.is-resetting .page-root { animation: reset-fade 260ms ease both; }
   .comment-composer textarea { font-size: 16px; }
   .comment__timecode,
   .timecode-toggle,
+  .timecode-check,
   .comment-composer button,
   .creator-card__meta button,
   .source-chip,
+  .source-meta a,
+  .source-table a,
+  .section-panel__head button,
   .reset-control button,
   .button { min-height: 44px; }
+  .source-meta a,
+  .source-table a { display: inline-flex; align-items: center; }
 
   .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 70; display: grid; height: var(--mobile-nav-height); padding: 4px 6px env(safe-area-inset-bottom); border-top: 1px solid var(--line); background: var(--surface); grid-template-columns: repeat(5, 1fr); }
   .mobile-nav button { display: grid; min-width: 0; min-height: 48px; padding: 3px 0; color: var(--ink-35); background: transparent; cursor: pointer; justify-items: center; align-content: center; gap: 2px; }
