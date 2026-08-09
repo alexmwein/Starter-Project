@@ -18,6 +18,23 @@ function numericRowId(message) {
   return Number.isFinite(value) ? value : 0;
 }
 
+export function hasCurrentTerminalAgentError(messages) {
+  const rootEvents = messages.filter(
+    (message) =>
+      isRootMessage(message) &&
+      ['user', 'assistant', 'agent-error', 'turn-result'].includes(message.kind),
+  );
+  if (rootEvents.length === 0) return false;
+  const latestRowId = Math.max(...rootEvents.map(numericRowId));
+  return rootEvents.some(
+    (message) =>
+      message.kind === 'agent-error' &&
+      message.retrying !== true &&
+      message.code !== 'background_action_failed' &&
+      numericRowId(message) === latestRowId,
+  );
+}
+
 function completedTurns(messages, sessionStatus) {
   const turns = new Map();
 

@@ -10,7 +10,7 @@ import {
   ConductorDatabase,
 } from '../src/conductor-db.mjs';
 
-test('agent errors use closed server-authored copy without provider details', () => {
+test('agent errors emit only allowlisted codes and behavior without provider details', () => {
   const error = classifyAgentError({
     type: 'error',
     content: 'Rate limit reached PRIVATE_PROVIDER_DETAIL',
@@ -22,8 +22,6 @@ test('agent errors use closed server-authored copy without provider details', ()
   assert.deepEqual(error, {
     code: 'usage_limit',
     severity: 'error',
-    title: 'Account limit reached',
-    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
     retrying: false,
   });
   const serialized = JSON.stringify(error);
@@ -39,11 +37,21 @@ test('agent errors use closed server-authored copy without provider details', ()
     {
       code: 'permission_required',
       severity: 'error',
-      title: 'Permission required',
-      guidance: 'Open Conductor on the Mac to approve the requested permission.',
       retrying: false,
     },
   );
+  const cyber = classifyAgentError({
+    type: 'result',
+    is_error: true,
+    result:
+      'Error: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber PRIVATE_POLICY_TRACE',
+  });
+  assert.deepEqual(cyber, {
+    code: 'cybersecurity_policy',
+    severity: 'error',
+    retrying: false,
+  });
+  assert.equal(JSON.stringify(cyber).includes('PRIVATE_POLICY_TRACE'), false);
 });
 
 test('database adapter emits normalized failures and never raw diagnostics', async (context) => {
@@ -196,6 +204,16 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
     }),
     '2026-01-01T00:00:06Z',
   );
+  insert.run(
+    'error-7',
+    JSON.stringify({
+      type: 'result',
+      is_error: true,
+      result:
+        'This content was flagged for possible cybersecurity risk. Join Trusted Access for Cyber at https://chatgpt.com/cyber PRIVATE_CYBER_TRACE',
+    }),
+    '2026-01-01T00:00:07Z',
+  );
   const database = new ConductorDatabase(dbPath);
   context.after(async () => {
     database.close();
@@ -215,6 +233,7 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
       'provider_reconnecting',
       'provider_unavailable',
       'permission_required',
+      'cybersecurity_policy',
     ],
   );
   assert.equal(
@@ -232,4 +251,26 @@ test('database adapter emits normalized failures and never raw diagnostics', asy
   assert.equal(serialized.includes('PRIVATE_RETRY_DETAIL'), false);
   assert.equal(serialized.includes('PRIVATE_STREAM_DETAIL'), false);
   assert.equal(serialized.includes('PRIVATE_NESTED_PERMISSION_DETAIL'), false);
+  assert.equal(serialized.includes('PRIVATE_CYBER_TRACE'), false);
+  assert.equal(serialized.includes('chatgpt.com/cyber'), false);
+});
+
+test('the browser renders only allowlisted error copy and a real cyber recovery link', async () => {
+  const [application, stylesheet] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(application, /Blocked: cybersecurity policy/);
+  assert.match(application, /https:\/\/chatgpt\.com\/cyber/);
+  assert.match(
+    application,
+    /target: '_blank'[\s\S]*rel: 'noopener noreferrer'/,
+  );
+  assert.match(
+    application,
+    /className: 'message agent-error',[\s\S]*role: 'alert'/,
+  );
+  assert.doesNotMatch(application, /text: message\.(?:title|guidance)/);
+  assert.match(stylesheet, /\.agent-error-copy a[\s\S]*text-decoration: underline/);
+  assert.match(stylesheet, /\.agent-error-copy a:focus-visible/);
 });

@@ -1,13 +1,13 @@
 import {
   discardTerminalUnconfirmedDeliveries,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-images-20260730';
+} from './delivery-receipts.js?v=0.2.0-read-20260809';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-images-20260730';
-import { fetchJson } from './http.js?v=0.2.0-images-20260730';
+} from './app-update.js?v=0.2.0-read-20260809';
+import { fetchJson } from './http.js?v=0.2.0-read-20260809';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -17,22 +17,34 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-images-20260730';
+} from './image-attachments.js?v=0.2.0-read-20260809';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-images-20260730';
+} from './live-refresh.js?v=0.2.0-read-20260809';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-images-20260730';
+} from './rich-text.js?v=0.2.0-read-20260809';
+import {
+  READ_DWELL_MS,
+  advanceReadProgress,
+  effectiveSessionUnreadCount,
+  effectiveWorkspaceUnreadCount,
+  emptyReadProgress,
+  normalizeReadReceipts,
+  normalizeUnreadHeads,
+  readableResponseRange,
+  readReceiptSnapshot,
+} from './read-state.js?v=0.2.0-read-20260809';
 import {
   activityLabel,
   buildFocusedTranscript,
-} from './transcript-focus.js?v=0.2.0-images-20260730';
+  hasCurrentTerminalAgentError,
+} from './transcript-focus.js?v=0.2.0-read-20260809';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-images-20260730';
+} from './swipe-navigation.js?v=0.2.0-read-20260809';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -51,10 +63,12 @@ const CACHE_PURGE_CHANNEL = 'conductor-pocket-cache-purge-v1';
 const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
 const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const ATTACHMENT_DRAFTS_KEY = 'cp:attachment-drafts:v1';
+const READ_RECEIPTS_KEY = 'cp:read-receipts:v1';
+const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-images-20260730';
+const CLIENT_SHELL_REVISION = '0.2.0-read-20260809';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -77,6 +91,7 @@ const state = {
   messagesBySession: new Map(),
   cursorsBySession: new Map(),
   messageBaselinesBySession: new Set(),
+  messageLiveEpochBySession: new Map(),
   sessionOpenController: null,
   route: { view: 'workspaces', workspaceId: null, sessionId: null },
   optimistic: [],
@@ -88,11 +103,21 @@ const state = {
   visibilityEpoch: 0,
   seenMessageIds: new Set(),
   expandedActivities: new Set(),
+  unreadHeads: new Map(),
+  unreadHeadsLoaded: false,
+  unreadMetadataEpoch: 0,
+  workspaceRequestGeneration: 0,
+  readReceipts: new Map(),
 };
 
 let activeImageUploads = 0;
 const pendingImageUploads = [];
 let imagePreparationQueue = Promise.resolve();
+let readProgress = emptyReadProgress();
+let readEvaluationTimer = null;
+let readGestureSequence = 0;
+let readReceiptWriteQueue = Promise.resolve();
+const readReceiptCommits = new Set();
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
 
@@ -103,6 +128,8 @@ function resetSessionMessageState() {
   state.messagesBySession.clear();
   state.cursorsBySession.clear();
   state.messageBaselinesBySession.clear();
+  state.messageLiveEpochBySession.clear();
+  cancelReadTracking();
 }
 
 const transcriptRefresh = createLiveRefreshCoordinator({
@@ -162,6 +189,83 @@ const ICONS = {
   warn: 'i-warn',
   wifiOff: 'i-wifi-off',
 };
+
+const AGENT_ERROR_PRESENTATIONS = Object.freeze({
+  provider_reconnecting: {
+    title: 'Agent connection interrupted',
+    guidance: 'Conductor is reconnecting automatically.',
+  },
+  provider_unavailable: {
+    title: 'Agent service unavailable',
+    guidance: 'Try again in a moment. Your chat is still safe.',
+  },
+  usage_limit: {
+    title: 'Account limit reached',
+    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
+  },
+  model_unavailable: {
+    title: 'Model unavailable',
+    guidance: 'Choose another model in Conductor on the Mac, then try again.',
+  },
+  provider_auth_required: {
+    title: 'Agent sign-in required',
+    guidance: 'Reconnect the account in Conductor on the Mac.',
+  },
+  permission_required: {
+    title: 'Permission required',
+    guidance: 'Open Conductor on the Mac to approve the requested permission.',
+  },
+  policy_blocked: {
+    title: 'Request blocked by provider policy',
+    guidance: 'Rephrase your message, or open Conductor on the Mac for more guidance.',
+  },
+  cybersecurity_policy: {
+    title: 'Blocked: cybersecurity policy',
+    guidanceBefore:
+      'The provider declined this request under its cybersecurity policy. Rephrase to make authorized, defensive intent clear, or request trusted access at ',
+    guidanceLink: 'chatgpt.com/cyber',
+    guidanceAfter: '.',
+    helpUrl: 'https://chatgpt.com/cyber',
+  },
+  turn_interrupted: {
+    title: 'Agent turn interrupted',
+    guidance: 'Send again when you’re ready.',
+  },
+  agent_failed: {
+    title: 'Request failed',
+    guidance: 'Try again, or rephrase your message. Details are logged on the Mac.',
+  },
+  background_action_failed: {
+    title: 'Background action failed',
+    guidance:
+      'This does not by itself stop the main turn. Open Conductor on the Mac only if you need private action details.',
+  },
+  tool_action_failed: {
+    title: 'Tool action failed',
+    guidance:
+      'A Conductor action failed. Open the turn on your Mac for private details.',
+  },
+});
+
+const UNKNOWN_AGENT_ERROR_PRESENTATION = Object.freeze({
+  title: 'Request failed',
+  guidance: 'Try again, or rephrase your message. Details are logged on the Mac.',
+});
+
+function safeAgentErrorCode(value) {
+  return typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value)
+    ? value
+    : 'unknown_error';
+}
+
+function agentErrorPresentation(code) {
+  const safeCode = safeAgentErrorCode(code);
+  return {
+    code: safeCode,
+    ...(AGENT_ERROR_PRESENTATIONS[safeCode] ||
+      UNKNOWN_AGENT_ERROR_PRESENTATION),
+  };
+}
 
 function icon(name, className = '') {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -354,6 +458,14 @@ function cappedCount(count) {
   return count > 99 ? '99+' : String(count);
 }
 
+function unreadBadge(count) {
+  return node('span', {
+    className: 'badge',
+    text: cappedCount(count),
+    'aria-label': `${count} unread ${count === 1 ? 'message' : 'messages'}`,
+  });
+}
+
 function randomIdempotencyKey() {
   if (crypto.randomUUID) return crypto.randomUUID();
   const bytes = crypto.getRandomValues(new Uint8Array(24));
@@ -468,6 +580,8 @@ async function request(
 
 function gateView({ mark = 'bolt', title, body, content, action, secondary }) {
   state.shell?.composer.observer?.disconnect();
+  state.shell?.readObserver?.disconnect();
+  cancelReadTracking();
   state.shell = null;
   const markNode = node('div', { className: 'app-mark' }, icon(mark));
   const column = node('div', { className: 'gate-column' }, [
@@ -721,7 +835,12 @@ function renderSignedOut() {
   state.recentSessionsLoad = 'idle';
   state.recentSessionsError = null;
   state.recentSessionsRequestGeneration += 1;
+  state.workspaceRequestGeneration += 1;
+  state.unreadMetadataEpoch += 1;
   state.sessionsByWorkspace.clear();
+  state.unreadHeads.clear();
+  state.unreadHeadsLoaded = false;
+  state.readReceipts.clear();
   resetSessionMessageState();
   state.optimistic = [];
   state.seenMessageIds.clear();
@@ -1378,6 +1497,10 @@ const cachePurgeChannel =
   'BroadcastChannel' in window
     ? new BroadcastChannel(CACHE_PURGE_CHANNEL)
     : null;
+const readReceiptChannel =
+  'BroadcastChannel' in window
+    ? new BroadcastChannel(READ_RECEIPTS_CHANNEL)
+    : null;
 let getServiceWorkerRegistration = null;
 let appUpdateCoordinator = null;
 let appUpdateSensitiveOperations = 0;
@@ -1479,6 +1602,115 @@ async function cacheSetRequired(key, value) {
       reject(transaction.error || new Error('cache_write_aborted'));
   });
 }
+
+async function mergeReadReceiptRequired(receipt) {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('snapshots', 'readwrite');
+    const store = transaction.objectStore('snapshots');
+    const currentRequest = store.get(READ_RECEIPTS_KEY);
+    let snapshot = null;
+    currentRequest.onsuccess = () => {
+      const current = normalizeReadReceipts(currentRequest.result);
+      snapshot = readReceiptSnapshot(
+        normalizeReadReceipts([...current.values(), receipt]),
+      );
+      store.put(snapshot, READ_RECEIPTS_KEY);
+    };
+    currentRequest.onerror = () => transaction.abort();
+    transaction.oncomplete = () => resolve(snapshot || []);
+    transaction.onerror = () =>
+      reject(transaction.error || new Error('cache_write_failed'));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('cache_write_aborted'));
+  });
+}
+
+async function restoreReadReceipts() {
+  state.readReceipts = normalizeReadReceipts(
+    await cacheGet(READ_RECEIPTS_KEY),
+  );
+}
+
+function sessionUnreadHead(sessionId) {
+  return state.unreadHeads.get(sessionId) || null;
+}
+
+function sessionUnreadCount(session) {
+  return effectiveSessionUnreadCount({
+    sessionId: session?.id,
+    nativeUnreadCount: session?.unreadCount,
+    unreadHeads: state.unreadHeads,
+    readReceipts: state.readReceipts,
+    headsLoaded: state.unreadHeadsLoaded && state.connection === 'live',
+  });
+}
+
+function workspaceUnreadCount(workspace) {
+  return effectiveWorkspaceUnreadCount({
+    workspaceId: workspace?.id,
+    nativeUnreadCount: workspace?.unreadCount,
+    unreadHeads: state.unreadHeads,
+    readReceipts: state.readReceipts,
+    headsLoaded: state.unreadHeadsLoaded && state.connection === 'live',
+  });
+}
+
+function readHeadStillCurrent(candidate) {
+  const head = sessionUnreadHead(candidate.sessionId);
+  return (
+    state.unreadHeadsLoaded &&
+    state.unreadMetadataEpoch === candidate.metadataEpoch &&
+    head?.responseId === candidate.responseId &&
+    head.unreadCount === candidate.unreadCount &&
+    head.status === candidate.status
+  );
+}
+
+function commitReadReceipt(candidate) {
+  const {
+    sessionId,
+    responseId,
+    unreadCount,
+  } = candidate;
+  const commitKey = `${sessionId}:${responseId}:${unreadCount}`;
+  if (readReceiptCommits.has(commitKey)) return;
+  readReceiptCommits.add(commitKey);
+  const commit = async () => {
+    if (!readHeadStillCurrent(candidate)) return;
+    const snapshot = await mergeReadReceiptRequired({
+      sessionId,
+      responseId,
+      unreadCount,
+      readAt: Date.now(),
+    });
+    if (!readHeadStillCurrent(candidate)) return;
+    state.readReceipts = normalizeReadReceipts(snapshot);
+    readReceiptChannel?.postMessage({ type: 'read-receipts-updated' });
+    renderWorkspacePanel();
+    renderSessionsPanel();
+    appUpdateCoordinator?.stateChanged();
+  };
+  const operation = readReceiptWriteQueue.then(commit, commit);
+  readReceiptWriteQueue = operation.catch(() => {});
+  void operation
+    .catch(() => {
+      readProgress = emptyReadProgress();
+    })
+    .finally(() => {
+      readReceiptCommits.delete(commitKey);
+    });
+}
+
+readReceiptChannel?.addEventListener('message', (event) => {
+  if (event.data?.type !== 'read-receipts-updated') return;
+  void cacheGet(READ_RECEIPTS_KEY).then((snapshot) => {
+    state.readReceipts = normalizeReadReceipts(snapshot);
+    renderWorkspacePanel();
+    renderSessionsPanel();
+    scheduleReadEvaluation();
+  });
+});
 
 function validPersistedKey(value) {
   return (
@@ -1755,15 +1987,29 @@ async function purgeLocalData() {
 async function startApplication() {
   localStorage.removeItem(HIDDEN_AT_KEY);
   state.hiddenAt = null;
+  state.workspaceRequestGeneration += 1;
+  state.unreadMetadataEpoch += 1;
+  state.unreadHeadsLoaded = false;
+  cancelReadTracking();
   state.route = loadRoute();
   state.workspacesLoaded = false;
-  await restorePendingDeliveries();
+  await Promise.all([
+    restorePendingDeliveries(),
+    restoreReadReceipts(),
+  ]);
   ensureShell();
   updateRoutePanels();
-  const [cachedWorkspaces, cachedRecentSessions] = await Promise.all([
+  const [cachedWorkspaces, cachedRecentSessions, cachedUnreadHeads] = await Promise.all([
     cacheGet('workspaces'),
     cacheGet('recent-sessions'),
+    cacheGet('unread-session-heads'),
   ]);
+  if (Array.isArray(cachedUnreadHeads)) {
+    state.unreadHeads = normalizeUnreadHeads(cachedUnreadHeads);
+    // Cached heads may paint context, but only a current network response can
+    // authorize a persisted receipt to suppress an unread badge.
+    state.unreadHeadsLoaded = false;
+  }
   if (Array.isArray(cachedWorkspaces)) {
     state.workspaces = cachedWorkspaces;
     renderWorkspacePanel();
@@ -1863,6 +2109,7 @@ function ensureShell() {
       hidden: true,
       on: {
         click: () => {
+          noteReadGesture();
           transcriptScroll.scrollTo({ top: transcriptScroll.scrollHeight, behavior: 'smooth' });
           latestButton.hidden = true;
         },
@@ -1885,7 +2132,25 @@ function ensureShell() {
       transcriptScroll.scrollTop;
     latestButton.hidden = distance < 120;
     transcriptNav.root.classList.toggle('is-scrolled', transcriptScroll.scrollTop > 1);
+    scheduleReadEvaluation();
   });
+  for (const eventName of ['touchstart', 'pointerdown', 'wheel']) {
+    transcriptScroll.addEventListener(eventName, noteReadGesture, {
+      passive: true,
+    });
+  }
+  transcriptScroll.addEventListener('keydown', (event) => {
+    if (
+      ['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ']
+        .includes(event.key)
+    ) {
+      noteReadGesture();
+    }
+  });
+  const readObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => scheduleReadEvaluation())
+    : null;
+  readObserver?.observe(transcriptColumn);
   installRecentChatsSwipe(transcriptScroll);
 
   state.shell = {
@@ -1902,10 +2167,144 @@ function ensureShell() {
     statusRow,
     latestButton,
     composer,
+    readObserver,
   };
   appUpdateCoordinator?.stateChanged();
   renderWorkspacePanel();
   renderSessionsPanel();
+}
+
+function cancelReadTracking() {
+  if (readEvaluationTimer !== null) clearTimeout(readEvaluationTimer);
+  readEvaluationTimer = null;
+  readProgress = emptyReadProgress();
+}
+
+function invalidateUnreadHeadEvidence({ render = true } = {}) {
+  state.unreadMetadataEpoch += 1;
+  state.unreadHeadsLoaded = false;
+  cancelReadTracking();
+  if (render) {
+    renderWorkspacePanel();
+    renderSessionsPanel();
+  }
+}
+
+function noteReadGesture() {
+  readGestureSequence += 1;
+  scheduleReadEvaluation();
+}
+
+function scheduleReadEvaluation(delayMs = 0) {
+  if (readEvaluationTimer !== null) clearTimeout(readEvaluationTimer);
+  readEvaluationTimer = setTimeout(evaluateReadPosition, Math.max(0, delayMs));
+}
+
+function readCandidate() {
+  if (
+    document.hidden ||
+    !document.hasFocus() ||
+    state.connection !== 'live' ||
+    !state.shell ||
+    state.route.view !== 'transcript' ||
+    !state.route.sessionId ||
+    app.getAttribute('aria-hidden') === 'true' ||
+    document.querySelector('#privacy-shield') ||
+    overlayRoot.childElementCount > 0
+  ) {
+    return null;
+  }
+  const sessionId = state.route.sessionId;
+  const session = currentSession();
+  const head = sessionUnreadHead(sessionId);
+  if (
+    !session ||
+    session.status === 'working' ||
+    head?.status === 'working' ||
+    head?.status !== session.status ||
+    head?.unreadCount !== Number(session.unreadCount) ||
+    sessionUnreadCount(session) === 0 ||
+    !head?.responseId ||
+    !state.messageBaselinesBySession.has(sessionId) ||
+    state.messageLiveEpochBySession.get(sessionId) !== state.visibilityEpoch
+  ) {
+    return null;
+  }
+  const messages = [
+    ...(state.messagesBySession.get(sessionId) || []),
+    ...state.optimistic.filter((item) => item.sessionId === sessionId),
+  ];
+  const { entries } = buildFocusedTranscript(messages, {
+    sessionStatus: session.status || 'unknown',
+  });
+  const range = readableResponseRange(entries, head.responseId);
+  if (!range) return null;
+  const elements = [...state.shell.messageList.children];
+  const first = elements.find(
+    (element) => element.dataset.messageId === range.firstMessageId,
+  );
+  const last = elements.find(
+    (element) => element.dataset.messageId === range.lastMessageId,
+  );
+  if (!first || !last) return null;
+  const viewport = state.shell.transcriptScroll.getBoundingClientRect();
+  const firstRect = first.getBoundingClientRect();
+  const lastRect = last.getBoundingClientRect();
+  const viewportHeight = Math.max(0, viewport.bottom - viewport.top);
+  const responseHeight = Math.max(0, lastRect.bottom - firstRect.top);
+  if (viewportHeight <= 0 || responseHeight <= 0) return null;
+  const tolerance = 1;
+  const topVisible =
+    firstRect.top >= viewport.top - tolerance &&
+    firstRect.top <= viewport.bottom + tolerance;
+  const bottomVisible =
+    lastRect.bottom >= viewport.top - tolerance &&
+    lastRect.bottom <= viewport.bottom + tolerance;
+  const fullyVisible =
+    firstRect.top >= viewport.top - tolerance &&
+    lastRect.bottom <= viewport.bottom + tolerance;
+  return {
+    sessionId,
+    responseId: head.responseId,
+    unreadCount: head.unreadCount,
+    status: head.status,
+    metadataEpoch: state.unreadMetadataEpoch,
+    sample: {
+      eligible: true,
+      key: `${head.responseId}:${Math.round(responseHeight)}`,
+      gestureSequence: readGestureSequence,
+      long: responseHeight > viewportHeight + tolerance,
+      topVisible,
+      bottomVisible,
+      fullyVisible,
+    },
+  };
+}
+
+function evaluateReadPosition() {
+  readEvaluationTimer = null;
+  const candidate = readCandidate();
+  if (!candidate) {
+    readProgress = emptyReadProgress();
+    return;
+  }
+  const result = advanceReadProgress(
+    readProgress,
+    candidate.sample,
+    Date.now(),
+  );
+  readProgress = result.progress;
+  if (result.acknowledge) {
+    commitReadReceipt(candidate);
+    return;
+  }
+  if (readProgress.bottomSince !== null) {
+    const remaining = Math.max(
+      0,
+      READ_DWELL_MS - (Date.now() - readProgress.bottomSince),
+    );
+    scheduleReadEvaluation(remaining);
+  }
 }
 
 function installRecentChatsSwipe(element) {
@@ -2110,6 +2509,7 @@ function updateRoutePanels() {
 }
 
 function navigate(route, push = true) {
+  cancelReadTracking();
   state.route = route;
   persistRoute();
   if (push) history.pushState({ pocketRoute: route }, '', '/');
@@ -2120,12 +2520,35 @@ function navigate(route, push = true) {
 }
 
 async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
+  const generation = state.workspaceRequestGeneration + 1;
+  state.workspaceRequestGeneration = generation;
+  const metadataEpoch = state.unreadMetadataEpoch;
   try {
     const data = await request('/api/workspaces', { signal, timeoutMs });
+    if (
+      generation !== state.workspaceRequestGeneration ||
+      metadataEpoch !== state.unreadMetadataEpoch
+    ) {
+      return;
+    }
     state.workspaces = data.workspaces;
+    if (Array.isArray(data.unreadSessions)) {
+      state.unreadHeads = normalizeUnreadHeads(data.unreadSessions);
+      state.unreadHeadsLoaded = true;
+    } else {
+      state.unreadHeads.clear();
+      state.unreadHeadsLoaded = false;
+    }
     state.workspacesLoaded = true;
     renderWorkspacePanel();
     void cacheSet('workspaces', state.workspaces);
+    if (Array.isArray(data.unreadSessions)) {
+      void cacheSet(
+        'unread-session-heads',
+        [...state.unreadHeads.values()],
+      );
+    }
+    scheduleReadEvaluation();
   } catch (error) {
     if (signal?.aborted || error?.name === 'AbortError') return;
     handleRuntimeError(error);
@@ -2147,6 +2570,7 @@ async function loadRecentSessions({ signal, timeoutMs = 0 } = {}) {
     }
     state.recentSessions = data.sessions;
     state.recentSessionsLoad = 'ready';
+    scheduleReadEvaluation();
     void cacheSet('recent-sessions', data.sessions);
     return { ok: true, cached: false };
   } catch (error) {
@@ -2200,6 +2624,7 @@ async function loadSessions(
     state.sessionsByWorkspace.set(workspaceId, data.sessions);
     if (state.route.workspaceId === workspaceId) renderSessionsPanel();
     void cacheSet(`sessions:${workspaceId}`, data.sessions);
+    scheduleReadEvaluation();
     return data.sessions;
   } catch (error) {
     if (signal?.aborted || error?.name === 'AbortError') {
@@ -2329,6 +2754,7 @@ function appendWorkspaceSection(content, title, workspaces) {
 }
 
 function workspaceRow(workspace) {
+  const unreadCount = workspaceUnreadCount(workspace);
   const subtitle = node('span', { className: 'row-subtitle' }, [
     icon('branch'),
     workspace.branch || 'No branch',
@@ -2341,8 +2767,8 @@ function workspaceRow(workspace) {
         workspace.workingCount > 1 ? String(workspace.workingCount) : null,
       ]),
     );
-  } else if (workspace.unreadCount > 0) {
-    meta.append(node('span', { className: 'badge', text: cappedCount(workspace.unreadCount) }));
+  } else if (unreadCount > 0) {
+    meta.append(unreadBadge(unreadCount));
   } else {
     meta.textContent = formatRelative(workspace.activityAt);
   }
@@ -2406,6 +2832,7 @@ function renderSessionsPanel() {
 function sessionRow(session, { crossWorkspace = false } = {}) {
   const isWorking = session.status === 'working';
   const isError = session.status === 'error';
+  const unreadCount = sessionUnreadCount(session);
   const subtitleText = crossWorkspace
     ? session.workspaceName
     : `${session.agentType || 'agent'}${session.model ? ` · ${session.model}` : ''}`;
@@ -2418,8 +2845,8 @@ function sessionRow(session, { crossWorkspace = false } = {}) {
       ])
       : isWorking
       ? node('span', { className: 'status-dot working' })
-      : session.unreadCount > 0
-        ? node('span', { className: 'badge', text: cappedCount(session.unreadCount) })
+      : unreadCount > 0
+        ? unreadBadge(unreadCount)
         : null,
   ]);
   const control = node('button', {
@@ -2460,6 +2887,7 @@ function updateNavSubtitle(element, fallback) {
 }
 
 async function openSession(sessionId, { workspaceId = state.route.workspaceId, push = true } = {}) {
+  cancelReadTracking();
   state.sessionOpenController?.abort();
   const controller = new AbortController();
   state.sessionOpenController = controller;
@@ -2519,6 +2947,7 @@ async function refreshMessages(
   { full = false, signal, timeoutMs = 0 } = {},
 ) {
   if (!sessionId) return [];
+  const requestVisibilityEpoch = state.visibilityEpoch;
   const effectiveFull =
     full || !state.messageBaselinesBySession.has(sessionId);
   try {
@@ -2554,6 +2983,10 @@ async function refreshMessages(
         if (effectiveFull) {
           state.messageBaselinesBySession.add(sessionId);
         }
+        state.messageLiveEpochBySession.set(
+          sessionId,
+          requestVisibilityEpoch,
+        );
         const reconciled = reconcileOptimistic(sessionId);
         if (state.route.sessionId === sessionId) renderTranscript();
         void cacheSet(`messages:${sessionId}`, {
@@ -2659,9 +3092,6 @@ function renderTranscript() {
       rendered.__pocketRenderKey = renderKey;
       if (!state.seenMessageIds.has(messageId)) {
         rendered.classList.add('is-new');
-        if (message.kind === 'agent-error') {
-          announce(`${message.title}. ${message.guidance}`);
-        }
         rendered.addEventListener(
           'animationend',
           () => rendered.classList.remove('is-new'),
@@ -2700,6 +3130,7 @@ function renderTranscript() {
       });
     }
     else state.shell.latestButton.hidden = false;
+    scheduleReadEvaluation();
   });
   renderComposerState();
   appUpdateCoordinator?.stateChanged();
@@ -2744,8 +3175,6 @@ function messageRenderKey(message, toolResults) {
             item.occurrenceCount,
             item.compactFailure,
             item.code,
-            item.title,
-            item.guidance,
             item.resolvedState ||
               (item.kind === 'tool'
                 ? toolResults.get(item.toolCallId)?.state || item.state
@@ -2778,8 +3207,6 @@ function messageRenderKey(message, toolResults) {
       ? toolResult?.state || message.state
       : message.state,
     message.code,
-    message.title,
-    message.guidance,
   ]);
 }
 
@@ -2900,6 +3327,25 @@ function renderUserImages(message, attachments) {
     );
   });
   return grid;
+}
+
+function renderAgentErrorGuidance(presentation) {
+  const guidance = node('p');
+  if (!presentation.helpUrl) {
+    guidance.textContent = presentation.guidance;
+    return guidance;
+  }
+  guidance.append(
+    document.createTextNode(presentation.guidanceBefore),
+    node('a', {
+      href: presentation.helpUrl,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      text: presentation.guidanceLink,
+    }),
+    document.createTextNode(presentation.guidanceAfter),
+  );
+  return guidance;
 }
 
 function renderMessage(message, toolResults) {
@@ -3050,19 +3496,28 @@ function renderMessage(message, toolResults) {
     const occurrenceCount = Number(message.occurrenceCount) || 1;
     const groupedBackgroundFailure =
       message.code === 'background_action_failed' && occurrenceCount > 1;
+    const presentation = agentErrorPresentation(message.code);
     const title = groupedBackgroundFailure
       ? `${occurrenceCount} background actions failed`
-      : message.title;
+      : presentation.title;
     const guidance = groupedBackgroundFailure
-      ? 'Pocket grouped these repeated failures. They do not by themselves stop the main turn; open it on your Mac only if you need the private action details.'
-      : message.guidance;
-    return node('li', { className: 'message agent-error' }, [
+      ? node('p', {
+          text: 'Pocket grouped these repeated failures. They do not by themselves stop the main turn; open it on your Mac only if you need the private action details.',
+        })
+      : renderAgentErrorGuidance(presentation);
+    return node('li', {
+      className: 'message agent-error',
+      role: 'alert',
+    }, [
       node('div', { className: `agent-error-row ${message.severity}` }, [
         icon('warn'),
         node('div', { className: 'agent-error-copy' }, [
           node('strong', { className: 'agent-error-title', text: title }),
-          node('p', { text: guidance }),
-          node('code', { className: 'agent-error-code', text: message.code }),
+          guidance,
+          node('code', {
+            className: 'agent-error-code',
+            text: presentation.code,
+          }),
         ]),
       ]),
     ]);
@@ -3150,13 +3605,7 @@ function renderAgentStatus(container, session, messages = []) {
     return;
   }
   if (session?.status === 'error') {
-    if (
-      messages.some(
-        (message) => message.kind === 'agent-error' && !message.retrying,
-      )
-    ) {
-      return;
-    }
+    if (hasCurrentTerminalAgentError(messages)) return;
     container.className = 'status-row failed';
     container.append(icon('warn'), document.createTextNode('Agent stopped with an error'));
     return;
@@ -3760,6 +4209,7 @@ function startEvents() {
   };
   eventSource.addEventListener('ready', (event) => {
     live();
+    invalidateUnreadHeadEvidence();
     try {
       appUpdateCoordinator?.serverRevision(
         JSON.parse(event.data).shellRevision,
@@ -3768,10 +4218,25 @@ function startEvents() {
       // The periodic health check remains the update fallback.
     }
     void appUpdateCoordinator?.checkForUpdate({ force: true });
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
+    void transcriptRefresh.flush();
+    void metadataRefresh.flush();
   });
-  eventSource.addEventListener('heartbeat', live);
+  eventSource.addEventListener('heartbeat', () => {
+    const wasLive = state.connection === 'live';
+    live();
+    if (!wasLive) {
+      invalidateUnreadHeadEvidence();
+      transcriptRefresh.schedule();
+      metadataRefresh.schedule();
+      void transcriptRefresh.flush();
+      void metadataRefresh.flush();
+    }
+  });
   eventSource.addEventListener('change', () => {
     live();
+    invalidateUnreadHeadEvidence();
     transcriptRefresh.schedule();
     metadataRefresh.schedule();
   });
@@ -3800,6 +4265,7 @@ function startEvents() {
     }
   });
   eventSource.onerror = () => {
+    invalidateUnreadHeadEvidence();
     if (Date.now() - state.lastHeartbeat > 10_000) {
       state.connection = state.lastHeartbeat ? 'offline' : 'connecting';
       renderConnectionState();
@@ -3807,6 +4273,7 @@ function startEvents() {
   };
   state.heartbeatTimer = setInterval(() => {
     if (Date.now() - state.lastHeartbeat > 10_000) {
+      if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
       state.connection = state.lastHeartbeat ? 'offline' : 'connecting';
       renderConnectionState();
     }
@@ -3858,6 +4325,7 @@ function handleRuntimeError(error) {
 }
 
 function openSheet(title, content, { className = '', onClose } = {}) {
+  cancelReadTracking();
   closeOverlay();
   const close = button('Close', {
     iconName: 'close',
@@ -3898,6 +4366,7 @@ function closeOverlay(onClose) {
   overlayRoot.replaceChildren();
   onClose?.();
   appUpdateCoordinator?.stateChanged();
+  scheduleReadEvaluation();
 }
 
 async function openSwitcher() {
@@ -4289,6 +4758,7 @@ window.addEventListener('popstate', (event) => {
 });
 
 function shieldApplication() {
+  invalidateUnreadHeadEvidence({ render: false });
   const hiddenAt = Date.now();
   state.visibilityEpoch += 1;
   state.hiddenAt = hiddenAt;
@@ -4340,6 +4810,8 @@ async function revealApplication() {
           return;
         }
         startEvents();
+        transcriptRefresh.schedule();
+        metadataRefresh.schedule();
       } catch (error) {
         if (
           error.status === 401 ||
@@ -4362,6 +4834,7 @@ async function revealApplication() {
   }
   document.querySelector('#privacy-shield')?.remove();
   app.removeAttribute('aria-hidden');
+  scheduleReadEvaluation();
 }
 
 function currentAppUpdateReloadIsSafe() {

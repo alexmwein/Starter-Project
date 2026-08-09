@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   activityLabel,
   buildFocusedTranscript,
+  hasCurrentTerminalAgentError,
 } from '../public/transcript-focus.js';
 
 const user = (id, rowId, turnId) => ({
@@ -14,6 +15,7 @@ const user = (id, rowId, turnId) => ({
 });
 const assistant = (id, rowId, turnId, parentToolUseId = null) => ({
   id,
+  responseId: id,
   rowId,
   kind: 'assistant',
   text: id,
@@ -65,6 +67,8 @@ test('completed turns collapse progress and keep every final text block prominen
   assert.equal(entries[1].running, false);
   assert.equal(entries[2].importance, 'primary');
   assert.equal(entries[3].importance, 'primary');
+  assert.equal(entries[2].responseId, 'final-block-a');
+  assert.equal(entries[3].responseId, 'final-block-b');
   assert.equal(activityLabel(entries[1]), '1 tool call, 1 message');
 });
 
@@ -636,4 +640,59 @@ test('a nested failed result does not finish the still-working root turn', () =>
 
   assert.equal(entries[0].kind, 'activity');
   assert.equal(entries[0].running, true);
+});
+
+test('only the latest root agent error explains a terminal session status', () => {
+  const oldError = {
+    id: 'old-error',
+    rowId: 2,
+    kind: 'agent-error',
+    code: 'provider_unavailable',
+    retrying: false,
+    turnId: 'turn-old',
+  };
+  assert.equal(hasCurrentTerminalAgentError([oldError]), true);
+  assert.equal(
+    hasCurrentTerminalAgentError([
+      oldError,
+      user('new-question', 3, 'turn-current'),
+    ]),
+    false,
+  );
+  assert.equal(
+    hasCurrentTerminalAgentError([
+      user('question', 1, 'turn-current'),
+      {
+        id: 'background-error',
+        rowId: 2,
+        kind: 'agent-error',
+        code: 'background_action_failed',
+        retrying: false,
+        turnId: 'turn-current',
+        parentToolUseId: 'spawned-tool',
+      },
+    ]),
+    false,
+  );
+  assert.equal(
+    hasCurrentTerminalAgentError([
+      user('question', 1, 'turn-current'),
+      {
+        id: 'current-error',
+        rowId: 2,
+        kind: 'agent-error',
+        code: 'cybersecurity_policy',
+        retrying: false,
+        turnId: 'turn-current',
+      },
+      {
+        id: 'current-result',
+        rowId: 2,
+        kind: 'turn-result',
+        state: 'failed',
+        turnId: 'turn-current',
+      },
+    ]),
+    true,
+  );
 });

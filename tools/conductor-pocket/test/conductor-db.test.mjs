@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { ConductorDatabase } from '../src/conductor-db.mjs';
 
-async function createConfirmationFixture(context) {
+async function createConfirmationFixture(context, databaseOptions = {}) {
   const directory = await fs.mkdtemp(
     path.join(os.tmpdir(), 'conductor-pocket-confirmation-db-'),
   );
@@ -102,7 +102,7 @@ async function createConfirmationFixture(context) {
       ('session-1', 'workspace-1', 'First chat', 'codex', 'gpt-test', 'working', 0, '2026-01-01', '2026-01-01', 0),
       ('session-2', 'workspace-1', 'Second chat', 'codex', 'gpt-test', 'working', 0, '2026-01-01', '2026-01-01', 0);
   `);
-  const database = new ConductorDatabase(dbPath);
+  const database = new ConductorDatabase(dbPath, databaseOptions);
   context.after(async () => {
     database.close();
     writable.close();
@@ -113,7 +113,7 @@ async function createConfirmationFixture(context) {
       (id, session_id, role, content, created_at, sent_at, cancelled_at, model, turn_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'gpt-test', 'turn-1')
   `);
-  return { database, insert };
+  return { database, insert, writable };
 }
 
 test('database adapter exposes sanitized chat events without tool payloads', async (context) => {
@@ -441,6 +441,270 @@ test('workspace routes use the visible Conductor name instead of the folder code
   );
   assert.equal(database.listLocalWorkspacePaths().length, 1);
   assert.equal(path.isAbsolute(database.listLocalWorkspacePaths()[0]), true);
+});
+
+test('unread heads bind completion status and match the focused visible response', async (context) => {
+  const { database, insert, writable } = await createConfirmationFixture(context);
+  writable
+    .prepare(
+      'UPDATE sessions SET unread_count = 1, updated_at = ? WHERE id = ?',
+    )
+    .run('2026-01-01T00:00:01Z', 'session-1');
+  insert.run(
+    'root-response-1',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Readable answer' }] },
+    }),
+    '2026-01-01T00:00:01Z',
+    null,
+    null,
+  );
+  insert.run(
+    'nested-response-1',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: 'nested-tool',
+      message: { content: [{ type: 'text', text: 'Nested research' }] },
+    }),
+    '2026-01-01T00:00:02Z',
+    null,
+    null,
+  );
+
+  assert.deepEqual(database.listUnreadSessionHeads(), [
+    {
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      unreadCount: 1,
+      responseId: null,
+      status: 'working',
+    },
+  ]);
+
+  writable
+    .prepare('UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?')
+    .run('idle', '2026-01-01T00:00:03Z', 'session-1');
+
+  assert.deepEqual(database.listUnreadSessionHeads(), [
+    {
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      unreadCount: 1,
+      responseId: 'root-response-1',
+      status: 'idle',
+    },
+  ]);
+  assert.equal(
+    database
+      .listMessages('session-1')
+      .messages.find((message) => message.text === 'Readable answer')
+      .responseId,
+    'root-response-1',
+  );
+
+  insert.run(
+    'failed-result-1',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'result',
+      is_error: true,
+      error: 'private provider detail',
+    }),
+    '2026-01-01T00:00:03Z',
+    null,
+    null,
+  );
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'failed-result-1',
+  );
+
+  insert.run(
+    'normal-tool-use-1',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'tool_use',
+          id: 'normal-tool-call-1',
+          name: 'Bash',
+          input: { private: 'not exposed' },
+        }],
+      },
+    }),
+    '2026-01-01T00:00:04Z',
+    null,
+    null,
+  );
+  insert.run(
+    'normal-tool-failure-1',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'normal-tool-call-1',
+          is_error: true,
+          content: 'private failure output',
+        }],
+      },
+    }),
+    '2026-01-01T00:00:05Z',
+    null,
+    null,
+  );
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'failed-result-1',
+  );
+
+  insert.run(
+    'orphan-tool-failure-1',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'orphan-tool-call-1',
+          is_error: true,
+          content: 'private orphan output',
+        }],
+      },
+    }),
+    '2026-01-01T00:00:06Z',
+    null,
+    null,
+  );
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'orphan-tool-failure-1',
+  );
+
+  writable
+    .prepare('UPDATE session_messages SET cancelled_at = ? WHERE id = ?')
+    .run('2026-01-01T00:00:07Z', 'orphan-tool-failure-1');
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'failed-result-1',
+  );
+});
+
+test('an unrelated chat write retains cached unread response heads', async (context) => {
+  const scans = [];
+  const { database, insert, writable } = await createConfirmationFixture(
+    context,
+    { onReadableHeadScan: (sessionId) => scans.push(sessionId) },
+  );
+  writable
+    .prepare(
+      'UPDATE sessions SET status = ?, unread_count = 1, updated_at = ? WHERE id = ?',
+    )
+    .run('idle', '2026-01-01T00:00:01Z', 'session-1');
+  insert.run(
+    'cached-root-response',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Cached answer' }] },
+    }),
+    '2026-01-01T00:00:01Z',
+    null,
+    null,
+  );
+
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'cached-root-response',
+  );
+  assert.deepEqual(scans, ['session-1']);
+  scans.length = 0;
+
+  insert.run(
+    'unrelated-active-message',
+    'session-2',
+    'assistant',
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Still working elsewhere' }] },
+    }),
+    '2026-01-01T00:00:02Z',
+    null,
+    null,
+  );
+
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'cached-root-response',
+  );
+  assert.deepEqual(scans, []);
+});
+
+test('unread head caching detects an exact cancellation-set swap', async (context) => {
+  const scans = [];
+  const { database, insert, writable } = await createConfirmationFixture(
+    context,
+    { onReadableHeadScan: (sessionId) => scans.push(sessionId) },
+  );
+  writable
+    .prepare(
+      'UPDATE sessions SET status = ?, unread_count = 1, updated_at = ? WHERE id = ?',
+    )
+    .run('idle', '2026-01-01T00:00:01Z', 'session-1');
+  for (const [id, cancelledAt] of [
+    ['swap-response-1', '2026-01-01T00:01:01Z'],
+    ['swap-response-2', null],
+    ['swap-response-3', null],
+    ['swap-response-4', '2026-01-01T00:01:04Z'],
+  ]) {
+    insert.run(
+      id,
+      'session-1',
+      'assistant',
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: id }] },
+      }),
+      '2026-01-01T00:00:01Z',
+      null,
+      cancelledAt,
+    );
+  }
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'swap-response-3',
+  );
+  assert.deepEqual(scans, ['session-1']);
+  scans.length = 0;
+
+  writable.exec(`
+    BEGIN;
+    UPDATE session_messages
+      SET cancelled_at = NULL
+      WHERE id IN ('swap-response-1', 'swap-response-4');
+    UPDATE session_messages
+      SET cancelled_at = '2026-01-01T00:02:00Z'
+      WHERE id IN ('swap-response-2', 'swap-response-3');
+    COMMIT;
+  `);
+
+  assert.equal(
+    database.listUnreadSessionHeads()[0].responseId,
+    'swap-response-4',
+  );
+  assert.deepEqual(scans, ['session-1']);
 });
 
 test('cancelled rows stay hidden while the high-water cursor still fences them', async (context) => {

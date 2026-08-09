@@ -6,6 +6,8 @@ import {
   parseAttachmentMessage,
   validAttachmentId,
 } from './attachment-markup.mjs';
+import { buildFocusedTranscript } from '../public/transcript-focus.js';
+import { latestReadableResponseId } from '../public/read-state.js';
 
 function workspaceDisplayName(row) {
   return (
@@ -103,59 +105,45 @@ const VISIBLE_TRANSCRIPT_EVENT_SQL = `
   )
 `;
 
-const AGENT_ERROR_COPY = {
+const AGENT_ERROR_BEHAVIOR = {
   provider_reconnecting: {
     severity: 'warning',
-    title: 'Agent connection interrupted',
-    guidance: 'Conductor is reconnecting automatically.',
     retrying: true,
   },
   provider_unavailable: {
     severity: 'error',
-    title: 'Agent service unavailable',
-    guidance: 'Try again in a moment. Your chat is still safe.',
     retrying: false,
   },
   usage_limit: {
     severity: 'error',
-    title: 'Account limit reached',
-    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
     retrying: false,
   },
   model_unavailable: {
     severity: 'error',
-    title: 'Model unavailable',
-    guidance: 'Choose another model in Conductor on the Mac, then try again.',
     retrying: false,
   },
   provider_auth_required: {
     severity: 'error',
-    title: 'Agent sign-in required',
-    guidance: 'Reconnect the account in Conductor on the Mac.',
     retrying: false,
   },
   permission_required: {
     severity: 'error',
-    title: 'Permission required',
-    guidance: 'Open Conductor on the Mac to approve the requested permission.',
     retrying: false,
   },
   policy_blocked: {
     severity: 'error',
-    title: 'Request blocked by the provider',
-    guidance: 'Open Conductor on the Mac for the provider’s guidance.',
+    retrying: false,
+  },
+  cybersecurity_policy: {
+    severity: 'error',
     retrying: false,
   },
   turn_interrupted: {
     severity: 'warning',
-    title: 'Agent turn interrupted',
-    guidance: 'Send again when you’re ready.',
     retrying: false,
   },
   agent_failed: {
     severity: 'error',
-    title: 'Agent stopped with an error',
-    guidance: 'Open Conductor on the Mac for full diagnostic details.',
     retrying: false,
   },
 };
@@ -182,13 +170,13 @@ export function classifyAgentError(event) {
   if (systemSignal === 'api_retry') {
     return {
       code: 'provider_reconnecting',
-      ...AGENT_ERROR_COPY.provider_reconnecting,
+      ...AGENT_ERROR_BEHAVIOR.provider_reconnecting,
     };
   }
   if (systemSignal === 'permission_denied') {
     return {
       code: 'permission_required',
-      ...AGENT_ERROR_COPY.permission_required,
+      ...AGENT_ERROR_BEHAVIOR.permission_required,
     };
   }
   const isProviderError =
@@ -202,6 +190,11 @@ export function classifyAgentError(event) {
   } else {
     const searchText = agentErrorSearchText(event);
     if (
+      /\b(?:cybersecurity|trusted access for cyber)\b/i.test(searchText) &&
+      /\bchatgpt\.com\/cyber\b/i.test(searchText)
+    ) {
+      code = 'cybersecurity_policy';
+    } else if (
       /\b(?:usage limit|rate limit|quota|credits?|billing|resource exhausted|too many requests)\b/i.test(
         searchText,
       )
@@ -236,7 +229,7 @@ export function classifyAgentError(event) {
     }
   }
 
-  return { code, ...AGENT_ERROR_COPY[code] };
+  return { code, ...AGENT_ERROR_BEHAVIOR[code] };
 }
 
 function parseAssistantRow(row, { cleanAttachments = false } = {}) {
@@ -275,6 +268,7 @@ function parseAssistantRow(row, { cleanAttachments = false } = {}) {
       if (item.type === 'text' && typeof item.text === 'string' && item.text.trim()) {
         messages.push({
           id: `${row.id}:${index}`,
+          responseId: row.id,
           rowId: row.row_id,
           kind: 'assistant',
           text: item.text,
@@ -307,13 +301,11 @@ function parseAssistantRow(row, { cleanAttachments = false } = {}) {
         return [
           {
             id: `background-failure:${row.turn_id || 'unknown'}:${item.tool_use_id || row.id}`,
+            responseId: row.id,
             rowId: row.row_id,
             kind: 'agent-error',
             code: 'background_action_failed',
             severity: 'error',
-            title: 'Background action failed',
-            guidance:
-              'A background Conductor action failed. Open the turn on your Mac for full details.',
             retrying: false,
             createdAt: row.created_at,
             turnId: row.turn_id || null,
@@ -336,14 +328,12 @@ function parseAssistantRow(row, { cleanAttachments = false } = {}) {
         toolResult,
         {
           id: `tool-failure:${row.turn_id || 'unknown'}:${item.tool_use_id || row.id}`,
+          responseId: row.id,
           rowId: row.row_id,
           kind: 'tool-failure',
           toolCallId: item.tool_use_id || null,
           code: 'tool_action_failed',
           severity: 'error',
-          title: 'Tool action failed',
-          guidance:
-            'A Conductor action failed. Open the turn on your Mac for full details.',
           retrying: false,
           createdAt: row.created_at,
           turnId: row.turn_id || null,
@@ -359,6 +349,7 @@ function parseAssistantRow(row, { cleanAttachments = false } = {}) {
         ? [
             {
               id: `${row.id}:error`,
+              responseId: row.id,
               rowId: row.row_id,
               kind: 'agent-error',
               ...agentError,
@@ -385,6 +376,7 @@ function parseAssistantRow(row, { cleanAttachments = false } = {}) {
     return [
       {
         id: row.id,
+        responseId: row.id,
         rowId: row.row_id,
         kind: 'agent-error',
         ...agentError,
@@ -418,10 +410,14 @@ function parseAssistantRow(row, { cleanAttachments = false } = {}) {
 export class ConductorDatabase {
   #db;
   #dbPath;
+  #readableHeadCache = new Map();
+  #onReadableHeadScan;
   #statements;
 
-  constructor(dbPath) {
+  constructor(dbPath, { onReadableHeadScan = null } = {}) {
     this.#dbPath = dbPath;
+    this.#onReadableHeadScan =
+      typeof onReadableHeadScan === 'function' ? onReadableHeadScan : null;
     this.#db = new DatabaseSync(dbPath, { readOnly: true });
     this.#db.exec('PRAGMA query_only = ON; PRAGMA busy_timeout = 1000;');
     this.#statements = {
@@ -463,6 +459,62 @@ export class ConductorDatabase {
           w.pinned_at DESC,
           activity_at DESC,
           w.updated_at DESC
+      `),
+      unreadSessions: this.#db.prepare(`
+        SELECT
+          s.id,
+          s.workspace_id,
+          s.unread_count,
+          s.status,
+          s.updated_at,
+          (
+            SELECT COALESCE(MAX(message.rowid), 0)
+            FROM session_messages message
+            WHERE message.session_id = s.id
+          ) AS message_cursor,
+          (
+            SELECT COALESCE(GROUP_CONCAT(cancelled_row.row_id, ','), '')
+            FROM (
+              SELECT cancelled.rowid AS row_id
+              FROM session_messages AS cancelled
+                INDEXED BY idx_session_messages_cancelled_at
+              WHERE cancelled.session_id = s.id
+                AND cancelled.cancelled_at IS NOT NULL
+              ORDER BY cancelled.cancelled_at, cancelled.rowid
+            ) AS cancelled_row
+          ) AS cancellation_fingerprint
+        FROM sessions s
+        JOIN workspaces w ON w.id = s.workspace_id
+        JOIN repos r ON r.id = w.repository_id
+        WHERE s.is_hidden = 0
+          AND s.unread_count > 0
+          AND w.state != 'archived'
+          AND r.hidden = 0
+        ORDER BY s.id
+      `),
+      unreadSessionState: this.#db.prepare(`
+        SELECT
+          s.unread_count,
+          s.status,
+          s.updated_at,
+          (
+            SELECT COALESCE(MAX(message.rowid), 0)
+            FROM session_messages message
+            WHERE message.session_id = s.id
+          ) AS message_cursor,
+          (
+            SELECT COALESCE(GROUP_CONCAT(cancelled_row.row_id, ','), '')
+            FROM (
+              SELECT cancelled.rowid AS row_id
+              FROM session_messages AS cancelled
+                INDEXED BY idx_session_messages_cancelled_at
+              WHERE cancelled.session_id = s.id
+                AND cancelled.cancelled_at IS NOT NULL
+              ORDER BY cancelled.cancelled_at, cancelled.rowid
+            ) AS cancelled_row
+          ) AS cancellation_fingerprint
+        FROM sessions s
+        WHERE s.id = ?
       `),
       sessions: this.#db.prepare(`
         SELECT
@@ -610,6 +662,24 @@ export class ConductorDatabase {
         ORDER BY rowid
         LIMIT 1
       `),
+      readableHeadRows: this.#db.prepare(`
+        SELECT
+          rowid AS row_id,
+          id,
+          role,
+          content,
+          created_at,
+          sent_at,
+          cancelled_at,
+          model,
+          turn_id
+        FROM session_messages
+        WHERE session_id = ?
+          AND cancelled_at IS NULL
+          AND ${VISIBLE_TRANSCRIPT_EVENT_SQL}
+        ORDER BY rowid DESC
+        LIMIT 1000
+      `),
       userMessagesAfter: this.#db.prepare(`
         SELECT
           rowid AS row_id,
@@ -662,6 +732,60 @@ export class ConductorDatabase {
       unreadCount: Number(row.unread_count),
       workingCount: Number(row.working_count),
       activityAt: row.activity_at || row.updated_at,
+    }));
+  }
+
+  #readableHeadVersion(row) {
+    return [
+      Number(row.unread_count || 0),
+      row.status || '',
+      row.updated_at || '',
+      Number(row.message_cursor || 0),
+      row.cancellation_fingerprint || '',
+    ].join(':');
+  }
+
+  #latestReadableResponseId(sessionRow) {
+    const version = this.#readableHeadVersion(sessionRow);
+    const cached = this.#readableHeadCache.get(sessionRow.id);
+    if (cached?.version === version) return cached.responseId;
+    if (sessionRow.status === 'working') {
+      this.#readableHeadCache.set(sessionRow.id, {
+        version,
+        responseId: null,
+      });
+      return null;
+    }
+    this.#onReadableHeadScan?.(sessionRow.id);
+    const messages = this.#statements.readableHeadRows
+      .all(sessionRow.id)
+      .reverse()
+      .flatMap(parseAssistantRow);
+    const { entries } = buildFocusedTranscript(messages, {
+      sessionStatus: sessionRow.status || 'unknown',
+    });
+    const responseId = latestReadableResponseId(entries);
+    const current = this.#statements.unreadSessionState.get(sessionRow.id);
+    if (!current || this.#readableHeadVersion(current) !== version) {
+      this.#readableHeadCache.delete(sessionRow.id);
+      return null;
+    }
+    this.#readableHeadCache.set(sessionRow.id, { version, responseId });
+    return responseId;
+  }
+
+  listUnreadSessionHeads() {
+    const rows = this.#statements.unreadSessions.all();
+    const activeIds = new Set(rows.map((row) => row.id));
+    for (const sessionId of this.#readableHeadCache.keys()) {
+      if (!activeIds.has(sessionId)) this.#readableHeadCache.delete(sessionId);
+    }
+    return rows.map((row) => ({
+      sessionId: row.id,
+      workspaceId: row.workspace_id,
+      unreadCount: Number(row.unread_count || 0),
+      responseId: this.#latestReadableResponseId(row),
+      status: row.status || 'unknown',
     }));
   }
 
