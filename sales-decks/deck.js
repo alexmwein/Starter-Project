@@ -22,6 +22,19 @@
   let touchStartY = 0;
   let preparedText = new Map();
   let relayoutQueued = false;
+  let panelReturnFocus = null;
+
+  const slideAnnouncer = document.createElement("div");
+  slideAnnouncer.className = "deck-live-region";
+  slideAnnouncer.setAttribute("aria-live", "polite");
+  slideAnnouncer.setAttribute("aria-atomic", "true");
+  document.body.appendChild(slideAnnouncer);
+
+  const panelConfigs = [
+    { panel: notesPanel, action: "notes", id: `${deckKey}-speaker-notes` },
+    { panel: overview, action: "overview", id: `${deckKey}-slide-overview` },
+    { panel: help, action: "help", id: `${deckKey}-keyboard-help` },
+  ];
 
   const pad = (value) => String(value).padStart(2, "0");
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -81,6 +94,12 @@
     if (currentLabel) currentLabel.textContent = pad(current + 1);
     if (progress) progress.style.width = `${((current + 1) / slides.length) * 100}%`;
     document.title = `${slides[current]?.dataset.title || "Presentation"} · OVO Talent`;
+    slideAnnouncer.textContent = `Slide ${current + 1} of ${slides.length}: ${slides[current]?.dataset.title || "OVO Talent presentation"}`;
+
+    const previousControl = document.querySelector('[data-action="previous"]');
+    const nextControl = document.querySelector('[data-action="next"]');
+    if (previousControl instanceof HTMLButtonElement) previousControl.disabled = current === 0;
+    if (nextControl instanceof HTMLButtonElement) nextControl.disabled = current === slides.length - 1;
 
     const nextHash = `#${current + 1}`;
     if (window.location.hash !== nextHash) {
@@ -101,17 +120,79 @@
     goTo(current - 1);
   }
 
-  function closePanels(except = null) {
-    [notesPanel, overview, help].forEach((panel) => {
-      if (panel && panel !== except) panel.classList.remove("is-open");
+  function panelTrigger(action) {
+    return document.querySelector(`[data-action="${action}"]`);
+  }
+
+  function setPanelOpen(config, isOpen) {
+    if (!config.panel) return;
+    config.panel.classList.toggle("is-open", isOpen);
+    config.panel.setAttribute("aria-hidden", String(!isOpen));
+    panelTrigger(config.action)?.setAttribute("aria-expanded", String(isOpen));
+  }
+
+  function isPanelDescendant(element) {
+    return panelConfigs.some((config) => config.panel?.contains(element));
+  }
+
+  function focusDeckSurface() {
+    const target = slides[current] || stage;
+    if (!(target instanceof HTMLElement)) return;
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  }
+
+  function closePanels(except = null, { restoreFocus = false } = {}) {
+    panelConfigs.forEach((config) => {
+      if (config.panel && config.panel !== except) setPanelOpen(config, false);
     });
+    if (restoreFocus && panelReturnFocus instanceof HTMLElement && panelReturnFocus.isConnected && !isPanelDescendant(panelReturnFocus)) {
+      panelReturnFocus.focus({ preventScroll: true });
+      panelReturnFocus = null;
+    } else if (restoreFocus) {
+      panelReturnFocus = null;
+      focusDeckSurface();
+    }
   }
 
   function togglePanel(panel) {
     if (!panel) return;
     const willOpen = !panel.classList.contains("is-open");
+    if (!willOpen) {
+      closePanels(null, { restoreFocus: true });
+      return;
+    }
+    const active = document.activeElement;
+    if (!(panelReturnFocus instanceof HTMLElement) && active instanceof HTMLElement && active !== document.body && !isPanelDescendant(active)) {
+      panelReturnFocus = active;
+    }
     closePanels(panel);
-    panel.classList.toggle("is-open", willOpen);
+    const config = panelConfigs.find((candidate) => candidate.panel === panel);
+    if (config) setPanelOpen(config, true);
+    window.requestAnimationFrame(() => {
+      const firstTarget = panel.querySelector("button, a[href], [tabindex]:not([tabindex=\"-1\"])");
+      (firstTarget || panel).focus({ preventScroll: true });
+    });
+  }
+
+  function trapPanelFocus(event, panel) {
+    if (event.key !== "Tab") return;
+    const focusable = [...panel.querySelectorAll('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => element instanceof HTMLElement && element.offsetParent !== null);
+    if (!focusable.length) {
+      event.preventDefault();
+      panel.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   async function toggleFullscreen() {
@@ -131,13 +212,19 @@
       notes: () => togglePanel(notesPanel),
       overview: () => togglePanel(overview),
       help: () => togglePanel(help),
-      blank: () => blank?.classList.toggle("is-open"),
+      blank: () => setBlank(!blank?.classList.contains("is-open")),
     };
     actions[action]?.();
   }
 
   function isEditing() {
-    return document.activeElement?.isContentEditable;
+    const active = document.activeElement;
+    return Boolean(active?.isContentEditable || active?.matches?.("input, textarea, select"));
+  }
+
+  function setBlank(isOpen) {
+    blank?.classList.toggle("is-open", isOpen);
+    blank?.setAttribute("aria-hidden", String(!isOpen));
   }
 
   function handleKeydown(event) {
@@ -148,13 +235,19 @@
 
     const key = event.key.toLowerCase();
 
+    const openPanel = panelConfigs.find((config) => config.panel?.classList.contains("is-open"))?.panel;
+    if (openPanel && event.key === "Tab") {
+      trapPanelFocus(event, openPanel);
+      return;
+    }
+
     if (blank?.classList.contains("is-open")) {
-      if (key === "b" || key === "escape") blank.classList.remove("is-open");
+      if (key === "b" || key === "escape") setBlank(false);
       return;
     }
 
     if (key === "escape") {
-      closePanels();
+      closePanels(null, { restoreFocus: true });
       return;
     }
 
@@ -177,7 +270,7 @@
     } else if (key === "o") {
       togglePanel(overview);
     } else if (key === "b") {
-      blank?.classList.add("is-open");
+      setBlank(true);
     } else if (key === "?" || key === "h") {
       togglePanel(help);
     }
@@ -198,7 +291,7 @@
       `;
       card.addEventListener("click", () => {
         goTo(index);
-        overview.classList.remove("is-open");
+        closePanels(null, { restoreFocus: true });
       });
       fragment.appendChild(card);
     });
@@ -246,8 +339,6 @@
     const elements = [...document.querySelectorAll("[data-pretext]")];
     elements.forEach((element) => {
       prepareTextElement(element);
-      element.setAttribute("contenteditable", "true");
-      element.setAttribute("spellcheck", "false");
 
       new MutationObserver(() => {
         prepareTextElement(element);
@@ -264,13 +355,34 @@
     button.addEventListener("click", () => runAction(button.dataset.action));
   });
 
+  panelConfigs.forEach((config) => {
+    if (!config.panel) return;
+    config.panel.id ||= config.id;
+    config.panel.setAttribute("role", "dialog");
+    config.panel.setAttribute("aria-modal", "true");
+    config.panel.setAttribute("aria-hidden", "true");
+    config.panel.setAttribute("tabindex", "-1");
+    const label = config.panel.querySelector(".speaker-notes-label, h2");
+    if (label) {
+      label.id ||= `${config.id}-label`;
+      config.panel.setAttribute("aria-labelledby", label.id);
+    }
+    const trigger = panelTrigger(config.action);
+    trigger?.setAttribute("aria-controls", config.panel.id);
+    trigger?.setAttribute("aria-expanded", "false");
+  });
+  setBlank(false);
+
   document.addEventListener("keydown", handleKeydown);
   window.addEventListener("hashchange", () => goTo(slideFromHash(), { replaceHash: true }));
 
   stage?.addEventListener("pointermove", (event) => {
     const rect = stage.getBoundingClientRect();
-    stage.style.setProperty("--pointer-x", `${((event.clientX - rect.left) / rect.width) * 100}%`);
-    stage.style.setProperty("--pointer-y", `${((event.clientY - rect.top) / rect.height) * 100}%`);
+    const relativeX = (event.clientX - rect.left) / rect.width;
+    const relativeY = (event.clientY - rect.top) / rect.height;
+    stage.style.setProperty("--pointer-x", `${relativeX * 100}%`);
+    stage.style.setProperty("--pointer-y", `${relativeY * 100}%`);
+    document.body.classList.toggle("deck-controls-visible", relativeX > 0.7 && relativeY > 0.78);
   });
 
   stage?.addEventListener("touchstart", (event) => {

@@ -126,7 +126,7 @@
     },
     {
       id: "VPWRswctjnM",
-      shortTitle: "Best nutrition app",
+      shortTitle: "Nutrition app review",
       sourceTitle: "Is This The Best Nutrition App?",
       creator: "Creator 04",
       creatorLabel: "Partner creator · demo roster label",
@@ -154,7 +154,7 @@
     },
     {
       id: "ZZLeVx6DiZQ",
-      shortTitle: "Number-one nutrition app",
+      shortTitle: "Creator’s top nutrition app",
       sourceTitle: "This is my #1 Fitness Nutrition App (Fitia)",
       creator: "Creator 05",
       creatorLabel: "Partner creator · demo roster label",
@@ -493,7 +493,7 @@
       <section class="page page--overview" aria-labelledby="overview-title">
         <header class="page-heading">
           <div class="page-heading__copy">
-            <span class="page-kicker">Fitia × OVO Talent · Active workspace</span>
+            <span class="page-kicker">Fitia × OVO Talent · Demo workspace</span>
             <h1 id="overview-title">Campaign control room</h1>
             <p>One place for creative review, exact-frame feedback, approvals, publishing dates, and source links.</p>
           </div>
@@ -638,7 +638,7 @@
           <div class="page-heading__meta">10 official Fitia posts · workflow simulated</div>
         </header>
 
-        <div class="deliverables-shell ${state.mobileReview ? "is-mobile-review" : ""}" data-review-tab="${state.reviewTab}">
+        <div class="deliverables-shell ${state.mobileReview ? "is-mobile-review" : ""} ${visible.length ? "" : "is-empty"}" data-review-tab="${state.reviewTab}">
           <aside class="queue-pane" aria-label="Deliverable queue">
             <div class="queue-toolbar">
               <label class="search-field">
@@ -665,20 +665,26 @@
             </div>
           </aside>
 
-          <div class="compact-review-tabs" role="tablist" aria-label="Review workspace panels">
+          ${visible.length ? "" : `
+            <section class="review-empty-detail" aria-live="polite">
+              <div><span>Queue filtered</span><strong>No deliverable selected</strong><p>Clear the current filters to return to the full review workspace.</p></div>
+            </section>
+          `}
+
+          <div class="compact-review-tabs" role="group" aria-label="Review workspace panels" ${visible.length ? "" : "hidden"}>
             <button class="compact-mobile-back" type="button" data-action="mobile-back" aria-label="Back to all deliverables">← Queue</button>
-            <button type="button" role="tab" data-action="review-tab" data-tab="review" aria-selected="${state.reviewTab === "review"}">Review</button>
-            <button type="button" role="tab" data-action="review-tab" data-tab="activity" aria-selected="${state.reviewTab === "activity"}">Activity · ${commentCount}</button>
+            <button type="button" data-action="review-tab" data-tab="review" aria-pressed="${state.reviewTab === "review"}">Review</button>
+            <button type="button" data-action="review-tab" data-tab="activity" aria-pressed="${state.reviewTab === "activity"}">Activity · ${commentCount}</button>
           </div>
 
-          <section class="review-pane" aria-label="Creative review stage">
+          <section class="review-pane" aria-label="Creative review stage" ${visible.length ? "" : "hidden"}>
             <header class="review-stage__head">
               <div><p>${escapeHtml(item.creator)} · ${escapeHtml(item.platform)}</p><h2>${escapeHtml(item.sourceTitle)}</h2></div>
               ${statusMarkup(item.status)}
             </header>
 
-            <div class="version-switcher" role="tablist" aria-label="Draft versions">
-              ${item.versions.map((version) => `<button type="button" role="tab" data-action="version" data-version="${version.number}" aria-selected="${activeVersion === version.number}">V${version.number}</button>`).join("")}
+            <div class="version-switcher" role="group" aria-label="Draft versions">
+              ${item.versions.map((version) => `<button type="button" data-action="version" data-version="${version.number}" aria-pressed="${activeVersion === version.number}">V${version.number}</button>`).join("")}
               <span>${isSuperseded ? "Superseded · " : "Current · "}${escapeHtml(item.versions.find((version) => version.number === activeVersion)?.note || "Draft")}</span>
             </div>
 
@@ -707,7 +713,7 @@
             ${actionMarkup("stage")}
           </section>
 
-          <aside class="thread-pane" aria-label="Review activity">
+          <aside class="thread-pane" aria-label="Review activity" ${visible.length ? "" : "hidden"}>
             <header class="thread-head">
               <div class="thread-head__top"><h2>Review thread</h2><span class="status status--${item.status}"><i></i>${commentCount} notes</span></div>
               <p>${escapeHtml(item.shortTitle)} · ${isSuperseded ? `viewing V${activeVersion} · read-only` : `current V${item.currentVersion}`}</p>
@@ -866,7 +872,7 @@
     return `
       <section class="page" aria-labelledby="brief-title">
         <header class="page-heading">
-          <div class="page-heading__copy"><span class="page-kicker">Operating brief · simulated</span><h1 id="brief-title">Campaign brief</h1><p>The source content is real; scope, dates, statuses, comments, and operating targets below are built for this private demo.</p></div>
+          <div class="page-heading__copy"><span class="page-kicker">Operating brief · simulated</span><h1 id="brief-title">Campaign brief</h1><p>The source content is real; scope, dates, statuses, comments, and operating targets below are built for this campaign demo.</p></div>
           <div class="page-heading__meta">Last aligned · Aug 8, 2026 · simulated</div>
         </header>
         <div class="brief-layout">
@@ -1127,6 +1133,15 @@
   }
 
   document.addEventListener("click", (event) => {
+    const skipLink = event.target.closest('.skip-link[href="#workspace-main"]');
+    if (skipLink) {
+      event.preventDefault();
+      const workspace = document.getElementById("workspace-main");
+      workspace?.focus({ preventScroll: true });
+      workspace?.scrollIntoView({ block: "start" });
+      return;
+    }
+
     const routeButton = event.target.closest("[data-route]");
     if (routeButton) {
       navigate(routeButton.dataset.route);
@@ -1240,9 +1255,9 @@
     } else if (state.route === "deliverables" && event.key.toLowerCase() === "r") {
       event.preventDefault();
       openChangeModal();
-    } else if (state.route === "deliverables" && event.key === "ArrowDown") {
+    } else if (state.route === "deliverables" && event.target.closest(".deliverable-list") && event.key === "ArrowDown") {
       event.preventDefault(); selectAdjacent(1);
-    } else if (state.route === "deliverables" && event.key === "ArrowUp") {
+    } else if (state.route === "deliverables" && event.target.closest(".deliverable-list") && event.key === "ArrowUp") {
       event.preventDefault(); selectAdjacent(-1);
     }
   });

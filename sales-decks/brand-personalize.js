@@ -76,10 +76,10 @@
     setText("[data-brand-feedback]", String(brand.feedback || neutralBrand.feedback).slice(0, 150));
     setText("[data-brand-response]", String(brand.response || neutralBrand.response).slice(0, 150));
     setText("[data-brand-health]", String(brand.health || "4 of 6 approved").slice(0, 28));
-    setText("[data-brand-prepared-for]", unavailable ? "Private brand presentation · personalization unavailable" : `Prepared for ${name} · private presentation · 2026`);
-    setText("[data-chrome-deck]", `Private presentation · ${name} × OVO`);
+    setText("[data-brand-prepared-for]", unavailable ? "Brand presentation · personalization unavailable" : `Prepared for ${name} · brand presentation · 2026`);
+    setText("[data-chrome-deck]", `Brand presentation · ${name} × OVO`);
     setText("[data-brand-preview-label]", unavailable ? "Personalization unavailable · neutral illustrative workspace preview" : `Illustrative ${name} workspace preview · based on OVO’s live workflow`);
-    setText("[data-brand-close-copy]", `Next review: ${name} campaign direction, creator shortlist, and commercial plan. Then we lock terms and move into contracting.`);
+    setText("[data-brand-close-copy]", `Next review: ${name} campaign direction, targeted creator shortlist, legal guardrails, and commercial plan. Then we lock terms and move into contracting.`);
     applyLogo(brand);
   }
 
