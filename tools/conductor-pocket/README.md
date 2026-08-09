@@ -23,6 +23,17 @@ The relay watches Conductor's SQLite WAL and emits an event within roughly
 On a healthy tailnet, replies normally appear a few hundred milliseconds
 after Conductor saves them.
 
+Unread badges are acknowledged locally on this iPhone. Pocket waits for a
+live transcript baseline and a completed root response, then clears the badge
+only after the full short response—or the bottom of a long response whose top
+was already visited—remains visible for 600 ms. Cached content, backgrounded
+pages, active turns, and overlays cannot acknowledge a response. A short reply
+may clear while its entirety remains visible in the focused app; programmatic
+scrolling cannot bypass the top-to-bottom visit required for a long reply. The
+receipt binds the response's stable ID to the exact native unread count in
+Pocket's bounded IndexedDB cache; a newer response ID or count restores unread
+immediately. This does not change Conductor's native unread counter on the Mac.
+
 Phone sends are serialized through macOS Accessibility. Selecting the target
 workspace/chat, entering and verifying its real draft, proving ownership of
 Conductor's unique composer, posting Return only to Conductor's process, and
@@ -89,6 +100,11 @@ The production setup is defense in depth:
     Mac to the selected device, session, and workspace. The phone never
     supplies a filesystem path. Restart-safe ownership ledgers and thumbnails
     remain private on the Mac and are never exposed in the transcript API.
+12. Provider failures cross the relay only as fixed error codes and behavior.
+    Pocket turns known codes into concise recovery guidance; a cybersecurity
+    refusal offers rephrasing guidance and an explicit trusted-access link.
+    Unknown failures stay generic, the composer remains available, and raw
+    provider diagnostics remain private on the Mac.
 
 See [SECURITY.md](./SECURITY.md) for trust boundaries and failure behavior.
 

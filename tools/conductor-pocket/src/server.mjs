@@ -63,6 +63,7 @@ const staticFiles = new Map([
     ['live-refresh.js', 'text/javascript; charset=utf-8'],
   ],
   ['/rich-text.js', ['rich-text.js', 'text/javascript; charset=utf-8']],
+  ['/read-state.js', ['read-state.js', 'text/javascript; charset=utf-8']],
   [
     '/transcript-focus.js',
     ['transcript-focus.js', 'text/javascript; charset=utf-8'],
@@ -951,7 +952,10 @@ export function createPocketServer({
         return sendJson(
           response,
           200,
-          { workspaces: database.listWorkspaces() },
+          {
+            workspaces: database.listWorkspaces(),
+            unreadSessions: database.listUnreadSessionHeads?.() || [],
+          },
           config,
         );
       }

@@ -60,10 +60,20 @@ test('large API responses use Brotli when the phone accepts it', async (context)
     name: `Workspace ${index} with enough repeated metadata to compress`,
     branch: `feature/fast-pocket-${index}`,
   }));
+  const unreadSessions = [{
+    sessionId: 'session-unread-1',
+    workspaceId: 'workspace-1',
+    unreadCount: 1,
+    responseId: 'response-unread-1',
+    status: 'idle',
+  }];
   const server = createServer(config, {
     database: {
       listWorkspaces() {
         return workspaces;
+      },
+      listUnreadSessionHeads() {
+        return unreadSessions;
       },
     },
   });
@@ -81,7 +91,7 @@ test('large API responses use Brotli when the phone accepts it', async (context)
     JSON.parse(
       brotliDecompressSync(response.rawBody).toString('utf8'),
     ),
-    { workspaces },
+    { workspaces, unreadSessions },
   );
 });
 
@@ -331,6 +341,12 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
   assert.equal(richTextScript.status, 200);
   assert.equal(
     richTextScript.headers['content-type'],
+    'text/javascript; charset=utf-8',
+  );
+  const readStateScript = await get(port, { pathname: '/read-state.js' });
+  assert.equal(readStateScript.status, 200);
+  assert.equal(
+    readStateScript.headers['content-type'],
     'text/javascript; charset=utf-8',
   );
   const transcriptFocusScript = await get(port, {
@@ -2410,6 +2426,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const richTextPreloadVersion = document.match(
     /rel="modulepreload" href="\/rich-text\.js\?v=([^"]+)"/,
   )?.[1];
+  const readStatePreloadVersion = document.match(
+    /rel="modulepreload" href="\/read-state\.js\?v=([^"]+)"/,
+  )?.[1];
   const transcriptFocusPreloadVersion = document.match(
     /rel="modulepreload" href="\/transcript-focus\.js\?v=([^"]+)"/,
   )?.[1];
@@ -2458,6 +2477,12 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const cachedRichTextVersion = serviceWorker.match(
     /'\/rich-text\.js\?v=([^']+)'/,
   )?.[1];
+  const readStateVersion = application.match(
+    /from '\.\/read-state\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedReadStateVersion = serviceWorker.match(
+    /'\/read-state\.js\?v=([^']+)'/,
+  )?.[1];
   const transcriptFocusVersion = application.match(
     /from '\.\/transcript-focus\.js\?v=([^']+)'/,
   )?.[1];
@@ -2505,6 +2530,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.equal(richTextPreloadVersion, appVersion);
   assert.equal(richTextVersion, appVersion);
   assert.equal(cachedRichTextVersion, appVersion);
+  assert.equal(readStatePreloadVersion, appVersion);
+  assert.equal(readStateVersion, appVersion);
+  assert.equal(cachedReadStateVersion, appVersion);
   assert.equal(transcriptFocusPreloadVersion, appVersion);
   assert.equal(transcriptFocusVersion, appVersion);
   assert.equal(cachedTranscriptFocusVersion, appVersion);
@@ -2782,7 +2810,10 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.ok(requiredPersistence > optimisticPush);
   assert.ok(draftClear > requiredPersistence);
   assert.match(source, /const DELIVERY_RECOVERY_MS = 27_000/);
-  assert.match(source, /await restorePendingDeliveries\(\)/);
+  assert.match(
+    source,
+    /await Promise\.all\(\[\s*restorePendingDeliveries\(\),\s*restoreReadReceipts\(\),\s*\]\)/,
+  );
   assert.match(source, /void recoverPendingDeliveries\(\)/);
   assert.match(
     source,
@@ -2851,7 +2882,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   const restoreWrite = restoreBlock.indexOf('cacheSet(');
   const startupRestore = startApplicationBlock.indexOf(
-    'await restorePendingDeliveries()',
+    'restorePendingDeliveries(),',
   );
   const startupRecovery = startApplicationBlock.indexOf(
     'void recoverPendingDeliveries()',

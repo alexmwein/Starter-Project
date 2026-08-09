@@ -111,6 +111,25 @@ The relay opens Conductor's SQLite database with `readOnly: true` and
 `PRAGMA query_only = ON`. It does not insert queue rows, edit session state,
 or connect to Conductor's sidecar socket.
 
+Pocket read acknowledgements do not weaken this boundary. They are a
+device-local display overlay stored in the same bounded IndexedDB database as
+transcript snapshots. Each receipt contains only a session ID, stable root
+response ID, exact native unread count, and local read time. Cross-window writes
+merge in one IndexedDB read/write transaction, and cached head metadata cannot
+authorize badge suppression until a current network response arrives. Missing,
+malformed, duplicate, stale, mismatched, or unpersisted receipts leave the
+native badge visible. Receipts are deleted by the existing device purge, and
+they never update `sessions.unread_count`, `workspaces.unread`, or any other
+Conductor state.
+
+Unread-head caching follows Conductor's event-log contract: message rows are
+append-only at runtime except for visibility changes through `cancelled_at`.
+The cache key binds the session state, high-water row, and the exact ordered
+set of cancelled row IDs, so an unrelated chat write does not rescan this chat
+while any runtime-visible change does. A future Conductor schema that permits
+other in-place message mutations must expose a per-session message revision
+before Pocket can safely reuse these cached heads.
+
 For a phone-selected image only, the relay creates a private Pocket-owned
 subdirectory beneath the database-resolved workspace's
 `.context/attachments/` directory. The request cannot provide a workspace
@@ -187,6 +206,13 @@ USB, and serial access are disabled. The UI builds transcript nodes with
 `textContent`; transcript Markdown is never injected as HTML.
 Photo selection uses the browser's user-activated native file picker rather
 than `getUserMedia`; Pocket never receives standing camera permission.
+
+Agent failures are classified on the Mac into a fixed code, severity, and
+retry state. Raw provider text, identifiers, tool output, traces, and embedded
+URLs never cross the transcript boundary. The browser maps allowlisted codes
+to hard-coded copy. Only the dedicated cybersecurity-policy code creates a
+hard-coded `https://chatgpt.com/cyber` recovery link; unknown codes render a
+generic retry/rephrase message with no link or diagnostic interpolation.
 
 The service worker handles only an allowlist of Pocket shell paths, deletes
 only `conductor-pocket-shell-*` caches, and never intercepts sibling routes or

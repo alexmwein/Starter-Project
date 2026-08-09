@@ -1,18 +1,19 @@
-const SHELL_REVISION = '0.2.0-images-20260730';
-const CACHE = 'conductor-pocket-shell-v19';
+const SHELL_REVISION = '0.2.0-read-20260809';
+const CACHE = 'conductor-pocket-shell-v20';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-images-20260730',
-  '/app.js?v=0.2.0-images-20260730',
-  '/delivery-receipts.js?v=0.2.0-images-20260730',
-  '/app-update.js?v=0.2.0-images-20260730',
-  '/http.js?v=0.2.0-images-20260730',
-  '/image-attachments.js?v=0.2.0-images-20260730',
-  '/live-refresh.js?v=0.2.0-images-20260730',
-  '/rich-text.js?v=0.2.0-images-20260730',
-  '/transcript-focus.js?v=0.2.0-images-20260730',
-  '/swipe-navigation.js?v=0.2.0-images-20260730',
+  '/app.css?v=0.2.0-read-20260809',
+  '/app.js?v=0.2.0-read-20260809',
+  '/delivery-receipts.js?v=0.2.0-read-20260809',
+  '/app-update.js?v=0.2.0-read-20260809',
+  '/http.js?v=0.2.0-read-20260809',
+  '/image-attachments.js?v=0.2.0-read-20260809',
+  '/live-refresh.js?v=0.2.0-read-20260809',
+  '/read-state.js?v=0.2.0-read-20260809',
+  '/rich-text.js?v=0.2.0-read-20260809',
+  '/transcript-focus.js?v=0.2.0-read-20260809',
+  '/swipe-navigation.js?v=0.2.0-read-20260809',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -26,6 +27,7 @@ const SHELL_PATHS = new Set([
   '/http.js',
   '/image-attachments.js',
   '/live-refresh.js',
+  '/read-state.js',
   '/rich-text.js',
   '/transcript-focus.js',
   '/swipe-navigation.js',
@@ -40,6 +42,7 @@ const VERSIONED_SHELL_PATHS = new Set([
   '/http.js',
   '/image-attachments.js',
   '/live-refresh.js',
+  '/read-state.js',
   '/rich-text.js',
   '/transcript-focus.js',
   '/swipe-navigation.js',

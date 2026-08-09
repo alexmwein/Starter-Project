@@ -1333,8 +1333,21 @@ button:active {
   margin: 2px 0 7px;
   color: var(--text-secondary);
   font-size: 0.8125rem;
-  line-height: 1.125rem;
+  line-height: 1.1875rem;
   text-wrap: pretty;
+}
+
+.agent-error-copy a {
+  color: var(--down);
+  text-decoration: underline;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 2px;
+}
+
+.agent-error-copy a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--copper);
+  outline-offset: 2px;
 }
 
 .agent-error-code {

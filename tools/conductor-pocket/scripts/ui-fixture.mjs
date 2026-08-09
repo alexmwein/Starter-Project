@@ -21,8 +21,8 @@ const workspaces = [
     state: 'active',
     pinned: true,
     sessionCount: 3,
-    unreadCount: 0,
-    workingCount: 1,
+    unreadCount: fixtureMode === 'read' ? 1 : 0,
+    workingCount: fixtureMode === 'read' ? 0 : 1,
     activityAt: at(0),
   },
   {
@@ -97,8 +97,13 @@ const sessionsByWorkspace = new Map([
         title: 'Explain conductor operations',
         agentType: 'codex',
         model: 'gpt-5.6-sol',
-        status: fixtureMode === 'errors' ? 'error' : 'working',
-        unreadCount: 0,
+        status:
+          fixtureMode === 'errors'
+            ? 'error'
+            : fixtureMode === 'read'
+              ? 'idle'
+              : 'working',
+        unreadCount: fixtureMode === 'read' ? 1 : 0,
         queuedCount: 0,
         queuePaused: false,
         contextUsedPercent: 42,
@@ -196,6 +201,7 @@ const messages = [
   },
   {
     id: 'm-2',
+    responseId: 'response-m-2',
     rowId: 2,
     kind: 'assistant',
     text:
@@ -225,6 +231,7 @@ const messages = [
   },
   {
     id: 'm-5',
+    responseId: 'response-m-5',
     rowId: 5,
     kind: 'assistant',
     text:
@@ -253,6 +260,7 @@ const messages = [
   },
   {
     id: 'm-7',
+    responseId: 'response-m-7',
     rowId: 8,
     kind: 'assistant',
     text:
@@ -281,6 +289,7 @@ const messages = [
   },
   {
     id: 'm-9',
+    responseId: 'response-m-9',
     rowId: 11,
     kind: 'assistant',
     text:
@@ -332,12 +341,11 @@ const errorMessages = [
   })),
   {
     id: 'm-error-agent',
+    responseId: 'response-m-error-agent',
     rowId: 72,
     kind: 'agent-error',
-    code: 'usage_limit',
+    code: 'cybersecurity_policy',
     severity: 'error',
-    title: 'Account limit reached',
-    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
     retrying: false,
     createdAt: at(0.5),
     turnId: 'turn-error',
@@ -364,6 +372,16 @@ const database = {
   },
   listWorkspaces() {
     return fixtureMode === 'empty' ? [] : workspaces;
+  },
+  listUnreadSessionHeads() {
+    if (fixtureMode !== 'read') return [];
+    return [{
+      sessionId: 's-pocket',
+      workspaceId: 'w-pocket',
+      unreadCount: 1,
+      responseId: 'response-m-9',
+      status: 'idle',
+    }];
   },
   listRecentSessions(limit) {
     if (fixtureMode === 'empty') return [];
