@@ -408,6 +408,20 @@
     window.requestAnimationFrame(() => { elements.live.textContent = message; });
   }
 
+  function isRendered(element) {
+    return Boolean(element && !element.hidden && element.getClientRects().length);
+  }
+
+  function focusAfterRender(...selectors) {
+    window.requestAnimationFrame(() => {
+      const target = selectors
+        .flatMap((selector) => [...document.querySelectorAll(selector)])
+        .find((element) => isRendered(element));
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }
+
   function renderChrome() {
     const activeRoute = state.route;
     document.querySelectorAll("[data-route]").forEach((button) => {
@@ -435,6 +449,18 @@
       node.innerHTML = state.resetConfirm
         ? '<div class="reset-control__confirm"><span>Sure?</span><button type="button" data-action="confirm-reset" data-confirm="yes">Yes</button><button type="button" data-action="cancel-reset">No</button></div>'
         : '<button type="button" data-action="ask-reset">Reset demo</button>';
+    });
+  }
+
+  function updateResetConfirmation(origin, isConfirming) {
+    const controls = [...document.querySelectorAll("[data-reset-control]")];
+    const controlIndex = Math.max(0, controls.indexOf(origin.closest("[data-reset-control]")));
+    state.resetConfirm = isConfirming;
+    renderResetControls();
+    window.requestAnimationFrame(() => {
+      const refreshed = [...document.querySelectorAll("[data-reset-control]")][controlIndex];
+      const target = refreshed?.querySelector(isConfirming ? '[data-confirm="yes"]' : '[data-action="ask-reset"]');
+      target?.focus();
     });
   }
 
@@ -519,15 +545,45 @@
     const rows = [];
     state.deliverables.forEach((item) => {
       item.comments.slice(-2).forEach((comment) => {
+        const explicitSortKey = comment.activityAt ? Date.parse(comment.activityAt) : NaN;
         rows.push({
           body: comment.type === "system" ? comment.body : `${comment.author}: ${comment.body}`,
           created: comment.created,
           title: item.shortTitle,
           tone: comment.type === "system" ? (comment.tone || "ink") : comment.role === "Fitia" ? "fitia" : "ovo",
+          sortKey: Number.isFinite(explicitSortKey) ? explicitSortKey : activitySortKey(comment.created),
+          sequence: rows.length,
         });
       });
     });
-    return rows.reverse();
+    return rows.sort((a, b) => b.sortKey - a.sortKey || b.sequence - a.sequence);
+  }
+
+  function activitySortKey(label) {
+    const [dayLabel = "", timeLabel = ""] = String(label).split(" · ");
+    if (dayLabel === "Now") return Date.now();
+
+    const snapshot = Date.UTC(2026, 7, 8);
+    let day = snapshot;
+    if (dayLabel === "Yesterday") day -= 86400000;
+    else if (dayLabel !== "Today") {
+      const weekdays = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      if (Object.hasOwn(weekdays, dayLabel)) {
+        const snapshotWeekday = new Date(snapshot).getUTCDay();
+        day -= ((snapshotWeekday - weekdays[dayLabel] + 7) % 7) * 86400000;
+      } else {
+        const dated = dayLabel.match(/^Aug (\d{1,2})$/);
+        if (dated) day = Date.UTC(2026, 7, Number(dated[1]));
+      }
+    }
+
+    const time = timeLabel.match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+    if (!time) return day;
+    let hour = Number(time[1]);
+    const meridiem = time[3]?.toUpperCase();
+    if (meridiem === "AM" && hour === 12) hour = 0;
+    if (meridiem === "PM" && hour < 12) hour += 12;
+    return day + hour * 3600000 + Number(time[2]) * 60000;
   }
 
   function filteredDeliverables() {
@@ -537,6 +593,15 @@
       if (!query) return true;
       return [item.shortTitle, item.sourceTitle, item.creator, item.platform, STATUS_LABELS[item.status]].join(" ").toLowerCase().includes(query);
     });
+  }
+
+  function reconcileSelectionToResults() {
+    const visible = filteredDeliverables();
+    if (!visible.length || visible.some((item) => item.id === state.selectedId)) return false;
+    state.selectedId = visible[0].id;
+    visible[0].unread = false;
+    state.reviewTab = "review";
+    return true;
   }
 
   function renderDeliverables() {
@@ -550,7 +615,9 @@
     const isPublished = item.status === "published";
     const canApprove = !isLocked && !isSuperseded;
     const canRequest = !isPublished && !isSuperseded;
-    const comments = item.comments;
+    const comments = isSuperseded
+      ? item.comments.filter((comment) => comment.type === "comment" && comment.version === activeVersion)
+      : item.comments;
     const commentCount = comments.filter((comment) => comment.type === "comment").length;
     const markers = comments.filter((comment) => comment.type === "comment" && Number.isFinite(comment.timecode));
 
@@ -643,17 +710,17 @@
           <aside class="thread-pane" aria-label="Review activity">
             <header class="thread-head">
               <div class="thread-head__top"><h2>Review thread</h2><span class="status status--${item.status}"><i></i>${commentCount} notes</span></div>
-              <p>${escapeHtml(item.shortTitle)} · current V${item.currentVersion}</p>
+              <p>${escapeHtml(item.shortTitle)} · ${isSuperseded ? `viewing V${activeVersion} · read-only` : `current V${item.currentVersion}`}</p>
               <div class="version-history">${item.versions.map((version) => `<span class="${version.number === item.currentVersion ? "is-current" : ""}">V${version.number} · ${escapeHtml(version.uploaded)}</span>`).join("")}</div>
             </header>
             <div class="comments-list" data-comments-list>
-              ${comments.map((comment) => renderComment(comment)).join("")}
+              ${comments.length ? comments.map((comment) => renderComment(comment)).join("") : '<div class="system-event" data-tone="ink">No feedback was logged on this version.</div>'}
             </div>
             <form class="comment-composer" data-comment-form>
               <label class="sr-only" for="portal-comment">Add a simulated Fitia comment</label>
-              <textarea id="portal-comment" name="comment" rows="3" placeholder="Add Fitia feedback…" required></textarea>
+              <textarea id="portal-comment" name="comment" rows="3" placeholder="${isSuperseded ? `V${activeVersion} is read-only · select V${item.currentVersion} to comment` : "Add Fitia feedback…"}" required ${isSuperseded ? "disabled" : ""}></textarea>
               <div class="comment-composer__foot">
-                <label class="timecode-toggle"><input type="checkbox" name="include_timecode" checked>◆ ${formatTime(currentTimecode)}</label>
+                <label class="timecode-toggle"><input type="checkbox" name="include_timecode" checked ${isSuperseded ? "disabled" : ""}>◆ ${formatTime(currentTimecode)}</label>
                 <button type="submit" disabled data-comment-send>Send comment</button>
               </div>
             </form>
@@ -759,9 +826,9 @@
         <section class="performance-section" aria-labelledby="public-source-title">
           <div class="performance-section__head"><h2 id="public-source-title">Official Fitia source snapshot</h2><span>Public YouTube values captured ${SNAPSHOT_DATE}<br>Not attributed to OVO campaign work</span></div>
           <div class="performance-primary">
-            ${metricBlock("Combined public views", formatMetric(totalViews), "Across the 10 official source posts", [6, 12, 11, 20, 24, 52, 48, 76, 94])}
-            ${metricBlock("Combined public likes", formatMetric(totalLikes), "Public count at snapshot time", [8, 13, 18, 16, 30, 38, 43, 63, 70])}
-            ${metricBlock("Verified source posts", String(state.deliverables.length), "Every media card links to its official post", [10, 20, 30, 42, 52, 62, 74, 86, 96])}
+            ${metricBlock("Combined public views", formatMetric(totalViews), "Across the 10 official source posts")}
+            ${metricBlock("Combined public likes", formatMetric(totalLikes), "Public count at snapshot time")}
+            ${metricBlock("Verified source posts", String(state.deliverables.length), "Every media card links to its official post")}
           </div>
         </section>
 
@@ -784,10 +851,15 @@
       </section>`;
   }
 
-  function metricBlock(label, value, note, points) {
-    const coords = points.map((point, index) => `${(index / (points.length - 1)) * 100},${34 - (point / 100) * 30}`).join(" ");
-    const lastY = 34 - (points[points.length - 1] / 100) * 30;
-    return `<article class="metric-block"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small><svg class="sparkline" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true"><polyline points="${coords}"/><circle cx="100" cy="${lastY}" r="2.2"/></svg></article>`;
+  function metricBlock(label, value, note, points = null) {
+    const sparkline = Array.isArray(points) && points.length > 1
+      ? (() => {
+        const coords = points.map((point, index) => `${(index / (points.length - 1)) * 100},${34 - (point / 100) * 30}`).join(" ");
+        const lastY = 34 - (points[points.length - 1] / 100) * 30;
+        return `<svg class="sparkline" viewBox="0 0 100 36" preserveAspectRatio="none" role="img" aria-label="Simulated target trajectory"><polyline points="${coords}"/><circle cx="100" cy="${lastY}" r="2.2"/></svg>`;
+      })()
+      : "";
+    return `<article class="metric-block"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small>${sparkline}</article>`;
   }
 
   function renderBrief() {
@@ -842,6 +914,10 @@
     state.reviewTab = "review";
     saveState();
     navigate("deliverables", { mobileReview: window.matchMedia("(max-width: 768px)").matches });
+    focusAfterRender(
+      '[data-action="mobile-back"]',
+      `[data-id="${CSS.escape(state.selectedId)}"].deliverable-row`,
+    );
   }
 
   function setReviewTab(tab) {
@@ -849,28 +925,44 @@
     state.reviewTab = tab;
     saveState();
     render();
+    focusAfterRender(`[data-action="review-tab"][data-tab="${CSS.escape(tab)}"]`);
   }
 
   function focusComment(commentId) {
     window.requestAnimationFrame(() => {
       const target = document.querySelector(`[data-comment-id="${CSS.escape(commentId)}"].comment`);
       target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.setAttribute("tabindex", "-1");
+      target?.focus({ preventScroll: true });
       window.setTimeout(() => {
         target?.classList.remove("is-highlighted");
         document.querySelectorAll(".timeline-marker.is-active").forEach((marker) => marker.classList.remove("is-active"));
         state.highlightedComment = null;
-      }, 650);
+      }, 900);
     });
   }
 
-  function selectMarker(commentId, timecode, openActivity = true) {
+  function focusMarker(commentId) {
+    window.requestAnimationFrame(() => {
+      const target = document.querySelector(`.timeline-marker[data-comment-id="${CSS.escape(commentId)}"]`);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+      window.setTimeout(() => {
+        target?.classList.remove("is-active");
+        state.highlightedComment = null;
+      }, 900);
+    });
+  }
+
+  function selectMarker(commentId, timecode, destination = "activity") {
     const item = selectedDeliverable();
     state.currentTimecodes[item.id] = Number(timecode) || 0;
     state.highlightedComment = commentId;
-    if (openActivity && window.matchMedia("(max-width: 1280px)").matches) state.reviewTab = "activity";
+    if (window.matchMedia("(max-width: 1280px)").matches) state.reviewTab = destination;
     saveState();
     render();
-    focusComment(commentId);
+    if (destination === "review") focusMarker(commentId);
+    else focusComment(commentId);
   }
 
   function addComment(form) {
@@ -878,6 +970,8 @@
     const body = textarea.value.trim();
     if (!body) return;
     const item = selectedDeliverable();
+    const activeVersion = state.activeVersions[item.id] || item.currentVersion;
+    if (activeVersion !== item.currentVersion) return;
     const includeTimecode = form.elements.include_timecode.checked;
     const now = new Date();
     const timeLabel = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(now);
@@ -887,7 +981,8 @@
       author: "Fitia team",
       role: "Fitia",
       created: `Now · ${timeLabel}`,
-      version: item.currentVersion,
+      activityAt: now.toISOString(),
+      version: activeVersion,
       timecode: includeTimecode ? state.currentTimecodes[item.id] || 0 : null,
       resolved: false,
       body,
@@ -913,9 +1008,14 @@
       item.status = "approved";
       item.due = "Approved just now";
       item.unread = false;
-      item.comments.push({ id: `approve-${Date.now()}`, type: "system", created: `Now · ${timeLabel}`, tone: "fitia", body: `Approved by Fitia · simulated · ${timeLabel}` });
+      item.comments.forEach((comment) => {
+        if (comment.type === "comment") comment.resolved = true;
+      });
+      item.comments.push({ id: `approve-${Date.now()}`, type: "system", created: `Now · ${timeLabel}`, activityAt: now.toISOString(), tone: "fitia", body: `Approved by Fitia · simulated · ${timeLabel}` });
+      reconcileSelectionToResults();
       saveState();
       render();
+      focusAfterRender('[data-action="review-tab"][data-tab="review"]', `[data-id="${CSS.escape(state.selectedId)}"].deliverable-row`);
       announce(`${item.shortTitle} approved in the simulated workflow.`);
     }, 310);
   }
@@ -956,16 +1056,19 @@
       author: "Fitia team",
       role: "Fitia",
       created: `Now · ${timeLabel}`,
+      activityAt: now.toISOString(),
       version: item.currentVersion,
       timecode: form.elements.include_timecode.checked ? modalContext.timecode : null,
       resolved: false,
       body,
     });
-    item.comments.push({ id: `request-system-${Date.now()}`, type: "system", created: `Now · ${timeLabel}`, tone: "ovo", body: "Changes requested by Fitia · simulated" });
-    saveState();
+    item.comments.push({ id: `request-system-${Date.now()}`, type: "system", created: `Now · ${timeLabel}`, activityAt: now.toISOString(), tone: "ovo", body: "Changes requested by Fitia · simulated" });
+    const advanced = reconcileSelectionToResults();
     closeChangeModal();
-    state.reviewTab = "activity";
+    state.reviewTab = advanced ? "review" : "activity";
+    saveState();
     render();
+    focusAfterRender(`[data-action="review-tab"][data-tab="${state.reviewTab}"]`, `[data-id="${CSS.escape(state.selectedId)}"].deliverable-row`);
     announce(`${item.shortTitle} returned to OVO in the simulated workflow.`);
   }
 
@@ -996,6 +1099,7 @@
     if (window.location.hash !== "#overview") window.history.replaceState(null, "", "#overview");
     closeMore();
     render();
+    focusAfterRender('[data-route="overview"][aria-current="page"]');
     announce("Fitia portal demo restored to its original simulated state.");
     window.setTimeout(() => document.body.classList.remove("is-resetting"), 280);
   }
@@ -1009,7 +1113,7 @@
     visible[nextIndex].unread = false;
     saveState();
     render();
-    document.querySelector(`[data-id="${CSS.escape(state.selectedId)}"].deliverable-row`)?.focus();
+    focusAfterRender(`[data-id="${CSS.escape(state.selectedId)}"].deliverable-row`);
   }
 
   function trapFocus(event, container) {
@@ -1034,20 +1138,43 @@
     const action = actionTarget.dataset.action;
     if (action === "open-deliverable" || action === "select-deliverable") openDeliverable(actionTarget.dataset.id);
     else if (action === "view-all-deliverables") navigate("deliverables");
-    else if (action === "filter") { state.filter = actionTarget.dataset.filter; saveState(); render(); }
-    else if (action === "clear-filters") { state.filter = "all"; state.search = ""; saveState(); render(); }
+    else if (action === "filter") {
+      state.filter = actionTarget.dataset.filter;
+      reconcileSelectionToResults();
+      saveState();
+      render();
+      focusAfterRender(`[data-action="filter"][data-filter="${CSS.escape(state.filter)}"]`);
+    }
+    else if (action === "clear-filters") {
+      state.filter = "all";
+      state.search = "";
+      saveState();
+      render();
+      focusAfterRender('[data-action="filter"][data-filter="all"]');
+    }
     else if (action === "review-tab") setReviewTab(actionTarget.dataset.tab);
-    else if (action === "mobile-back") { state.mobileReview = false; state.reviewTab = "review"; render(); }
-    else if (action === "version") { const item = selectedDeliverable(); state.activeVersions[item.id] = Number(actionTarget.dataset.version); saveState(); render(); }
-    else if (action === "marker") selectMarker(actionTarget.dataset.commentId, actionTarget.dataset.timecode, true);
-    else if (action === "comment-timecode") selectMarker(actionTarget.dataset.commentId, actionTarget.dataset.timecode, false);
+    else if (action === "mobile-back") {
+      state.mobileReview = false;
+      state.reviewTab = "review";
+      render();
+      focusAfterRender(`[data-id="${CSS.escape(state.selectedId)}"].deliverable-row`);
+    }
+    else if (action === "version") {
+      const item = selectedDeliverable();
+      state.activeVersions[item.id] = Number(actionTarget.dataset.version);
+      saveState();
+      render();
+      focusAfterRender(`[data-action="version"][data-version="${Number(actionTarget.dataset.version)}"]`);
+    }
+    else if (action === "marker") selectMarker(actionTarget.dataset.commentId, actionTarget.dataset.timecode, "activity");
+    else if (action === "comment-timecode") selectMarker(actionTarget.dataset.commentId, actionTarget.dataset.timecode, "review");
     else if (action === "approve") approveSelected(actionTarget);
     else if (action === "open-change-modal") openChangeModal();
     else if (action === "close-change-modal") closeChangeModal();
     else if (action === "open-more") openMore();
     else if (action === "close-more") closeMore();
-    else if (action === "ask-reset") { state.resetConfirm = true; renderResetControls(); }
-    else if (action === "cancel-reset") { state.resetConfirm = false; renderResetControls(); }
+    else if (action === "ask-reset") updateResetConfirmation(actionTarget, true);
+    else if (action === "cancel-reset") updateResetConfirmation(actionTarget, false);
     else if (action === "confirm-reset") resetDemo();
   });
 
@@ -1055,6 +1182,7 @@
     if (event.target.matches("[data-deliverable-search]")) {
       const position = event.target.selectionStart;
       state.search = event.target.value;
+      reconcileSelectionToResults();
       saveState();
       render();
       window.requestAnimationFrame(() => {
@@ -1107,7 +1235,7 @@
       window.requestAnimationFrame(() => document.querySelector("[data-deliverable-search]")?.focus());
     } else if (state.route === "deliverables" && event.key.toLowerCase() === "a") {
       event.preventDefault();
-      const button = document.querySelector('[data-action="approve"]:not([disabled])');
+      const button = [...document.querySelectorAll('[data-action="approve"]:not([disabled])')].find((candidate) => isRendered(candidate));
       if (button) approveSelected(button);
     } else if (state.route === "deliverables" && event.key.toLowerCase() === "r") {
       event.preventDefault();
