@@ -65,6 +65,8 @@ Slide 10 recreates the real OVO brand-portal workflow as a presentation-safe min
 
 The slide now launches `fitia-portal.html`, a full responsive demonstration with overview, deliverables, calendar, creator, performance/source, and campaign-brief views. The portal uses ten locally cached thumbnails from official Fitia YouTube Shorts and links every item back to its public source. Public view/like values are labeled as an August 8, 2026 snapshot and are never attributed to OVO. Creator roster labels, campaign dates, statuses, version history, comments, approvals, and targets are explicitly simulated. Demo interactions persist under the local-storage key `fitia-portal-demo-v1`; **Reset demo** restores the original state.
 
+The brand-deck narrative now treats creator stewardship as brand protection. Slides 2–3 establish the reputation risk without statistics or named incidents; slide 6 explains precision casting; slide 7 shows OVO’s creator-care operating standard; and slide 8 shows legal and brand-guideline alignment beginning when the brand agreement is signed, before creators are briefed. The legal slide describes OVO’s process, not guaranteed compliance or a transfer of the brand’s legal responsibility. Never describe the function as in-house counsel unless that exact relationship is verified for the prospect.
+
 ## Controls
 
 - Arrow keys or space: navigate

@@ -278,7 +278,7 @@ a:focus-visible,
   transition: opacity 220ms ease;
 }
 
-body:hover .controls,
+body.deck-controls-visible .controls,
 .controls:focus-within {
   opacity: 1;
   pointer-events: auto;
@@ -310,9 +310,30 @@ body:hover .controls,
   background: rgba(20, 20, 20, 0.9);
 }
 
+.control:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+.control:disabled:hover {
+  color: var(--white-60);
+  border-color: var(--white-12);
+  background: rgba(0, 0, 0, 0.78);
+}
+
 .control svg {
   width: 16px;
   height: 16px;
+}
+
+.deck-live-region {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .eyebrow {
@@ -2036,6 +2057,156 @@ body[data-deck="brand-campaigns"] .campaign-stage p {
 
 body[data-deck="brand-campaigns"] .brief-field:first-child {
   background: linear-gradient(145deg, rgba(255, 0, 49, 0.1), transparent 62%);
+}
+
+/* Brand deck v2: premium stewardship, precision casting, creator care, and day-zero legal alignment. */
+.operating-evidence-split {
+  min-height: 0;
+  gap: clamp(34px, 4.6vw, 74px);
+  align-items: end;
+}
+
+.operating-evidence-copy {
+  gap: clamp(12px, 1.45vw, 23px);
+}
+
+.operating-evidence-slide .display.medium {
+  max-width: 10ch;
+}
+
+.operating-evidence-copy .lede {
+  max-width: 45ch;
+}
+
+.operating-evidence-metrics {
+  margin-top: clamp(5px, 0.8vw, 12px);
+}
+
+.operating-evidence-metrics .metric {
+  min-height: clamp(166px, 17vw, 268px);
+  padding: clamp(18px, 2vw, 31px);
+}
+
+.operating-evidence-metrics .metric-value {
+  margin-top: clamp(2px, 0.65vw, 10px);
+  font-size: clamp(50px, 5.4vw, 86px);
+}
+
+.operating-evidence-metrics .metric-label {
+  margin-top: clamp(11px, 1vw, 16px);
+  font-size: clamp(12px, 0.98vw, 16px);
+}
+
+.operating-evidence-metrics .metric-note {
+  right: clamp(14px, 1.5vw, 24px);
+  bottom: clamp(14px, 1.5vw, 24px);
+  left: clamp(14px, 1.5vw, 24px);
+}
+
+.operating-logo-grid {
+  align-self: end;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.operating-logo-grid .logo-cell {
+  min-height: clamp(96px, 9.7vw, 154px);
+  padding: clamp(13px, 1.55vw, 25px);
+}
+
+.operating-logo-grid .logo-cell img {
+  max-height: 48px;
+}
+
+.casting-slide {
+  align-content: center;
+}
+
+.casting-slide .display.medium {
+  max-width: 10ch;
+}
+
+.casting-lede {
+  max-width: 61ch;
+  margin-top: clamp(11px, 1.25vw, 20px);
+}
+
+.casting-slide .creator-experience-note {
+  top: var(--pad-y);
+}
+
+.casting-slide .talent-grid {
+  height: min(48vh, 430px);
+  margin-top: clamp(18px, 2.15vw, 34px);
+}
+
+.creator-care-title {
+  max-width: 22ch !important;
+}
+
+.legal-alignment-title {
+  max-width: 14ch !important;
+}
+
+.creator-care-lede,
+.legal-alignment-lede,
+.campaign-engine-lede {
+  margin-top: clamp(14px, 1.65vw, 26px);
+}
+
+.creator-care-lede {
+  max-width: 76ch;
+}
+
+.creator-care-standard {
+  margin-top: clamp(22px, 2.5vw, 40px);
+}
+
+.creator-care-standard .brief-field {
+  min-height: clamp(176px, 18vw, 282px);
+}
+
+.creator-care-standard .brief-field .answer {
+  margin-top: clamp(20px, 2.4vw, 38px);
+  font-size: clamp(15px, 1.28vw, 20px);
+  line-height: 1.24;
+}
+
+.legal-alignment-lede {
+  max-width: 82ch;
+}
+
+.legal-flow {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.legal-flow .campaign-stage {
+  min-height: clamp(168px, 17vw, 270px);
+}
+
+.legal-flow .campaign-stage p {
+  font-size: clamp(10.5px, 0.85vw, 13px);
+}
+
+.legal-flow .campaign-stage:nth-child(3)::after {
+  display: block;
+}
+
+.legal-flow .campaign-stage:last-child::after {
+  display: none;
+}
+
+.legal-proof-line {
+  margin-top: clamp(15px, 1.7vw, 27px);
+  color: var(--white-60);
+  text-align: right;
+}
+
+.campaign-engine-lede {
+  max-width: 70ch;
+}
+
+.campaign-engine-slide .campaign-flow {
+  margin-top: clamp(18px, 2.3vw, 36px);
 }
 
 @media (max-height: 800px) and (min-width: 769px) {
@@ -3872,6 +4043,7 @@ kbd {
   }
 
   .slide {
+    overflow-x: hidden;
     overflow-y: auto;
   }
 
@@ -3917,6 +4089,13 @@ kbd {
     gap: 24px;
   }
 
+  .operating-evidence-split {
+    height: max-content;
+    align-content: start;
+    align-items: start;
+    grid-auto-rows: max-content;
+  }
+
   .client-proof-head,
   .ownership-lane {
     grid-template-columns: 1fr;
@@ -3955,6 +4134,12 @@ kbd {
   }
 
   body[data-deck="brand-campaigns"] .creator-experience-slide {
+    align-content: start;
+    padding-top: 92px;
+    padding-bottom: 82px;
+  }
+
+  body[data-deck="brand-campaigns"] .operating-evidence-slide {
     align-content: start;
     padding-top: 92px;
     padding-bottom: 82px;
