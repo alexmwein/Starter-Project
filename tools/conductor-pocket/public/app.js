@@ -7,6 +7,7 @@ import {
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
 } from './app-update.js?v=0.2.0-read-20260809';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-read-20260809';
 import { fetchJson } from './http.js?v=0.2.0-read-20260809';
 import {
   attachmentMessageByteLength,
@@ -4143,7 +4144,47 @@ function retryMessage(message) {
   deliverOptimistic(message, { replaceDraft: message.replaceDraft === true });
 }
 
+const draftConflictFlow = createDraftConflictFlow({
+  deliver: (optimistic, options) => deliverOptimistic(optimistic, options),
+  makeOptimistic: (sessionId, text) => {
+    const idempotencyKey = randomIdempotencyKey();
+    return {
+      id: `optimistic:${randomIdempotencyKey()}`,
+      idempotencyKey,
+      activeDeliveryKey: idempotencyKey,
+      kind: 'optimistic',
+      sessionId,
+      text,
+      attachments: [],
+      draftAttachmentItems: null,
+      delivery: 'delivering',
+      createdAt: new Date().toISOString(),
+    };
+  },
+  insertBefore: (entry, reference) => {
+    const at = state.optimistic.indexOf(reference);
+    state.optimistic.splice(at === -1 ? state.optimistic.length : at, 0, entry);
+  },
+  remove: (entry) => {
+    state.optimistic = state.optimistic.filter((item) => item !== entry);
+  },
+  restoreComposer: (sessionId, text) => {
+    saveDraft(sessionId, text);
+    if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+      state.shell.composer.field.value = text;
+      state.shell.composer.resize();
+    }
+  },
+  persist: (options) => persistPendingDeliveries(options),
+  render: () => renderTranscript(),
+  announce,
+});
+
 function openDraftConflict(message) {
+  const act = (run) => () => {
+    closeOverlay();
+    run();
+  };
   const content = node('div', {}, [
     node('p', {
       className: 'gate-lede',
@@ -4152,29 +4193,46 @@ function openDraftConflict(message) {
     }),
     node('section', { className: 'pair-card' }, [
       node('div', { className: 'micro-caps', text: 'On your Mac' }),
-      node('p', {
-        className: 'machine-fact',
-        text: message.macDraft || 'Conductor has an unsent draft.',
-      }),
+      node('div', { className: 'draft-preview' }, [
+        node('p', {
+          className: 'machine-fact',
+          text: message.macDraft || 'Conductor has an unsent draft.',
+        }),
+      ]),
       node('div', { className: 'pair-divider' }),
       node('div', { className: 'micro-caps', text: 'From this phone' }),
-      node('p', { text: message.text }),
+      node('div', { className: 'draft-preview' }, [
+        node('p', { text: message.text }),
+      ]),
     ]),
     node('button', {
       className: 'primary-button',
       type: 'button',
-      text: 'Replace and send',
+      text: 'Replace and send mine',
       on: {
-        click: () => {
-          message.delivery = 'delivering';
-          void persistPendingDeliveries();
-          closeOverlay();
-          renderTranscript();
-          deliverOptimistic(message, {
-            replaceDraft: true,
-            expectedMacDraft: message.macDraft,
-          });
-        },
+        click: act(() => {
+          void draftConflictFlow.replaceAndSend(message);
+        }),
+      },
+    }),
+    node('button', {
+      className: 'secondary-button',
+      type: 'button',
+      text: 'Send the Mac draft, then mine',
+      on: {
+        click: act(() => {
+          void draftConflictFlow.sendMacDraft(message, { thenPhone: true });
+        }),
+      },
+    }),
+    node('button', {
+      className: 'secondary-button',
+      type: 'button',
+      text: 'Send only the Mac draft',
+      on: {
+        click: act(() => {
+          void draftConflictFlow.sendMacDraft(message);
+        }),
       },
     }),
     node('button', {
@@ -4182,14 +4240,9 @@ function openDraftConflict(message) {
       type: 'button',
       text: 'Keep the Mac draft',
       on: {
-        click: () => {
-          state.shell.composer.field.value = message.text;
-          saveDraft(message.sessionId, message.text);
-          state.optimistic = state.optimistic.filter((item) => item !== message);
-          void persistPendingDeliveries();
-          closeOverlay();
-          renderTranscript();
-        },
+        click: act(() => {
+          draftConflictFlow.keepMacDraft(message);
+        }),
       },
     }),
   ]);
