@@ -6675,7 +6675,7 @@ kbd {
   padding: 0 clamp(12px, 1.2vw, 18px);
   align-items: center;
   border-bottom: 1px solid rgba(17, 16, 14, 0.16);
-  grid-template-columns: 40px minmax(112px, 0.46fr) minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(180px, 0.46fr) minmax(0, 1fr) auto;
   gap: clamp(10px, 1.2vw, 18px);
 }
 
