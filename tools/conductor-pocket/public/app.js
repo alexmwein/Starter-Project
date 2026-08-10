@@ -198,6 +198,28 @@ const ICONS = {
   wifiOff: 'i-wifi-off',
 };
 
+// Why a send failed, in words a phone user can act on. Codes come from the
+// Mac's automation layer; anything unmapped falls back to the sanitized
+// detail when the relay preserved one.
+const SEND_FAILURE_REASONS = Object.freeze({
+  session_locked: 'The Mac is locked.',
+  accessibility_disabled: 'Automation permission is off on the Mac.',
+  conductor_not_running: 'Conductor is not running on the Mac.',
+  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  composer_unavailable: 'The message box was not found in Conductor.',
+  workspace_list_unavailable: 'The workspace list was not found in Conductor.',
+  workspace_not_visible: 'This workspace is not visible in Conductor.',
+  session_not_visible: 'This chat is not visible in Conductor.',
+  user_input_active: 'Someone was using the Mac keyboard.',
+  send_unavailable: 'The send button was not available in Conductor.',
+  route_changed: 'The Conductor window changed mid-send.',
+  composer_focus_changed: 'The message box lost focus mid-send.',
+  draft_changed: 'The Mac draft changed mid-send.',
+  input_helper_unavailable: 'The automation helper failed on the Mac.',
+  automation_timeout: 'The Mac took too long.',
+  automation_failed: 'Automation failed on the Mac.',
+});
+
 const AGENT_ERROR_PRESENTATIONS = Object.freeze({
   provider_reconnecting: {
     title: 'Agent connection interrupted',
@@ -1788,6 +1810,10 @@ function sanitizePendingDelivery(value) {
     retrySafe: value.retrySafe === true,
     errorCode:
       typeof value.errorCode === 'string' ? value.errorCode : null,
+    errorDetail:
+      typeof value.errorDetail === 'string'
+        ? value.errorDetail.slice(0, 300)
+        : null,
     replaceDraft: value.replaceDraft === true,
     macDraft:
       typeof value.macDraft === 'string'
@@ -3422,6 +3448,18 @@ function renderMessage(message, toolResults) {
           on: { click: () => discardFailedMessage(message) },
         }),
       );
+      const reason = SEND_FAILURE_REASONS[message.errorCode] || null;
+      const detail =
+        typeof message.errorDetail === 'string' && message.errorDetail !== ''
+          ? message.errorDetail
+          : null;
+      const reasonText =
+        message.errorCode === 'automation_failed' && detail ? detail : reason;
+      if (reasonText) {
+        meta.append(
+          node('span', { className: 'failure-reason', text: reasonText }),
+        );
+      }
     } else if (
       message.kind === 'optimistic' &&
       message.delivery === 'delivered'
@@ -3988,6 +4026,10 @@ async function deliverOptimistic(
       error.retrySafe = payload.error?.retrySafe === true;
       error.definitelyUnsent =
         payload.error?.definitelyUnsent === true;
+      error.detail =
+        typeof payload.error?.detail === 'string'
+          ? payload.error.detail.slice(0, 300)
+          : null;
       throw error;
     }
     applyDeliveryReceipt(optimistic, payload);
@@ -4002,6 +4044,10 @@ async function deliverOptimistic(
     await persistence;
   } catch (error) {
     optimistic.errorCode = error.code;
+    optimistic.errorDetail =
+      typeof error.detail === 'string' && error.detail !== ''
+        ? error.detail
+        : null;
     if (error.definitelyUnsent === true) {
       await restoreDefinitelyUnsentDraft(optimistic, error);
       if (error.status === 401 || error.status === 423) {

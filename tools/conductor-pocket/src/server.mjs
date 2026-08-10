@@ -1573,6 +1573,12 @@ export function createPocketServer({
                 ...(result.safeToRetry === true
                   ? { definitelyUnsent: true }
                   : {}),
+                // Already redacted at the source (quoted spans and base64
+                // runs stripped), so the phone can show why the Mac failed
+                // instead of pointing the user at a log they cannot see.
+                ...(typeof result.detail === 'string' && result.detail !== ''
+                  ? { detail: result.detail.slice(0, 300) }
+                  : {}),
               },
             },
             config,

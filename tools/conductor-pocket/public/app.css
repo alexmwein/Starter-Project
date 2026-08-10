@@ -1097,6 +1097,17 @@ button:active {
   color: var(--down);
 }
 
+/* The plain-words reason under a failed send. Block-level so it wraps under
+   the Retry and Delete controls instead of crowding them. */
+.failure-reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  overflow-wrap: anywhere;
+}
+
 .message-retry {
   min-height: 44px;
   margin: -12px -8px -12px 0;
