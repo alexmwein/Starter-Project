@@ -39,10 +39,11 @@ test("brand protection story uses one risk case and creator-focused legal alignm
 });
 
 test("proof rail and creator wall remain interactive and appropriately labeled", async () => {
-  const [html, script, index] = await Promise.all([
+  const [html, script, index, portal] = await Promise.all([
     source("brands.html"),
     source("deck.js"),
     source("index.html"),
+    source("fitia-portal.html"),
   ]);
 
   assert.equal((html.match(/role="tab"/g) || []).length, 3);
@@ -52,4 +53,6 @@ test("proof rail and creator wall remain interactive and appropriately labeled",
   assert.match(script, /index < 6; index \+= 1/);
   assert.match(script, /prefers-reduced-motion: reduce/);
   assert.match(index, /brands\.html#11/);
+  assert.match(portal, /brands\.html#11/);
+  assert.doesNotMatch(portal, /brands\.html#10/);
 });
