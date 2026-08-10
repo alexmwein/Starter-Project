@@ -6248,6 +6248,12 @@ kbd {
     align-content: start;
   }
 
+  .creator-ledger-slide {
+    align-content: start;
+    padding-top: 92px;
+    padding-bottom: 82px;
+  }
+
   .fitia-results-head {
     display: grid;
     gap: 18px;
