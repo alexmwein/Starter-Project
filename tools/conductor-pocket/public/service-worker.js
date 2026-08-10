@@ -1,19 +1,19 @@
-const SHELL_REVISION = '0.2.0-send-20260810';
-const CACHE = 'conductor-pocket-shell-v21';
+const SHELL_REVISION = '0.2.0-receipt-20260810';
+const CACHE = 'conductor-pocket-shell-v22';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-send-20260810',
-  '/app.js?v=0.2.0-send-20260810',
-  '/delivery-receipts.js?v=0.2.0-send-20260810',
-  '/app-update.js?v=0.2.0-send-20260810',
-  '/http.js?v=0.2.0-send-20260810',
-  '/image-attachments.js?v=0.2.0-send-20260810',
-  '/live-refresh.js?v=0.2.0-send-20260810',
-  '/read-state.js?v=0.2.0-send-20260810',
-  '/rich-text.js?v=0.2.0-send-20260810',
-  '/transcript-focus.js?v=0.2.0-send-20260810',
-  '/swipe-navigation.js?v=0.2.0-send-20260810',
+  '/app.css?v=0.2.0-receipt-20260810',
+  '/app.js?v=0.2.0-receipt-20260810',
+  '/delivery-receipts.js?v=0.2.0-receipt-20260810',
+  '/app-update.js?v=0.2.0-receipt-20260810',
+  '/http.js?v=0.2.0-receipt-20260810',
+  '/image-attachments.js?v=0.2.0-receipt-20260810',
+  '/live-refresh.js?v=0.2.0-receipt-20260810',
+  '/read-state.js?v=0.2.0-receipt-20260810',
+  '/rich-text.js?v=0.2.0-receipt-20260810',
+  '/transcript-focus.js?v=0.2.0-receipt-20260810',
+  '/swipe-navigation.js?v=0.2.0-receipt-20260810',
   '/icon.svg',
   '/manifest.webmanifest',
 ];

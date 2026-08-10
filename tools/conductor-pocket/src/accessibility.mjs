@@ -1,4 +1,8 @@
 import { execFile } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
+import { chmod, mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { MAX_MESSAGE_BYTES } from './constants.mjs';
@@ -8,6 +12,8 @@ const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(new URL('./conductor-send.applescript', import.meta.url));
 const inputScriptPath = fileURLToPath(new URL('./conductor-input.js', import.meta.url));
 const PHYSICAL_INPUT_COUNTER_COUNT = 16;
+const PRESS_MARKER_MAX_BYTES = 64;
+const PRESS_MARKER_PREFIX = 'conductor-pocket-press-';
 const safeToRetryCodes = new Set([
   'accessibility_disabled',
   'composer_changed_pre_send',
@@ -39,15 +45,24 @@ export function parseResult(stdout) {
     if (!result || typeof result.ok !== 'boolean' || typeof result.code !== 'string') {
       throw new Error('Unexpected result shape');
     }
+    const attributionCode =
+      result.code === 'sent' ||
+      result.code === 'send_not_confirmed' ||
+      result.code === 'send_interrupted';
     if (
-      (result.code === 'sent' ||
-        result.code === 'send_not_confirmed' ||
-        result.code === 'send_interrupted') &&
+      attributionCode &&
       (!Number.isSafeInteger(result.pressedAt) ||
         result.pressedAt <= 0 ||
         typeof result.composerOwned !== 'boolean')
     ) {
       throw new Error('Missing ambiguous-send attribution');
+    }
+    if (
+      !attributionCode &&
+      (Object.hasOwn(result, 'pressedAt') ||
+        Object.hasOwn(result, 'composerOwned'))
+    ) {
+      throw new Error('Unexpected ambiguous-send attribution');
     }
     if (
       result.code === 'composer_changed_pre_send' &&
@@ -70,13 +85,16 @@ export function parseResult(stdout) {
   }
 }
 
-export function mapAutomationError(error) {
+export function mapAutomationError(error, markerContext) {
   const details = `${error?.stderr || ''}\n${error?.message || ''}`.toLowerCase();
-  if (
+  const pressedAt = validatedPressedAt(markerContext);
+  const permissionDenied =
     details.includes('not authorized to send apple events') ||
     details.includes('not allowed assistive access') ||
     details.includes('(-1743)') ||
-    details.includes('(-25211)')
+    details.includes('(-25211)');
+  if (
+    pressedAt === null && permissionDenied
   ) {
     return {
       ok: false,
@@ -84,10 +102,99 @@ export function mapAutomationError(error) {
       safeToRetry: true,
     };
   }
-  if (error?.killed || error?.signal === 'SIGTERM') {
-    return { ok: false, code: 'automation_timeout' };
+  const result =
+    error?.killed || error?.signal === 'SIGTERM'
+      ? { ok: false, code: 'automation_timeout' }
+      : { ok: false, code: 'automation_failed' };
+  if (pressedAt !== null) {
+    return {
+      ...result,
+      pressedAt,
+      composerOwned: true,
+    };
   }
-  return { ok: false, code: 'automation_failed' };
+  return result;
+}
+
+function validatedPressedAt({
+  markerContent,
+  attemptStartedAt,
+  observedAt,
+} = {}) {
+  if (
+    typeof markerContent !== 'string' ||
+    Buffer.byteLength(markerContent, 'utf8') > PRESS_MARKER_MAX_BYTES ||
+    !Number.isSafeInteger(attemptStartedAt) ||
+    attemptStartedAt <= 0 ||
+    !Number.isSafeInteger(observedAt) ||
+    observedAt < attemptStartedAt
+  ) {
+    return null;
+  }
+  const match = /^([1-9][0-9]*)\n([1-9][0-9]*)\n$/.exec(markerContent);
+  if (!match) return null;
+  const markerAttemptStartedAt = Number(match[1]);
+  const pressedAt = Number(match[2]);
+  if (
+    !Number.isSafeInteger(markerAttemptStartedAt) ||
+    markerAttemptStartedAt !== attemptStartedAt ||
+    !Number.isSafeInteger(pressedAt) ||
+    pressedAt < attemptStartedAt ||
+    pressedAt > observedAt
+  ) {
+    return null;
+  }
+  return pressedAt;
+}
+
+async function readPressMarker(markerPath) {
+  let handle;
+  try {
+    handle = await open(
+      markerPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > PRESS_MARKER_MAX_BYTES) {
+      return '';
+    }
+    return await handle.readFile('utf8');
+  } catch {
+    return '';
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function pressMarkerContext(markerPath, attemptStartedAt) {
+  const markerContent = await readPressMarker(markerPath);
+  return {
+    markerContent,
+    attemptStartedAt,
+    observedAt: Date.now(),
+  };
+}
+
+function attributeStructuredFailure(result, markerContext) {
+  const pressedAt = validatedPressedAt(markerContext);
+  if (
+    pressedAt === null ||
+    result.ok ||
+    (result.composerOwned === true &&
+      Number.isSafeInteger(result.pressedAt) &&
+      result.pressedAt > 0)
+  ) {
+    return result;
+  }
+  return {
+    ok: false,
+    code:
+      result.code === 'automation_timeout'
+        ? 'automation_timeout'
+        : 'automation_failed',
+    pressedAt,
+    composerOwned: true,
+  };
 }
 
 export class AccessibilityTransport {
@@ -191,6 +298,25 @@ export class AccessibilityTransport {
     expectedInputCounters = '',
     timeoutMs = 45_000,
   }) {
+    let pressMarkerDirectory = '';
+    let pressMarkerPath = '';
+    if (operation === 'send') {
+      try {
+        pressMarkerDirectory = await mkdtemp(
+          join(tmpdir(), PRESS_MARKER_PREFIX),
+        );
+        await chmod(pressMarkerDirectory, 0o700);
+        pressMarkerPath = join(pressMarkerDirectory, 'pressed-at');
+      } catch {
+        if (pressMarkerDirectory) {
+          await rm(pressMarkerDirectory, {
+            recursive: true,
+            force: true,
+          }).catch(() => {});
+        }
+        return safeToRetry('input_helper_unavailable');
+      }
+    }
     const attemptStartedAt = Date.now();
     try {
       const { stdout } = await execFileAsync('/usr/bin/osascript', [scriptPath], {
@@ -215,6 +341,7 @@ export class AccessibilityTransport {
             'base64',
           ),
           POCKET_INPUT_SCRIPT: inputScriptPath,
+          POCKET_PRESS_MARKER_PATH: pressMarkerPath,
           POCKET_REPLACE_DRAFT: replaceDraft ? 'true' : 'false',
           POCKET_ATTEMPT_STARTED_AT: String(attemptStartedAt),
           POCKET_EXPECTED_DRAFT_BASE64: Buffer.from(
@@ -224,9 +351,26 @@ export class AccessibilityTransport {
           POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
-      return parseResult(stdout);
+      const result = parseResult(stdout);
+      if (!pressMarkerPath) return result;
+      return attributeStructuredFailure(
+        result,
+        await pressMarkerContext(pressMarkerPath, attemptStartedAt),
+      );
     } catch (error) {
-      return mapAutomationError(error);
+      return mapAutomationError(
+        error,
+        pressMarkerPath
+          ? await pressMarkerContext(pressMarkerPath, attemptStartedAt)
+          : undefined,
+      );
+    } finally {
+      if (pressMarkerDirectory) {
+        await rm(pressMarkerDirectory, {
+          recursive: true,
+          force: true,
+        }).catch(() => {});
+      }
     }
   }
 }

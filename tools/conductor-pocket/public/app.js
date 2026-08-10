@@ -1,12 +1,15 @@
 import {
+  deliveryNeedsAutomaticRecovery,
+  deliveryRecoveryDecision,
+  deliveryStatusIsTerminal,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-send-20260810';
+} from './delivery-receipts.js?v=0.2.0-receipt-20260810';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-send-20260810';
-import { fetchJson } from './http.js?v=0.2.0-send-20260810';
+} from './app-update.js?v=0.2.0-receipt-20260810';
+import { fetchJson } from './http.js?v=0.2.0-receipt-20260810';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -16,15 +19,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-send-20260810';
+} from './image-attachments.js?v=0.2.0-receipt-20260810';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-send-20260810';
+} from './live-refresh.js?v=0.2.0-receipt-20260810';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-send-20260810';
+} from './rich-text.js?v=0.2.0-receipt-20260810';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -35,15 +38,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-send-20260810';
+} from './read-state.js?v=0.2.0-receipt-20260810';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-send-20260810';
+} from './transcript-focus.js?v=0.2.0-receipt-20260810';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-send-20260810';
+} from './swipe-navigation.js?v=0.2.0-receipt-20260810';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -64,12 +67,14 @@ const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const ATTACHMENT_DRAFTS_KEY = 'cp:attachment-drafts:v1';
 const READ_RECEIPTS_KEY = 'cp:read-receipts:v1';
 const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
-const DELIVERY_RECOVERY_MS = 27_000;
+const DELIVERY_RECOVERY_MS = 120_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
-const DELIVERY_PROGRESS_POLL_MS = 750;
+const DELIVERY_RECOVERY_POLL_MS = 1_000;
+const DELIVERY_PROGRESS_POLL_MS = 1_000;
+const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-send-20260810';
+const CLIENT_SHELL_REVISION = '0.2.0-receipt-20260810';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -120,6 +125,9 @@ let readEvaluationTimer = null;
 let readGestureSequence = 0;
 let readReceiptWriteQueue = Promise.resolve();
 const readReceiptCommits = new Set();
+const deliveryRecoveryInFlight = new Map();
+const deliveryRecoveryQueue = [];
+let activeDeliveryRecoveryCount = 0;
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
 
@@ -1845,6 +1853,8 @@ function sanitizePendingDelivery(value) {
       : null,
     retrySafe: value.retrySafe === true,
     definitelyUnsent: value.definitelyUnsent === true,
+    deliveryRecoveryExhausted:
+      value.deliveryRecoveryExhausted === true,
     errorCode:
       typeof value.errorCode === 'string' ? value.errorCode : null,
     deliveryPhase: new Set([
@@ -1962,6 +1972,7 @@ async function claimTerminalDeliveryActionRequired(message, action) {
           deliveryPhase: null,
           retrySafe: false,
           definitelyUnsent: false,
+          deliveryRecoveryExhausted: false,
           errorCode: null,
           deliveryAttempt: candidate.deliveryAttempt + 1,
         };
@@ -3548,6 +3559,7 @@ function messageRenderKey(message, toolResults) {
     message.errorCode,
     message.retrySafe,
     message.definitelyUnsent,
+    message.deliveryRecoveryExhausted,
     message.deliveryPhase,
     message.kind === 'tool'
       ? toolResult?.state || message.state
@@ -3788,7 +3800,9 @@ function renderMessage(message, toolResults) {
             type: 'button',
             text: 'Check',
             'aria-label': 'Check this message’s delivery',
-            on: { click: () => checkDelivery(message) },
+            on: {
+              click: () => checkDelivery(message, { force: true }),
+            },
           }),
         );
       }
@@ -4204,6 +4218,7 @@ async function sendCurrentMessage() {
     delivery: 'delivering',
     deliveryPhase: null,
     definitelyUnsent: false,
+    deliveryRecoveryExhausted: false,
     deliveryAttempt: 1,
     createdAt: new Date().toISOString(),
   };
@@ -4272,6 +4287,7 @@ async function markDefinitelyUnsent(optimistic, error) {
   optimistic.errorCode = error.code;
   optimistic.retrySafe = error.retrySafe === true;
   optimistic.definitelyUnsent = true;
+  optimistic.deliveryRecoveryExhausted = true;
   await persistPendingDeliveries({ upserts: [optimistic] });
   renderTranscript();
   announce(`Message was not sent. ${deliveryErrorCopy(error.code)}`);
@@ -4288,6 +4304,7 @@ async function deliverOptimistic(
   const previousDeliveryKey = optimistic.activeDeliveryKey;
   const previousReplaceDraft = optimistic.replaceDraft === true;
   optimistic.replaceDraft = replaceDraft;
+  optimistic.deliveryRecoveryExhausted = false;
   if (replaceDraft && !optimistic.replaceIdempotencyKey) {
     optimistic.replaceIdempotencyKey = randomIdempotencyKey();
   }
@@ -4352,6 +4369,7 @@ async function deliverOptimistic(
           'Content-Type': 'application/json',
           'X-CSRF-Token': state.csrfToken,
           'Idempotency-Key': deliveryKey,
+          'X-Pocket-Shell-Revision': CLIENT_SHELL_REVISION,
         },
         body: JSON.stringify({
           message: optimistic.text,
@@ -4408,6 +4426,7 @@ async function deliverOptimistic(
       optimistic.delivery = 'failed';
       optimistic.retrySafe = true;
       optimistic.definitelyUnsent = true;
+      optimistic.deliveryRecoveryExhausted = true;
       optimistic.macDraft = error.draft;
       if (replaceDraft) optimistic.replaceIdempotencyKey = null;
       optimistic.replaceDraft = false;
@@ -4417,19 +4436,12 @@ async function deliverOptimistic(
     } else if (error.status === 401 || error.status === 423) {
       optimistic.delivery = 'failed';
       optimistic.retrySafe = false;
+      optimistic.deliveryRecoveryExhausted = true;
       await persistPendingDeliveries({ upserts: [optimistic] });
       renderTranscript();
       handleRuntimeError(error);
-    } else if (
-      !error.status ||
-      error.code === 'send_not_confirmed'
-    ) {
-      await checkDelivery(optimistic);
     } else {
-      optimistic.delivery = 'failed';
-      optimistic.retrySafe = error.retrySafe === true;
-      await persistPendingDeliveries({ upserts: [optimistic] });
-      renderTranscript();
+      await checkDelivery(optimistic);
     }
   } finally {
     clearTimeout(deliveryTimeout);
@@ -4448,6 +4460,8 @@ function applyDeliveryReceipt(message, receipt) {
     : null;
   message.retrySafe = false;
   message.definitelyUnsent = false;
+  message.deliveryRecoveryExhausted = false;
+  message.errorCode = null;
   message.deliveryPhase = null;
   for (const attachment of message.attachments || []) {
     releaseAttachmentPreview(attachment);
@@ -4478,6 +4492,7 @@ async function requestDeliveryStatus(message) {
           'X-CSRF-Token': state.csrfToken,
           'Idempotency-Key':
             message.activeDeliveryKey || message.idempotencyKey,
+          'X-Pocket-Shell-Revision': CLIENT_SHELL_REVISION,
         },
       },
     );
@@ -4510,11 +4525,13 @@ async function settleTerminalDeliveryStatus(message, delivery) {
     return true;
   }
   if (delivery.state === 'failed') {
+    if (!deliveryStatusIsTerminal(delivery)) return false;
+    message.errorCode = delivery.code || 'delivery_unknown';
     message.delivery = 'failed';
     message.deliveryPhase = null;
-    message.errorCode = delivery.code || 'delivery_unknown';
     message.retrySafe = delivery.retrySafe === true;
-    message.definitelyUnsent = message.retrySafe;
+    message.definitelyUnsent = delivery.retrySafe === true;
+    message.deliveryRecoveryExhausted = true;
     await persistPendingDeliveries({ upserts: [message] });
     renderTranscript();
     return true;
@@ -4531,8 +4548,7 @@ async function watchDeliveryProgress(message, isActive, onTerminal) {
     try {
       const delivery = await requestDeliveryStatus(message);
       if (
-        (delivery.state === 'delivered' ||
-          delivery.state === 'failed') &&
+        deliveryStatusIsTerminal(delivery) &&
         await onTerminal(delivery)
       ) {
         return;
@@ -4555,66 +4571,157 @@ async function watchDeliveryProgress(message, isActive, onTerminal) {
   }
 }
 
-async function checkDelivery(message) {
+function checkDelivery(message, { force = false } = {}) {
+  const key = message?.id;
+  if (typeof key !== 'string') return Promise.resolve(false);
+  if (!force && message.deliveryRecoveryExhausted === true) {
+    return Promise.resolve(false);
+  }
+  const existing = deliveryRecoveryInFlight.get(key);
+  if (existing) return existing.operation;
+  let resolveOperation;
+  let rejectOperation;
+  const operation = new Promise((resolve, reject) => {
+    resolveOperation = resolve;
+    rejectOperation = reject;
+  });
+  const entry = {
+    key,
+    message,
+    force,
+    operation,
+    resolve: resolveOperation,
+    reject: rejectOperation,
+  };
+  deliveryRecoveryInFlight.set(key, entry);
+  if (force) deliveryRecoveryQueue.unshift(entry);
+  else deliveryRecoveryQueue.push(entry);
+  drainDeliveryRecoveryQueue();
+  return operation;
+}
+
+function drainDeliveryRecoveryQueue() {
+  while (
+    activeDeliveryRecoveryCount < MAX_CONCURRENT_DELIVERY_RECOVERIES &&
+    deliveryRecoveryQueue.length > 0
+  ) {
+    const entry = deliveryRecoveryQueue.shift();
+    activeDeliveryRecoveryCount += 1;
+    void checkDeliveryOnce(entry.message, { force: entry.force })
+      .then(entry.resolve, entry.reject)
+      .finally(() => {
+        if (deliveryRecoveryInFlight.get(entry.key) === entry) {
+          deliveryRecoveryInFlight.delete(entry.key);
+        }
+        activeDeliveryRecoveryCount -= 1;
+        drainDeliveryRecoveryQueue();
+      });
+  }
+}
+
+async function exhaustDeliveryRecovery(message, errorCode) {
+  message.delivery = 'failed';
+  message.errorCode = safeDeliveryErrorCode(
+    errorCode || 'delivery_confirmation_timeout',
+  );
+  message.retrySafe = false;
+  message.definitelyUnsent = false;
+  message.deliveryRecoveryExhausted = true;
+  message.deliveryPhase = null;
+  await persistPendingDeliveries({ upserts: [message] });
+  renderTranscript();
+  return false;
+}
+
+async function checkDeliveryOnce(message, { force = false } = {}) {
   if (!state.optimistic.includes(message)) return true;
+  if (!force && message.deliveryRecoveryExhausted === true) return false;
   message.delivery = 'confirming';
   message.deliveryPhase = 'confirming';
   message.retrySafe = false;
   message.definitelyUnsent = false;
+  message.deliveryRecoveryExhausted = false;
+  message.errorCode = null;
   await persistPendingDeliveries({ upserts: [message] });
   renderTranscript();
   const deadline = Date.now() + DELIVERY_RECOVERY_MS;
-  let lastError = null;
-  while (Date.now() < deadline) {
+  let lastErrorCode = null;
+  let lastDeliveryCode = null;
+  let inconclusiveChecks = 0;
+  let firstCheck = true;
+  while (firstCheck || Date.now() < deadline) {
+    firstCheck = false;
     try {
       const delivery = await requestDeliveryStatus(message);
+      lastErrorCode = null;
       if (await settleTerminalDeliveryStatus(message, delivery)) {
         return delivery.state === 'delivered';
       }
-      if (delivery.state !== 'pending') {
-        message.delivery = 'failed';
-        message.errorCode =
-          delivery.state === 'failed'
-            ? delivery.code
-            : 'delivery_unknown';
-        message.retrySafe =
-          delivery.state === 'failed' &&
-          delivery.retrySafe === true;
-        message.definitelyUnsent = message.retrySafe;
-        message.deliveryPhase = null;
-        await persistPendingDeliveries({ upserts: [message] });
-        renderTranscript();
-        return false;
+      const decision = deliveryRecoveryDecision(
+        delivery,
+        inconclusiveChecks,
+      );
+      inconclusiveChecks = decision.inconclusiveChecks;
+      if (delivery.state === 'failed' && delivery.code) {
+        lastDeliveryCode = delivery.code;
+      } else if (delivery.state === 'unknown') {
+        lastDeliveryCode = delivery.code || 'delivery_unknown';
+      } else if (delivery.state === 'pending') {
+        lastDeliveryCode = null;
+      } else {
+        lastDeliveryCode = delivery.code || 'delivery_unknown';
+      }
+      if (decision.action === 'exhaust') {
+        return exhaustDeliveryRecovery(
+          message,
+          lastDeliveryCode || 'delivery_unknown',
+        );
       }
     } catch (error) {
-      lastError = error;
       if (error.status === 401 || error.status === 423) {
         message.delivery = 'failed';
         message.errorCode = error.code;
         message.retrySafe = false;
         message.definitelyUnsent = false;
+        message.deliveryRecoveryExhausted = true;
         message.deliveryPhase = null;
         await persistPendingDeliveries({ upserts: [message] });
         renderTranscript();
         handleRuntimeError(error);
         return false;
       }
+      lastErrorCode = safeDeliveryErrorCode(
+        typeof error?.code === 'string'
+          ? error.code
+          : error?.name === 'AbortError'
+            ? 'delivery_confirmation_timeout'
+            : 'delivery_unknown',
+      );
+      const decision = deliveryRecoveryDecision(
+        { state: 'unknown' },
+        inconclusiveChecks,
+      );
+      inconclusiveChecks = decision.inconclusiveChecks;
+      if (decision.action === 'exhaust') {
+        return exhaustDeliveryRecovery(
+          message,
+          lastDeliveryCode || lastErrorCode,
+        );
+      }
     }
     const remaining = deadline - Date.now();
     if (remaining > 0) {
       await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(500, remaining)),
+        setTimeout(resolve, Math.min(DELIVERY_RECOVERY_POLL_MS, remaining)),
       );
     }
   }
-  message.delivery = 'failed';
-  message.errorCode = lastError?.code || 'delivery_confirmation_timeout';
-  message.retrySafe = false;
-  message.definitelyUnsent = false;
-  message.deliveryPhase = null;
-  await persistPendingDeliveries({ upserts: [message] });
-  renderTranscript();
-  return false;
+  return exhaustDeliveryRecovery(
+    message,
+    lastDeliveryCode ||
+      lastErrorCode ||
+      'delivery_confirmation_timeout',
+  );
 }
 
 async function recoverPendingDeliveries() {
@@ -4622,16 +4729,23 @@ async function recoverPendingDeliveries() {
     state.optimistic.map(async (message) => {
       if (message.delivery === 'delivered') {
         await refreshMessages(message.sessionId, { full: true });
-      } else if (
-        !(
-          message.delivery === 'failed' &&
-          message.definitelyUnsent === true
-        )
-      ) {
+      } else if (deliveryNeedsAutomaticRecovery(message)) {
         await checkDelivery(message);
       }
     }),
   );
+}
+
+function recheckAmbiguousDeliveries(sessionId = null) {
+  for (const message of state.optimistic) {
+    if (
+      (sessionId === null || message.sessionId === sessionId) &&
+      deliveryNeedsAutomaticRecovery(message) &&
+      message.definitelyUnsent !== true
+    ) {
+      void checkDelivery(message).catch(() => {});
+    }
+  }
 }
 
 async function retryMessage(message) {
@@ -4755,6 +4869,7 @@ function startEvents() {
     metadataRefresh.schedule();
     void transcriptRefresh.flush();
     void metadataRefresh.flush();
+    recheckAmbiguousDeliveries();
   });
   eventSource.addEventListener('heartbeat', () => {
     const wasLive = state.connection === 'live';
@@ -4765,6 +4880,7 @@ function startEvents() {
       metadataRefresh.schedule();
       void transcriptRefresh.flush();
       void metadataRefresh.flush();
+      recheckAmbiguousDeliveries();
     }
   });
   eventSource.addEventListener('change', () => {
@@ -4772,6 +4888,7 @@ function startEvents() {
     invalidateUnreadHeadEvidence();
     transcriptRefresh.schedule();
     metadataRefresh.schedule();
+    recheckAmbiguousDeliveries();
   });
   eventSource.addEventListener('locked', async (event) => {
     let code = 'device_locked';
@@ -5411,12 +5528,14 @@ document.addEventListener('visibilitychange', () => {
     shieldApplication();
     return;
   }
+  recheckAmbiguousDeliveries();
   if (!appUpdateCoordinator?.foreground()) revealApplication();
 });
 
 window.addEventListener('pagehide', shieldApplication);
 window.addEventListener('pageshow', () => {
   const reloading = appUpdateCoordinator?.foreground() === true;
+  if (!reloading) recheckAmbiguousDeliveries();
   if (
     !reloading &&
     !document.hidden &&

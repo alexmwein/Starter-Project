@@ -263,7 +263,7 @@ on sessionIsSelected(sessionTitle, sessionOrdinal)
 	return false
 end sessionIsSelected
 
-on commitAndPressMessage(textArea, inputScriptPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
+on commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
 		set focused of textArea to true
@@ -271,7 +271,7 @@ on commitAndPressMessage(textArea, inputScriptPath, conductorPid, workspaceConta
 	delay 0.05
 	set routeEnvironment to "POCKET_WORKSPACE_CONTAINER_INDEX=" & (workspaceContainerIndex as text) & " POCKET_WORKSPACE_LINK_INDEX=" & (workspaceLinkIndex as text) & " POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT=" & (sidebarChildCount as text) & " POCKET_WORKSPACE_CONTAINER_CHILD_COUNT=" & (containerChildCount as text)
 	try
-		set helperResult to do shell script "/usr/bin/env " & routeEnvironment & " POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+		set helperResult to do shell script "/usr/bin/env " & routeEnvironment & " POCKET_PRESS_MARKER_PATH=" & quoted form of pressMarkerPath & " POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error errorText
 		if errorText contains "draft_conflict" then return "draft_conflict"
 		if errorText contains "session_locked" then return "session_locked"
@@ -299,6 +299,7 @@ end waitForInputIdle
 
 set operationMode to system attribute "POCKET_OPERATION"
 set inputScriptPath to system attribute "POCKET_INPUT_SCRIPT"
+set pressMarkerPath to system attribute "POCKET_PRESS_MARKER_PATH"
 
 tell application "System Events"
 	if UI elements enabled is false then return "{\"ok\":false,\"code\":\"accessibility_disabled\"}"
@@ -434,7 +435,7 @@ end tell
 if my workspaceLinkIsSelected(workspaceLink, workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
-set commitResult to my commitAndPressMessage(textArea, inputScriptPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
+set commitResult to my commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
 if commitResult is "draft_conflict" then
 	set latestTextArea to getTextArea()
 	if latestTextArea is missing value then return "{\"ok\":false,\"code\":\"composer_unavailable\"}"

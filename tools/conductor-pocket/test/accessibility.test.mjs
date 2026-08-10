@@ -171,6 +171,12 @@ test('only structured pre-send automation failures are marked safe to retry', ()
     ok: false,
     code: 'automation_invalid_response',
   });
+  assert.deepEqual(
+    parseResult(
+      '{"ok":false,"code":"automation_failed","pressedAt":1785093000000,"composerOwned":true}',
+    ),
+    { ok: false, code: 'automation_invalid_response' },
+  );
 });
 
 test('draft ownership and replacement checks are case-sensitive', async () => {
@@ -243,6 +249,127 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
     mapAutomationError({ message: 'Unexpected automation failure' }),
     { ok: false, code: 'automation_failed' },
   );
+
+  const attemptStartedAt = 1_785_093_000_000;
+  const pressedAt = attemptStartedAt + 250;
+  const markerContext = {
+    markerContent: `${attemptStartedAt}\n${pressedAt}\n`,
+    attemptStartedAt,
+    observedAt: pressedAt + 10,
+  };
+  assert.deepEqual(
+    mapAutomationError(
+      { killed: true, signal: 'SIGTERM' },
+      markerContext,
+    ),
+    {
+      ok: false,
+      code: 'automation_timeout',
+      pressedAt,
+      composerOwned: true,
+    },
+  );
+  assert.deepEqual(
+    mapAutomationError(
+      { message: 'Unexpected automation failure' },
+      markerContext,
+    ),
+    {
+      ok: false,
+      code: 'automation_failed',
+      pressedAt,
+      composerOwned: true,
+    },
+  );
+  assert.deepEqual(
+    mapAutomationError(
+      { stderr: 'Not authorized to send Apple events. (-1743)' },
+      markerContext,
+    ),
+    {
+      ok: false,
+      code: 'automation_failed',
+      pressedAt,
+      composerOwned: true,
+    },
+  );
+  assert.deepEqual(
+    mapAutomationError(
+      { killed: true, signal: 'SIGTERM' },
+      {
+        ...markerContext,
+        markerContent: `${attemptStartedAt - 1}\n${pressedAt}\n`,
+      },
+    ),
+    { ok: false, code: 'automation_timeout' },
+  );
+  assert.deepEqual(
+    mapAutomationError(
+      { message: 'Unexpected automation failure' },
+      {
+        ...markerContext,
+        markerContent: `${attemptStartedAt}\n${markerContext.observedAt + 1}\n`,
+      },
+    ),
+    { ok: false, code: 'automation_failed' },
+  );
+});
+
+test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after each transport attempt', async () => {
+  const [transport, appleScript, inputHelper] = await Promise.all([
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    transport,
+    /mkdtemp\(\s*join\(tmpdir\(\), PRESS_MARKER_PREFIX\)/,
+  );
+  assert.match(transport, /chmod\(pressMarkerDirectory, 0o700\)/);
+  assert.match(transport, /pressMarkerPath = join\(pressMarkerDirectory, 'pressed-at'\)/);
+  assert.match(transport, /POCKET_PRESS_MARKER_PATH: pressMarkerPath/);
+  assert.match(
+    transport,
+    /const result = parseResult\(stdout\);[\s\S]*attributeStructuredFailure\([\s\S]*await pressMarkerContext\(pressMarkerPath, attemptStartedAt\)/,
+  );
+  assert.match(
+    transport,
+    /markerAttemptStartedAt !== attemptStartedAt[\s\S]*pressedAt < attemptStartedAt[\s\S]*pressedAt > observedAt/,
+  );
+  assert.match(
+    transport,
+    /open\(\s*markerPath,[\s\S]*O_RDONLY \| fsConstants\.O_NOFOLLOW/,
+  );
+  assert.match(
+    transport,
+    /finally \{[\s\S]*rm\(pressMarkerDirectory,[\s\S]*recursive: true,[\s\S]*force: true/,
+  );
+  const markerSetup = transport.slice(
+    transport.indexOf("if (operation === 'send')"),
+    transport.indexOf('const attemptStartedAt = Date.now()'),
+  );
+  assert.match(markerSetup, /catch \{[\s\S]*safeToRetry\('input_helper_unavailable'\)/);
+  assert.match(
+    appleScript,
+    /POCKET_PRESS_MARKER_PATH=" & quoted form of pressMarkerPath & " POCKET_OPERATION=type-and-send/,
+  );
+  assert.match(
+    inputHelper,
+    /const markerText = `\$\{attemptStartedAt\}\\n\$\{pressedAt\}\\n`/,
+  );
+  assert.match(
+    inputHelper,
+    /sendButton\.actions\.byName\('AXPress'\)\.perform\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);/,
+  );
+  const markerWriter = inputHelper.slice(
+    inputHelper.indexOf('function recordPressProvenance'),
+    inputHelper.indexOf('function decodeBase64Environment'),
+  );
+  assert.doesNotMatch(markerWriter, /message|draft|base64/i);
 });
 
 test('message submission waits for and presses Conductor’s unique enabled Send control', async () => {
