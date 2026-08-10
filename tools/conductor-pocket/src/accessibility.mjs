@@ -117,9 +117,50 @@ export function mapAutomationError(error) {
 
 export class AccessibilityTransport {
   #queue = Promise.resolve();
+  #busy = 0;
+  #currentChild = null;
 
   doctor() {
     return this.#run({ operation: 'doctor' });
+  }
+
+  // True while an osascript run is in flight. Shutdown uses this pair to
+  // avoid the worst outcome of a dying relay: the parent exiting while its
+  // osascript child keeps typing into Conductor with no relay left to record
+  // the result.
+  get busy() {
+    return this.#busy > 0;
+  }
+
+  // Wait for the in-flight operation (the queue is serialized, so there is at
+  // most one) to settle, up to budgetMs. Resolves true when the transport is
+  // idle, false when the budget expired first.
+  drain(budgetMs) {
+    if (this.#busy === 0) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(this.#busy === 0), budgetMs);
+      timer.unref?.();
+      const settle = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.#queue.then(settle, settle);
+    });
+  }
+
+  // Last resort for a forced exit: without this, the orphaned child survives
+  // the parent and finishes the send with nobody left to observe it.
+  killCurrentAutomation() {
+    const child = this.#currentChild;
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      return false;
+    }
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   send({
@@ -217,8 +258,9 @@ export class AccessibilityTransport {
     timeoutMs = 45_000,
   }) {
     const attemptStartedAt = Date.now();
+    this.#busy += 1;
     try {
-      const { stdout } = await execFileAsync('/usr/bin/osascript', [scriptPath], {
+      const pending = execFileAsync('/usr/bin/osascript', [scriptPath], {
         encoding: 'utf8',
         timeout: timeoutMs,
         maxBuffer: 64 * 1024,
@@ -249,9 +291,14 @@ export class AccessibilityTransport {
           POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
+      this.#currentChild = pending.child;
+      const { stdout } = await pending;
       return parseResult(stdout);
     } catch (error) {
       return mapAutomationError(error);
+    } finally {
+      this.#busy -= 1;
+      this.#currentChild = null;
     }
   }
 }
