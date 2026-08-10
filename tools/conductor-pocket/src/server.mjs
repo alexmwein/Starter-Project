@@ -39,6 +39,13 @@ const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
 const SEND_AUTOMATION_RETRY_BUDGET_MS = 45_000;
+const DELIVERY_PHASES = new Set(['queued', 'automating', 'confirming']);
+const TRANSIENT_PRE_COMPOSER_CODES = new Set([
+  'workspace_list_unavailable',
+  'workspace_not_visible',
+  'session_not_visible',
+  'composer_unavailable',
+]);
 const PHYSICAL_INPUT_COUNTER_COUNT = 16;
 const brotliCompressAsync = promisify(brotliCompress);
 const staticAssetCache = new Map();
@@ -434,16 +441,26 @@ class IdempotencyStore {
       }
       return existing.promise;
     }
-    const promise = Promise.resolve().then(task);
     const entry = {
       sessionId,
       fingerprint,
-      promise,
+      promise: null,
       state: 'pending',
+      phase: 'queued',
       result: null,
       reconciliationPromise: null,
       expiresAt,
     };
+    const setPhase = (phase) => {
+      if (
+        entry.state === 'pending' &&
+        DELIVERY_PHASES.has(phase)
+      ) {
+        entry.phase = phase;
+      }
+    };
+    const promise = Promise.resolve().then(() => task(setPhase));
+    entry.promise = promise;
     this.#entries.set(key, entry);
     void promise.then(
       (result) => {
@@ -467,7 +484,9 @@ class IdempotencyStore {
     if (!entry || entry.sessionId !== sessionId) {
       return { state: 'unknown' };
     }
-    if (entry.state === 'pending') return { state: 'pending' };
+    if (entry.state === 'pending') {
+      return { state: 'pending', phase: entry.phase || 'queued' };
+    }
     if (entry.state !== 'resolved' || !entry.result) {
       return { state: 'unknown' };
     }
@@ -517,7 +536,9 @@ class IdempotencyStore {
           });
       }
       const reconciliationState = await entry.reconciliationPromise;
-      if (reconciliationState === 'pending') return { state: 'pending' };
+      if (reconciliationState === 'pending') {
+        return { state: 'pending', phase: 'confirming' };
+      }
     }
     if (entry.result.ok) {
       return {
@@ -1197,8 +1218,14 @@ export function createPocketServer({
           key,
           route.id,
           fingerprint,
-          () =>
+          (setDeliveryPhase) =>
             serializeSend(async () => {
+              setDeliveryPhase('automating');
+              recordAudit({
+                traceId,
+                phase: 'automation-started',
+                queueWaitMs: Date.now() - sendStartedAt,
+              });
               security.assertOrigin(request);
               const currentAuth = security.session(request, {
                 requireUnlocked: true,
@@ -1262,6 +1289,12 @@ export function createPocketServer({
                 const automationDeadline =
                   Date.now() + SEND_AUTOMATION_RETRY_BUDGET_MS;
                 let attributionBaseline = beforeRowId;
+                let transportAttempt = 1;
+                const definitelyUnsentResult = (code) => ({
+                  ok: false,
+                  code,
+                  safeToRetry: true,
+                });
                 const recordTransport = (sendResult, attempt) => {
                   recordAudit({
                     traceId,
@@ -1285,7 +1318,85 @@ export function createPocketServer({
                   replaceDraft,
                   expectedMacDraft,
                 });
-                recordTransport(sendResult, 1);
+                recordTransport(sendResult, transportAttempt);
+                if (
+                  !sendResult.ok &&
+                  TRANSIENT_PRE_COMPOSER_CODES.has(sendResult.code)
+                ) {
+                  certifiedPreSend = true;
+                  const remainingBeforeRetry =
+                    automationDeadline - Date.now();
+                  if (remainingBeforeRetry >= 1_000) {
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    security.assertOrigin(request);
+                    const retryAuth = security.session(request, {
+                      requireUnlocked: true,
+                      requireCsrf: true,
+                      touch: false,
+                    });
+                    if (retryAuth.device.id !== auth.device.id) {
+                      throw new HttpError(401, 'device_revoked');
+                    }
+                    const retryRoute = database.getSessionRoute(route.id);
+                    if (
+                      !sameSessionRoute(route, retryRoute, {
+                        attachments: selectedAttachments.length > 0,
+                      })
+                    ) {
+                      sendResult = definitelyUnsentResult(
+                        'session_route_changed',
+                      );
+                    } else {
+                      const retryBeforeRowId =
+                        database.getSessionMessageCursor(route.id);
+                      let retryBoundary = 'unreadable';
+                      try {
+                        const cursorValid =
+                          Number.isSafeInteger(retryBeforeRowId) &&
+                          retryBeforeRowId >= beforeRowId;
+                        if (cursorValid) {
+                          retryBoundary = database.listUserMessagesAfter(
+                            route.id,
+                            beforeRowId,
+                          ).length === 0
+                            ? 'clear'
+                            : 'blocked';
+                        }
+                      } catch {
+                        // A database read failure cannot prove a safe retry boundary.
+                      }
+                      const remainingRetryMs =
+                        automationDeadline - Date.now();
+                      if (retryBoundary === 'blocked') {
+                        sendResult = definitelyUnsentResult(
+                          'user_input_active',
+                        );
+                      } else if (retryBoundary !== 'clear') {
+                        // Keep the original structured pre-composer failure.
+                      } else if (remainingRetryMs < 1_000) {
+                        // Keep the original structured pre-composer failure.
+                      } else {
+                        attributionBaseline = retryBeforeRowId;
+                        transportAttempt += 1;
+                        // The structured failure certifies only the completed
+                        // attempt. Once another transport starts, its outcome
+                        // must be treated as ambiguous until independently
+                        // certified or confirmed from the database.
+                        certifiedPreSend = false;
+                        sendResult = await transport.send({
+                          workspaceName: retryRoute.workspaceName,
+                          sessionTitle: retryRoute.title,
+                          sessionOrdinal: retryRoute.titleOrdinal,
+                          message: deliveryMessage,
+                          replaceDraft,
+                          expectedMacDraft,
+                          timeoutMs: Math.min(45_000, remainingRetryMs),
+                        });
+                        recordTransport(sendResult, transportAttempt);
+                      }
+                    }
+                  }
+                }
                 if (
                   !sendResult.ok &&
                   sendResult.code === 'composer_changed_pre_send'
@@ -1301,11 +1412,6 @@ export function createPocketServer({
                     };
                   } else {
                     certifiedPreSend = true;
-                    const definitelyUnsentResult = (code) => ({
-                      ok: false,
-                      code,
-                      safeToRetry: true,
-                    });
                     const retryTimeoutMs =
                       automationDeadline - Date.now();
                     if (retryTimeoutMs < 1_000) {
@@ -1410,6 +1516,10 @@ export function createPocketServer({
                               } else {
                                 attributionBaseline =
                                   retryBeforeRowId;
+                                // The retry certificate stops at the transport
+                                // boundary. Do not let a later exception mark a
+                                // started retry as definitely unsent.
+                                certifiedPreSend = false;
                                 sendResult = await transport.send({
                                   workspaceName:
                                     finalRetryRoute.workspaceName,
@@ -1428,7 +1538,11 @@ export function createPocketServer({
                                     remainingRetryMs,
                                   ),
                                 });
-                                recordTransport(sendResult, 2);
+                                transportAttempt += 1;
+                                recordTransport(
+                                  sendResult,
+                                  transportAttempt,
+                                );
                               }
                             }
                           }
@@ -1460,6 +1574,7 @@ export function createPocketServer({
                   }
                   return sendResult;
                 }
+                setDeliveryPhase('confirming');
                 const confirmed = await waitForExactUserMessage({
                   database,
                   sessionId: route.id,

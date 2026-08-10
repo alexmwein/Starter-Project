@@ -725,6 +725,341 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
   assert.equal(rejectedSends, 1);
 });
 
+test('a transient route lookup retries once inside the original send boundary', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const rows = [];
+  const calls = [];
+  const audit = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      audit.push(event);
+    },
+    transport: {
+      async send(options) {
+        calls.push(options);
+        if (calls.length === 1) {
+          return {
+            ok: false,
+            code: 'workspace_list_unavailable',
+            safeToRetry: true,
+          };
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'route-retry-row',
+          rowId: 11,
+          text: 'Route retry',
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'transient_route_retry_key',
+    message: 'Route retry',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].timeoutMs >= 1_000);
+  assert.ok(calls[1].timeoutMs <= 45_000);
+  assert.deepEqual(
+    audit
+      .filter((event) => event.phase === 'transport')
+      .map((event) => [event.attempt, event.code]),
+    [
+      [1, 'workspace_list_unavailable'],
+      [2, 'sent'],
+    ],
+  );
+  assert.equal(
+    audit.some(
+      (event) =>
+        event.phase === 'automation-started' &&
+        Number.isSafeInteger(event.queueWaitMs),
+    ),
+    true,
+  );
+});
+
+test('a started route retry is never reported as definitely unsent after an exception', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        if (sends === 1) {
+          return {
+            ok: false,
+            code: 'workspace_list_unavailable',
+            safeToRetry: true,
+          };
+        }
+        throw new Error('transport outcome unavailable');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'route_retry_exception_key',
+  });
+
+  assert.equal(response.status, 500);
+  assert.equal(sends, 2);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'internal_error',
+  });
+});
+
+test('a new user row blocks the transient route retry', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let firstAttemptFinished = false;
+  let calls = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 20;
+      },
+      listUserMessagesAfter() {
+        return firstAttemptFinished
+          ? [{ id: 'manual-row', rowId: 21, text: 'Manual send' }]
+          : [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        calls += 1;
+        firstAttemptFinished = true;
+        return {
+          ok: false,
+          code: 'workspace_list_unavailable',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'route_retry_blocked_key',
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(calls, 1);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
+test('delivery status exposes queued and active Mac automation phases', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseFirst;
+  let firstStarted;
+  let secondAccepted;
+  let accepted = 0;
+  const firstStartedPromise = new Promise((resolve) => {
+    firstStarted = resolve;
+  });
+  const secondAcceptedPromise = new Promise((resolve) => {
+    secondAccepted = resolve;
+  });
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let calls = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      if (event.phase !== 'accepted') return;
+      accepted += 1;
+      if (accepted === 2) secondAccepted();
+    },
+    transport: {
+      async send() {
+        calls += 1;
+        if (calls === 1) {
+          firstStarted();
+          await firstGate;
+          return { ok: false, code: 'automation_failed' };
+        }
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = postMessage(port, {
+    idempotencyKey: 'phase_first_key_1',
+    message: 'First phase message',
+  });
+  await firstStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'phase_second_key_1',
+    message: 'Second phase message',
+  });
+  await secondAcceptedPromise;
+
+  const activeStatus = await postDeliveryStatus(port, {
+    idempotencyKey: 'phase_first_key_1',
+  });
+  const queuedStatus = await postDeliveryStatus(port, {
+    idempotencyKey: 'phase_second_key_1',
+  });
+  const activeDelivery = JSON.parse(activeStatus.body).delivery;
+  const queuedDelivery = JSON.parse(queuedStatus.body).delivery;
+
+  releaseFirst();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+  assert.deepEqual(activeDelivery, {
+    state: 'pending',
+    phase: 'automating',
+  });
+  assert.deepEqual(queuedDelivery, {
+    state: 'pending',
+    phase: 'queued',
+  });
+  assert.equal(firstResponse.status, 502);
+  assert.equal(secondResponse.status, 503);
+  assert.equal(calls, 2);
+});
+
 test('a certified composer rerender retries once inside the same send', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -1395,6 +1730,7 @@ test('delivery status remains pending in-window and recovers the exact row', asy
   assert.equal(first.status, 502);
   assert.deepEqual(JSON.parse(pending.body).delivery, {
     state: 'pending',
+    phase: 'confirming',
   });
   assert.equal(pending.body.includes(message), false);
   assert.equal(pending.body.includes('contentHash'), false);
@@ -1815,7 +2151,7 @@ test('an interruption before Pocket owns the full composer fails fast and is ret
   assert.ok(Date.now() - startedAt < 1_000);
   assert.deepEqual(
     audits.map((event) => event.phase),
-    ['accepted', 'transport', 'complete'],
+    ['accepted', 'automation-started', 'transport', 'complete'],
   );
   assert.equal(JSON.stringify(audits).includes('Hello from Pocket'), false);
   assert.deepEqual(
@@ -1896,7 +2232,7 @@ test('an interrupted pre-send attempt is retryable only after Conductor stays un
     definitelyUnsent: true,
   });
   assert.equal(retry.status, 503);
-  assert.equal(sends, 2);
+  assert.equal(sends, 3);
 });
 
 test('a cleared composer without an exact database row is never reported delivered', async (context) => {
@@ -2796,7 +3132,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   const optimisticPush = source.indexOf('state.optimistic.push(optimistic)');
   const requiredPersistence = source.indexOf(
-    'await persistPendingDeliveries({ required: true })',
+    'await persistPendingDeliveries({',
     optimisticPush,
   );
   const draftClear = source.indexOf("field.value = ''", requiredPersistence);
@@ -2829,7 +3165,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /const deliveryIdentityChanged[\s\S]*if \(!deliveryIdentityPersisted \|\| deliveryIdentityChanged\) \{[\s\S]*await persistPendingDeliveries\(\{ required: true \}\)[\s\S]*fetch\(/,
+    /const deliveryIdentityChanged[\s\S]*if \(!deliveryIdentityPersisted \|\| deliveryIdentityChanged\) \{[\s\S]*await persistPendingDeliveries\(\{[\s\S]*required: true,[\s\S]*upserts: \[optimistic\][\s\S]*fetch\(/,
   );
   const retryStart = source.indexOf('function retryMessage');
   const conflictStart = source.indexOf('function openDraftConflict', retryStart);
@@ -2871,16 +3207,9 @@ test('pending sends persist before draft clearing and recover for the full send 
     startApplicationStart,
     restoreRouteStart,
   );
-  const persistDiscard = persistBlock.indexOf(
-    'discardTerminalUnconfirmed()',
+  const persistMutation = persistBlock.indexOf(
+    'mutatePendingDeliveriesRequired',
   );
-  const persistSnapshot = persistBlock.indexOf(
-    'pendingDeliverySnapshot()',
-  );
-  const restoreDiscard = restoreBlock.indexOf(
-    'discardTerminalUnconfirmed()',
-  );
-  const restoreWrite = restoreBlock.indexOf('cacheSet(');
   const startupRestore = startApplicationBlock.indexOf(
     'restorePendingDeliveries(),',
   );
@@ -2893,10 +3222,20 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.ok(clearCacheStart > restoreStart);
   assert.ok(startApplicationStart >= 0);
   assert.ok(restoreRouteStart > startApplicationStart);
-  assert.ok(persistDiscard >= 0);
-  assert.ok(persistSnapshot > persistDiscard);
-  assert.ok(restoreDiscard >= 0);
-  assert.ok(restoreWrite > restoreDiscard);
+  assert.ok(persistMutation >= 0);
+  assert.doesNotMatch(persistBlock, /discardTerminalUnconfirmed/);
+  assert.doesNotMatch(restoreBlock, /discardTerminalUnconfirmed/);
+  assert.match(
+    source,
+    /function mutatePendingDeliveriesRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*store\.get\(PENDING_DELIVERIES_KEY\)[\s\S]*store\.put\(snapshot, PENDING_DELIVERIES_KEY\)/,
+  );
+  assert.match(source, /async function markDefinitelyUnsent/);
+  assert.match(
+    source,
+    /definitelyUnsent \? 'failed' : 'unknown'/,
+  );
+  assert.match(source, /text: 'Check'[\s\S]*checkDelivery\(message\)/);
+  assert.match(source, /text: 'Edit'[\s\S]*editFailedMessage\(message\)/);
   assert.ok(startupRestore >= 0);
   assert.ok(startupRecovery > startupRestore);
   assert.match(

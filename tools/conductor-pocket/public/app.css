@@ -1097,6 +1097,45 @@ button:active {
   color: var(--down);
 }
 
+.message-meta.unknown {
+  color: var(--wait);
+}
+
+.message-meta.terminal {
+  flex-wrap: wrap;
+  gap: 0 4px;
+  max-width: min(100%, 420px);
+  margin-left: auto;
+  text-align: right;
+}
+
+.delivery-summary,
+.delivery-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.delivery-summary {
+  gap: 4px;
+  max-width: 100%;
+}
+
+.delivery-summary > span {
+  overflow-wrap: anywhere;
+}
+
+.delivery-actions {
+  gap: 0;
+  margin-left: 2px;
+}
+
+.delivery-actions .message-retry + .message-retry::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
 .message-retry {
   min-height: 44px;
   margin: -12px -8px -12px 0;
@@ -1105,6 +1144,16 @@ button:active {
   color: var(--copper);
   font-size: 0.8125rem;
   font-weight: 600;
+}
+
+@media (max-width: 420px) {
+  .message.user:has(.message-meta.terminal) {
+    max-width: 92%;
+  }
+
+  .message-meta.terminal {
+    row-gap: 2px;
+  }
 }
 
 .message.activity {

@@ -142,12 +142,17 @@ test('image-only messages persist tokens and send ordered attachment ids', async
   assert.match(delivery, /\(attachment\) => attachment\.id/);
 });
 
-test('definite preflight failures restore the caption and photo tray instead of vanishing', async () => {
+test('definite preflight failures stay visible and can be moved back to the editor', async () => {
   const source = await applicationSource();
-  const restore = functionSource(
+  const markUnsent = functionSource(
     source,
-    'async function restoreDefinitelyUnsentDraft',
+    'async function markDefinitelyUnsent',
     'async function deliverOptimistic',
+  );
+  const edit = functionSource(
+    source,
+    'async function editFailedMessage',
+    'async function persistPendingDeliveries',
   );
   const delivery = functionSource(
     source,
@@ -155,15 +160,19 @@ test('definite preflight failures restore the caption and photo tray instead of 
     'function applyDeliveryReceipt',
   );
 
-  assert.match(restore, /state\.attachmentsBySession\.set/);
-  assert.match(restore, /saveDraft\(sessionId, combinedDraft\)/);
+  assert.match(markUnsent, /optimistic\.delivery = 'failed'/);
+  assert.match(markUnsent, /optimistic\.definitelyUnsent = true/);
   assert.match(
-    restore,
-    /state\.optimistic = state\.optimistic\.filter/,
+    markUnsent,
+    /await persistPendingDeliveries\(\{ upserts: \[optimistic\] \}\)/,
   );
-  assert.doesNotMatch(restore, /\.slice\(0, MAX_ATTACHMENTS_PER_MESSAGE\)/);
+  assert.doesNotMatch(markUnsent, /state\.optimistic = state\.optimistic\.filter/);
+  assert.match(edit, /state\.attachmentsBySession\.set/);
+  assert.match(edit, /saveDraft\(sessionId, combinedDraft\)/);
+  assert.match(edit, /state\.optimistic = state\.optimistic\.filter/);
+  assert.doesNotMatch(edit, /deleteUploadedAttachment/);
   assert.match(
     delivery,
-    /error\.definitelyUnsent[\s\S]*restoreDefinitelyUnsentDraft/,
+    /error\.definitelyUnsent[\s\S]*markDefinitelyUnsent/,
   );
 });
