@@ -7464,6 +7464,16 @@ kbd {
 }
 
 @media (max-width: 900px) {
+  .stage:has(.legal-protocol-slide.is-active) .chrome-logo,
+  .stage:has(.fitia-evidence-slide.is-active) .chrome-logo {
+    color: var(--white);
+  }
+
+  .stage:has(.legal-protocol-slide.is-active) .slide-count strong,
+  .stage:has(.fitia-evidence-slide.is-active) .slide-count strong {
+    color: rgba(17, 16, 14, 0.78);
+  }
+
   body[data-deck="brand-campaigns"] .ftc-risk-slide,
   body[data-deck="brand-campaigns"] .legal-protocol-slide,
   body[data-deck="brand-campaigns"] .fitia-evidence-slide,
