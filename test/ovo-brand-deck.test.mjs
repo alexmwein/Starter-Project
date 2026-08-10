@@ -34,6 +34,7 @@ test("brand deck keeps the 12-slide sales narrative and truthful proof scope", a
   assert.match(html, /24 measured creator accounts/);
   assert.match(html, /These six posts alone:<\/strong> 2\.42M plays · 24\.9K likes/);
   assert.match(html, /<strong>51\/65<\/strong> over 100K/);
+  assert.match(html, /50 identity-deduplicated contracted creators across 59 executed agreements/);
   assert.equal((html.match(/class="fitia-post-card(?: |")/g) || []).length, 6);
   assert.equal((html.match(/class="cal-post-card(?: |")/g) || []).length, 5);
   assert.match(html, /13\.4M recorded views\/plays/);

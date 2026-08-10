@@ -6,10 +6,11 @@
     {
       "screen": "creator-partnership",
       "html_file": "creator.html",
-      "slides": 13,
+      "slides": 10,
       "personalized": true,
       "profile_source": "server-side ScrapeCreators Instagram profile + recent-post sample",
       "profile_level_fallback": true,
+      "sales_spine": "personalized read, Juan-Fitia hero case, Daria-Colby proof, commercial lanes, value engine, 30-day plan, creator control, canonical economics, mutual close",
       "signed_link_lifetime_days": 90
     },
     {
