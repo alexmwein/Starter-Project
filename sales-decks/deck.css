@@ -8815,3 +8815,176 @@ body[data-deck="creator-partnership"] .creator-economics-slide {
     width: 100%;
   }
 }
+
+@media (min-width: 1025px) {
+  .creator-read-layout {
+    min-height: 360px;
+  }
+
+  .creator-read-layout[data-post-count="0"] .creator-read-card {
+    min-height: 360px;
+  }
+
+  .creator-read-post img {
+    min-height: 210px;
+  }
+
+  .creator-read-post > div {
+    min-height: 120px;
+  }
+
+  .creator-case-story {
+    gap: 11px;
+  }
+
+  .creator-case-story .display {
+    font-size: clamp(56px, 5.4vw, 72px);
+  }
+
+  .creator-case-story .lede {
+    font-size: clamp(12px, 1.05vw, 16px);
+  }
+
+  .case-agreement-timeline {
+    padding: 11px 0;
+  }
+
+  .creator-case-metrics div {
+    min-height: 78px;
+    padding: 13px;
+  }
+
+  .creator-case-caveat {
+    font-size: 7px;
+    line-height: 1.4;
+  }
+
+  .creator-proof-ledger-head .display {
+    font-size: clamp(52px, 4.35vw, 62px);
+  }
+
+  .creator-proof-ledger-head {
+    gap: 48px;
+  }
+
+  .creator-proof-ledger {
+    min-height: 340px;
+    margin-top: 14px;
+  }
+
+  .creator-proof-record {
+    grid-template-rows: 140px 1fr;
+  }
+
+  .creator-proof-record-copy {
+    padding: 12px 14px;
+    gap: 6px;
+  }
+
+  .creator-proof-record-copy h3 {
+    font-size: clamp(18px, 1.4vw, 22px);
+  }
+
+  .creator-proof-record-copy dl div {
+    min-height: 52px;
+    padding: 7px 8px;
+  }
+
+  .creator-proof-record-copy dt {
+    font-size: clamp(23px, 1.9vw, 29px);
+  }
+
+  .creator-proof-record-copy dd,
+  .creator-proof-record-copy p,
+  .creator-client-rail p {
+    font-size: 7px;
+    line-height: 1.35;
+  }
+
+  .creator-client-rail {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .creator-client-rail img {
+    min-height: 68px;
+    padding: 12px;
+  }
+
+  .creator-proof-ledger-footnote {
+    margin-top: 8px;
+    font-size: 7px;
+  }
+
+  .creator-value-flow {
+    min-height: 230px;
+    margin-top: 20px;
+  }
+
+  .creator-value-flow article {
+    padding: 16px 14px;
+  }
+
+  .creator-value-flow p {
+    min-height: 50px;
+  }
+
+  .creator-value-promise {
+    min-height: 54px;
+    padding: 10px 18px;
+  }
+
+  .creator-control-grid {
+    min-height: 290px;
+    margin-top: 18px;
+  }
+
+  .creator-control-grid article {
+    padding: 24px 30px;
+  }
+
+  .creator-control-grid article > span {
+    font-size: clamp(38px, 3.6vw, 52px);
+  }
+
+  .creator-control-grid p {
+    min-height: 56px;
+    margin-top: 12px;
+  }
+
+  .creator-control-service {
+    min-height: 54px;
+    padding: 10px 18px;
+  }
+
+  .creator-terms-ledger article {
+    min-height: 120px;
+    padding: 13px 16px;
+  }
+
+  .creator-economics-layout {
+    min-height: 360px;
+  }
+
+  .creator-mutual-close {
+    padding-top: 76px;
+  }
+
+  .creator-close-lockup {
+    gap: 14px;
+  }
+
+  .creator-mutual-close .proposal-close-title {
+    font-size: clamp(46px, 4.55vw, 60px);
+    line-height: 0.9;
+  }
+
+  .creator-close-steps li {
+    min-height: 36px;
+    padding: 6px 0;
+  }
+
+  .creator-mutual-close .proposal-close-line {
+    padding: 10px 0;
+  }
+}
