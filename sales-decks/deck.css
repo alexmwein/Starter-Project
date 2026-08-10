@@ -7767,6 +7767,38 @@ kbd {
   }
 }
 
+@media (max-width: 1024px) and (orientation: portrait) {
+  .chrome-bottom {
+    right: 16px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: 16px;
+    min-height: 32px;
+    padding: 0 10px;
+    gap: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(8, 8, 8, 0.86);
+    backdrop-filter: blur(12px);
+  }
+
+  .slide-count,
+  .stage:has(.legal-protocol-slide.is-active) .slide-count,
+  .stage:has(.fitia-evidence-slide.is-active) .slide-count {
+    color: rgba(255, 255, 255, 0.58);
+  }
+
+  .slide-count strong,
+  .stage:has(.legal-protocol-slide.is-active) .slide-count strong,
+  .stage:has(.fitia-evidence-slide.is-active) .slide-count strong {
+    color: var(--white);
+  }
+
+  .progress-track,
+  .stage:has(.legal-protocol-slide.is-active) .progress-track,
+  .stage:has(.fitia-evidence-slide.is-active) .progress-track {
+    background: rgba(255, 255, 255, 0.16);
+  }
+}
+
 @media print {
   html,
   body {
