@@ -5896,13 +5896,13 @@ kbd {
 
 .proof-panel {
   display: grid;
-  min-height: clamp(300px, 32vw, 486px);
+  min-height: 0;
   height: 100%;
   overflow: hidden;
   border: 1px solid var(--white-12);
   background: rgba(255, 255, 255, 0.025);
   grid-template-columns: minmax(0, 0.58fr) minmax(360px, 0.42fr);
-  grid-template-rows: 1fr auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   animation: proof-panel-in 200ms var(--ease-out) both;
 }
 
@@ -5917,7 +5917,8 @@ kbd {
 .proof-panel-detail {
   display: grid;
   min-width: 0;
-  padding: clamp(26px, 3vw, 48px);
+  min-height: 0;
+  padding: clamp(20px, 2vw, 32px);
   align-content: center;
 }
 
@@ -5939,10 +5940,10 @@ kbd {
 }
 
 .proof-panel-primary > strong {
-  margin-top: clamp(20px, 2.5vw, 40px);
+  margin-top: clamp(16px, 1.8vw, 28px);
   color: var(--red);
   font-family: "Boska", Georgia, serif;
-  font-size: clamp(82px, 9.5vw, 152px);
+  font-size: clamp(76px, 8vw, 128px);
   font-style: italic;
   font-weight: 700;
   line-height: 0.78;
@@ -5951,7 +5952,7 @@ kbd {
 
 .proof-panel-primary > p {
   max-width: 36ch;
-  margin: clamp(18px, 2vw, 30px) 0 0;
+  margin: clamp(12px, 1.3vw, 20px) 0 0;
   color: var(--white-60);
   font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
   font-size: clamp(12px, 1vw, 16px);
@@ -5976,7 +5977,7 @@ kbd {
 
 .proof-support-grid {
   display: grid;
-  margin-top: clamp(18px, 2vw, 30px);
+  margin-top: clamp(12px, 1.2vw, 18px);
   border-top: 1px solid var(--white-22);
   border-left: 1px solid var(--white-12);
   grid-template-columns: repeat(2, 1fr);
@@ -5984,8 +5985,8 @@ kbd {
 
 .proof-support-grid > div {
   display: grid;
-  min-height: clamp(72px, 7.2vw, 112px);
-  padding: clamp(12px, 1.2vw, 18px);
+  min-height: clamp(60px, 4.8vw, 76px);
+  padding: clamp(10px, 1vw, 16px);
   align-content: center;
   gap: 7px;
   border-right: 1px solid var(--white-12);
@@ -6007,7 +6008,7 @@ kbd {
 }
 
 .proof-outcome {
-  margin: clamp(16px, 1.7vw, 26px) 0 0;
+  margin: clamp(10px, 1vw, 16px) 0 0;
   color: var(--white-60);
   font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
   font-size: clamp(10px, 0.82vw, 13px);
@@ -6016,7 +6017,7 @@ kbd {
 
 .proof-source {
   grid-column: 1 / -1;
-  padding: clamp(12px, 1.2vw, 18px) clamp(26px, 3vw, 48px);
+  padding: clamp(9px, 0.9vw, 14px) clamp(20px, 2vw, 32px);
   border-top: 1px solid var(--white-12);
 }
 
