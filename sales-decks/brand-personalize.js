@@ -67,6 +67,8 @@
     document.body.dataset.personalizedBrand = name;
     document.querySelector(".portal-window")?.style.setProperty("--portal-accent", accent);
 
+    setText("[data-prospect-name]", unavailable ? "your brand" : name);
+    setText("[data-prospect-title]", unavailable ? "Your brand" : name);
     setText("[data-brand-name]", name);
     setText("[data-brand-comment-author]", name);
     setText("[data-brand-campaign]", campaign);
@@ -76,10 +78,12 @@
     setText("[data-brand-feedback]", String(brand.feedback || neutralBrand.feedback).slice(0, 150));
     setText("[data-brand-response]", String(brand.response || neutralBrand.response).slice(0, 150));
     setText("[data-brand-health]", String(brand.health || "4 of 6 approved").slice(0, 28));
-    setText("[data-brand-prepared-for]", unavailable ? "Private brand presentation · personalization unavailable" : `Prepared for ${name} · private presentation · 2026`);
-    setText("[data-chrome-deck]", `Private presentation · ${name} × OVO`);
-    setText("[data-brand-preview-label]", unavailable ? "Personalization unavailable · neutral illustrative workspace preview" : `Illustrative ${name} workspace preview · based on OVO’s live workflow`);
-    setText("[data-brand-close-copy]", `Next review: ${name} campaign direction, creator shortlist, and commercial plan. Then we lock terms and move into contracting.`);
+    setText("[data-brand-prepared-for]", unavailable ? "Brand presentation · personalization unavailable" : `Prepared for ${name} · brand presentation · 2026`);
+    setText("[data-chrome-deck]", unavailable ? "Brand presentation · personalization unavailable" : `Brand presentation · ${name} × OVO`);
+    setText("[data-brand-preview-label]", unavailable
+      ? "Personalization unavailable · neutral workflow illustration; interactive example uses Fitia public-source demo data"
+      : `Prospect-branded workflow illustration for ${name} · interactive example uses Fitia public-source demo data`);
+    setText("[data-brand-close-copy]", `Next review: ${name} campaign direction, targeted creator shortlist, legal guardrails, and commercial plan. Then we lock terms and move into contracting.`);
     applyLogo(brand);
   }
 
