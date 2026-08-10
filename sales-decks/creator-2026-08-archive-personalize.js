@@ -4,6 +4,8 @@
   const params = new URLSearchParams(window.location.search);
   const status = document.querySelector("[data-profile-status]");
   const alert = document.querySelector("[data-profile-alert]");
+  const readLayout = document.querySelector("[data-creator-read-layout]");
+  const readMetrics = document.querySelector("[data-signal-metrics]");
 
   const CAMPAIGN_LANES = {
     fitness: [
@@ -76,13 +78,6 @@
     return /^[a-z0-9._]{1,30}$/.test(value) ? value : "";
   }
 
-  function formatNumber(value) {
-    if (value === null || value === undefined || value === "") return "—";
-    const number = Number(value);
-    if (!Number.isFinite(number)) return "—";
-    return new Intl.NumberFormat("en-US").format(number);
-  }
-
   function formatCompact(value) {
     if (value === null || value === undefined || value === "") return "—";
     const number = Number(value);
@@ -116,25 +111,8 @@
     return `${safe}…`;
   }
 
-  function truncateMultiline(value, max = 180) {
-    const normalized = String(value || "")
-      .replace(/\r/g, "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .join("\n");
-    if (normalized.length <= max) return normalized;
-    return `${normalized.slice(0, max - 1).trimEnd()}…`;
-  }
-
-  function emailLocalPart(name, handle) {
-    const candidate = firstName(name, handle)
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "")
-      .slice(0, 24);
-    return candidate || String(handle || "creator").replace(/[^a-z0-9]/g, "").slice(0, 24) || "creator";
+  function hasMetric(value) {
+    return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
   }
 
   function setText(selector, value) {
@@ -239,34 +217,28 @@
     document.body.classList.toggle("has-profile-only", candidatePosts.length === 0);
     document.body.classList.toggle("has-no-content-images", posts.length === 0);
     document.body.dataset.profileHandle = handle;
+    if (readLayout) readLayout.dataset.postCount = String(posts.length);
     setText("[data-creator-name]", name);
     setText("[data-creator-first]", first);
     setText("[data-creator-handle]", `@${handle}`);
-    setText("[data-creator-handle-plain]", handle);
-    setText("[data-creator-email]", `${emailLocalPart(profile.full_name, handle)}@ovotalent.com`);
-    setText("[data-creator-bio]", truncateMultiline(profile.bio || "The profile tells us what the audience comes for. The proposal turns that attention into a focused outbound thesis.", 180));
     setText("[data-creator-category]", category);
     setText("[data-creator-followers]", formatCompact(profile.followers));
-    setText("[data-creator-followers-full]", formatNumber(profile.followers));
-    setText("[data-creator-following]", formatCompact(profile.following));
-    setText("[data-creator-posts]", formatCompact(profile.posts_count));
-    setText("[data-avg-likes]", formatCompact(profile.avg_likes));
-    setText("[data-avg-comments]", formatCompact(profile.avg_comments));
-    setText("[data-avg-views]", profile.avg_views === null ? "—" : formatCompact(profile.avg_views));
-    setText("[data-engagement-rate]", profile.engagement_rate === null ? "—" : `${profile.engagement_rate}%`);
-    setText("[data-signal-label]", candidatePosts.length ? "Recent content signal" : "Public profile signal");
-    setText("[data-sample-size]", candidatePosts.length ? `${profile.sample_size || candidatePosts.length} recent posts` : "profile-level pull");
+    setText("[data-avg-likes]", hasMetric(profile.avg_likes) ? formatCompact(profile.avg_likes) : "");
+    setText("[data-avg-comments]", hasMetric(profile.avg_comments) ? formatCompact(profile.avg_comments) : "");
+    setText("[data-engagement-rate]", hasMetric(profile.engagement_rate) ? `${profile.engagement_rate}%` : "");
+    const hasPostMetrics = posts.length > 0 && [profile.avg_likes, profile.avg_comments, profile.engagement_rate].some(hasMetric);
+    if (readMetrics) readMetrics.hidden = !hasPostMetrics;
     setText(
       ".sample-disclaimer",
-      candidatePosts.length && !posts.length
-        ? "Recent-post metrics available · source imagery unavailable · not private Instagram Insights"
-        : "Directional recent-post sample · not private Instagram Insights",
+      posts.length
+        ? "Directional public-post sample · not private Instagram Insights or a revenue forecast"
+        : "Public profile snapshot · no recent post imagery available · not private Instagram Insights",
     );
     setText("[data-why-invited]", whyInvited);
     setText("[data-positioning]", POSITIONING[primaryNiche] || POSITIONING.lifestyle);
     setText(
       "[data-profile-status-line]",
-      candidatePosts.length ? `Live Instagram profile · ${profile.sample_size || candidatePosts.length}-post sample` : "Live Instagram profile · profile-level data",
+      posts.length ? `Public Instagram snapshot · ${posts.length}-post sample` : "Public Instagram snapshot · profile-level data",
     );
     setText("[data-chrome-deck]", `Private OVO proposal · @${handle}`);
 
@@ -284,12 +256,15 @@
 
     document.querySelectorAll("[data-creator-photo]").forEach((image) => {
       const index = Number(image.dataset.creatorPhoto || 0);
-      const source = posts.length ? posts[index % posts.length]?.thumbnail : "";
+      const closeImage = image.closest(".personalized-close");
+      const source = closeImage
+        ? posts[Math.min(index, Math.max(posts.length - 1, 0))]?.thumbnail
+        : posts[index]?.thumbnail;
       if (source) setImage(image, source);
       else image.closest("[data-photo-frame]")?.setAttribute("hidden", "");
     });
 
-    document.querySelectorAll("[data-post-card]").forEach((card) => {
+    document.querySelectorAll(".creator-read-post[data-post-card]").forEach((card) => {
       const index = Number(card.dataset.postCard || 0);
       const post = posts[index];
       if (!post) {
@@ -301,8 +276,14 @@
       const likes = card.querySelector("[data-post-likes]");
       const comments = card.querySelector("[data-post-comments]");
       if (caption) caption.textContent = truncate(post.caption || "Recent Instagram content", 86);
-      if (likes) likes.textContent = `${formatCompact(post.likes)} likes`;
-      if (comments) comments.textContent = `${formatCompact(post.comments)} comments`;
+      if (likes) {
+        likes.hidden = !hasMetric(post.likes);
+        likes.textContent = hasMetric(post.likes) ? `${formatCompact(post.likes)} likes` : "";
+      }
+      if (comments) {
+        comments.hidden = !hasMetric(post.comments);
+        comments.textContent = hasMetric(post.comments) ? `${formatCompact(post.comments)} comments` : "";
+      }
     });
 
     document.querySelectorAll("[data-niche]").forEach((element) => {

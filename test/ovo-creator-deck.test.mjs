@@ -1,18 +1,78 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const DECK = new URL("../sales-decks/", import.meta.url);
 
-async function source(name) {
-  return readFile(new URL(name, DECK), "utf8");
+async function raw(name) {
+  return readFile(new URL(name, DECK));
 }
 
-test("creator deck ships the approved 10-slide proof-led sales spine", async () => {
-  const html = await source("creator.html");
-  const slideTitles = [...html.matchAll(/<section class="[^"]*\bslide\b[^"]*" data-title="([^"]+)"/g)].map((match) => match[1]);
+async function source(name) {
+  return raw(name).then((buffer) => buffer.toString("utf8"));
+}
 
-  assert.deepEqual(slideTitles, [
+async function digest(name) {
+  return createHash("sha256").update(await raw(name)).digest("hex");
+}
+
+function slideTitles(html) {
+  return [...html.matchAll(/<section class="[^"]*\bslide\b[^"]*" data-title="([^"]+)"/g)].map((match) => match[1]);
+}
+
+test("default creator deck is the exact pre-rebuild 13-slide presentation", async () => {
+  const html = await source("creator.html");
+
+  assert.deepEqual(slideTitles(html), [
+    "Your private OVO proposal",
+    "Your OVO profile preview",
+    "300+ signed creator partnerships",
+    "The signal is already there",
+    "Why OVO invited you",
+    "Two campaigns we sell first",
+    "The OVO outbound engine",
+    "OVO client proof",
+    "Your first 30 days",
+    "What hammering means",
+    "You keep the final yes",
+    "Simple economics",
+    "Put the machine behind it",
+  ]);
+  assert.equal(slideTitles(html).length, 13);
+  assert.match(html, /<span data-total-slides>13<\/span>/);
+  assert.match(html, /href="deck\.css"/);
+  assert.match(html, /src="personalize\.js" defer/);
+  assert.match(html, /300\+ signed creator partnerships/);
+  assert.match(html, /The OVO outbound engine/);
+  assert.match(html, /What hammering means/);
+  assert.doesNotMatch(html, /creator-read-layout|20 days between signed agreements/);
+});
+
+test("default creator presentation assets remain byte-identical to the approved old deck", async () => {
+  const expected = {
+    "creator.html": "b9844463787512158ecb58b97c7d1b3887ee1a7fa983a3a91a9ce06f54e074f8",
+    "deck.css": "b36f2ac3594c9b5be0eb947b8aef8092119cdb6da1199ed9e141d4410f0b995f",
+    "personalize.js": "244f955e08773a3a5ef4b2b906ad14c0fe7e89dac889923cbd5a3ad1d4f39d64",
+    "index.html": "14c418619edef798fbc04f21f5c356d688fe63d2697c917a14df948675488130",
+    "finalized.json": "11a065e301b524f882380f5fc9ba6ed235862fe30ee3e080966df778514be7cb",
+    "assets/previews/creator.webp": "2f9cb6fda24914a6db8b26b5800ff30c86f175da2d5f4ff58abf4054718aea49",
+  };
+
+  for (const [name, sha256] of Object.entries(expected)) {
+    assert.equal(await digest(name), sha256, `${name} drifted from the approved pre-rebuild version`);
+  }
+});
+
+test("August 2026 rebuild remains available only as an isolated archive", async () => {
+  const [html, css, script, index] = await Promise.all([
+    source("creator-2026-08-archive.html"),
+    source("creator-2026-08-archive.css"),
+    source("creator-2026-08-archive-personalize.js"),
+    source("index.html"),
+  ]);
+
+  assert.deepEqual(slideTitles(html), [
     "Your private OVO proposal",
     "Why OVO chose you",
     "20 days between signed agreements",
@@ -24,76 +84,45 @@ test("creator deck ships the approved 10-slide proof-led sales spine", async () 
     "Clear economics. Written terms",
     "If the fit is mutual",
   ]);
-  const slideCount = [...html.matchAll(/<section class="([^"]+)"/g)]
-    .filter((match) => match[1].split(/\s+/).includes("slide"))
-    .length;
-  assert.equal(slideCount, 10);
   assert.match(html, /<span data-total-slides>10<\/span>/);
-  assert.doesNotMatch(html, /<section class="slide[^\n]*data-title="What hammering actually means"/);
-});
-
-test("creator proof is source-linked, bounded, and conversion-free", async () => {
-  const html = await source("creator.html");
-
-  assert.match(html, /20 days<\/span> between signed agreements/);
-  assert.match(html, /2\.18M<\/strong><span>recorded public plays/);
-  assert.match(html, /28\.3K<\/strong><span>recorded likes/);
-  assert.match(html, /instagram\.com\/reel\/DaPRQJiBE-m\//);
-  assert.match(html, /Two signed agreements/);
-  assert.match(html, /10\.13M<\/dt><dd>recorded views \/ plays/);
-  assert.match(html, /instagram\.com\/p\/DNukqna3Poa\//);
-  assert.match(html, /Six-month agreement record/);
-  assert.match(html, /3\.13M<\/dt><dd>recorded public views/);
-  assert.match(html, /instagram\.com\/reel\/DIotuaoP9aX\//);
-  assert.match(html, /No revenue or conversion attribution/);
-  assert.match(html, /not reach, installs, conversions, revenue or ROAS/);
-  assert.doesNotMatch(html, /\$42K|attributed revenue|conversion rate|ROAS of/i);
-});
-
-test("creator economics match the canonical Creator Services Agreement", async () => {
-  const html = await source("creator.html");
-  const economics = html.match(/<section class="slide first-thirty-slide economics-slide creator-economics-slide"[\s\S]*?<aside class="notes" hidden>/)?.[0] || "";
-
-  assert.match(economics, /Campaign Service Fee/);
-  assert.match(economics, /<strong>20%<\/strong>/);
-  assert.match(economics, /creator compensation shown in each OVO SOW you choose to accept/);
-  assert.match(economics, /No default category exclusivity/);
-  assert.match(economics, /12-month initial term, then month-to-month/);
-  assert.match(economics, /net 30 after OVO receives client funds/);
-  assert.match(economics, /Paid media and whitelisting require separate terms and additional compensation/);
-  assert.match(html, /You have no obligation to accept it/);
-  assert.match(html, /You keep content ownership/);
-  assert.match(html, /No campaign, income level or closing date is guaranteed/);
-  assert.doesNotMatch(economics, /commission|fire us anytime|manager|talent representative/i);
-});
-
-test("creator personalization degrades cleanly from three posts to profile-only", async () => {
-  const [html, script, css] = await Promise.all([
-    source("creator.html"),
-    source("personalize.js"),
-    source("deck.css"),
-  ]);
-
-  assert.match(html, /data-creator-read-layout data-post-count="0"/);
-  assert.equal((html.match(/class="creator-read-post" data-post-card=/g) || []).length, 3);
-  assert.match(html, /data-signal-metrics hidden/);
+  assert.match(html, /<meta name="robots" content="noindex,nofollow,noarchive">/);
+  assert.match(html, /href="creator-2026-08-archive\.css"/);
+  assert.match(html, /src="creator-2026-08-archive-personalize\.js" defer/);
+  assert.match(html, /src="deck\.js" defer/);
+  assert.doesNotMatch(html, /href="deck\.css"/);
+  assert.doesNotMatch(html, /src="personalize\.js"/);
+  assert.match(html, /20 days between signed agreements/);
+  assert.match(css, /\.creator-read-layout\[data-post-count="0"\]/);
   assert.match(script, /readLayout\.dataset\.postCount = String\(posts\.length\)/);
-  assert.match(script, /\.creator-read-post\[data-post-card\]/);
-  assert.match(script, /readMetrics\.hidden = !hasPostMetrics/);
-  assert.match(script, /Public Instagram snapshot · \$\{posts\.length\}-post sample/);
-  assert.doesNotMatch(script, /@ovotalent\.com/);
-  assert.match(css, /\.creator-read-layout\[data-post-count="2"\]/);
-  assert.match(css, /\.creator-read-layout\[data-post-count="1"\]/);
-  assert.match(css, /\.creator-read-layout\[data-post-count="0"\] \.creator-read-posts \{\s*display: none;/);
-  assert.match(css, /@media \(max-width: 1024px\) and \(orientation: portrait\)/);
+  assert.doesNotMatch(index, /creator-2026-08-archive/);
 });
 
-test("creator case-study images are packaged locally", async () => {
-  const images = [
-    "assets/case-studies/fitia/juan-801k.jpg",
-    "assets/case-studies/cal-ai/daria-1590k.jpg",
-    "assets/case-studies/cal-ai/colby-2430k.jpg",
-  ];
+test("presentation room and proposal manifest point only to the restored deck", async () => {
+  const [index, finalizedSource] = await Promise.all([
+    source("index.html"),
+    source("finalized.json"),
+  ]);
+  const finalized = JSON.parse(finalizedSource);
+  const creator = finalized.presentations.find((presentation) => presentation.screen === "creator-partnership");
 
-  await Promise.all(images.map((image) => access(new URL(image, DECK))));
+  assert.match(index, /href="creator\.html#1"/);
+  assert.match(index, /13 slides · Personalized creator close/);
+  assert.match(index, /Live public profile, OVO contact-email preview, three real roster examples/);
+  assert.doesNotMatch(index, /creator-2026-08-archive/);
+  assert.equal(creator.html_file, "creator.html");
+  assert.equal(creator.slides, 13);
+  assert.equal(finalized.personalized_url_shape, "/creator.html?ig=<handle>&exp=<unix>&sig=<hmac>&p=<signed-proposal>#1");
+});
+
+test("archived rebuild assets preserve the shipped revision", async () => {
+  const expected = {
+    "creator-2026-08-archive.html": "f24a5894806618806301e78826d4b037a0ab7f0be94be9912d573f5dd8a6e92c",
+    "creator-2026-08-archive.css": "0d1205a900dc21c1d9266b03c1095655c6aa0e544d53744c8d53aec4f4e06774",
+    "creator-2026-08-archive-personalize.js": "fe1090b849ab7e7ff3b5da95bd1488565b577bafa5754f3118836231f7fcfc72",
+    "assets/previews/creator-2026-08-archive.webp": "4e558ad819b78e5bf910aab74186e168e9c700a1fbbe6fd978aa55fb68d059b8",
+  };
+
+  for (const [name, sha256] of Object.entries(expected)) {
+    assert.equal(await digest(name), sha256, `${name} drifted from the archived shipped revision`);
+  }
 });
