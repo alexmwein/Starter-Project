@@ -70,6 +70,21 @@ export function parseResult(stdout) {
   }
 }
 
+// Message text and transcript content are protected assets (SECURITY.md),
+// and the audit log deliberately carries codes, never content. osascript
+// error text can quote the exact value it choked on, so before any of it may
+// leave this module as a diagnostic, quoted spans and base64-looking runs
+// (how the message and draft travel to the script) are redacted. The code
+// recovery below runs on the unredacted text, so redaction never costs a
+// recognized code.
+function sanitizeAutomationDetail(raw) {
+  return raw
+    .replace(/[A-Za-z0-9+/=]{20,}/g, '[b64]')
+    .replace(/"[^"\n]*"/g, '"[redacted]"')
+    .replace(/“[^”\n]*”/g, '"[redacted]"')
+    .slice(0, 500);
+}
+
 export function mapAutomationError(error) {
   const rawDetail = `${error?.stderr || ''}\n${error?.message || ''}`.trim();
   const details = rawDetail.toLowerCase();
@@ -101,7 +116,7 @@ export function mapAutomationError(error) {
         ok: false,
         code,
         safeToRetry: true,
-        detail: rawDetail.slice(0, 2000),
+        detail: sanitizeAutomationDetail(rawDetail),
       };
     }
   }
@@ -111,7 +126,7 @@ export function mapAutomationError(error) {
   return {
     ok: false,
     code: 'automation_failed',
-    detail: rawDetail.slice(0, 2000),
+    detail: sanitizeAutomationDetail(rawDetail),
   };
 }
 
