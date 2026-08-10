@@ -17,7 +17,8 @@
       "html_file": "brands.html",
       "slides": 12,
       "personalized": true,
-      "personalization_scope": "cover, presentation chrome, operating layer, casting context, creator service, specialist legal-partner workflow, branded workspace illustration, value ledger, and close",
+      "personalization_scope": "cover, presentation chrome, operating layer, casting context, creator service, specialist legal-partner workflow, branded workspace illustration, and proof-led close",
+      "interactive_case_rail": ["Cal AI", "AYBL", "BeHard"],
       "signed_link_lifetime_days": 90
     },
     {
