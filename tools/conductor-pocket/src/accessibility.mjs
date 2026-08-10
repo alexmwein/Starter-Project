@@ -71,7 +71,8 @@ export function parseResult(stdout) {
 }
 
 export function mapAutomationError(error) {
-  const details = `${error?.stderr || ''}\n${error?.message || ''}`.toLowerCase();
+  const rawDetail = `${error?.stderr || ''}\n${error?.message || ''}`.trim();
+  const details = rawDetail.toLowerCase();
   if (
     details.includes('not authorized to send apple events') ||
     details.includes('not allowed assistive access') ||
@@ -87,7 +88,31 @@ export function mapAutomationError(error) {
   if (error?.killed || error?.signal === 'SIGTERM') {
     return { ok: false, code: 'automation_timeout' };
   }
-  return { ok: false, code: 'automation_failed' };
+  // The helpers throw typed pocket codes (send_unavailable,
+  // user_input_active, ...) whose text survives into osascript's stderr even
+  // when the run dies before the AppleScript can map them. Recover the code
+  // rather than collapsing every distinct failure into automation_failed,
+  // which is undiagnosable from logs and always treated as maybe-sent. Only
+  // codes from the proven safe-to-retry set are recovered here so this can
+  // never loosen delivery semantics for an unrecognized failure.
+  for (const code of safeToRetryCodes) {
+    if (details.includes(code)) {
+      return {
+        ok: false,
+        code,
+        safeToRetry: true,
+        detail: rawDetail.slice(0, 2000),
+      };
+    }
+  }
+  // Unrecognized: keep automation_failed's cautious semantics, but carry the
+  // underlying text so the failure is diagnosable from the audit log instead
+  // of being discarded here.
+  return {
+    ok: false,
+    code: 'automation_failed',
+    detail: rawDetail.slice(0, 2000),
+  };
 }
 
 export class AccessibilityTransport {

@@ -200,10 +200,12 @@ async function install() {
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
+  <!-- Unconditional: with SuccessfulExit=false, a clean SIGTERM (exit 0)
+       left the relay permanently down until a manual kickstart, and the
+       phone cannot even report why. Deliberate stops go through launchctl
+       bootout, which unloads the job entirely, so this never fights an
+       intentional shutdown. -->
+  <true/>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>

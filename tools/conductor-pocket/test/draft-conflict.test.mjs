@@ -34,6 +34,9 @@ function harness({ outcomes = {}, persistFailsOnRequired = false } = {}) {
     restoreComposer: (sessionId, text) => {
       log.push(['restore', sessionId, text]);
     },
+    restoreAttachments: (entry) => {
+      log.push(['restoreAttachments', entry.text]);
+    },
     persist: async (options) => {
       log.push(['persist', options?.required === true]);
       if (persistFailsOnRequired && options?.required === true) {
@@ -80,11 +83,52 @@ test('send the Mac draft delivers its exact text and returns mine to the compose
       ['insert', 'the draft on the mac'],
       ['remove', 'my phone message'],
       ['restore', 'session-1', 'my phone message'],
-      ['deliver', 'the draft on the mac', { deliveryIdentityPersisted: true }],
+      ['restoreAttachments', 'my phone message'],
+      [
+        'deliver',
+        'the draft on the mac',
+        {
+          deliveryIdentityPersisted: true,
+          replaceDraft: true,
+          expectedMacDraft: 'the draft on the mac',
+        },
+      ],
     ],
   );
   assert.equal(list.length, 1);
   assert.equal(list[0].text, 'the draft on the mac');
+});
+
+test('send the Mac draft goes through the swap branch so edge whitespace cannot loop', async () => {
+  // The server trims the outgoing message but never trims expectedMacDraft,
+  // so the exact-match path re-conflicts forever on a draft with edge
+  // whitespace. The swap path compares the untrimmed text just read.
+  const { flow, log } = harness();
+  const message = conflicted();
+  message.macDraft = '  hello from the mac ';
+  await flow.sendMacDraft(message);
+  const delivery = log.find(([kind]) => kind === 'deliver');
+  assert.equal(delivery[2].replaceDraft, true);
+  assert.equal(delivery[2].expectedMacDraft, '  hello from the mac ');
+});
+
+test('the Mac draft optimistic is tagged with its origin', async () => {
+  const { flow, list } = harness();
+  const message = conflicted();
+  list.push(message);
+  await flow.sendMacDraft(message, { thenPhone: true });
+  assert.equal(list[0].origin, 'macDraft');
+  assert.equal(list[1].origin, undefined);
+});
+
+test('then mine keeps attachments on the queued phone message instead of restoring them', async () => {
+  const { flow, log } = harness();
+  const message = conflicted();
+  await flow.sendMacDraft(message, { thenPhone: true });
+  assert.equal(
+    log.filter(([kind]) => kind === 'restoreAttachments').length,
+    0,
+  );
 });
 
 test('send the Mac draft then mine delivers both in order once the first confirms', async () => {
@@ -147,6 +191,20 @@ test('an empty Mac draft is treated as a stale sheet and keeps mine safe', async
   );
 });
 
+test('a whitespace-only Mac draft cannot send and keeps mine safe', async () => {
+  // Trimmed server-side it becomes an empty message the relay rejects, so
+  // offering to send it would only manufacture a confusing failure.
+  const { flow, log } = harness();
+  const message = conflicted();
+  message.macDraft = '   \n';
+  const result = await flow.sendMacDraft(message);
+  assert.equal(result, null);
+  assert.equal(log.filter(([kind]) => kind === 'deliver').length, 0);
+  assert.ok(
+    log.some(([kind, , text]) => kind === 'restore' && text === 'my phone message'),
+  );
+});
+
 test('keep the Mac draft restores the composer and removes the optimistic', () => {
   const { flow, log, list } = harness();
   const message = conflicted();
@@ -154,9 +212,13 @@ test('keep the Mac draft restores the composer and removes the optimistic', () =
   flow.keepMacDraft(message);
   assert.equal(log.filter(([kind]) => kind === 'deliver').length, 0);
   assert.deepEqual(
-    log.filter(([kind]) => kind === 'restore' || kind === 'remove'),
+    log.filter(
+      ([kind]) =>
+        kind === 'restore' || kind === 'remove' || kind === 'restoreAttachments',
+    ),
     [
       ['restore', 'session-1', 'my phone message'],
+      ['restoreAttachments', 'my phone message'],
       ['remove', 'my phone message'],
     ],
   );

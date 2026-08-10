@@ -28,6 +28,7 @@ export function createDraftConflictFlow({
   insertBefore,
   remove,
   restoreComposer,
+  restoreAttachments,
   persist,
   render,
   announce,
@@ -46,20 +47,27 @@ export function createDraftConflictFlow({
   // draft's optimistic entry so callers can check how the send settled.
   async function sendMacDraft(message, { thenPhone = false } = {}) {
     const macText = typeof message.macDraft === 'string' ? message.macDraft : '';
-    if (macText === '') {
-      // A conflict only fires on a non-empty composer, so this is a stale
-      // sheet. Nothing to send; put the phone message back where it is safe.
+    if (macText.trim() === '') {
+      // A conflict only fires on a non-empty composer, so an empty draft is a
+      // stale sheet, and a whitespace-only draft would trim server-side to an
+      // empty message the relay rejects. Neither can send; put the phone
+      // message back where it is safe.
       keepMacDraft(message);
-      announce('The Mac composer is empty now. Your message is back in the draft.');
+      announce('The Mac composer has nothing to send. Your message is back in the draft.');
       return null;
     }
     const macOptimistic = makeOptimistic(message.sessionId, macText);
+    // A re-conflict of this entry must never be presented as "from this
+    // phone": its text belongs to the Mac, and pushing it back through the
+    // conflict sheet would offer to overwrite the phone composer with it.
+    macOptimistic.origin = 'macDraft';
     insertBefore(macOptimistic, message);
     if (thenPhone) {
       message.delivery = 'delivering';
     } else {
       remove(message);
       restoreComposer(message.sessionId, message.text);
+      restoreAttachments(message);
     }
     try {
       await persist({ required: true });
@@ -77,7 +85,17 @@ export function createDraftConflictFlow({
       return null;
     }
     render();
-    await deliver(macOptimistic, { deliveryIdentityPersisted: true });
+    // Delivered through the compare-and-swap branch, not the exact-match one:
+    // the server trims the outgoing message but never trims expectedMacDraft,
+    // so a Mac draft with edge whitespace can never equal its own trimmed self
+    // and the exact-match path would re-conflict on the same draft forever.
+    // The swap compares the composer against the untrimmed text just read and
+    // then sends the trimmed message in its place.
+    await deliver(macOptimistic, {
+      deliveryIdentityPersisted: true,
+      replaceDraft: true,
+      expectedMacDraft: macText,
+    });
     if (thenPhone) {
       if (macOptimistic.delivery === 'delivered') {
         // The composer emptied when the Mac draft went out, so the queued
@@ -100,6 +118,7 @@ export function createDraftConflictFlow({
 
   function keepMacDraft(message) {
     restoreComposer(message.sessionId, message.text);
+    restoreAttachments(message);
     remove(message);
     void persist();
     render();
