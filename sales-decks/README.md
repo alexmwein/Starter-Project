@@ -65,7 +65,7 @@ Slide 11 recreates the real OVO brand-portal workflow as a presentation-safe min
 
 The slide now launches `fitia-portal.html`, a full responsive demonstration with overview, deliverables, calendar, creator, performance/source, and campaign-brief views. The portal uses ten locally cached thumbnails from official Fitia YouTube Shorts and links every item back to its public source. Public view/like values are labeled as an August 8, 2026 snapshot and are never attributed to OVO. Creator roster labels, campaign dates, statuses, version history, comments, approvals, and targets are explicitly simulated. Demo interactions persist under the local-storage key `fitia-portal-demo-v1`; **Reset demo** restores the original state.
 
-The brand deck now follows one clean sales spine: risk, protection, operating standard, proof, method, control, close. Slide 2 is the only risk slide and anonymizes the company in the visible FTC case. Slide 3 immediately resolves that risk with OVO’s creator-by-creator specialist legal-partner workflow. Slide 6 is the deep Fitia evidence case, with six real source-linked Instagram posts and their recorded public counters. Slide 7 is an interactive proof rail for Cal AI, AYBL, and BeHard; press `1`, `2`, or `3` on that slide to switch cases. Slide 8 explains precision casting, slide 9 is the positive white-glove creator experience, slide 10 shows the campaign engine, and slide 11 launches the portal demo. The legal slide describes OVO’s process, not guaranteed compliance or a transfer of the brand’s legal responsibility. Never describe the function as in-house counsel unless that exact relationship is verified for the prospect.
+The brand deck now follows one clean sales spine: value, credibility, proof, method, creator care, risk, protection, control, close. Slide 2 establishes OVO’s one-owner operating model, slide 3 shows selected direct clients, slide 4 is the deep Fitia evidence case with six real source-linked Instagram posts, and slide 5 is the interactive Cal AI, AYBL, and BeHard proof rail. Slide 6 explains precision casting and slide 7 shows the positive white-glove creator experience. Slide 8 is the only risk slide and anonymizes the company in the visible FTC case; slide 9 immediately resolves that risk with OVO’s creator-by-creator specialist legal-partner workflow. Slide 10 shows the campaign engine, slide 11 launches the portal demo, and slide 12 closes. The legal slide describes OVO’s process, not guaranteed compliance or a transfer of the brand’s legal responsibility. Never describe the function as in-house counsel unless that exact relationship is verified for the prospect.
 
 ## Controls
 
@@ -74,7 +74,7 @@ The brand deck now follows one clean sales spine: risk, protection, operating st
 - `N`: speaker notes
 - `O`: slide index
 - `B`: black screen
-- `1` / `2` / `3`: switch cases while slide 7 is open
+- `1` / `2` / `3`: switch cases while slide 5 is open
 - `Home` / `End`: first or last slide
 
 Hover near the lower-right corner to reveal on-screen controls. Each slide’s number is also reflected in the URL hash, so links such as `creator.html#7` open on a specific slide.

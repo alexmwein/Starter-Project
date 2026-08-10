@@ -11,8 +11,23 @@ async function source(name) {
 test("brand deck keeps the 12-slide sales narrative and truthful proof scope", async () => {
   const html = await source("brands.html");
   const slides = html.match(/<section class="slide\b/g) || [];
+  const slideTitles = [...html.matchAll(/<section class="[^"]*\bslide\b[^"]*" data-title="([^"]+)"/g)].map((match) => match[1]);
 
   assert.equal(slides.length, 12);
+  assert.deepEqual(slideTitles, [
+    "Influence, operated",
+    "One owner from brief to live post",
+    "Selected direct OVO clients",
+    "12.8M recorded public plays",
+    "Same system. Three more brands",
+    "Cast for fit, not reach",
+    "Your brand should feel premium to creators",
+    "The campaign worked. The protection did not",
+    "Every signed creator gets the call",
+    "Your team stays in control",
+    "Approve content. Skip the chase",
+    "Bring us the brief",
+  ]);
   assert.match(html, /12\.8M<\/span> recorded public plays/);
   assert.match(html, /65 live Reels/);
   assert.match(html, /174\.5K median/);
@@ -43,8 +58,9 @@ test("brand protection story uses one risk case and creator-focused legal alignm
 
   assert.equal((html.match(/\bftc-risk-slide\b/g) || []).length, 1);
   assert.equal((html.match(/\blegal-protocol-slide\b/g) || []).length, 1);
-  assert.equal(riskIndex, 1);
-  assert.equal(legalIndex, 2);
+  assert.equal(riskIndex, 7);
+  assert.equal(legalIndex, 8);
+  assert.equal(legalIndex, riskIndex + 1);
   assert.doesNotMatch(riskSlide, /Lord &amp; Taylor/);
   assert.match(riskSlide, /company anonymized/);
   assert.match(riskSlide, /The campaign worked/);
@@ -52,6 +68,8 @@ test("brand protection story uses one risk case and creator-focused legal alignm
   assert.match(html, /OVO’s specialist legal partner separately contacts each contracted creator/);
   assert.match(html, /Every signed creator/);
   assert.match(html, /Delivery is monitored\. Exceptions are escalated/);
+  assert.match(html, /That is the experience side\. Now the part of this industry most agencies leave unmanaged/);
+  assert.doesNotMatch(html, /positive reframe after the public case study|reacted to on slide two|second fear slide/i);
   assert.doesNotMatch(visibleHtml, /badmouth|talk(?:ing)? behind|gossip/i);
   assert.doesNotMatch(visibleHtml, /Four decisions/i);
 });
