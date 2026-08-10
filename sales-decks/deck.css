@@ -6461,8 +6461,8 @@ kbd {
 
 /* Brand deck v4: source-visible case studies and paired risk / protection narrative. */
 .ftc-risk-slide {
-  padding-top: clamp(86px, 7.2vw, 116px);
-  padding-bottom: clamp(58px, 5vw, 80px);
+  padding-top: clamp(78px, 6.35vw, 102px);
+  padding-bottom: clamp(46px, 3.75vw, 60px);
   align-content: stretch;
   background:
     radial-gradient(circle at 79% 12%, rgba(255, 0, 49, 0.11), transparent 30%),
@@ -6509,7 +6509,7 @@ kbd {
 
 .ftc-risk-evidence article {
   display: grid;
-  min-height: clamp(106px, 9.5vw, 152px);
+  min-height: clamp(98px, 8.45vw, 136px);
   padding: clamp(18px, 1.8vw, 28px);
   align-content: center;
   gap: 10px;
@@ -6542,7 +6542,7 @@ kbd {
 .ftc-fault-line {
   display: grid;
   height: 26px;
-  margin: clamp(14px, 1.6vw, 24px) 0 clamp(12px, 1.35vw, 20px);
+  margin: clamp(10px, 1.25vw, 20px) 0 clamp(8px, 1vw, 16px);
   align-items: center;
   grid-template-columns: 44% 12% 44%;
 }
