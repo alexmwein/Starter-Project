@@ -4206,10 +4206,23 @@ const draftConflictFlow = createDraftConflictFlow({
   remove: (entry) => {
     state.optimistic = state.optimistic.filter((item) => item !== entry);
   },
+  // Merged, never overwritten: a conflict can come back tens of seconds
+  // after the send, and the user may have typed something new in the phone
+  // composer meanwhile. Same combined-draft shape restoreDefinitelyUnsentDraft
+  // uses: restored text first, newer typing after, no duplication when they
+  // already match.
   restoreComposer: (sessionId, text) => {
-    saveDraft(sessionId, text);
+    const current =
+      state.route.sessionId === sessionId && state.shell?.composer.field
+        ? state.shell.composer.field.value
+        : draftFor(sessionId);
+    const combined =
+      current && current !== text
+        ? `${text}${text ? '\n\n' : ''}${current}`
+        : text || current;
+    saveDraft(sessionId, combined);
     if (state.route.sessionId === sessionId && state.shell?.composer.field) {
-      state.shell.composer.field.value = text;
+      state.shell.composer.field.value = combined;
       state.shell.composer.resize();
     }
   },

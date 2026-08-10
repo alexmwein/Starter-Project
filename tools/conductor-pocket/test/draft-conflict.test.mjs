@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import { createDraftConflictFlow } from '../public/draft-conflict.js';
 
@@ -202,6 +203,28 @@ test('a whitespace-only Mac draft cannot send and keeps mine safe', async () => 
   assert.equal(log.filter(([kind]) => kind === 'deliver').length, 0);
   assert.ok(
     log.some(([kind, , text]) => kind === 'restore' && text === 'my phone message'),
+  );
+});
+
+test('the composer restore wiring merges with newer typing instead of overwriting it', async () => {
+  // A conflict can come back tens of seconds after the send, and the user
+  // may have typed something new in the phone composer meanwhile. The app
+  // wiring must combine restored text with that typing, the same shape
+  // restoreDefinitelyUnsentDraft uses, never blindly assign over it.
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const wiringStart = source.indexOf('const draftConflictFlow = createDraftConflictFlow({');
+  assert.ok(wiringStart >= 0);
+  const wiring = source.slice(wiringStart, wiringStart + 2600);
+  assert.match(
+    wiring,
+    /restoreComposer: \(sessionId, text\) => \{[\s\S]{0,600}current && current !== text[\s\S]{0,200}\$\{text\}\$\{text \? '\\n\\n' : ''\}\$\{current\}/,
+  );
+  assert.doesNotMatch(
+    wiring,
+    /restoreComposer: \(sessionId, text\) => \{\s*saveDraft\(sessionId, text\)/,
   );
 });
 
