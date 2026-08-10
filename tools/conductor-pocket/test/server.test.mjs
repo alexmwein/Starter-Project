@@ -886,6 +886,86 @@ test('a started route retry is never reported as definitely unsent after an exce
   });
 });
 
+test('a certified pre-send exception does not poison a same-key retry', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let cursorReads = 0;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        cursorReads += 1;
+        if (cursorReads === 2) throw new Error('cursor unavailable');
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        if (sends === 1) {
+          return {
+            ok: false,
+            code: 'workspace_list_unavailable',
+            safeToRetry: true,
+          };
+        }
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = await postMessage(port, {
+    idempotencyKey: 'certified_exception_retry_key',
+  });
+  const retry = await postMessage(port, {
+    idempotencyKey: 'certified_exception_retry_key',
+  });
+
+  assert.equal(first.status, 500);
+  assert.deepEqual(JSON.parse(first.body).error, {
+    code: 'internal_error',
+    definitelyUnsent: true,
+  });
+  assert.equal(retry.status, 503);
+  assert.deepEqual(JSON.parse(retry.body).error, {
+    code: 'accessibility_disabled',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+  assert.equal(sends, 2);
+});
+
 test('a new user row blocks the transient route retry', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -3146,6 +3226,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.ok(requiredPersistence > optimisticPush);
   assert.ok(draftClear > requiredPersistence);
   assert.match(source, /const DELIVERY_RECOVERY_MS = 27_000/);
+  assert.match(source, /const DELIVERY_POST_TIMEOUT_MS = 90_000/);
   assert.match(
     source,
     /await Promise\.all\(\[\s*restorePendingDeliveries\(\),\s*restoreReadReceipts\(\),\s*\]\)/,
@@ -3161,6 +3242,14 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
+    /signal: deliveryController\.signal[\s\S]*if \(progressSettled\) return/,
+  );
+  assert.match(
+    source,
+    /watchDeliveryProgress\([\s\S]*settleTerminalDeliveryStatus\(optimistic, delivery\)/,
+  );
+  assert.match(
+    source,
     /await deliverOptimistic\(optimistic, \{ deliveryIdentityPersisted: true \}\)/,
   );
   assert.match(
@@ -3172,11 +3261,15 @@ test('pending sends persist before draft clearing and recover for the full send 
   const retryBlock = source.slice(retryStart, conflictStart);
   assert.match(
     retryBlock,
-    /deliverOptimistic\(message, \{ replaceDraft: message\.replaceDraft === true \}\)/,
+    /deliverOptimistic\(message, \{[\s\S]*replaceDraft: message\.replaceDraft === true/,
   );
-  assert.doesNotMatch(
+  assert.match(
     retryBlock,
     /deliveryIdentityPersisted: true/,
+  );
+  assert.match(
+    retryBlock,
+    /claimTerminalDeliveryActionRequired\(message, 'retry'\)/,
   );
   assert.match(
     source,
@@ -3230,6 +3323,34 @@ test('pending sends persist before draft clearing and recover for the full send 
     /function mutatePendingDeliveriesRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*store\.get\(PENDING_DELIVERIES_KEY\)[\s\S]*store\.put\(snapshot, PENDING_DELIVERIES_KEY\)/,
   );
   assert.match(source, /async function markDefinitelyUnsent/);
+  assert.match(
+    source,
+    /message\.delivery === 'failed'[\s\S]*message\.definitelyUnsent === true[\s\S]*await checkDelivery\(message\)/,
+  );
+  assert.match(
+    source,
+    /async function verifyTerminalDeliveryAction[\s\S]*cacheGetRequired\(PENDING_DELIVERIES_KEY\)[\s\S]*requestDeliveryStatus\(message\)/,
+  );
+  assert.match(
+    source,
+    /async function claimTerminalDeliveryActionRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*candidate\.deliveryAttempt === message\.deliveryAttempt[\s\S]*deliveryAttempt: candidate\.deliveryAttempt \+ 1/,
+  );
+  assert.match(
+    source,
+    /async function retryMessage\(message\)[\s\S]*verifyTerminalDeliveryAction\(message\)/,
+  );
+  assert.match(
+    source,
+    /async function editFailedMessage\(message\)[\s\S]*verifyTerminalDeliveryAction\(message\)/,
+  );
+  assert.match(
+    source,
+    /const messages = chronologicalTranscriptMessages\(\[/,
+  );
+  assert.match(
+    source,
+    /showComposerSendError\([\s\S]*Not sent — a photo failed to upload[\s\S]*Not sent — shorten the caption/,
+  );
   assert.match(
     source,
     /definitelyUnsent \? 'failed' : 'unknown'/,

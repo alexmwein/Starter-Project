@@ -67,6 +67,7 @@ const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
 const DELIVERY_RECOVERY_MS = 27_000;
 const DELIVERY_STATUS_REQUEST_MS = 2_500;
 const DELIVERY_PROGRESS_POLL_MS = 750;
+const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
 const CLIENT_SHELL_REVISION = '0.2.0-send-20260810';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
@@ -324,6 +325,12 @@ function deliveryCanRetry(message) {
     message.definitelyUnsent === true &&
     !EDIT_BEFORE_RETRY_CODES.has(message.errorCode)
   );
+}
+
+function showComposerSendError(sessionId, message) {
+  state.composerSendErrors.set(sessionId, message);
+  renderComposerState();
+  announce(message);
 }
 
 function icon(name, className = '') {
@@ -1635,6 +1642,19 @@ async function cacheGet(key) {
   }
 }
 
+async function cacheGetRequired(key) {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('snapshots', 'readonly');
+    const requestValue = transaction.objectStore('snapshots').get(key);
+    requestValue.onsuccess = () => resolve(requestValue.result);
+    requestValue.onerror = () =>
+      reject(requestValue.error || new Error('cache_read_failed'));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('cache_read_aborted'));
+  });
+}
+
 async function cacheSet(key, value) {
   try {
     const database = await cacheDatabase();
@@ -1907,8 +1927,72 @@ async function mutatePendingDeliveriesRequired({
   });
 }
 
-function discardFailedMessage(message) {
+async function claimTerminalDeliveryActionRequired(message, action) {
+  if (!new Set(['retry', 'edit', 'delete']).has(action)) {
+    throw new Error('delivery_action_invalid');
+  }
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('snapshots', 'readwrite');
+    const store = transaction.objectStore('snapshots');
+    const currentRequest = store.get(PENDING_DELIVERIES_KEY);
+    let claimed = null;
+    currentRequest.onsuccess = () => {
+      const current = Array.isArray(currentRequest.result)
+        ? currentRequest.result.map(sanitizePendingDelivery).filter(Boolean)
+        : [];
+      const index = current.findIndex(
+        (candidate) => candidate.id === message.id,
+      );
+      const candidate = index >= 0 ? current[index] : null;
+      const matches =
+        candidate?.delivery === 'failed' &&
+        candidate.deliveryAttempt === message.deliveryAttempt &&
+        candidate.activeDeliveryKey === message.activeDeliveryKey &&
+        (action === 'delete' || candidate.definitelyUnsent === true) &&
+        (action !== 'retry' || candidate.retrySafe === true);
+      if (!matches) return;
+      if (action === 'edit' || action === 'delete') {
+        claimed = candidate;
+        current.splice(index, 1);
+      } else {
+        claimed = {
+          ...candidate,
+          delivery: 'delivering',
+          deliveryPhase: null,
+          retrySafe: false,
+          definitelyUnsent: false,
+          errorCode: null,
+          deliveryAttempt: candidate.deliveryAttempt + 1,
+        };
+        current[index] = claimed;
+      }
+      store.put(current, PENDING_DELIVERIES_KEY);
+    };
+    currentRequest.onerror = () => transaction.abort();
+    transaction.oncomplete = () => resolve(claimed);
+    transaction.onerror = () =>
+      reject(transaction.error || new Error('cache_write_failed'));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('cache_write_aborted'));
+  });
+}
+
+async function discardFailedMessage(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  let claimed;
+  try {
+    claimed = await claimTerminalDeliveryActionRequired(message, 'delete');
+  } catch {
+    announce('Could not safely delete this notice yet. Try again.');
+    return;
+  }
+  if (!claimed) {
+    announce('This delivery changed in another Pocket window.');
+    await restorePendingDeliveries();
+    renderTranscript();
+    return;
+  }
   for (const attachment of message.attachments || []) {
     releaseAttachmentPreview(attachment);
     if (safeAttachmentId(attachment.id)) {
@@ -1921,8 +2005,73 @@ function discardFailedMessage(message) {
   }
   message.draftAttachmentItems = null;
   state.optimistic = state.optimistic.filter((item) => item !== message);
-  void persistPendingDeliveries({ removeIds: [message.id] });
   renderTranscript();
+}
+
+async function verifyTerminalDeliveryAction(message) {
+  let cached;
+  try {
+    cached = await cacheGetRequired(PENDING_DELIVERIES_KEY);
+  } catch {
+    announce('Could not verify this delivery yet. Try again.');
+    return null;
+  }
+  const authoritative = Array.isArray(cached)
+    ? cached
+        .map(sanitizePendingDelivery)
+        .filter(Boolean)
+        .find((candidate) => candidate.id === message.id)
+    : null;
+  if (!authoritative) {
+    state.optimistic = state.optimistic.filter(
+      (candidate) => candidate !== message,
+    );
+    renderTranscript();
+    announce('This delivery was already resolved in another Pocket window.');
+    return null;
+  }
+
+  applyAuthoritativePendingDelivery(message, authoritative);
+
+  if (message.delivery !== 'failed') {
+    renderTranscript();
+    announce('This delivery changed in another Pocket window.');
+    return null;
+  }
+  try {
+    const delivery = await requestDeliveryStatus(message);
+    if (await settleTerminalDeliveryStatus(message, delivery)) return null;
+    if (delivery.state === 'pending') {
+      message.delivery = 'delivering';
+      message.deliveryPhase = delivery.phase || 'queued';
+      message.retrySafe = false;
+      message.definitelyUnsent = false;
+      await persistPendingDeliveries({ upserts: [message] });
+      renderTranscript();
+      announce('This message is already being sent from another Pocket window.');
+      return null;
+    }
+  } catch {
+    announce('Could not verify this delivery yet. Try again.');
+    return null;
+  }
+  return message;
+}
+
+function applyAuthoritativePendingDelivery(message, authoritative) {
+  const draftAttachmentItems = message.draftAttachmentItems;
+  const previewUrls = new Map(
+    (message.attachments || []).map((attachment) => [
+      attachment.id,
+      attachment.previewUrl,
+    ]),
+  );
+  Object.assign(message, authoritative);
+  if (draftAttachmentItems) message.draftAttachmentItems = draftAttachmentItems;
+  message.attachments = (message.attachments || []).map((attachment) => ({
+    ...attachment,
+    previewUrl: previewUrls.get(attachment.id) || null,
+  }));
 }
 
 async function editFailedMessage(message) {
@@ -1933,6 +2082,21 @@ async function editFailedMessage(message) {
   ) {
     return;
   }
+  if (!await verifyTerminalDeliveryAction(message)) return;
+  let claimed;
+  try {
+    claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
+  } catch {
+    announce('Could not safely move this message yet. Try again.');
+    return;
+  }
+  if (!claimed) {
+    announce('This delivery changed in another Pocket window.');
+    await restorePendingDeliveries();
+    renderTranscript();
+    return;
+  }
+  applyAuthoritativePendingDelivery(message, claimed);
   const sessionId = message.sessionId;
   const restoredItems = restoredAttachmentItems(
     message,
@@ -3183,6 +3347,38 @@ function currentSession() {
   ) || state.recentSessions.find((session) => session.id === state.route.sessionId);
 }
 
+function transcriptTimestamp(message) {
+  for (const value of [
+    message?.createdAt,
+    message?.sentAt,
+    message?.deliveredAt,
+  ]) {
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return null;
+}
+
+function chronologicalTranscriptMessages(messages) {
+  return messages
+    .map((message, index) => ({
+      message,
+      index,
+      timestamp: transcriptTimestamp(message),
+    }))
+    .sort((left, right) => {
+      if (
+        left.timestamp != null &&
+        right.timestamp != null &&
+        left.timestamp !== right.timestamp
+      ) {
+        return left.timestamp - right.timestamp;
+      }
+      return left.index - right.index;
+    })
+    .map(({ message }) => message);
+}
+
 function renderTranscript() {
   if (!state.shell) return;
   const session = currentSession();
@@ -3212,10 +3408,10 @@ function renderTranscript() {
     transcriptScroll.clientHeight -
     transcriptScroll.scrollTop;
   const pinned = distanceBefore < 48;
-  const messages = [
+  const messages = chronologicalTranscriptMessages([
     ...(state.messagesBySession.get(state.route.sessionId) || []),
     ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
-  ];
+  ]);
   const { entries, toolResults } = buildFocusedTranscript(messages, {
     sessionStatus: session?.status || 'unknown',
   });
@@ -3550,8 +3746,7 @@ function renderMessage(message, toolResults) {
     } else if (message.delivery === 'confirming') {
       meta.textContent = 'Checking delivery…';
     } else if (message.delivery === 'failed') {
-      const definitelyUnsent =
-        message.definitelyUnsent === true && message.retrySafe === true;
+      const definitelyUnsent = message.definitelyUnsent === true;
       meta.classList.add(
         'terminal',
         definitelyUnsent ? 'failed' : 'unknown',
@@ -3899,11 +4094,17 @@ async function sendCurrentMessage() {
     return;
   }
   if (attachments.some((item) => item.state === 'failed')) {
-    announce('Retry or remove the failed photo before sending');
+    showComposerSendError(
+      sessionId,
+      'Not sent — retry or remove the failed photo.',
+    );
     return;
   }
   if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
-    announce('Remove photos until 4 remain before sending');
+    showComposerSendError(
+      sessionId,
+      'Not sent — remove photos until 4 remain.',
+    );
     return;
   }
   const pending = attachments.filter(
@@ -3939,17 +4140,24 @@ async function sendCurrentMessage() {
         (key, index) => key !== currentAttachmentKeys[index],
       )
     ) {
-      renderComposerState();
-      announce('Automatic send canceled because the photos changed');
+      showComposerSendError(
+        sessionId,
+        'Not sent — automatic send was canceled because the photos changed.',
+      );
       return;
     }
     if (attachments.some((item) => item.state === 'failed')) {
-      renderComposerState();
-      announce('A photo failed to upload. Tap it to retry.');
+      showComposerSendError(
+        sessionId,
+        'Not sent — a photo failed to upload. Tap it to retry.',
+      );
       return;
     }
     if (attachments.some((item) => item.state !== 'ready')) {
-      renderComposerState();
+      showComposerSendError(
+        sessionId,
+        'Not sent — a photo is still processing. Try again.',
+      );
       return;
     }
     text = queuedText;
@@ -3970,12 +4178,17 @@ async function sendCurrentMessage() {
     attachmentMessageByteLength(text, readyAttachments) >
     MAX_ATTACHMENT_MESSAGE_BYTES
   ) {
-    announce('Shorten the caption before sending');
-    renderComposerState();
+    showComposerSendError(
+      sessionId,
+      'Not sent — shorten the caption before sending.',
+    );
     return;
   }
   if (!text.trim() && readyAttachments.length === 0) {
-    renderComposerState();
+    showComposerSendError(
+      sessionId,
+      'Not sent — add text or a ready photo.',
+    );
     return;
   }
   const idempotencyKey = randomIdempotencyKey();
@@ -4004,12 +4217,10 @@ async function sendCurrentMessage() {
     state.optimistic = state.optimistic.filter(
       (item) => item !== optimistic,
     );
-    state.composerSendErrors.set(
+    showComposerSendError(
       sessionId,
       'Not sent — the message is still here because secure delivery storage is unavailable.',
     );
-    renderComposerState();
-    announce('Message stayed in your draft because secure delivery storage was unavailable');
     return;
   }
   state.attachmentsBySession.delete(sessionId);
@@ -4059,7 +4270,7 @@ async function markDefinitelyUnsent(optimistic, error) {
   optimistic.delivery = 'failed';
   optimistic.deliveryPhase = null;
   optimistic.errorCode = error.code;
-  optimistic.retrySafe = true;
+  optimistic.retrySafe = error.retrySafe === true;
   optimistic.definitelyUnsent = true;
   await persistPendingDeliveries({ upserts: [optimistic] });
   renderTranscript();
@@ -4104,7 +4315,30 @@ async function deliverOptimistic(
     }
   }
   let progressActive = true;
-  void watchDeliveryProgress(optimistic, () => progressActive);
+  let progressSettled = false;
+  const deliveryController = new AbortController();
+  const deliveryTimeout = setTimeout(
+    () => deliveryController.abort(),
+    DELIVERY_POST_TIMEOUT_MS,
+  );
+  void watchDeliveryProgress(
+    optimistic,
+    () => progressActive,
+    async (delivery) => {
+      if (
+        !progressActive ||
+        progressSettled ||
+        optimistic.delivery !== 'delivering'
+      ) {
+        return false;
+      }
+      progressSettled = true;
+      progressActive = false;
+      deliveryController.abort();
+      await settleTerminalDeliveryStatus(optimistic, delivery);
+      return true;
+    },
+  );
   try {
     const result = await fetch(
       `/api/sessions/${encodeURIComponent(optimistic.sessionId)}/messages`,
@@ -4112,6 +4346,7 @@ async function deliverOptimistic(
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
+        signal: deliveryController.signal,
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
@@ -4129,6 +4364,7 @@ async function deliverOptimistic(
       },
     );
     const payload = await result.json().catch(() => ({}));
+    if (progressSettled) return;
     if (!result.ok) {
       const error = new Error(payload.error?.code || `http_${result.status}`);
       error.code = payload.error?.code || `http_${result.status}`;
@@ -4152,6 +4388,14 @@ async function deliverOptimistic(
     void refreshMessages(optimistic.sessionId, { full: true });
     await persistence;
   } catch (error) {
+    if (progressSettled) return;
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('delivery_confirmation_timeout');
+      timeoutError.code = 'delivery_confirmation_timeout';
+      timeoutError.retrySafe = false;
+      timeoutError.definitelyUnsent = false;
+      error = timeoutError;
+    }
     optimistic.errorCode = error.code;
     optimistic.deliveryPhase = null;
     optimistic.definitelyUnsent = error.definitelyUnsent === true;
@@ -4188,6 +4432,7 @@ async function deliverOptimistic(
       renderTranscript();
     }
   } finally {
+    clearTimeout(deliveryTimeout);
     progressActive = false;
   }
 }
@@ -4251,7 +4496,33 @@ async function requestDeliveryStatus(message) {
   }
 }
 
-async function watchDeliveryProgress(message, isActive) {
+async function settleTerminalDeliveryStatus(message, delivery) {
+  if (delivery.state === 'delivered') {
+    applyDeliveryReceipt(message, delivery);
+    await persistPendingDeliveries({ upserts: [message] });
+    state.connectionProbe = {
+      sendPath: true,
+      capabilities: { send: true },
+    };
+    renderTranscript();
+    announce('Message delivered');
+    await refreshMessages(message.sessionId, { full: true });
+    return true;
+  }
+  if (delivery.state === 'failed') {
+    message.delivery = 'failed';
+    message.deliveryPhase = null;
+    message.errorCode = delivery.code || 'delivery_unknown';
+    message.retrySafe = delivery.retrySafe === true;
+    message.definitelyUnsent = message.retrySafe;
+    await persistPendingDeliveries({ upserts: [message] });
+    renderTranscript();
+    return true;
+  }
+  return false;
+}
+
+async function watchDeliveryProgress(message, isActive, onTerminal) {
   await new Promise((resolve) =>
     setTimeout(resolve, DELIVERY_PROGRESS_POLL_MS),
   );
@@ -4259,6 +4530,13 @@ async function watchDeliveryProgress(message, isActive) {
   while (isActive() && message.delivery === 'delivering') {
     try {
       const delivery = await requestDeliveryStatus(message);
+      if (
+        (delivery.state === 'delivered' ||
+          delivery.state === 'failed') &&
+        await onTerminal(delivery)
+      ) {
+        return;
+      }
       if (
         delivery.state === 'pending' &&
         phases.has(delivery.phase) &&
@@ -4290,13 +4568,8 @@ async function checkDelivery(message) {
   while (Date.now() < deadline) {
     try {
       const delivery = await requestDeliveryStatus(message);
-      if (delivery.state === 'delivered') {
-        applyDeliveryReceipt(message, delivery);
-        await persistPendingDeliveries({ upserts: [message] });
-        renderTranscript();
-        announce('Message delivered');
-        await refreshMessages(message.sessionId, { full: true });
-        return true;
+      if (await settleTerminalDeliveryStatus(message, delivery)) {
+        return delivery.state === 'delivered';
       }
       if (delivery.state !== 'pending') {
         message.delivery = 'failed';
@@ -4349,24 +4622,41 @@ async function recoverPendingDeliveries() {
     state.optimistic.map(async (message) => {
       if (message.delivery === 'delivered') {
         await refreshMessages(message.sessionId, { full: true });
-      } else if (!(message.delivery === 'failed' && message.retrySafe)) {
+      } else if (
+        !(
+          message.delivery === 'failed' &&
+          message.definitelyUnsent === true
+        )
+      ) {
         await checkDelivery(message);
       }
     }),
   );
 }
 
-function retryMessage(message) {
+async function retryMessage(message) {
   if (!deliveryCanRetry(message)) return;
-  message.delivery = 'delivering';
-  message.deliveryPhase = null;
-  message.retrySafe = false;
-  message.definitelyUnsent = false;
-  message.errorCode = null;
-  message.deliveryAttempt = (message.deliveryAttempt || 1) + 1;
-  void persistPendingDeliveries({ upserts: [message] });
+  if (!await verifyTerminalDeliveryAction(message)) return;
+  if (!deliveryCanRetry(message)) return;
+  let claimed;
+  try {
+    claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
+  } catch {
+    announce('Could not safely retry this message yet. Try again.');
+    return;
+  }
+  if (!claimed) {
+    announce('This delivery changed in another Pocket window.');
+    await restorePendingDeliveries();
+    renderTranscript();
+    return;
+  }
+  applyAuthoritativePendingDelivery(message, claimed);
   renderTranscript();
-  deliverOptimistic(message, { replaceDraft: message.replaceDraft === true });
+  deliverOptimistic(message, {
+    replaceDraft: message.replaceDraft === true,
+    deliveryIdentityPersisted: true,
+  });
 }
 
 function openDraftConflict(message) {
@@ -4391,18 +4681,35 @@ function openDraftConflict(message) {
       type: 'button',
       text: 'Replace and send',
       on: {
-        click: () => {
-          message.delivery = 'delivering';
-          message.deliveryPhase = null;
-          message.definitelyUnsent = false;
-          message.errorCode = null;
-          message.deliveryAttempt = (message.deliveryAttempt || 1) + 1;
-          void persistPendingDeliveries({ upserts: [message] });
+        click: async () => {
+          if (!await verifyTerminalDeliveryAction(message)) {
+            closeOverlay();
+            return;
+          }
+          let claimed;
+          try {
+            claimed = await claimTerminalDeliveryActionRequired(
+              message,
+              'retry',
+            );
+          } catch {
+            announce('Could not safely send this message yet. Try again.');
+            return;
+          }
+          if (!claimed) {
+            announce('This delivery changed in another Pocket window.');
+            await restorePendingDeliveries();
+            closeOverlay();
+            renderTranscript();
+            return;
+          }
+          applyAuthoritativePendingDelivery(message, claimed);
           closeOverlay();
           renderTranscript();
           deliverOptimistic(message, {
             replaceDraft: true,
             expectedMacDraft: message.macDraft,
+            deliveryIdentityPersisted: true,
           });
         },
       },
@@ -4412,13 +4719,9 @@ function openDraftConflict(message) {
       type: 'button',
       text: 'Keep the Mac draft',
       on: {
-        click: () => {
-          state.shell.composer.field.value = message.text;
-          saveDraft(message.sessionId, message.text);
-          state.optimistic = state.optimistic.filter((item) => item !== message);
-          void persistPendingDeliveries({ removeIds: [message.id] });
+        click: async () => {
+          await editFailedMessage(message);
           closeOverlay();
-          renderTranscript();
         },
       },
     }),

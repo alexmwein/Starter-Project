@@ -470,8 +470,13 @@ class IdempotencyStore {
         const current = this.#entries.get(key);
         if (current?.promise === promise) this.#entries.delete(key);
       },
-      () => {
+      (error) => {
         entry.state = 'rejected';
+        if (error?.deliveryDefinitelyUnsent === true) {
+          const current = this.#entries.get(key);
+          if (current?.promise === promise) this.#entries.delete(key);
+          return;
+        }
         // Unknown failures remain cached because the send outcome may be ambiguous.
       },
     );
@@ -1643,6 +1648,14 @@ export function createPocketServer({
               } catch (error) {
                 if (certifiedPreSend) {
                   await markDefinitelyUnsent();
+                  const markedError =
+                    error &&
+                    (typeof error === 'object' ||
+                      typeof error === 'function')
+                      ? error
+                      : asHttpError(error);
+                  markedError.deliveryDefinitelyUnsent = true;
+                  throw markedError;
                 }
                 throw error;
               }

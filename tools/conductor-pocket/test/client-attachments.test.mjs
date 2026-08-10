@@ -162,6 +162,8 @@ test('definite preflight failures stay visible and can be moved back to the edit
 
   assert.match(markUnsent, /optimistic\.delivery = 'failed'/);
   assert.match(markUnsent, /optimistic\.definitelyUnsent = true/);
+  assert.match(markUnsent, /optimistic\.retrySafe = error\.retrySafe === true/);
+  assert.doesNotMatch(markUnsent, /optimistic\.retrySafe = true/);
   assert.match(
     markUnsent,
     /await persistPendingDeliveries\(\{ upserts: \[optimistic\] \}\)/,
@@ -170,6 +172,7 @@ test('definite preflight failures stay visible and can be moved back to the edit
   assert.match(edit, /state\.attachmentsBySession\.set/);
   assert.match(edit, /saveDraft\(sessionId, combinedDraft\)/);
   assert.match(edit, /state\.optimistic = state\.optimistic\.filter/);
+  assert.match(edit, /verifyTerminalDeliveryAction\(message\)/);
   assert.doesNotMatch(edit, /deleteUploadedAttachment/);
   assert.match(
     delivery,
