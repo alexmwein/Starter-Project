@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  discardTerminalUnconfirmedDeliveries,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
 } from '../public/delivery-receipts.js';
@@ -74,62 +73,28 @@ test('invalid or absent receipt cursors fail closed', () => {
   }
 });
 
-test('terminal unconfirmed bubbles are partitioned from actionable deliveries', () => {
-  const explicitFailure = optimistic({
-    id: 'explicit-failure',
+test('failed and definitely-unsent messages survive receipt reconciliation', () => {
+  const unknown = optimistic({
+    id: 'unknown',
     delivery: 'failed',
     retrySafe: false,
     errorCode: 'send_not_confirmed',
   });
-  const restoredFailure = optimistic({
-    id: 'restored-failure',
-    sessionId: 'session-2',
-    delivery: 'failed',
-    errorCode: 'delivery_unknown',
-  });
-  const retryable = optimistic({
-    id: 'retryable',
+  const definitelyUnsent = optimistic({
+    id: 'not-sent',
     delivery: 'failed',
     retrySafe: true,
-  });
-  const delivering = optimistic({
-    id: 'delivering',
-    delivery: 'delivering',
-  });
-  const confirming = optimistic({
-    id: 'confirming',
-    delivery: 'confirming',
+    definitelyUnsent: true,
+    errorCode: 'workspace_list_unavailable',
   });
   const delivered = optimistic({ id: 'delivered' });
-  const transcriptMessage = optimistic({
-    id: 'transcript-message',
-    kind: 'user',
-    delivery: 'failed',
-    retrySafe: false,
-  });
 
-  const input = [
-    explicitFailure,
-    restoredFailure,
-    retryable,
-    delivering,
-    confirming,
-    delivered,
-    transcriptMessage,
-  ];
-  const original = [...input];
-  const result = discardTerminalUnconfirmedDeliveries(input);
+  const result = reconcileDeliveryReceipts(
+    [unknown, definitelyUnsent, delivered],
+    'session-1',
+    11,
+  );
 
-  assert.deepEqual(result.discarded, [
-    explicitFailure,
-    restoredFailure,
-  ]);
-  assert.deepEqual(result.remaining, [
-    retryable,
-    delivering,
-    confirming,
-    delivered,
-    transcriptMessage,
-  ]);
-  assert.deepEqual(input, original);
+  assert.deepEqual(result.reconciled, [delivered]);
+  assert.deepEqual(result.remaining, [unknown, definitelyUnsent]);
 });

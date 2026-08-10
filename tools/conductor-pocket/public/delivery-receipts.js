@@ -33,19 +33,3 @@ export function reconcileDeliveryReceipts(
   });
   return { remaining, reconciled };
 }
-
-export function discardTerminalUnconfirmedDeliveries(
-  optimisticMessages,
-) {
-  const discarded = [];
-  const remaining = optimisticMessages.filter((message) => {
-    const terminalUnconfirmed =
-      message?.kind === 'optimistic' &&
-      message.delivery === 'failed' &&
-      message.retrySafe !== true;
-    if (!terminalUnconfirmed) return true;
-    discarded.push(message);
-    return false;
-  });
-  return { remaining, discarded };
-}
