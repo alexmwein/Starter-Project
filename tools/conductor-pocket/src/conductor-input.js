@@ -77,6 +77,41 @@ function environmentValue(name) {
   return value ? ObjC.unwrap(value) : null;
 }
 
+function recordPressProvenance(attemptStartedAt, pressedAt) {
+  const markerPath = environmentValue('POCKET_PRESS_MARKER_PATH');
+  if (
+    typeof markerPath !== 'string' ||
+    !markerPath.startsWith('/') ||
+    markerPath.length > 4096 ||
+    markerPath.includes('\0') ||
+    !markerPath.endsWith('/pressed-at') ||
+    !Number.isSafeInteger(attemptStartedAt) ||
+    attemptStartedAt <= 0 ||
+    !Number.isSafeInteger(pressedAt) ||
+    pressedAt < attemptStartedAt ||
+    pressedAt > Date.now()
+  ) {
+    fail('press_marker_unavailable');
+  }
+  const markerText = `${attemptStartedAt}\n${pressedAt}\n`;
+  const markerData = $(markerText).dataUsingEncoding(
+    $.NSUTF8StringEncoding,
+  );
+  const fileManager = $.NSFileManager.defaultManager;
+  if (
+    !markerData ||
+    Number(markerData.length) > 64 ||
+    fileManager.fileExistsAtPath($(markerPath)) ||
+    !fileManager.createFileAtPathContentsAttributes(
+      $(markerPath),
+      markerData,
+      $.NSDictionary.dictionary,
+    )
+  ) {
+    fail('press_marker_unavailable');
+  }
+}
+
 function decodeBase64Environment(name) {
   const encoded = environmentValue(name);
   if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
@@ -1281,6 +1316,7 @@ function typeAndSendMessage(pid) {
     assertSessionUnlocked();
     pressInvokedAt = Date.now();
     sendButton.actions.byName('AXPress').perform();
+    recordPressProvenance(attemptStartedAt, pressInvokedAt);
     assertSessionUnlocked();
     assertInputLease(inputLease);
     return `pressed:${pressInvokedAt}`;

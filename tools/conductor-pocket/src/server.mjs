@@ -214,6 +214,18 @@ function idempotencyKey(request) {
   return value;
 }
 
+function clientShellRevision(request) {
+  const value = request.headers['x-pocket-shell-revision'];
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 100 &&
+    /^[A-Za-z0-9._-]+$/.test(value)
+  )
+    ? value
+    : null;
+}
+
 function pathMatch(pathname, expression) {
   const match = expression.exec(pathname);
   if (!match) return null;
@@ -372,6 +384,7 @@ function databaseDeliveryResult(match, baselineCursor) {
 }
 
 function sendNotConfirmedResult({
+  code = 'send_not_confirmed',
   baselineCursor,
   contentHash,
   pressedAt,
@@ -380,7 +393,7 @@ function sendNotConfirmedResult({
 }) {
   const result = {
     ok: false,
-    code: 'send_not_confirmed',
+    code,
     pressedAt,
     composerOwned,
   };
@@ -439,7 +452,7 @@ class IdempotencyStore {
       ) {
         throw new HttpError(409, 'idempotency_key_reused');
       }
-      return existing.promise;
+      return { promise: existing.promise, joined: true };
     }
     const entry = {
       sessionId,
@@ -471,16 +484,22 @@ class IdempotencyStore {
         if (current?.promise === promise) this.#entries.delete(key);
       },
       (error) => {
-        entry.state = 'rejected';
         if (error?.deliveryDefinitelyUnsent === true) {
           const current = this.#entries.get(key);
           if (current?.promise === promise) this.#entries.delete(key);
           return;
         }
-        // Unknown failures remain cached because the send outcome may be ambiguous.
+        // A transport exception after the send boundary is ambiguous, but it
+        // must still resolve to an authoritative status. Keeping a rejected
+        // entry as `unknown` makes every phone recovery poll futile.
+        entry.state = 'resolved';
+        entry.result = {
+          ok: false,
+          code: 'internal_error',
+        };
       },
     );
-    return promise;
+    return { promise, joined: false };
   }
 
   async status(key, sessionId, database) {
@@ -498,7 +517,6 @@ class IdempotencyStore {
     const recovery = entry.result.recovery;
     if (
       !entry.result.ok &&
-      entry.result.code === 'send_not_confirmed' &&
       recovery &&
       Number.isSafeInteger(recovery.baselineCursor) &&
       recovery.baselineCursor >= 0 &&
@@ -544,6 +562,12 @@ class IdempotencyStore {
       if (reconciliationState === 'pending') {
         return { state: 'pending', phase: 'confirming' };
       }
+      if (reconciliationState === 'failed' && !entry.result.ok) {
+        // A failed reconciliation is conclusive: either its attribution
+        // window elapsed or another row made attribution unsafe. Do not scan
+        // the database again for this idempotency key.
+        delete entry.result.recovery;
+      }
     }
     if (entry.result.ok) {
       return {
@@ -558,6 +582,7 @@ class IdempotencyStore {
       state: 'failed',
       code: entry.result.code,
       retrySafe: entry.result.safeToRetry === true,
+      final: true,
     };
   }
 
@@ -1218,8 +1243,13 @@ export function createPocketServer({
         });
         const traceId = randomUUID();
         const sendStartedAt = Date.now();
-        recordAudit({ traceId, phase: 'accepted' });
-        const result = await idempotency.run(
+        const clientRevision = clientShellRevision(request);
+        recordAudit({
+          traceId,
+          phase: 'accepted',
+          clientRevision,
+        });
+        const deliveryOperation = idempotency.run(
           key,
           route.id,
           fingerprint,
@@ -1569,32 +1599,47 @@ export function createPocketServer({
                   await markDefinitelyUnsent();
                   return interruptedResult;
                 }
+                const attributedTransportFailure =
+                  !sendResult.ok &&
+                  sendResult.code !== 'send_not_confirmed' &&
+                  sendResult.code !== 'send_interrupted' &&
+                  sendResult.safeToRetry !== true &&
+                  Number.isSafeInteger(sendResult.pressedAt) &&
+                  sendResult.pressedAt > 0 &&
+                  sendResult.composerOwned === true;
                 if (
                   !sendResult.ok &&
                   sendResult.code !== 'send_not_confirmed' &&
-                  sendResult.code !== 'send_interrupted'
+                  sendResult.code !== 'send_interrupted' &&
+                  !attributedTransportFailure
                 ) {
                   if (sendResult.safeToRetry === true) {
                     await markDefinitelyUnsent();
                   }
                   return sendResult;
                 }
+                const confirmationPressedAt = sendResult.pressedAt;
+                const confirmationComposerOwned = sendResult.composerOwned;
+                const confirmationAttributionWindowMs =
+                  sendResult.code === 'send_interrupted'
+                    ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                    : attributedTransportFailure
+                      ? SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS
+                    : SEND_ATTRIBUTION_WINDOW_MS;
                 setDeliveryPhase('confirming');
                 const confirmed = await waitForExactUserMessage({
                   database,
                   sessionId: route.id,
                   afterRowId: attributionBaseline,
                   exactContent: deliveryMessage,
-                  pressedAt: sendResult.pressedAt,
-                  composerOwned: sendResult.composerOwned,
+                  pressedAt: confirmationPressedAt,
+                  composerOwned: confirmationComposerOwned,
                   timeoutMs:
                     sendResult.code === 'send_interrupted'
                       ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
                       : SEND_CONFIRMATION_TIMEOUT_MS,
                   attributionWindowMs:
-                    sendResult.code === 'send_interrupted'
-                      ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-                      : SEND_ATTRIBUTION_WINDOW_MS,
+                    confirmationAttributionWindowMs,
                 });
                 if (!confirmed) {
                   if (sendResult.code === 'send_interrupted') {
@@ -1625,6 +1670,17 @@ export function createPocketServer({
                           SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS,
                       }),
                     };
+                  }
+                  if (attributedTransportFailure) {
+                    return sendNotConfirmedResult({
+                      code: sendResult.code,
+                      baselineCursor: attributionBaseline,
+                      contentHash: sha256(deliveryMessage),
+                      pressedAt: confirmationPressedAt,
+                      composerOwned: confirmationComposerOwned,
+                      attributionWindowMs:
+                        confirmationAttributionWindowMs,
+                    });
                   }
                   if (!sendResult.ok) {
                     return sendNotConfirmedResult({
@@ -1661,6 +1717,8 @@ export function createPocketServer({
               }
             }),
         );
+        if (deliveryOperation.joined) deliveryTransportStarted = true;
+        const result = await deliveryOperation.promise;
         recordAudit({
           traceId,
           phase: 'complete',
@@ -1772,7 +1830,8 @@ export function createPocketServer({
             /^\/api\/sessions\/[^/]+\/messages$/.test(
               requestPathname || '',
             ) &&
-            (!deliveryTransportStarted ||
+            (error?.deliveryDefinitelyUnsent === true ||
+              !deliveryTransportStarted ||
               deliveryDefinitelyUnsent)
               ? { definitelyUnsent: true }
               : {}),

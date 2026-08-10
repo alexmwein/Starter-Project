@@ -191,6 +191,18 @@ Physical-input interruptions are checked against that same post-cursor database
 boundary before retry is permitted; any new or unreadable row keeps the outcome
 non-retryable.
 
+The local send audit records only timestamps, random trace IDs, delivery phases,
+attempt numbers, outcome codes, timing, and the Pocket shell revision. It never
+records message text, drafts, attachment contents, cookies, passkeys, or CSRF
+tokens.
+
+Each accessibility send attempt also uses a private `0700` temporary directory
+with a timestamp-only marker written immediately after the unique enabled Send
+control accepts `AXPress`. The relay validates both marker timestamps against
+that exact attempt, uses them only to reconcile an otherwise ambiguous timeout
+or automation failure, and removes the per-attempt directory afterward. Message
+and draft content are never written to this marker.
+
 macOS exposes no Conductor window to Accessibility while the login session is
 locked. Sends therefore fail closed until the Mac is unlocked. Pocket does not
 change sleep, lock-screen, or login settings; read-only transcript sync remains

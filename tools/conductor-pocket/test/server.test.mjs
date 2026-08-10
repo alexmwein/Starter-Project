@@ -192,6 +192,7 @@ function postMessage(
     message = 'Test message',
     replaceDraft,
     expectedMacDraft,
+    headers = {},
   },
 ) {
   const payload = { message };
@@ -214,6 +215,7 @@ function postMessage(
           'Content-Length': Buffer.byteLength(body),
           'Idempotency-Key': idempotencyKey,
           'X-CSRF-Token': 'test-csrf',
+          ...headers,
         },
       },
       (response) => {
@@ -723,6 +725,247 @@ test('a pre-send failure can retry without weakening ambiguous-send idempotency'
   assert.equal(rejected.status, 500);
   assert.equal(rejectedRetry.status, 500);
   assert.equal(rejectedSends, 1);
+});
+
+test('concurrent same-key transport rejection never claims the joined request was unsent', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseTransport;
+  let transportStarted;
+  const started = new Promise((resolve) => {
+    transportStarted = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    releaseTransport = resolve;
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        transportStarted();
+        await gate;
+        throw new Error('ambiguous transport rejection');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = postMessage(port, {
+    idempotencyKey: 'joined_rejected_send_key',
+  });
+  await started;
+  const joined = postMessage(port, {
+    idempotencyKey: 'joined_rejected_send_key',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseTransport();
+  const responses = await Promise.all([first, joined]);
+
+  assert.equal(sends, 1);
+  for (const response of responses) {
+    assert.equal(response.status, 500);
+    assert.deepEqual(JSON.parse(response.body).error, {
+      code: 'internal_error',
+    });
+  }
+  const status = await postDeliveryStatus(port, {
+    idempotencyKey: 'joined_rejected_send_key',
+  });
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'failed',
+    code: 'internal_error',
+    retrySafe: false,
+    final: true,
+  });
+});
+
+test('a press-attributed automation timeout is delivered when the exact Conductor row exists', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Timeout that reached Conductor';
+  const rows = [];
+  const audits = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 40;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      audits.push(event);
+    },
+    transport: {
+      async send() {
+        const pressedAt = Date.now();
+        const createdAt = new Date().toISOString();
+        rows.push({
+          id: 'timeout-confirmed-row',
+          rowId: 41,
+          text: message,
+          createdAt,
+          sentAt: createdAt,
+        });
+        return {
+          ok: false,
+          code: 'automation_timeout',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'timeout_database_confirmation_key',
+    message,
+    headers: {
+      'X-Pocket-Shell-Revision': '0.2.0-receipt-test',
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(JSON.parse(response.body).rowId, 41);
+  assert.equal(
+    audits.find((event) => event.phase === 'accepted')?.clientRevision,
+    '0.2.0-receipt-test',
+  );
+  assert.deepEqual(
+    audits
+      .filter((event) =>
+        event.phase === 'transport' || event.phase === 'complete')
+      .map((event) => [event.phase, event.code, event.ok]),
+    [
+      ['transport', 'automation_timeout', false],
+      ['complete', 'sent', true],
+    ],
+  );
+});
+
+test('an automation timeout without press provenance never claims an exact same-text row', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const message = 'Same text from an unproven source';
+  const createdAt = new Date().toISOString();
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 70;
+      },
+      listUserMessagesAfter() {
+        return [{
+          id: 'unattributed-same-text-row',
+          rowId: 71,
+          text: message,
+          createdAt,
+          sentAt: createdAt,
+        }];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        return { ok: false, code: 'automation_timeout' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'unproven_timeout_key',
+    message,
+  });
+  const status = await postDeliveryStatus(port, {
+    idempotencyKey: 'unproven_timeout_key',
+  });
+
+  assert.equal(response.status, 504);
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'failed',
+    code: 'automation_timeout',
+    retrySafe: false,
+    final: true,
+  });
 });
 
 test('a transient route lookup retries once inside the original send boundary', async (context) => {
@@ -1746,7 +1989,7 @@ test('delivery status recovers a late exact row without resending or exposing co
   assert.equal(sends, 1);
 });
 
-test('delivery status remains pending in-window and recovers the exact row', async (context) => {
+test('delivery status late-recovers an ambiguous automation timeout', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
     developmentMode: true,
@@ -1789,7 +2032,7 @@ test('delivery status remains pending in-window and recovers the exact row', asy
         sends += 1;
         return {
           ok: false,
-          code: 'send_not_confirmed',
+          code: 'automation_timeout',
           pressedAt,
           composerOwned: true,
         };
@@ -1807,7 +2050,7 @@ test('delivery status remains pending in-window and recovers the exact row', asy
     idempotencyKey: 'pending_database_confirmation_key',
   });
 
-  assert.equal(first.status, 502);
+  assert.equal(first.status, 504);
   assert.deepEqual(JSON.parse(pending.body).delivery, {
     state: 'pending',
     phase: 'confirming',
@@ -1917,6 +2160,7 @@ test('delivery status stays fail-closed for an interfering late row', async (con
     state: 'failed',
     code: 'send_not_confirmed',
     retrySafe: false,
+    final: true,
   });
   assert.equal(status.body.includes(message), false);
   assert.equal(status.body.includes('contentHash'), false);
@@ -2000,6 +2244,7 @@ test('delivery status rejects an exact row outside the recovery window', async (
     state: 'failed',
     code: 'send_not_confirmed',
     retrySafe: false,
+    final: true,
   });
   assert.equal(status.body.includes(message), false);
   assert.equal(status.body.includes('contentHash'), false);
@@ -3225,7 +3470,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.ok(durableActiveKey < requiredPersistence);
   assert.ok(requiredPersistence > optimisticPush);
   assert.ok(draftClear > requiredPersistence);
-  assert.match(source, /const DELIVERY_RECOVERY_MS = 27_000/);
+  assert.match(source, /const DELIVERY_RECOVERY_MS = 120_000/);
   assert.match(source, /const DELIVERY_POST_TIMEOUT_MS = 90_000/);
   assert.match(
     source,
@@ -3238,7 +3483,20 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /!error\.status\s*\|\|\s*error\.code === 'send_not_confirmed'[\s\S]*await checkDelivery\(optimistic\)/,
+    /error\.definitelyUnsent === true[\s\S]*else \{\s*await checkDelivery\(optimistic\)/,
+  );
+  assert.equal(
+    [...source.matchAll(/'X-Pocket-Shell-Revision': CLIENT_SHELL_REVISION/g)]
+      .length,
+    2,
+  );
+  assert.match(
+    source,
+    /const deliveryRecoveryInFlight = new Map\(\)[\s\S]*function checkDelivery\(message, \{ force = false \} = \{\}\)[\s\S]*deliveryRecoveryInFlight\.get\(key\)/,
+  );
+  assert.match(
+    source,
+    /function recheckAmbiguousDeliveries\([\s\S]*message\.definitelyUnsent !== true[\s\S]*checkDelivery\(message\)/,
   );
   assert.match(
     source,
