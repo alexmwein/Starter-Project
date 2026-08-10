@@ -6582,6 +6582,8 @@ kbd {
 }
 
 .ftc-source {
+  position: relative;
+  top: -12px;
   width: max-content;
   margin-top: auto;
   padding-bottom: 4px;
