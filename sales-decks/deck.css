@@ -8818,7 +8818,7 @@ body[data-deck="creator-partnership"] .creator-economics-slide {
 
 @media (min-width: 1025px) {
   .creator-read-layout {
-    min-height: 360px;
+    min-height: 350px;
   }
 
   .creator-read-layout[data-post-count="0"] .creator-read-card {
@@ -8830,7 +8830,34 @@ body[data-deck="creator-partnership"] .creator-economics-slide {
   }
 
   .creator-read-post > div {
-    min-height: 120px;
+    min-height: 108px;
+    padding: 12px 14px;
+    gap: 7px;
+  }
+
+  .creator-read-card {
+    padding: 20px;
+    gap: 10px;
+  }
+
+  .creator-read-profile img {
+    width: 48px;
+    height: 48px;
+  }
+
+  .creator-read-card blockquote {
+    margin: 4px 0 2px;
+    font-size: clamp(20px, 1.7vw, 23px);
+    line-height: 1.16;
+  }
+
+  .creator-read-metrics div {
+    min-height: 58px;
+    padding: 8px;
+  }
+
+  .creator-read-metrics strong {
+    font-size: clamp(15px, 1.25vw, 19px);
   }
 
   .creator-case-story {
