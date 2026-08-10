@@ -52,6 +52,10 @@ const staticFiles = new Map([
     '/delivery-receipts.js',
     ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
   ],
+  [
+    '/draft-conflict.js',
+    ['draft-conflict.js', 'text/javascript; charset=utf-8'],
+  ],
   ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
   [
