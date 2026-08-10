@@ -249,6 +249,22 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
   );
 });
 
+
+test('the workspace matcher accepts owner-prefixed sidebar titles', async () => {
+  // Conductor titles some workspaces "Owner/name" while the relay-side name
+  // is just "name"; every send then fails workspace resolution. The matcher
+  // must accept the slash-anchored form (with or without a diff badge) and
+  // stay anchored so partial names can never cross-match.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('on workspaceMatches');
+  const block = source.slice(start, source.indexOf('end workspaceMatches'));
+  assert.ok(block.includes('ends with ("/" & workspaceName)'));
+  assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
+});
+
 test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
   const mapped = mapAutomationError({
     stderr:

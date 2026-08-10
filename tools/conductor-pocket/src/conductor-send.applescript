@@ -11,6 +11,12 @@ end clearWorkspaceRouteCache
 on workspaceMatches(workspaceName, candidateName)
 	if candidateName is workspaceName then return true
 	if candidateName starts with (workspaceName & " +") then return true
+	-- Conductor titles some workspaces with the branch owner prefixed, e.g.
+	-- "Owner/name" for a workspace whose relay-side name is just "name". The
+	-- slash-anchored comparison keeps this tight: only a full path segment
+	-- match counts, so "name" can never match some other "other name".
+	if candidateName ends with ("/" & workspaceName) then return true
+	if candidateName contains ("/" & workspaceName & " +") then return true
 	return false
 end workspaceMatches
 
