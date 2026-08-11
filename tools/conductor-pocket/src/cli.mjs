@@ -671,6 +671,10 @@ async function serve(options) {
     database,
     watcher,
     transport,
+    deliveryLedgerPath: path.join(
+      path.dirname(configPath),
+      'delivery-receipts.json',
+    ),
     audit(event) {
       process.stdout.write(`${JSON.stringify(event)}\n`);
     },

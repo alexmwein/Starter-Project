@@ -1,20 +1,20 @@
-const SHELL_REVISION = '0.2.0-boot-recovery-20260811';
-const CACHE = 'conductor-pocket-shell-v23';
+const SHELL_REVISION = '0.2.0-delivery-recovery-20260811';
+const CACHE = 'conductor-pocket-shell-v24';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-boot-recovery-20260811',
-  '/app.js?v=0.2.0-boot-recovery-20260811',
-  '/bootstrap-recovery.js?v=0.2.0-boot-recovery-20260811',
-  '/delivery-receipts.js?v=0.2.0-boot-recovery-20260811',
-  '/app-update.js?v=0.2.0-boot-recovery-20260811',
-  '/http.js?v=0.2.0-boot-recovery-20260811',
-  '/image-attachments.js?v=0.2.0-boot-recovery-20260811',
-  '/live-refresh.js?v=0.2.0-boot-recovery-20260811',
-  '/read-state.js?v=0.2.0-boot-recovery-20260811',
-  '/rich-text.js?v=0.2.0-boot-recovery-20260811',
-  '/transcript-focus.js?v=0.2.0-boot-recovery-20260811',
-  '/swipe-navigation.js?v=0.2.0-boot-recovery-20260811',
+  '/app.css?v=0.2.0-delivery-recovery-20260811',
+  '/app.js?v=0.2.0-delivery-recovery-20260811',
+  '/bootstrap-recovery.js?v=0.2.0-delivery-recovery-20260811',
+  '/delivery-receipts.js?v=0.2.0-delivery-recovery-20260811',
+  '/app-update.js?v=0.2.0-delivery-recovery-20260811',
+  '/http.js?v=0.2.0-delivery-recovery-20260811',
+  '/image-attachments.js?v=0.2.0-delivery-recovery-20260811',
+  '/live-refresh.js?v=0.2.0-delivery-recovery-20260811',
+  '/read-state.js?v=0.2.0-delivery-recovery-20260811',
+  '/rich-text.js?v=0.2.0-delivery-recovery-20260811',
+  '/transcript-focus.js?v=0.2.0-delivery-recovery-20260811',
+  '/swipe-navigation.js?v=0.2.0-delivery-recovery-20260811',
   '/icon.svg',
   '/manifest.webmanifest',
 ];

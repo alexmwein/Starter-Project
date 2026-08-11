@@ -4,10 +4,45 @@ import {
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
-  MAX_INCONCLUSIVE_DELIVERY_CHECKS,
+  readDeliveryStatusResponse,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
 } from '../public/delivery-receipts.js';
+
+test('the client receipt parser preserves body aborts and rejects malformed success', async () => {
+  const abort = new Error('timed out');
+  abort.name = 'AbortError';
+  await assert.rejects(
+    readDeliveryStatusResponse({
+      ok: true,
+      status: 200,
+      async json() {
+        throw abort;
+      },
+    }),
+    (error) => error === abort,
+  );
+  await assert.rejects(
+    readDeliveryStatusResponse({
+      ok: true,
+      status: 200,
+      async json() {
+        return {};
+      },
+    }),
+    { code: 'delivery_status_invalid_response' },
+  );
+  assert.deepEqual(
+    await readDeliveryStatusResponse({
+      ok: true,
+      status: 200,
+      async json() {
+        return { delivery: { state: 'delivered', rowId: 42 } };
+      },
+    }),
+    { state: 'delivered', rowId: 42 },
+  );
+});
 
 test('delivered and authoritative final delivery statuses are terminal', () => {
   assert.equal(deliveryStatusIsTerminal({ state: 'delivered' }), true);
@@ -40,23 +75,22 @@ test('delivered and authoritative final delivery statuses are terminal', () => {
   assert.equal(deliveryStatusIsTerminal({ state: 'pending' }), false);
 });
 
-test('inconclusive delivery statuses retry briefly and then exhaust', () => {
+test('inconclusive delivery statuses remain recoverable through slow receipt checks', () => {
   let inconclusiveChecks = 0;
-  for (
-    let attempt = 1;
-    attempt <= MAX_INCONCLUSIVE_DELIVERY_CHECKS;
-    attempt += 1
-  ) {
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
     const decision = deliveryRecoveryDecision(
       { state: 'unknown' },
       inconclusiveChecks,
     );
     inconclusiveChecks = decision.inconclusiveChecks;
-    assert.equal(
-      decision.action,
-      attempt === MAX_INCONCLUSIVE_DELIVERY_CHECKS ? 'exhaust' : 'retry',
-    );
+    assert.equal(decision.action, 'retry');
+    assert.equal(inconclusiveChecks, attempt);
   }
+
+  assert.deepEqual(
+    deliveryRecoveryDecision({ state: 'delivered' }, inconclusiveChecks),
+    { action: 'settle', inconclusiveChecks: 0 },
+  );
 
   assert.deepEqual(
     deliveryRecoveryDecision(
@@ -71,7 +105,7 @@ test('inconclusive delivery statuses retry briefly and then exhaust', () => {
   );
 });
 
-test('automatic recovery skips exhausted and definitely-unsent notices', () => {
+test('automatic recovery re-arms legacy exhausted ambiguous notices', () => {
   assert.equal(
     deliveryNeedsAutomaticRecovery({ delivery: 'delivering' }),
     true,
@@ -92,13 +126,41 @@ test('automatic recovery skips exhausted and definitely-unsent notices', () => {
       delivery: 'failed',
       definitelyUnsent: false,
       deliveryRecoveryExhausted: true,
+      errorCode: 'delivery_unknown',
+    }),
+    true,
+  );
+  assert.equal(
+    deliveryNeedsAutomaticRecovery({
+      delivery: 'failed',
+      definitelyUnsent: true,
     }),
     false,
   );
   assert.equal(
     deliveryNeedsAutomaticRecovery({
       delivery: 'failed',
-      definitelyUnsent: true,
+      definitelyUnsent: false,
+      deliveryRecoveryExhausted: true,
+      errorCode: 'automation_timeout',
+    }),
+    false,
+  );
+  assert.equal(
+    deliveryNeedsAutomaticRecovery({
+      delivery: 'failed',
+      definitelyUnsent: false,
+      deliveryRecoveryExhausted: true,
+      errorCode: 'relay_restarted_during_send',
+    }),
+    false,
+  );
+  assert.equal(
+    deliveryNeedsAutomaticRecovery({
+      delivery: 'failed',
+      definitelyUnsent: false,
+      deliveryRecoveryExhausted: true,
+      errorCode: 'device_locked',
     }),
     false,
   );

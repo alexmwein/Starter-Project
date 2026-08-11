@@ -2,7 +2,17 @@ function validCursor(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
-export const MAX_INCONCLUSIVE_DELIVERY_CHECKS = 3;
+const RECOVERY_TERMINAL_AUTH_CODES = new Set([
+  'authentication_required',
+  'device_locked',
+  'device_revoked',
+  'device_session_expired',
+]);
+const LEGACY_INCONCLUSIVE_RECOVERY_CODES = new Set([
+  'delivery_confirmation_timeout',
+  'delivery_status_invalid_response',
+  'delivery_unknown',
+]);
 
 export function deliveryStatusIsTerminal(delivery) {
   return (
@@ -10,6 +20,32 @@ export function deliveryStatusIsTerminal(delivery) {
     (delivery?.state === 'failed' &&
       (delivery.retrySafe === true || delivery.final === true))
   );
+}
+
+export async function readDeliveryStatusResponse(response) {
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    const invalidResponse = new Error('delivery_status_invalid_response');
+    invalidResponse.code = 'delivery_status_invalid_response';
+    throw invalidResponse;
+  }
+  if (!response.ok) {
+    const error = new Error(
+      payload?.error?.code || `http_${response.status}`,
+    );
+    error.code = payload?.error?.code || `http_${response.status}`;
+    error.status = response.status;
+    throw error;
+  }
+  if (!payload?.delivery || typeof payload.delivery !== 'object') {
+    const invalidResponse = new Error('delivery_status_invalid_response');
+    invalidResponse.code = 'delivery_status_invalid_response';
+    throw invalidResponse;
+  }
+  return payload.delivery;
 }
 
 export function deliveryRecoveryDecision(
@@ -28,17 +64,20 @@ export function deliveryRecoveryDecision(
       : 0;
   const nextInconclusiveChecks = currentInconclusiveChecks + 1;
   return {
-    action:
-      nextInconclusiveChecks >= MAX_INCONCLUSIVE_DELIVERY_CHECKS
-        ? 'exhaust'
-        : 'retry',
+    // An absent, delayed, or timed-out receipt is never proof that delivery
+    // failed. The caller owns the polling window and may re-arm recovery when
+    // the app becomes visible or the network reconnects.
+    action: 'retry',
     inconclusiveChecks: nextInconclusiveChecks,
   };
 }
 
 export function deliveryNeedsAutomaticRecovery(message) {
   return (
-    message?.deliveryRecoveryExhausted !== true &&
+    message?.definitelyUnsent !== true &&
+    !RECOVERY_TERMINAL_AUTH_CODES.has(message?.errorCode) &&
+    (message?.deliveryRecoveryExhausted !== true ||
+      LEGACY_INCONCLUSIVE_RECOVERY_CODES.has(message?.errorCode)) &&
     (message?.delivery === 'delivering' ||
       message?.delivery === 'confirming' ||
       (message?.delivery === 'failed' &&
