@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { brotliDecompressSync } from 'node:zlib';
 import { createConfig } from '../src/config.mjs';
@@ -240,6 +242,7 @@ function composerRetryResult(
     { length: 16 },
     (_, index) => index,
   ).join(','),
+  kind = 'partial-draft-unpressed',
 ) {
   return {
     ok: false,
@@ -249,6 +252,7 @@ function composerRetryResult(
       JSON.stringify({
         draftBase64: Buffer.from(draft, 'utf8').toString('base64'),
         inputCounters,
+        kind,
       }),
       'utf8',
     ).toString('base64'),
@@ -1392,13 +1396,13 @@ test('delivery status exposes queued and active Mac automation phases', async (c
   assert.equal(calls, 2);
 });
 
-test('a certified composer rerender retries once inside the same send', async (context) => {
+test('a typed-but-unpressed exact draft retries once inside the same send', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
     developmentMode: true,
   });
   const message = 'Pocket certified retry';
-  const retryDraft = 'Pocket cert';
+  const retryDraft = message;
   const inputCounters = Array.from(
     { length: 16 },
     (_, index) => index + 10,
@@ -1438,7 +1442,11 @@ test('a certified composer rerender retries once inside the same send', async (c
       async send(options) {
         calls.push(options);
         if (calls.length === 1) {
-          return composerRetryResult(retryDraft, inputCounters);
+          return composerRetryResult(
+            retryDraft,
+            inputCounters,
+            'exact-draft-unpressed',
+          );
         }
         const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
         rows.push({
@@ -1604,6 +1612,360 @@ test('a new user row blocks a certified composer retry', async (context) => {
     retrySafe: true,
     definitelyUnsent: true,
   });
+});
+
+test('the private delivery ledger survives restart and never resurrects a retry tombstone', async () => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-delivery-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  const deliveryLedgerPath = path.join(
+    directory,
+    'delivery-receipts.json',
+  );
+  const message = 'Private restart receipt canary';
+  const messageHash = sha256(message);
+  const idempotencyKey = 'durable_retry_tombstone_key';
+  const queuedIdempotencyKey = 'durable_queued_restart_key';
+  const queuedMessage = 'Queued restart receipt canary';
+  const database = {
+    getSessionRoute() {
+      return {
+        id: 'test-session',
+        workspaceName: 'Workspace',
+        title: 'Chat',
+        titleOrdinal: 1,
+      };
+    },
+    getSessionMessageCursor() {
+      return 40;
+    },
+    listUserMessagesAfter() {
+      return [];
+    },
+  };
+  const security = {
+    assertOrigin() {},
+    session() {
+      return {
+        device: { id: 'test-device' },
+        csrfToken: 'test-csrf',
+        unlocked: true,
+      };
+    },
+  };
+  const makeServer = (transport) =>
+    createPocketServer({
+      configStore: { value: config },
+      security,
+      database,
+      watcher: createWatcher(),
+      transport,
+      deliveryLedgerPath,
+    });
+
+  try {
+    const firstServer = makeServer({
+      async send() {
+        return {
+          ok: false,
+          code: 'workspace_not_visible',
+          safeToRetry: true,
+        };
+      },
+    });
+    const firstPort = await listen(firstServer);
+    const firstResponse = await postMessage(firstPort, {
+      idempotencyKey,
+      message,
+    });
+    assert.equal(firstResponse.status, 503);
+    await close(firstServer);
+
+    let releaseRetry;
+    let retryStarted;
+    const retryStartedPromise = new Promise((resolve) => {
+      retryStarted = resolve;
+    });
+    const secondServer = makeServer({
+      send() {
+        retryStarted();
+        return new Promise((resolve) => {
+          releaseRetry = resolve;
+        });
+      },
+    });
+    const secondPort = await listen(secondServer);
+    const restoredTombstone = JSON.parse(
+      (await postDeliveryStatus(secondPort, { idempotencyKey })).body,
+    ).delivery;
+    assert.deepEqual(restoredTombstone, {
+      state: 'failed',
+      code: 'workspace_not_visible',
+      retrySafe: true,
+      final: true,
+    });
+
+    const retryRequest = postMessage(secondPort, {
+      idempotencyKey,
+      message,
+    }).catch(() => null);
+    await retryStartedPromise;
+    const queuedRequest = postMessage(secondPort, {
+      idempotencyKey: queuedIdempotencyKey,
+      message: queuedMessage,
+    }).catch(() => null);
+    let pendingLedger = null;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const candidate = JSON.parse(
+        await fs.readFile(deliveryLedgerPath, 'utf8'),
+      );
+      const pendingPhases = candidate.entries
+        .filter((entry) => entry.state === 'pending')
+        .map((entry) => entry.phase)
+        .sort();
+      if (
+        pendingPhases.length === 2 &&
+        pendingPhases.includes('automating') &&
+        pendingPhases.includes('queued')
+      ) {
+        pendingLedger = candidate;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(
+      pendingLedger?.entries
+        .filter((entry) => entry.state === 'pending')
+        .map((entry) => entry.phase)
+        .sort(),
+      ['automating', 'queued'],
+    );
+    const ledgerText = JSON.stringify(pendingLedger);
+    assert.doesNotMatch(ledgerText, new RegExp(message));
+    assert.doesNotMatch(ledgerText, new RegExp(messageHash));
+    assert.doesNotMatch(ledgerText, /test-session/);
+    assert.doesNotMatch(ledgerText, new RegExp(idempotencyKey));
+    assert.doesNotMatch(ledgerText, new RegExp(queuedIdempotencyKey));
+    assert.doesNotMatch(ledgerText, new RegExp(queuedMessage));
+    assert.equal(
+      (await fs.stat(deliveryLedgerPath)).mode & 0o777,
+      0o600,
+    );
+
+    secondServer.closeAllConnections();
+    await close(secondServer);
+    await retryRequest;
+    await queuedRequest;
+    // Keep the unresolved fake transport from being mistaken for a completed
+    // delivery. It does not hold an event-loop resource after the server closes.
+    void releaseRetry;
+
+    const thirdServer = makeServer({
+      async send() {
+        throw new Error('a status check must not restart transport');
+      },
+    });
+    const thirdPort = await listen(thirdServer);
+    try {
+      const restoredPending = JSON.parse(
+        (await postDeliveryStatus(thirdPort, { idempotencyKey })).body,
+      ).delivery;
+      assert.deepEqual(restoredPending, {
+        state: 'failed',
+        code: 'relay_restarted_during_send',
+        retrySafe: false,
+        final: true,
+      });
+      const restoredQueued = JSON.parse(
+        (await postDeliveryStatus(thirdPort, {
+          idempotencyKey: queuedIdempotencyKey,
+        })).body,
+      ).delivery;
+      assert.deepEqual(restoredQueued, {
+        state: 'failed',
+        code: 'relay_restarted_before_send',
+        retrySafe: true,
+        final: true,
+      });
+    } finally {
+      await close(thirdServer);
+    }
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a delivered receipt remains authoritative after a relay restart', async () => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-delivered-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  const deliveryLedgerPath = path.join(directory, 'delivery-receipts.json');
+  const idempotencyKey = 'durable_delivered_receipt_key';
+  const message = 'Delivered restart receipt canary';
+  const rows = [];
+  const database = {
+    getSessionRoute() {
+      return {
+        id: 'test-session',
+        workspaceName: 'Workspace',
+        title: 'Chat',
+        titleOrdinal: 1,
+      };
+    },
+    getSessionMessageCursor() {
+      return rows.at(-1)?.rowId || 40;
+    },
+    listUserMessagesAfter(_sessionId, afterRowId) {
+      return rows.filter((row) => row.rowId > afterRowId);
+    },
+  };
+  const security = {
+    assertOrigin() {},
+    session() {
+      return {
+        device: { id: 'test-device' },
+        csrfToken: 'test-csrf',
+        unlocked: true,
+      };
+    },
+  };
+  const makeServer = (transport) =>
+    createPocketServer({
+      configStore: { value: config },
+      security,
+      database,
+      watcher: createWatcher(),
+      transport,
+      deliveryLedgerPath,
+    });
+  try {
+    let transportStarted;
+    const transportStartedPromise = new Promise((resolve) => {
+      transportStarted = resolve;
+    });
+    const firstServer = makeServer({
+      async send() {
+        transportStarted();
+        const pressedAt = Date.now();
+        rows.push({
+          id: 'durable-row',
+          rowId: 41,
+          text: message,
+          createdAt: new Date(pressedAt + 1).toISOString(),
+          sentAt: new Date(pressedAt + 2).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    });
+    const firstPort = await listen(firstServer);
+    const body = JSON.stringify({ message });
+    let droppedRequest;
+    const droppedResponse = new Promise((resolve) => {
+      droppedRequest = http.request(
+        {
+          host: '127.0.0.1',
+          port: firstPort,
+          path: '/api/sessions/test-session/messages',
+          method: 'POST',
+          headers: {
+            Host: '127.0.0.1:4317',
+            Origin: 'http://127.0.0.1:4317',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            'Idempotency-Key': idempotencyKey,
+            'X-CSRF-Token': 'test-csrf',
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on('end', resolve);
+        },
+      );
+      droppedRequest.on('error', resolve);
+      droppedRequest.end(body);
+    });
+    await transportStartedPromise;
+    droppedRequest.destroy();
+    await droppedResponse;
+    let durableResult = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const ledger = JSON.parse(
+        await fs.readFile(deliveryLedgerPath, 'utf8'),
+      );
+      if (ledger.entries[0]?.state === 'resolved') {
+        durableResult = ledger.entries[0].result;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(durableResult?.ok, true);
+    await close(firstServer);
+
+    const secondServer = makeServer({
+      async send() {
+        throw new Error('a restored receipt must not send again');
+      },
+    });
+    const secondPort = await listen(secondServer);
+    try {
+      const restored = JSON.parse(
+        (await postDeliveryStatus(secondPort, { idempotencyKey })).body,
+      ).delivery;
+      assert.equal(restored.state, 'delivered');
+      assert.equal(restored.baselineCursor, 40);
+      assert.equal(restored.rowId, 41);
+    } finally {
+      await close(secondServer);
+    }
+    const ledgerText = await fs.readFile(deliveryLedgerPath, 'utf8');
+    assert.doesNotMatch(ledgerText, new RegExp(message));
+    assert.doesNotMatch(ledgerText, new RegExp(sha256(message)));
+    assert.doesNotMatch(
+      ledgerText,
+      new RegExp(sha256(JSON.stringify([message, false, null, []]))),
+    );
+    assert.doesNotMatch(ledgerText, /test-session/);
+    assert.doesNotMatch(ledgerText, /test-device/);
+    assert.doesNotMatch(ledgerText, new RegExp(idempotencyKey));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('delivery-ledger retention is week-long, bounded, and newest-first', async () => {
+  const source = await fs.readFile(
+    new URL('../src/server.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /DELIVERY_LEDGER_TTL_MS = 7 \* 24 \* 60 \* 60 \* 1000/,
+  );
+  assert.match(source, /DELIVERY_LEDGER_MAX_ENTRIES = 2048/);
+  assert.match(source, /DELIVERY_LEDGER_MAX_BYTES = 4 \* 1024 \* 1024/);
+  assert.match(
+    source,
+    /#makeRoomFor\(entryKey\)[\s\S]*reusesBinding = this\.#bindings\.has\(entryKey\)[\s\S]*reusesBinding \|\|[\s\S]*key !== entryKey[\s\S]*sort\(\(left, right\) => left\[1\]\.expiresAt - right\[1\]\.expiresAt\)/,
+  );
+  assert.match(
+    source,
+    /entries\.sort\(\(left, right\) => right\.expiresAt - left\.expiresAt\)[\s\S]*entries\.slice\(0, DELIVERY_LEDGER_MAX_ENTRIES\)/,
+  );
 });
 
 test('an idempotency key remains bound to the exact send body across safe retries', async (context) => {

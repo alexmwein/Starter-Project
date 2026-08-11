@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const ORIGIN = 'https://pocket.test';
-const CURRENT_CACHE = 'conductor-pocket-shell-v23';
+const CURRENT_CACHE = 'conductor-pocket-shell-v24';
 
 function requestKey(request) {
   const value = typeof request === 'string' ? request : request.url;
@@ -115,7 +115,7 @@ test('an old worker serves its own document while a newer cache exists', async (
       headers: { 'Content-Type': 'text/html' },
     }),
   );
-  const newer = await worker.caches.open('conductor-pocket-shell-v24');
+  const newer = await worker.caches.open('conductor-pocket-shell-v25');
   await newer.put(
     '/index.html',
     new Response('<p>other-generation</p>', {

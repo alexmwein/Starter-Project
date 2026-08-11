@@ -17,8 +17,8 @@ const COMPOSER_CLASSES = [
   'ProseMirror',
   'composer-tiptap-editor',
 ];
-const SEND_CLASSES = [
-  'ml-1',
+const SEND_POSITION_CLASS = 'ml-1';
+const SEND_ACTIVE_CLASSES = [
   'bg-foreground',
   'hover:bg-foreground/80',
 ];
@@ -1088,14 +1088,16 @@ function certifyPreSendRetry({
   lastProvenPrefix,
   lastAttemptedPrefix,
   message,
+  exactDraftExposedAt,
+  pressInvokedAt,
 }) {
   const trackedPrefixes = [
     lastProvenPrefix,
     lastAttemptedPrefix,
+    exactDraftExposedAt > 0 && pressInvokedAt <= 0 ? message : null,
   ].filter(
     (prefix, index, values) =>
       typeof prefix === 'string' &&
-      prefix !== message &&
       (prefix === '' || message.startsWith(prefix)) &&
       values.indexOf(prefix) === index,
   );
@@ -1128,10 +1130,57 @@ function certifyPreSendRetry({
       JSON.stringify({
         draftBase64: encodeBase64(firstDraft),
         inputCounters: inputLease.inputCounters.join(','),
+        kind:
+          firstDraft === message
+            ? 'exact-draft-unpressed'
+            : 'partial-draft-unpressed',
       }),
     );
   } catch {
     return null;
+  }
+}
+
+function isSpeechControl(candidate) {
+  if (!candidate) return false;
+  try {
+    if (candidate.role() !== 'AXButton') return false;
+  } catch {
+    return false;
+  }
+  for (const readLabel of [
+    () => candidate.name(),
+    () => candidate.description(),
+  ]) {
+    try {
+      if (readLabel() === 'Speech to text') return true;
+    } catch {
+      // Either stable AX label is sufficient; read them independently.
+    }
+  }
+  return false;
+}
+
+function isComposerSendButton(candidate, preceding) {
+  try {
+    const classes = candidate.attributes
+      .byName('AXDOMClassList')
+      .value();
+    const pressActions = candidate
+      .actions()
+      .filter((action) => action.name() === 'AXPress');
+    return (
+      candidate.role() === 'AXButton' &&
+      candidate.enabled() === true &&
+      Array.isArray(classes) &&
+      classes.includes(SEND_POSITION_CLASS) &&
+      SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
+      NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
+      isSpeechControl(preceding) &&
+      pressActions.length === 1
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -1156,28 +1205,23 @@ function resolveComposerSend(process, expectedDraft) {
   });
   if (textAreas.length !== 1) fail('send_unavailable');
 
-  const buttons = composerElements.filter((candidate) => {
-    try {
-      const classes = candidate.attributes
-        .byName('AXDOMClassList')
-        .value();
-      const pressActions = candidate
-        .actions()
-        .filter((action) => action.name() === 'AXPress');
-      return (
-        candidate.role() === 'AXButton' &&
-        candidate.enabled() === true &&
-        Array.isArray(classes) &&
-        SEND_CLASSES.every((name) => classes.includes(name)) &&
-        NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
-        pressActions.length === 1
-      );
-    } catch {
-      return false;
-    }
-  });
+  const buttons = composerElements.filter((candidate, index) =>
+    isComposerSendButton(candidate, composerElements[index - 1]),
+  );
   if (buttons.length !== 1) fail('send_unavailable');
   return buttons[0];
+}
+
+function resolveComposerPressAction(sendButton) {
+  try {
+    const pressActions = sendButton
+      .actions()
+      .filter((action) => action.name() === 'AXPress');
+    if (pressActions.length === 1) return pressActions[0];
+  } catch {
+    // Normalize a stale or unreadable AX action lookup as a pre-press failure.
+  }
+  fail('send_unavailable');
 }
 
 function waitForExactDraft(pid, expectedDraft, routeLease) {
@@ -1197,7 +1241,7 @@ function waitForComposerSend(
   inputLease,
   routeLease,
 ) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
     assertInputLease(inputLease);
     const process = validateFocusedComposer(pid, expectedDraft);
     assertRouteLease(process, routeLease);
@@ -1307,15 +1351,17 @@ function typeAndSendMessage(pid) {
     if (exactDraftExposedAt <= 0) fail('draft_changed');
     assertInputLease(inputLease);
     waitForComposerSend(pid, message, inputLease, routeLease);
+    delay(0.02);
     process = validateFocusedComposer(pid, message);
     assertRouteLease(process, routeLease);
     process = validateFocusedComposer(pid, message);
     const sendButton = resolveComposerSend(process, message);
+    const pressAction = resolveComposerPressAction(sendButton);
     assertRouteLease(process, routeLease);
     assertInputLease(inputLease);
     assertSessionUnlocked();
     pressInvokedAt = Date.now();
-    sendButton.actions.byName('AXPress').perform();
+    pressAction.perform();
     recordPressProvenance(attemptStartedAt, pressInvokedAt);
     assertSessionUnlocked();
     assertInputLease(inputLease);
@@ -1340,11 +1386,7 @@ function typeAndSendMessage(pid) {
           leaseError?.pocketCode === 'user_input_active';
       }
     }
-    if (pressInvokedAt > 0 || exactDraftExposedAt > 0) {
-      return `ambiguous:${
-        pressInvokedAt || exactDraftExposedAt || attemptStartedAt
-      }`;
-    }
+    if (pressInvokedAt > 0) return `ambiguous:${pressInvokedAt}`;
     if (inputInterrupted) return `interrupted:${attemptStartedAt}`;
     if (error?.pocketCode === 'session_locked') return 'session_locked';
     const retryCertificate = certifyPreSendRetry({
@@ -1355,6 +1397,8 @@ function typeAndSendMessage(pid) {
       lastProvenPrefix,
       lastAttemptedPrefix,
       message,
+      exactDraftExposedAt,
+      pressInvokedAt,
     });
     if (retryCertificate) return `retryable:${retryCertificate}`;
     throw error;

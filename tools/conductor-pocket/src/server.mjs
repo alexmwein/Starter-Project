@@ -1,4 +1,12 @@
-import { randomUUID } from 'node:crypto';
+import {
+  createHmac,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
+import {
+  lstatSync,
+  readFileSync,
+} from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -40,6 +48,10 @@ const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
 const SEND_AUTOMATION_RETRY_BUDGET_MS = 45_000;
 const DELIVERY_PHASES = new Set(['queued', 'automating', 'confirming']);
+const DELIVERY_LEDGER_VERSION = 1;
+const DELIVERY_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DELIVERY_LEDGER_MAX_ENTRIES = 2048;
+const DELIVERY_LEDGER_MAX_BYTES = 4 * 1024 * 1024;
 const TRANSIENT_PRE_COMPOSER_CODES = new Set([
   'workspace_list_unavailable',
   'workspace_not_visible',
@@ -246,6 +258,8 @@ export async function waitForExactUserMessage({
   afterRowId,
   exactContent,
   exactContentHash,
+  exactContentProof,
+  proofSecret,
   pressedAt,
   composerOwned,
   timeoutMs = SEND_CONFIRMATION_TIMEOUT_MS,
@@ -259,7 +273,11 @@ export async function waitForExactUserMessage({
     pressedAt <= 0 ||
     (typeof exactContent !== 'string' &&
       (typeof exactContentHash !== 'string' ||
-        !/^[A-Za-z0-9_-]{43}$/.test(exactContentHash)))
+        !/^[A-Za-z0-9_-]{43}$/.test(exactContentHash)) &&
+      (typeof exactContentProof !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(exactContentProof) ||
+        typeof proofSecret !== 'string' ||
+        proofSecret.length < 32))
   ) {
     return null;
   }
@@ -267,7 +285,16 @@ export async function waitForExactUserMessage({
     typeof message?.text === 'string' &&
     (typeof exactContent === 'string'
       ? message.text === exactContent
-      : sha256(message.text) === exactContentHash);
+      : typeof exactContentHash === 'string'
+        ? sha256(message.text) === exactContentHash
+        : deliveryLedgerProofMatches(
+            deliveryLedgerProof(
+              proofSecret,
+              'message-content-hash',
+              sha256(message.text),
+            ),
+            exactContentProof,
+          ));
   const earliestCreatedAt = pressedAt - SEND_EVENT_TIMESTAMP_SKEW_MS;
   const deadline = Date.now() + Math.max(0, timeoutMs);
   let candidateIdentity = null;
@@ -341,6 +368,8 @@ export async function reconcileExactUserMessage({
   sessionId,
   afterRowId,
   exactContentHash,
+  exactContentProof,
+  proofSecret,
   pressedAt,
   composerOwned,
   attributionWindowMs,
@@ -352,6 +381,8 @@ export async function reconcileExactUserMessage({
       sessionId,
       afterRowId,
       exactContentHash,
+      exactContentProof,
+      proofSecret,
       pressedAt,
       composerOwned,
       timeoutMs: candidateTimeoutMs,
@@ -424,43 +455,230 @@ function sendNotConfirmedResult({
   return result;
 }
 
+function deliveryLedgerProof(secret, domain, value) {
+  return createHmac('sha256', secret)
+    .update(`${domain}\0${value}`, 'utf8')
+    .digest('base64url');
+}
+
+function deliveryLedgerProofMatches(left, right) {
+  if (
+    typeof left !== 'string' ||
+    typeof right !== 'string' ||
+    !/^[A-Za-z0-9_-]{43}$/.test(left) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(right)
+  ) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+}
+
+function durableDeliveryResult(result, secret) {
+  if (!result || typeof result.ok !== 'boolean') return null;
+  if (result.ok) {
+    return {
+      ok: true,
+      code: 'sent',
+      deliveredAt:
+        typeof result.deliveredAt === 'string'
+          ? result.deliveredAt
+          : new Date().toISOString(),
+      baselineCursor: Number.isSafeInteger(result.baselineCursor)
+        ? result.baselineCursor
+        : null,
+      rowId: Number.isSafeInteger(result.rowId) ? result.rowId : null,
+    };
+  }
+  const durable = {
+    ok: false,
+    code:
+      typeof result.code === 'string' &&
+      /^[a-z0-9_]{1,80}$/.test(result.code)
+        ? result.code
+        : 'internal_error',
+    safeToRetry: result.safeToRetry === true,
+  };
+  const recovery = result.recovery;
+  if (
+    recovery &&
+    Number.isSafeInteger(recovery.baselineCursor) &&
+    recovery.baselineCursor >= 0 &&
+    typeof recovery.contentHash === 'string' &&
+    /^[A-Za-z0-9_-]{43}$/.test(recovery.contentHash) &&
+    Number.isSafeInteger(recovery.pressedAt) &&
+    recovery.pressedAt > 0 &&
+    recovery.composerOwned === true &&
+    Number.isSafeInteger(recovery.attributionWindowMs) &&
+    recovery.attributionWindowMs > 0 &&
+    recovery.attributionWindowMs <= SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+  ) {
+    durable.recovery = {
+      baselineCursor: recovery.baselineCursor,
+      contentProof: deliveryLedgerProof(
+        secret,
+        'message-content-hash',
+        recovery.contentHash,
+      ),
+      pressedAt: recovery.pressedAt,
+      composerOwned: true,
+      attributionWindowMs: recovery.attributionWindowMs,
+    };
+  }
+  return durable;
+}
+
+function validateDurableDeliveryResult(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return null;
+  }
+  if (result.ok === true) {
+    if (
+      result.code !== 'sent' ||
+      typeof result.deliveredAt !== 'string' ||
+      !Number.isFinite(Date.parse(result.deliveredAt)) ||
+      !(
+        result.baselineCursor === null ||
+        (Number.isSafeInteger(result.baselineCursor) &&
+          result.baselineCursor >= 0)
+      ) ||
+      !(
+        result.rowId === null ||
+        (Number.isSafeInteger(result.rowId) && result.rowId >= 0)
+      )
+    ) {
+      return null;
+    }
+    return {
+      ok: true,
+      code: 'sent',
+      deliveredAt: result.deliveredAt,
+      baselineCursor: result.baselineCursor,
+      rowId: result.rowId,
+    };
+  }
+  if (
+    result.ok !== false ||
+    typeof result.code !== 'string' ||
+    !/^[a-z0-9_]{1,80}$/.test(result.code) ||
+    typeof result.safeToRetry !== 'boolean'
+  ) {
+    return null;
+  }
+  const validated = {
+    ok: false,
+    code: result.code,
+    safeToRetry: result.safeToRetry,
+  };
+  if (result.recovery !== undefined) {
+    const recovery = result.recovery;
+    if (
+      !recovery ||
+      typeof recovery !== 'object' ||
+      Array.isArray(recovery) ||
+      Number.isSafeInteger(recovery.baselineCursor) === false ||
+      recovery.baselineCursor < 0 ||
+      typeof recovery.contentProof !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(recovery.contentProof) ||
+      !Number.isSafeInteger(recovery.pressedAt) ||
+      recovery.pressedAt <= 0 ||
+      recovery.composerOwned !== true ||
+      !Number.isSafeInteger(recovery.attributionWindowMs) ||
+      recovery.attributionWindowMs <= 0 ||
+      recovery.attributionWindowMs >
+        SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+    ) {
+      return null;
+    }
+    validated.recovery = {
+      baselineCursor: recovery.baselineCursor,
+      contentProof: recovery.contentProof,
+      pressedAt: recovery.pressedAt,
+      composerOwned: true,
+      attributionWindowMs: recovery.attributionWindowMs,
+    };
+  }
+  return validated;
+}
+
 class IdempotencyStore {
   #entries = new Map();
   #bindings = new Map();
+  #ledgerPath;
+  #secret;
+  #persistQueue = Promise.resolve();
+
+  constructor({ ledgerPath = null, secret }) {
+    if (typeof secret !== 'string' || secret.length < 32) {
+      throw new Error('Delivery ledger secret is unavailable');
+    }
+    if (
+      ledgerPath !== null &&
+      (typeof ledgerPath !== 'string' || !path.isAbsolute(ledgerPath))
+    ) {
+      throw new Error('Delivery ledger path must be absolute');
+    }
+    this.#ledgerPath = ledgerPath;
+    this.#secret = secret;
+    this.#load();
+  }
 
   run(key, sessionId, fingerprint, task) {
     this.#prune();
-    const expiresAt = Date.now() + 60 * 60 * 1000;
-    const binding = this.#bindings.get(key);
+    const entryKey = this.#keyProof(key);
+    const sessionProof = this.#sessionProof(sessionId);
+    const fingerprintProof = this.#fingerprintProof(fingerprint);
+    const expiresAt = Date.now() + DELIVERY_LEDGER_TTL_MS;
+    const binding = this.#bindings.get(entryKey);
     if (
       binding &&
-      (binding.sessionId !== sessionId ||
-        binding.fingerprint !== fingerprint)
+      (!deliveryLedgerProofMatches(binding.sessionProof, sessionProof) ||
+        !deliveryLedgerProofMatches(
+          binding.fingerprintProof,
+          fingerprintProof,
+        ))
     ) {
       throw new HttpError(409, 'idempotency_key_reused');
     }
+    let existing = this.#entries.get(entryKey);
+    if (existing) {
+      if (
+        !deliveryLedgerProofMatches(existing.sessionProof, sessionProof) ||
+        !deliveryLedgerProofMatches(
+          existing.fingerprintProof,
+          fingerprintProof,
+        )
+      ) {
+        throw new HttpError(409, 'idempotency_key_reused');
+      }
+      if (
+        existing.state !== 'resolved' ||
+        existing.result?.ok !== false ||
+        existing.result.safeToRetry !== true
+      ) {
+        existing.expiresAt = expiresAt;
+        binding.expiresAt = expiresAt;
+        void this.#persist().catch(() => {});
+        return { promise: existing.promise, joined: true };
+      }
+      // A retained safe-to-retry tombstone remains queryable until the phone
+      // explicitly retries the same idempotency key. That retry replaces it
+      // with one bounded pending operation.
+      this.#entries.delete(entryKey);
+      existing = null;
+    }
+    this.#makeRoomFor(entryKey);
     if (!binding) {
-      this.#bindings.set(key, {
-        sessionId,
-        fingerprint,
+      this.#bindings.set(entryKey, {
+        sessionProof,
+        fingerprintProof,
         expiresAt,
       });
     } else {
       binding.expiresAt = expiresAt;
     }
-    const existing = this.#entries.get(key);
-    if (existing) {
-      if (
-        existing.sessionId !== sessionId ||
-        existing.fingerprint !== fingerprint
-      ) {
-        throw new HttpError(409, 'idempotency_key_reused');
-      }
-      return { promise: existing.promise, joined: true };
-    }
     const entry = {
-      sessionId,
-      fingerprint,
+      sessionProof,
+      fingerprintProof,
       promise: null,
       state: 'pending',
       phase: 'queued',
@@ -474,24 +692,28 @@ class IdempotencyStore {
         DELIVERY_PHASES.has(phase)
       ) {
         entry.phase = phase;
+        return this.#persist();
       }
+      return Promise.resolve();
     };
-    const promise = Promise.resolve().then(() => task(setPhase));
-    entry.promise = promise;
-    this.#entries.set(key, entry);
-    void promise.then(
-      (result) => {
+    // Make the in-flight replacement durable before any transport can touch
+    // Conductor. A crash can then never resurrect an older safe-to-retry
+    // tombstone and invite a duplicate press.
+    this.#entries.set(entryKey, entry);
+    const taskPromise = this.#persist().then(() => task(setPhase));
+    const promise = taskPromise.then(
+      async (result) => {
         entry.state = 'resolved';
         entry.result = result;
-        if (result?.ok !== false || result.safeToRetry !== true) return;
-        const current = this.#entries.get(key);
-        if (current?.promise === promise) this.#entries.delete(key);
+        await this.#persist();
+        return result;
       },
-      (error) => {
+      async (error) => {
         if (error?.deliveryDefinitelyUnsent === true) {
-          const current = this.#entries.get(key);
-          if (current?.promise === promise) this.#entries.delete(key);
-          return;
+          const current = this.#entries.get(entryKey);
+          if (current === entry) this.#entries.delete(entryKey);
+          await this.#persist();
+          throw error;
         }
         // A transport exception after the send boundary is ambiguous, but it
         // must still resolve to an authoritative status. Keeping a rejected
@@ -501,15 +723,24 @@ class IdempotencyStore {
           ok: false,
           code: 'internal_error',
         };
+        await this.#persist();
+        throw error;
       },
     );
+    entry.promise = promise;
     return { promise, joined: false };
   }
 
   async status(key, sessionId, database) {
-    this.#prune();
-    const entry = this.#entries.get(key);
-    if (!entry || entry.sessionId !== sessionId) {
+    if (this.#prune()) await this.#persist();
+    const entry = this.#entries.get(this.#keyProof(key));
+    if (
+      !entry ||
+      !deliveryLedgerProofMatches(
+        entry.sessionProof,
+        this.#sessionProof(sessionId),
+      )
+    ) {
       return { state: 'unknown' };
     }
     if (entry.state === 'pending') {
@@ -519,7 +750,7 @@ class IdempotencyStore {
       return { state: 'unknown' };
     }
     const recovery = entry.result.recovery;
-    if (
+    if ((
       !entry.result.ok &&
       recovery &&
       Number.isSafeInteger(recovery.baselineCursor) &&
@@ -533,18 +764,34 @@ class IdempotencyStore {
       recovery.attributionWindowMs > 0 &&
       recovery.attributionWindowMs <=
         SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-    ) {
+    ) || (
+      !entry.result.ok &&
+      recovery &&
+      Number.isSafeInteger(recovery.baselineCursor) &&
+      recovery.baselineCursor >= 0 &&
+      typeof recovery.contentProof === 'string' &&
+      /^[A-Za-z0-9_-]{43}$/.test(recovery.contentProof) &&
+      Number.isSafeInteger(recovery.pressedAt) &&
+      recovery.pressedAt > 0 &&
+      recovery.composerOwned === true &&
+      Number.isSafeInteger(recovery.attributionWindowMs) &&
+      recovery.attributionWindowMs > 0 &&
+      recovery.attributionWindowMs <=
+        SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+    )) {
       if (!entry.reconciliationPromise) {
         entry.reconciliationPromise = reconcileExactUserMessage({
           database,
           sessionId,
           afterRowId: recovery.baselineCursor,
           exactContentHash: recovery.contentHash,
+          exactContentProof: recovery.contentProof,
+          proofSecret: this.#secret,
           pressedAt: recovery.pressedAt,
           composerOwned: recovery.composerOwned,
           attributionWindowMs: recovery.attributionWindowMs,
         })
-          .then((reconciliation) => {
+          .then(async (reconciliation) => {
             if (
               reconciliation.state === 'delivered' &&
               !entry.result.ok
@@ -555,6 +802,7 @@ class IdempotencyStore {
               );
               entry.result = delivered;
               entry.promise = Promise.resolve(delivered);
+              await this.#persist();
             }
             return reconciliation.state;
           })
@@ -571,6 +819,7 @@ class IdempotencyStore {
         // window elapsed or another row made attribution unsafe. Do not scan
         // the database again for this idempotency key.
         delete entry.result.recovery;
+        await this.#persist();
       }
     }
     if (entry.result.ok) {
@@ -592,12 +841,243 @@ class IdempotencyStore {
 
   #prune() {
     const now = Date.now();
+    let changed = false;
     for (const [key, entry] of this.#entries) {
-      if (entry.expiresAt <= now) this.#entries.delete(key);
+      if (entry.expiresAt <= now) {
+        this.#entries.delete(key);
+        changed = true;
+      }
     }
     for (const [key, binding] of this.#bindings) {
-      if (binding.expiresAt <= now) this.#bindings.delete(key);
+      if (binding.expiresAt <= now) {
+        this.#bindings.delete(key);
+        changed = true;
+      }
     }
+    return changed;
+  }
+
+  #keyProof(key) {
+    return deliveryLedgerProof(this.#secret, 'idempotency-key', key);
+  }
+
+  #makeRoomFor(entryKey) {
+    const reusesBinding = this.#bindings.has(entryKey);
+    if (
+      this.#entries.has(entryKey) ||
+      (this.#entries.size < DELIVERY_LEDGER_MAX_ENTRIES &&
+        (reusesBinding ||
+          this.#bindings.size < DELIVERY_LEDGER_MAX_ENTRIES))
+    ) {
+      return;
+    }
+    const evictable = [...this.#bindings.entries()]
+      .filter(
+        ([key]) =>
+          key !== entryKey &&
+          this.#entries.get(key)?.state !== 'pending',
+      )
+      .sort((left, right) => left[1].expiresAt - right[1].expiresAt);
+    for (const [key] of evictable) {
+      this.#entries.delete(key);
+      this.#bindings.delete(key);
+      if (
+        this.#entries.size < DELIVERY_LEDGER_MAX_ENTRIES &&
+        this.#bindings.size < DELIVERY_LEDGER_MAX_ENTRIES
+      ) {
+        return;
+      }
+    }
+    throw new HttpError(503, 'delivery_queue_full');
+  }
+
+  #sessionProof(sessionId) {
+    return deliveryLedgerProof(this.#secret, 'session-id', sessionId);
+  }
+
+  #fingerprintProof(fingerprint) {
+    return deliveryLedgerProof(
+      this.#secret,
+      'delivery-fingerprint',
+      fingerprint,
+    );
+  }
+
+  #load() {
+    if (!this.#ledgerPath) return;
+    let stat;
+    try {
+      stat = lstatSync(this.#ledgerPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      (stat.mode & 0o077) !== 0 ||
+      stat.size > DELIVERY_LEDGER_MAX_BYTES
+    ) {
+      throw new Error('Delivery ledger is not a private bounded file');
+    }
+    const parsed = JSON.parse(readFileSync(this.#ledgerPath, 'utf8'));
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      parsed.version !== DELIVERY_LEDGER_VERSION ||
+      !Array.isArray(parsed.entries) ||
+      parsed.entries.length > DELIVERY_LEDGER_MAX_ENTRIES
+    ) {
+      throw new Error('Delivery ledger is invalid');
+    }
+    const now = Date.now();
+    for (const record of parsed.entries) {
+      if (
+        !record ||
+        typeof record !== 'object' ||
+        Array.isArray(record) ||
+        typeof record.keyProof !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(record.keyProof) ||
+        typeof record.sessionProof !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(record.sessionProof) ||
+        typeof record.fingerprintProof !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(record.fingerprintProof) ||
+        !Number.isSafeInteger(record.expiresAt) ||
+        record.expiresAt <= now ||
+        record.expiresAt > now + DELIVERY_LEDGER_TTL_MS
+      ) {
+        continue;
+      }
+      const pending = record.state === 'pending';
+      const queuedBeforeTransport = pending && record.phase === 'queued';
+      const result = pending
+        ? queuedBeforeTransport
+          ? {
+              ok: false,
+              code: 'relay_restarted_before_send',
+              safeToRetry: true,
+            }
+          : {
+              ok: false,
+              code: 'relay_restarted_during_send',
+              safeToRetry: false,
+            }
+        : validateDurableDeliveryResult(record.result);
+      if (!pending && !result) continue;
+      if (
+        pending &&
+        !DELIVERY_PHASES.has(record.phase)
+      ) {
+        continue;
+      }
+      const entry = {
+        sessionProof: record.sessionProof,
+        fingerprintProof: record.fingerprintProof,
+        // Queued is durably before the transport boundary and may retry.
+        // Automating/confirming crossed that boundary, so a restart is final
+        // and non-retryable rather than an endless pending receipt.
+        promise: Promise.resolve(result),
+        state: 'resolved',
+        phase: null,
+        result,
+        reconciliationPromise: null,
+        expiresAt: record.expiresAt,
+      };
+      this.#entries.set(record.keyProof, entry);
+      this.#bindings.set(record.keyProof, {
+        sessionProof: record.sessionProof,
+        fingerprintProof: record.fingerprintProof,
+        expiresAt: record.expiresAt,
+      });
+    }
+  }
+
+  #persist() {
+    if (!this.#ledgerPath) return Promise.resolve();
+    const write = async () => {
+      const now = Date.now();
+      const entries = [];
+      for (const [keyProof, entry] of this.#entries) {
+        if (entry.expiresAt <= now) {
+          continue;
+        }
+        if (entry.state === 'pending') {
+          entries.push({
+            keyProof,
+            sessionProof: entry.sessionProof,
+            fingerprintProof: entry.fingerprintProof,
+            expiresAt: entry.expiresAt,
+            state: 'pending',
+            phase: DELIVERY_PHASES.has(entry.phase)
+              ? entry.phase
+              : 'queued',
+            result: null,
+          });
+          continue;
+        }
+        if (entry.state !== 'resolved') continue;
+        const result = durableDeliveryResult(entry.result, this.#secret);
+        if (!result) continue;
+        entries.push({
+          keyProof,
+          sessionProof: entry.sessionProof,
+          fingerprintProof: entry.fingerprintProof,
+          expiresAt: entry.expiresAt,
+          state: 'resolved',
+          phase: null,
+          result,
+        });
+      }
+      entries.sort((left, right) => right.expiresAt - left.expiresAt);
+      const retainedEntries = entries.slice(0, DELIVERY_LEDGER_MAX_ENTRIES);
+      const body = `${JSON.stringify({
+        version: DELIVERY_LEDGER_VERSION,
+        entries: retainedEntries,
+      })}\n`;
+      if (Buffer.byteLength(body, 'utf8') > DELIVERY_LEDGER_MAX_BYTES) {
+        throw new Error('Delivery ledger exceeds its size limit');
+      }
+      const directory = path.dirname(this.#ledgerPath);
+      await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+      const directoryStat = await fs.lstat(directory);
+      if (
+        !directoryStat.isDirectory() ||
+        directoryStat.isSymbolicLink() ||
+        (directoryStat.mode & 0o077) !== 0
+      ) {
+        throw new Error('Delivery ledger directory is not private');
+      }
+      const existing = await fs.lstat(this.#ledgerPath).catch((error) => {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (existing && (!existing.isFile() || existing.isSymbolicLink())) {
+        throw new Error('Delivery ledger path is unsafe');
+      }
+      const temporaryPath = `${this.#ledgerPath}.tmp-${process.pid}-${randomUUID()}`;
+      let handle;
+      try {
+        handle = await fs.open(temporaryPath, 'wx', 0o600);
+        await handle.writeFile(body, 'utf8');
+        await handle.sync();
+        await handle.close();
+        handle = null;
+        await fs.rename(temporaryPath, this.#ledgerPath);
+        await fs.chmod(this.#ledgerPath, 0o600);
+        const directoryHandle = await fs.open(directory, 'r');
+        try {
+          await directoryHandle.sync();
+        } finally {
+          await directoryHandle.close();
+        }
+      } finally {
+        await handle?.close().catch(() => {});
+        await fs.rm(temporaryPath, { force: true }).catch(() => {});
+      }
+    };
+    this.#persistQueue = this.#persistQueue.then(write, write);
+    return this.#persistQueue;
   }
 }
 
@@ -670,8 +1150,12 @@ function parseComposerRetryCertificate(result, message) {
     !certificate ||
     Array.isArray(certificate) ||
     Object.keys(certificate).sort().join(',') !==
-      'draftBase64,inputCounters' ||
-    typeof certificate.inputCounters !== 'string'
+      'draftBase64,inputCounters,kind' ||
+    typeof certificate.inputCounters !== 'string' ||
+    ![
+      'exact-draft-unpressed',
+      'partial-draft-unpressed',
+    ].includes(certificate.kind)
   ) {
     return null;
   }
@@ -687,8 +1171,9 @@ function parseComposerRetryCertificate(result, message) {
     normalizeText(draft) !== draft ||
     draft.includes('\0') ||
     /[\u0001-\u0009\u000b-\u001f\u007f]/.test(draft) ||
-    draft === message ||
-    (draft !== '' && !message.startsWith(draft))
+    (certificate.kind === 'exact-draft-unpressed'
+      ? draft !== message
+      : draft === message || (draft !== '' && !message.startsWith(draft)))
   ) {
     return null;
   }
@@ -703,6 +1188,7 @@ function parseComposerRetryCertificate(result, message) {
   return {
     draft,
     inputCounters: counters.join(','),
+    kind: certificate.kind,
   };
 }
 
@@ -766,8 +1252,12 @@ export function createPocketServer({
   transport,
   audit = () => {},
   attachmentManager = new AttachmentManager(),
+  deliveryLedgerPath = null,
 }) {
-  const idempotency = new IdempotencyStore();
+  const idempotency = new IdempotencyStore({
+    ledgerPath: deliveryLedgerPath,
+    secret: configStore.value.csrfSecret,
+  });
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
   let sendQueue = Promise.resolve();
@@ -1259,7 +1749,7 @@ export function createPocketServer({
           fingerprint,
           (setDeliveryPhase) =>
             serializeSend(async () => {
-              setDeliveryPhase('automating');
+              await setDeliveryPhase('automating');
               recordAudit({
                 traceId,
                 phase: 'automation-started',
@@ -1630,7 +2120,7 @@ export function createPocketServer({
                     : attributedTransportFailure
                       ? SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS
                     : SEND_ATTRIBUTION_WINDOW_MS;
-                setDeliveryPhase('confirming');
+                await setDeliveryPhase('confirming');
                 const confirmed = await waitForExactUserMessage({
                   database,
                   sessionId: route.id,

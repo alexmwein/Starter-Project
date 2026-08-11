@@ -363,7 +363,7 @@ test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after eac
   );
   assert.match(
     inputHelper,
-    /sendButton\.actions\.byName\('AXPress'\)\.perform\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);/,
+    /const pressAction = resolveComposerPressAction\(sendButton\);[\s\S]*pressInvokedAt = Date\.now\(\);\s*pressAction\.perform\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);/,
   );
   const markerWriter = inputHelper.slice(
     inputHelper.indexOf('function recordPressProvenance'),
@@ -382,7 +382,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   ]);
   assert.match(
     inputHelper,
-    /const SEND_CLASSES = \[[\s\S]*'ml-1'[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
+    /const SEND_POSITION_CLASS = 'ml-1'[\s\S]*const SEND_ACTIVE_CLASSES = \[[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
   );
   assert.match(
     inputHelper,
@@ -394,7 +394,11 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function resolveComposerSend[\s\S]*candidate\.focused\(\) === true[\s\S]*pressActions\.length === 1/,
+    /function resolveComposerSend[\s\S]*candidate\.focused\(\) === true[\s\S]*isComposerSendButton\(candidate, composerElements\[index - 1\]\)/,
+  );
+  assert.match(
+    inputHelper,
+    /function isComposerSendButton[\s\S]*classes\.includes\(SEND_POSITION_CLASS\)[\s\S]*SEND_ACTIVE_CLASSES\.every[\s\S]*NON_SEND_CLASSES\.every[\s\S]*isSpeechControl\(preceding\)[\s\S]*pressActions\.length === 1/,
   );
   assert.match(
     inputHelper,
@@ -444,7 +448,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.ok(firstInputPost > firstEditCheck);
   assert.match(
     inputHelper,
-    /function waitForComposerSend[\s\S]*attempt < 100[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(refreshed, expectedDraft\)/,
+    /function waitForComposerSend[\s\S]*attempt < 250[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(refreshed, expectedDraft\)/,
   );
   assert.match(
     inputHelper,
@@ -457,24 +461,34 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     'assertRouteLease(process, routeLease);',
     finalResolve,
   );
+  const finalActionResolve = inputHelper.indexOf(
+    'const pressAction = resolveComposerPressAction(sendButton);',
+    finalResolve,
+  );
+  const pressBoundary = inputHelper.indexOf(
+    'pressInvokedAt = Date.now();',
+    finalActionResolve,
+  );
   const finalPress = inputHelper.indexOf(
-    "sendButton.actions.byName('AXPress').perform();",
-    finalRouteProof,
+    'pressAction.perform();',
+    pressBoundary,
   );
   assert.ok(finalResolve >= 0);
+  assert.ok(finalActionResolve > finalResolve);
+  assert.ok(pressBoundary > finalActionResolve);
   assert.ok(finalRouteProof > finalResolve);
-  assert.ok(finalPress > finalRouteProof);
+  assert.ok(finalPress > pressBoundary);
   assert.doesNotMatch(inputHelper, /validateRoute\(/);
   assert.match(inputHelper, /exactDraftExposedAt = draftReadStartedAt/);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
   assert.match(
     inputHelper,
-    /assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*actions\.byName\('AXPress'\)\.perform\(\)[\s\S]*assertInputLease\(inputLease\)/,
+    /resolveComposerPressAction\(sendButton\)[\s\S]*assertInputLease\(inputLease\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*pressAction\.perform\(\)[\s\S]*assertInputLease\(inputLease\)/,
   );
   assert.doesNotMatch(inputHelper, /submitEvents: eventPair\(source, KEY_RETURN\)/);
   assert.match(
     inputHelper,
-    /return `ambiguous:\$\{[\s\S]*pressInvokedAt \|\| exactDraftExposedAt \|\| attemptStartedAt/,
+    /if \(pressInvokedAt > 0\) return `ambiguous:\$\{pressInvokedAt\}`/,
   );
   assert.match(
     inputHelper,
@@ -482,7 +496,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function certifyPreSendRetry[\s\S]*trackedPrefixes = \[[\s\S]*lastProvenPrefix[\s\S]*lastAttemptedPrefix[\s\S]*CERTIFIABLE_PRE_SEND_CODES\.includes\(error\?\.pocketCode\)[\s\S]*assertInputLease\(inputLease\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*!trackedPrefixes\.includes\(firstDraft\)[\s\S]*inputCounters: inputLease\.inputCounters\.join\(','\)/,
+    /function certifyPreSendRetry[\s\S]*trackedPrefixes = \[[\s\S]*lastProvenPrefix[\s\S]*lastAttemptedPrefix[\s\S]*exactDraftExposedAt > 0[\s\S]*CERTIFIABLE_PRE_SEND_CODES\.includes\(error\?\.pocketCode\)[\s\S]*assertInputLease\(inputLease\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*!trackedPrefixes\.includes\(firstDraft\)[\s\S]*kind:[\s\S]*'exact-draft-unpressed'[\s\S]*'partial-draft-unpressed'/,
   );
   assert.match(
     inputHelper,
@@ -490,7 +504,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /if \(pressInvokedAt > 0 \|\| exactDraftExposedAt > 0\)[\s\S]*return `ambiguous:[\s\S]*certifyPreSendRetry/,
+    /if \(pressInvokedAt > 0\)[\s\S]*return `ambiguous:[\s\S]*certifyPreSendRetry/,
   );
   assert.match(source, /POCKET_OPERATION=type-and-send/);
   assert.match(source, /commitResult starts with "pressed:"/);
@@ -569,6 +583,93 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.doesNotMatch(postCommit, /repeat with waitIndex from 1 to 40/);
   assert.doesNotMatch(source, /set bestX to/);
   assert.doesNotMatch(source, /\/bin\/date \+%s/);
+});
+
+test('Conductor 0.80 send-control policy accepts send/queue and rejects stop transitions', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}\nglobalThis.__isComposerSendButton = isComposerSendButton; globalThis.__resolveComposerPressAction = resolveComposerPressAction;`,
+    sandbox,
+  );
+  const candidate = (classes, { enabled = true } = {}) => ({
+    attributes: {
+      byName() {
+        return { value: () => classes };
+      },
+    },
+    actions() {
+      return [{ name: () => 'AXPress' }];
+    },
+    enabled() {
+      return enabled;
+    },
+    role() {
+      return 'AXButton';
+    },
+  });
+  const speech = {
+    role: () => 'AXButton',
+    name: () => 'Speech to text',
+    description() {
+      throw new Error('description unavailable');
+    },
+  };
+  const active = [
+    'ml-1',
+    'bg-foreground',
+    'hover:bg-foreground/80',
+  ];
+  assert.equal(sandbox.__isComposerSendButton(candidate(active), speech), true);
+  const pressAction = { name: () => 'AXPress', perform() {} };
+  assert.equal(
+    sandbox.__resolveComposerPressAction({ actions: () => [pressAction] }),
+    pressAction,
+  );
+  assert.throws(
+    () =>
+      sandbox.__resolveComposerPressAction({
+        actions() {
+          throw new Error('stale action proxy');
+        },
+      }),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.equal(sandbox.__isComposerSendButton(candidate(active), speech), true);
+  assert.equal(
+    sandbox.__isComposerSendButton(
+      candidate(['ml-1', 'border', 'border-border', 'hover:bg-muted']),
+      speech,
+    ),
+    false,
+  );
+  assert.equal(
+    sandbox.__isComposerSendButton(candidate(['ml-1']), speech),
+    false,
+  );
+  assert.equal(
+    sandbox.__isComposerSendButton(candidate(active, { enabled: false }), speech),
+    false,
+  );
+  assert.equal(
+    sandbox.__isComposerSendButton(candidate(active), {
+      role: () => 'AXButton',
+      name: () => 'Attach file',
+      description: () => 'Attach file',
+    }),
+    false,
+  );
 });
 
 test('route leases revalidate fresh AX nodes in constant workspace time and fail closed', async () => {
@@ -1045,7 +1146,7 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   );
   assert.match(
     inputHelper,
-    /pressInvokedAt = Date\.now\(\)[\s\S]*AXPress'\)\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
+    /resolveComposerPressAction\(sendButton\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*pressAction\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
   );
   assert.match(appleScript, /session_locked/);
 

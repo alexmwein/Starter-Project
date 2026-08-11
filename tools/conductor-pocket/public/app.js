@@ -2,18 +2,19 @@ import {
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
+  readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-boot-recovery-20260811';
+} from './delivery-receipts.js?v=0.2.0-delivery-recovery-20260811';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-boot-recovery-20260811';
+} from './app-update.js?v=0.2.0-delivery-recovery-20260811';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-boot-recovery-20260811';
-import { fetchJson } from './http.js?v=0.2.0-boot-recovery-20260811';
+} from './bootstrap-recovery.js?v=0.2.0-delivery-recovery-20260811';
+import { fetchJson } from './http.js?v=0.2.0-delivery-recovery-20260811';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -23,15 +24,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-boot-recovery-20260811';
+} from './image-attachments.js?v=0.2.0-delivery-recovery-20260811';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-boot-recovery-20260811';
+} from './live-refresh.js?v=0.2.0-delivery-recovery-20260811';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-boot-recovery-20260811';
+} from './rich-text.js?v=0.2.0-delivery-recovery-20260811';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -42,15 +43,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-boot-recovery-20260811';
+} from './read-state.js?v=0.2.0-delivery-recovery-20260811';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-boot-recovery-20260811';
+} from './transcript-focus.js?v=0.2.0-delivery-recovery-20260811';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-boot-recovery-20260811';
+} from './swipe-navigation.js?v=0.2.0-delivery-recovery-20260811';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -72,13 +73,13 @@ const ATTACHMENT_DRAFTS_KEY = 'cp:attachment-drafts:v1';
 const READ_RECEIPTS_KEY = 'cp:read-receipts:v1';
 const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
 const DELIVERY_RECOVERY_MS = 120_000;
-const DELIVERY_STATUS_REQUEST_MS = 2_500;
+const DELIVERY_STATUS_REQUEST_MS = 8_000;
 const DELIVERY_RECOVERY_POLL_MS = 1_000;
 const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-boot-recovery-20260811';
+const CLIENT_SHELL_REVISION = '0.2.0-delivery-recovery-20260811';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -300,6 +301,9 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   message_empty: 'The message is empty.',
   message_invalid: 'The message contains unsupported content.',
   message_too_large: 'The message is too long.',
+  relay_restarted_before_send: 'The relay restarted before sending it.',
+  relay_restarted_during_send:
+    'The relay restarted during this send, so Pocket cannot safely send it again.',
   send_not_confirmed: 'Pocket could not verify whether Conductor accepted it.',
   send_unavailable: 'Conductor’s Send control is not ready.',
   secure_delivery_storage_unavailable: 'Secure delivery storage is unavailable on this phone.',
@@ -4558,16 +4562,7 @@ async function requestDeliveryStatus(message) {
         },
       },
     );
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(
-        payload.error?.code || `http_${response.status}`,
-      );
-      error.code = payload.error?.code || `http_${response.status}`;
-      error.status = response.status;
-      throw error;
-    }
-    return payload.delivery || { state: 'unknown' };
+    return await readDeliveryStatusResponse(response);
   } finally {
     clearTimeout(timeout);
   }
@@ -4636,9 +4631,6 @@ async function watchDeliveryProgress(message, isActive, onTerminal) {
 function checkDelivery(message, { force = false } = {}) {
   const key = message?.id;
   if (typeof key !== 'string') return Promise.resolve(false);
-  if (!force && message.deliveryRecoveryExhausted === true) {
-    return Promise.resolve(false);
-  }
   const existing = deliveryRecoveryInFlight.get(key);
   if (existing) return existing.operation;
   let resolveOperation;
@@ -4681,23 +4673,8 @@ function drainDeliveryRecoveryQueue() {
   }
 }
 
-async function exhaustDeliveryRecovery(message, errorCode) {
-  message.delivery = 'failed';
-  message.errorCode = safeDeliveryErrorCode(
-    errorCode || 'delivery_confirmation_timeout',
-  );
-  message.retrySafe = false;
-  message.definitelyUnsent = false;
-  message.deliveryRecoveryExhausted = true;
-  message.deliveryPhase = null;
-  await persistPendingDeliveries({ upserts: [message] });
-  renderTranscript();
-  return false;
-}
-
 async function checkDeliveryOnce(message, { force = false } = {}) {
   if (!state.optimistic.includes(message)) return true;
-  if (!force && message.deliveryRecoveryExhausted === true) return false;
   message.delivery = 'confirming';
   message.deliveryPhase = 'confirming';
   message.retrySafe = false;
@@ -4733,12 +4710,6 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
       } else {
         lastDeliveryCode = delivery.code || 'delivery_unknown';
       }
-      if (decision.action === 'exhaust') {
-        return exhaustDeliveryRecovery(
-          message,
-          lastDeliveryCode || 'delivery_unknown',
-        );
-      }
     } catch (error) {
       if (error.status === 401 || error.status === 423) {
         message.delivery = 'failed';
@@ -4764,12 +4735,6 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
         inconclusiveChecks,
       );
       inconclusiveChecks = decision.inconclusiveChecks;
-      if (decision.action === 'exhaust') {
-        return exhaustDeliveryRecovery(
-          message,
-          lastDeliveryCode || lastErrorCode,
-        );
-      }
     }
     const remaining = deadline - Date.now();
     if (remaining > 0) {
@@ -4778,12 +4743,22 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
       );
     }
   }
-  return exhaustDeliveryRecovery(
-    message,
+  // The full recovery window elapsed without authoritative proof. Keep this
+  // delivery eligible for visibility/online rechecks instead of turning a
+  // temporary receipt outage into a permanent failure.
+  message.delivery = 'failed';
+  message.errorCode = safeDeliveryErrorCode(
     lastDeliveryCode ||
       lastErrorCode ||
       'delivery_confirmation_timeout',
   );
+  message.retrySafe = false;
+  message.definitelyUnsent = false;
+  message.deliveryRecoveryExhausted = false;
+  message.deliveryPhase = null;
+  await persistPendingDeliveries({ upserts: [message] });
+  renderTranscript();
+  return false;
 }
 
 async function recoverPendingDeliveries() {
@@ -5595,6 +5570,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('pagehide', shieldApplication);
+window.addEventListener('online', () => {
+  recheckAmbiguousDeliveries();
+});
 window.addEventListener('pageshow', () => {
   const reloading = appUpdateCoordinator?.foreground() === true;
   if (!reloading) recheckAmbiguousDeliveries();
