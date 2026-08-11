@@ -56,6 +56,10 @@ const staticFiles = new Map([
   ['/app.css', ['app.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   [
+    '/bootstrap-recovery.js',
+    ['bootstrap-recovery.js', 'text/javascript; charset=utf-8'],
+  ],
+  [
     '/delivery-receipts.js',
     ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
   ],
@@ -1924,6 +1928,7 @@ async function serveStatic(
       'Cache-Control':
         pathname === '/service-worker.js' ||
         pathname === '/app.js' ||
+        pathname === '/bootstrap-recovery.js' ||
         pathname === '/delivery-receipts.js' ||
         pathname === '/app-update.js' ||
         pathname === '/' ||

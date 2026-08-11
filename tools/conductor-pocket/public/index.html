@@ -9,21 +9,22 @@
     <meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)">
     <meta name="theme-color" content="#F7F5F1" media="(prefers-color-scheme: light)">
     <meta name="color-scheme" content="dark light">
-    <meta name="conductor-pocket-shell-revision" content="0.2.0-receipt-20260810">
+    <meta name="conductor-pocket-shell-revision" content="0.2.0-boot-recovery-20260811">
     <title>Conductor Pocket</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/app.css?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/delivery-receipts.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/app-update.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/http.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/image-attachments.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/live-refresh.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/read-state.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/rich-text.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/transcript-focus.js?v=0.2.0-receipt-20260810">
-    <link rel="modulepreload" href="/swipe-navigation.js?v=0.2.0-receipt-20260810">
-    <script type="module" src="/app.js?v=0.2.0-receipt-20260810"></script>
+    <link rel="stylesheet" href="/app.css?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/bootstrap-recovery.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/delivery-receipts.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/app-update.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/http.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/image-attachments.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/live-refresh.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/read-state.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/rich-text.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/transcript-focus.js?v=0.2.0-boot-recovery-20260811">
+    <link rel="modulepreload" href="/swipe-navigation.js?v=0.2.0-boot-recovery-20260811">
+    <script type="module" src="/app.js?v=0.2.0-boot-recovery-20260811"></script>
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -52,7 +53,18 @@
       <symbol id="i-wifi-off" viewBox="0 0 20 20"><path d="M3 7.5a11 11 0 0 1 3-1.7m3.1-.7A11 11 0 0 1 17 7.5M5.5 10.5a7 7 0 0 1 3.5-1.4m3 .4a7 7 0 0 1 2.5 1M8 13.5a3 3 0 0 1 4 0M10 17h.01M3 3l14 14"/></symbol>
     </svg>
 
-    <div id="app" aria-live="off"></div>
+    <div id="app" aria-live="off">
+      <main class="gate boot-gate" role="status" aria-live="polite">
+        <div class="gate-column">
+          <div class="app-mark" aria-hidden="true">
+            <svg class="icon"><use href="#i-bolt"></use></svg>
+          </div>
+          <h1 class="sr-only">Conductor Pocket</h1>
+          <p class="gate-lede boot-connecting">Connecting to your Mac…</p>
+          <p class="gate-lede boot-stalled">Still connecting. Check that Conductor is running on your Mac, then reopen Pocket.</p>
+        </div>
+      </main>
+    </div>
     <div id="overlay-root"></div>
     <div id="announcer" class="sr-only" aria-live="polite"></div>
   </body>

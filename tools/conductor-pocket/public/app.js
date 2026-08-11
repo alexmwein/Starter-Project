@@ -3,13 +3,17 @@ import {
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-receipt-20260810';
+} from './delivery-receipts.js?v=0.2.0-boot-recovery-20260811';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-receipt-20260810';
-import { fetchJson } from './http.js?v=0.2.0-receipt-20260810';
+} from './app-update.js?v=0.2.0-boot-recovery-20260811';
+import {
+  BOOTSTRAP_REQUEST_MS,
+  createBootstrapCoordinator,
+} from './bootstrap-recovery.js?v=0.2.0-boot-recovery-20260811';
+import { fetchJson } from './http.js?v=0.2.0-boot-recovery-20260811';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -19,15 +23,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-receipt-20260810';
+} from './image-attachments.js?v=0.2.0-boot-recovery-20260811';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-receipt-20260810';
+} from './live-refresh.js?v=0.2.0-boot-recovery-20260811';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-receipt-20260810';
+} from './rich-text.js?v=0.2.0-boot-recovery-20260811';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -38,15 +42,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-receipt-20260810';
+} from './read-state.js?v=0.2.0-boot-recovery-20260811';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-receipt-20260810';
+} from './transcript-focus.js?v=0.2.0-boot-recovery-20260811';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-receipt-20260810';
+} from './swipe-navigation.js?v=0.2.0-boot-recovery-20260811';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -74,7 +78,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-receipt-20260810';
+const CLIENT_SHELL_REVISION = '0.2.0-boot-recovery-20260811';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -128,6 +132,7 @@ const readReceiptCommits = new Set();
 const deliveryRecoveryInFlight = new Map();
 const deliveryRecoveryQueue = [];
 let activeDeliveryRecoveryCount = 0;
+let bootstrapCoordinator = null;
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
 
@@ -652,6 +657,42 @@ async function request(
   return payload;
 }
 
+function revealGateSurface() {
+  document.querySelector('#privacy-shield')?.remove();
+  app.removeAttribute('aria-hidden');
+}
+
+function bootView() {
+  state.shell?.composer.observer?.disconnect();
+  state.shell?.readObserver?.disconnect();
+  cancelReadTracking();
+  state.shell = null;
+  const view =
+    node(
+      'main',
+      {
+        className: 'gate boot-gate',
+        role: 'status',
+        'aria-live': 'polite',
+      },
+      node('div', { className: 'gate-column' }, [
+        node('div', { className: 'app-mark', 'aria-hidden': 'true' }, icon('bolt')),
+        node('h1', { className: 'sr-only', text: 'Conductor Pocket' }),
+        node('p', {
+          className: 'gate-lede boot-connecting',
+          text: 'Connecting to your Mac…',
+        }),
+        node('p', {
+          className: 'gate-lede boot-stalled',
+          text: 'Still connecting. Check that Conductor is running on your Mac, then reopen Pocket.',
+        }),
+      ]),
+    );
+  app.replaceChildren(view);
+  revealGateSurface();
+  appUpdateCoordinator?.stateChanged();
+}
+
 function gateView({ mark = 'bolt', title, body, content, action, secondary }) {
   state.shell?.composer.observer?.disconnect();
   state.shell?.readObserver?.disconnect();
@@ -667,6 +708,7 @@ function gateView({ mark = 'bolt', title, body, content, action, secondary }) {
     secondary,
   ]);
   app.replaceChildren(node('main', { className: 'gate' }, column));
+  revealGateSurface();
   appUpdateCoordinator?.stateChanged();
 }
 
@@ -789,20 +831,27 @@ function renderPairingExpired(code) {
   });
 }
 
-async function bootstrap() {
-  try {
-    const auth = await request('/api/auth/bootstrap');
-    state.auth = auth;
-    state.csrfToken = auth.csrfToken;
-    if (auth.unlocked) await startApplication();
-    else renderLock();
-  } catch (error) {
-    if (error.status === 401 || error.code === 'device_revoked') {
-      await purgeThenRenderSignedOut();
-    } else {
-      renderConnectionGate(error.code);
-    }
-  }
+function bootstrap() {
+  bootstrapCoordinator ||= createBootstrapCoordinator({
+    timeoutMs: BOOTSTRAP_REQUEST_MS,
+    load: ({ signal, timeoutMs }) =>
+      request('/api/auth/bootstrap', { signal, timeoutMs }),
+    onStart: bootView,
+    onSuccess: async (auth) => {
+      state.auth = auth;
+      state.csrfToken = auth.csrfToken;
+      if (auth.unlocked) await startApplication();
+      else renderLock();
+    },
+    onFailure: async (error) => {
+      if (error.status === 401 || error.code === 'device_revoked') {
+        await purgeThenRenderSignedOut();
+      } else {
+        renderConnectionGate(error.code);
+      }
+    },
+  });
+  return bootstrapCoordinator.run();
 }
 
 function renderLock({ errorMessage = '' } = {}) {
