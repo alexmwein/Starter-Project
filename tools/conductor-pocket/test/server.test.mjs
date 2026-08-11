@@ -366,6 +366,15 @@ test('static shell is hardened, host-checked, and development HTTP is not upgrad
     appUpdateScript.headers['content-type'],
     'text/javascript; charset=utf-8',
   );
+  const bootstrapRecoveryScript = await get(port, {
+    pathname: '/bootstrap-recovery.js',
+  });
+  assert.equal(bootstrapRecoveryScript.status, 200);
+  assert.equal(bootstrapRecoveryScript.headers['cache-control'], 'no-cache');
+  assert.equal(
+    bootstrapRecoveryScript.headers['content-type'],
+    'text/javascript; charset=utf-8',
+  );
 
   const compressedScript = await get(port, {
     pathname: '/app.js',
@@ -3023,10 +3032,11 @@ test('service worker handles only Pocket shell paths and Pocket-owned caches', a
     source,
     /cache\.addAll\(SHELL\)[\s\S]*self\.skipWaiting\(\)/,
   );
-  assert.match(
-    source,
-    /VERSIONED_SHELL_PATHS\.has\(requestUrl\.pathname\)[\s\S]*caches[\s\S]*\.match\(event\.request\)[\s\S]*response \|\| fetchAndCache\(event\.request\)/,
-  );
+  assert.match(source, /SHELL_ASSET_PATHS\.has\(requestUrl\.pathname\)/);
+  assert.match(source, /shellAssetResponseIsValid/);
+  assert.match(source, /cachedDocumentResponse\(\)/);
+  assert.doesNotMatch(source, /caches\.match\(/);
+  assert.doesNotMatch(source, /caches\.match\('\/'\)/);
 });
 
 test('Pocket shell asset versions remain consistent across the rollout', async () => {
@@ -3072,6 +3082,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   const preloadVersion = document.match(
     /rel="modulepreload" href="\/delivery-receipts\.js\?v=([^"]+)"/,
   )?.[1];
+  const bootstrapPreloadVersion = document.match(
+    /rel="modulepreload" href="\/bootstrap-recovery\.js\?v=([^"]+)"/,
+  )?.[1];
   const httpPreloadVersion = document.match(
     /rel="modulepreload" href="\/http\.js\?v=([^"]+)"/,
   )?.[1];
@@ -3101,6 +3114,12 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   )?.[1];
   const cachedCssVersion = serviceWorker.match(
     /'\/app\.css\?v=([^']+)'/,
+  )?.[1];
+  const bootstrapVersion = application.match(
+    /from '\.\/bootstrap-recovery\.js\?v=([^']+)'/,
+  )?.[1];
+  const cachedBootstrapVersion = serviceWorker.match(
+    /'\/bootstrap-recovery\.js\?v=([^']+)'/,
   )?.[1];
   const receiptsVersion = application.match(
     /from '\.\/delivery-receipts\.js\?v=([^']+)'/,
@@ -3172,6 +3191,9 @@ test('Pocket shell asset versions remain consistent across the rollout', async (
   assert.ok(appVersion);
   assert.equal(cssVersion, appVersion);
   assert.equal(preloadVersion, appVersion);
+  assert.equal(bootstrapPreloadVersion, appVersion);
+  assert.equal(bootstrapVersion, appVersion);
+  assert.equal(cachedBootstrapVersion, appVersion);
   assert.equal(cachedAppVersion, appVersion);
   assert.equal(cachedCssVersion, appVersion);
   assert.equal(receiptsVersion, appVersion);

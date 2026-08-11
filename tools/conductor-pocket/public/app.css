@@ -1758,6 +1758,54 @@ button:active {
   text-align: center;
 }
 
+.connection-anchor-gate {
+  align-items: flex-start;
+}
+
+.connection-anchor-gate .gate-column {
+  position: relative;
+  max-width: 340px;
+  margin-top: max(
+    0px,
+    calc(50svh - 152px - env(safe-area-inset-top))
+  );
+}
+
+.boot-connecting,
+.boot-stalled {
+  margin-bottom: 0;
+}
+
+.boot-connecting {
+  opacity: 0;
+  animation: boot-connecting 2.4s ease-in-out 0.8s infinite;
+}
+
+.boot-stalled {
+  position: absolute;
+  right: 0;
+  left: 0;
+  opacity: 0;
+  animation: boot-stalled 1ms step-end 8s both;
+}
+
+@keyframes boot-connecting {
+  0%,
+  100% {
+    opacity: 0.92;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes boot-stalled {
+  to {
+    opacity: 1;
+  }
+}
+
 .app-mark {
   display: flex;
   align-items: center;
@@ -2350,5 +2398,10 @@ button:active {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .boot-connecting {
+    opacity: 1;
+    animation: none !important;
   }
 }

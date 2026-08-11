@@ -1,19 +1,20 @@
-const SHELL_REVISION = '0.2.0-receipt-20260810';
-const CACHE = 'conductor-pocket-shell-v22';
+const SHELL_REVISION = '0.2.0-boot-recovery-20260811';
+const CACHE = 'conductor-pocket-shell-v23';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-receipt-20260810',
-  '/app.js?v=0.2.0-receipt-20260810',
-  '/delivery-receipts.js?v=0.2.0-receipt-20260810',
-  '/app-update.js?v=0.2.0-receipt-20260810',
-  '/http.js?v=0.2.0-receipt-20260810',
-  '/image-attachments.js?v=0.2.0-receipt-20260810',
-  '/live-refresh.js?v=0.2.0-receipt-20260810',
-  '/read-state.js?v=0.2.0-receipt-20260810',
-  '/rich-text.js?v=0.2.0-receipt-20260810',
-  '/transcript-focus.js?v=0.2.0-receipt-20260810',
-  '/swipe-navigation.js?v=0.2.0-receipt-20260810',
+  '/app.css?v=0.2.0-boot-recovery-20260811',
+  '/app.js?v=0.2.0-boot-recovery-20260811',
+  '/bootstrap-recovery.js?v=0.2.0-boot-recovery-20260811',
+  '/delivery-receipts.js?v=0.2.0-boot-recovery-20260811',
+  '/app-update.js?v=0.2.0-boot-recovery-20260811',
+  '/http.js?v=0.2.0-boot-recovery-20260811',
+  '/image-attachments.js?v=0.2.0-boot-recovery-20260811',
+  '/live-refresh.js?v=0.2.0-boot-recovery-20260811',
+  '/read-state.js?v=0.2.0-boot-recovery-20260811',
+  '/rich-text.js?v=0.2.0-boot-recovery-20260811',
+  '/transcript-focus.js?v=0.2.0-boot-recovery-20260811',
+  '/swipe-navigation.js?v=0.2.0-boot-recovery-20260811',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -22,6 +23,7 @@ const SHELL_PATHS = new Set([
   '/index.html',
   '/app.css',
   '/app.js',
+  '/bootstrap-recovery.js',
   '/delivery-receipts.js',
   '/app-update.js',
   '/http.js',
@@ -34,9 +36,10 @@ const SHELL_PATHS = new Set([
   '/icon.svg',
   '/manifest.webmanifest',
 ]);
-const VERSIONED_SHELL_PATHS = new Set([
+const SHELL_ASSET_PATHS = new Set([
   '/app.css',
   '/app.js',
+  '/bootstrap-recovery.js',
   '/delivery-receipts.js',
   '/app-update.js',
   '/http.js',
@@ -47,25 +50,105 @@ const VERSIONED_SHELL_PATHS = new Set([
   '/transcript-focus.js',
   '/swipe-navigation.js',
 ]);
+const SCRIPT_CONTENT_TYPES = new Set([
+  'application/ecmascript',
+  'application/javascript',
+  'text/ecmascript',
+  'text/javascript',
+]);
 
-function fetchAndCache(request) {
-  return fetch(request).then((response) => {
-    if (response.ok) {
-      const clone = response.clone();
-      void caches.open(CACHE).then((cache) => cache.put(request, clone));
+function shellAssetResponseIsValid(pathname, response) {
+  if (!response?.ok) return false;
+  const contentType = response?.headers
+    ?.get('content-type')
+    ?.split(';', 1)[0]
+    ?.trim()
+    ?.toLowerCase();
+  if (pathname === '/app.css') return contentType === 'text/css';
+  return SCRIPT_CONTENT_TYPES.has(contentType);
+}
+
+function documentResponseIsValid(response) {
+  if (!response?.ok) return false;
+  return response.headers
+    .get('content-type')
+    ?.split(';', 1)[0]
+    ?.trim()
+    ?.toLowerCase() === 'text/html';
+}
+
+async function fetchAndCache(request) {
+  const response = await fetch(request);
+  if (response.ok) {
+    const cache = await caches.open(CACHE);
+    await cache.put(request, response.clone());
+  }
+  return response;
+}
+
+async function shellAssetResponse(request, requestUrl) {
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(request);
+  if (cached && shellAssetResponseIsValid(requestUrl.pathname, cached)) {
+    return cached;
+  }
+  if (cached) await cache.delete(request);
+
+  const response = await fetch(request);
+  if (!shellAssetResponseIsValid(requestUrl.pathname, response)) {
+    throw new Error('shell_asset_content_type_mismatch');
+  }
+  if (response.ok) await cache.put(request, response.clone());
+  return response;
+}
+
+async function cachedDocumentResponse() {
+  const cache = await caches.open(CACHE);
+  for (const documentUrl of ['/index.html', '/']) {
+    const response = await cache.match(documentUrl);
+    if (documentResponseIsValid(response)) return response;
+    if (response) await cache.delete(documentUrl);
+  }
+  return new Response(
+    'Conductor Pocket needs to refresh. Close Pocket and reopen it while online.',
+    {
+      status: 503,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+    },
+  );
+}
+
+async function installShell() {
+  try {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(SHELL);
+    for (const shellUrl of SHELL) {
+      const pathname = new URL(shellUrl, self.location.origin).pathname;
+      const response = await cache.match(shellUrl);
+      const valid = SHELL_ASSET_PATHS.has(pathname)
+        ? shellAssetResponseIsValid(pathname, response)
+        : pathname === '/' || pathname === '/index.html'
+          ? documentResponseIsValid(response)
+          : true;
+      if (!valid) {
+        throw new Error('shell_asset_content_type_mismatch');
+      }
     }
-    return response;
-  });
+  } catch (error) {
+    await caches.delete(CACHE);
+    throw error;
+  }
 }
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
-      .then(() => self.skipWaiting()),
+    installShell().then(() => self.skipWaiting()),
   );
 });
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
@@ -123,20 +206,18 @@ self.addEventListener('fetch', (event) => {
   ) {
     return;
   }
-  const versionedAsset =
-    VERSIONED_SHELL_PATHS.has(requestUrl.pathname) &&
-    requestUrl.searchParams.has('v');
-  if (versionedAsset) {
-    event.respondWith(
-      caches
-        .match(event.request)
-        .then((response) => response || fetchAndCache(event.request))
-        .catch(() => caches.match('/')),
-    );
+  if (SHELL_ASSET_PATHS.has(requestUrl.pathname)) {
+    event.respondWith(shellAssetResponse(event.request, requestUrl));
+    return;
+  }
+  if (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
+    event.respondWith(cachedDocumentResponse());
     return;
   }
   event.respondWith(
-    fetchAndCache(event.request)
-      .catch(() => caches.match(event.request).then((response) => response || caches.match('/'))),
+    fetchAndCache(event.request).catch(async () => {
+      const cache = await caches.open(CACHE);
+      return cache.match(event.request);
+    }),
   );
 });
