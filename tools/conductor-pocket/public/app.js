@@ -671,7 +671,7 @@ function bootView() {
     node(
       'main',
       {
-        className: 'gate boot-gate',
+        className: 'gate boot-gate connection-anchor-gate',
         role: 'status',
         'aria-live': 'polite',
       },
@@ -693,7 +693,15 @@ function bootView() {
   appUpdateCoordinator?.stateChanged();
 }
 
-function gateView({ mark = 'bolt', title, body, content, action, secondary }) {
+function gateView({
+  mark = 'bolt',
+  title,
+  body,
+  content,
+  action,
+  secondary,
+  connectionAnchor = false,
+}) {
   state.shell?.composer.observer?.disconnect();
   state.shell?.readObserver?.disconnect();
   cancelReadTracking();
@@ -707,7 +715,11 @@ function gateView({ mark = 'bolt', title, body, content, action, secondary }) {
     action,
     secondary,
   ]);
-  app.replaceChildren(node('main', { className: 'gate' }, column));
+  app.replaceChildren(
+    node('main', {
+      className: connectionAnchor ? 'gate connection-anchor-gate' : 'gate',
+    }, column),
+  );
   revealGateSurface();
   appUpdateCoordinator?.stateChanged();
 }
@@ -1018,6 +1030,7 @@ function renderConnectionGate(code) {
     code === 'tailscale_identity_unpaired' ||
     code === 'device_identity_mismatch';
   gateView({
+    connectionAnchor: !upgradeRequired && !identityProblem,
     mark: upgradeRequired ? 'refresh' : 'wifiOff',
     title: upgradeRequired ? 'Pocket must refresh' : 'Mac unreachable',
     body:

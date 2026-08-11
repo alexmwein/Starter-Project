@@ -1758,10 +1758,17 @@ button:active {
   text-align: center;
 }
 
-.boot-gate .gate-column {
+.connection-anchor-gate {
+  align-items: flex-start;
+}
+
+.connection-anchor-gate .gate-column {
   position: relative;
   max-width: 340px;
-  transform: translateY(-6vh);
+  margin-top: max(
+    0px,
+    calc(50svh - 152px - env(safe-area-inset-top))
+  );
 }
 
 .boot-connecting,
@@ -1785,7 +1792,7 @@ button:active {
 @keyframes boot-connecting {
   0%,
   100% {
-    opacity: 0.6;
+    opacity: 0.92;
   }
 
   50% {
