@@ -39,7 +39,7 @@ concurrency:
 jobs:
   advance:
     name: Advance background queue
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ovo-studio]
     timeout-minutes: 5
     permissions:
       contents: write
@@ -453,7 +453,7 @@ jobs:
 
   cleanup:
     name: Clean exact merged queue branches
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ovo-studio]
     timeout-minutes: 3
     permissions:
       contents: read
