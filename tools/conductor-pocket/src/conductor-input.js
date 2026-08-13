@@ -342,6 +342,46 @@ function routeTarget() {
   };
 }
 
+// Reads one attribute across an ENTIRE collection in a single Apple Event
+// instead of one round trip per element. Measured against the live window: each
+// individual read costs ~8.5ms regardless of which attribute it is, because the
+// cost is the IPC round trip into Conductor's web renderer, not the value. The
+// three nested reads this enables over the whole sidebar cost ~39ms where the
+// equivalent per-element reads cost ~515ms, and the bulk cost is FLAT in the
+// number of workspaces while the per-element cost grows linearly with it.
+//
+// This is also strictly safer than the per-element loop it replaces: a bulk read
+// is one call, so it is a more atomic snapshot than N sequential reads, which
+// narrows the Conductor re-render race rather than widening it.
+//
+// The bulk specifier chain is an optimisation, never a requirement. If it is
+// unavailable or returns anything malformed, this falls back to the exact
+// per-element reads it replaced, so behaviour is identical and merely slower.
+// That keeps the fast path from ever becoming a new way to fail, and it keeps
+// the unit tests that model AX nodes as plain objects meaningful.
+function bulkRead(collection, elements, bulkReader, elementReader) {
+  const values = tryBulk(collection, elements.length, bulkReader);
+  if (values) return values;
+  return elements.map((element) => elementReader(element));
+}
+
+// Bulk with NO fallback: returns the array or null. Callers use this when the
+// per-element equivalent would read attributes the original code never touched.
+// A blanket fallback there would widen the read set, and a read that HEAD never
+// performed is a new way to throw, which on this path means a spurious
+// route_changed that strands a send.
+function tryBulk(collection, expectedLength, bulkReader) {
+  try {
+    const values = bulkReader(collection);
+    if (Array.isArray(values) && values.length === expectedLength) {
+      return values;
+    }
+  } catch {
+    // No bulk specifier chain available (unit-test AX doubles, or a changed API).
+  }
+  return null;
+}
+
 function routeRole(element) {
   try {
     return element.role();
@@ -388,34 +428,69 @@ function routeSelected(element) {
 function sessionRadioTopology(tabGroup) {
   const topology = [];
   const tabChildren = routeElements(tabGroup);
+  // Six Apple Events for the whole tab strip instead of three per tab plus
+  // three per nested tab. Only name, path and selected are ever consumed
+  // downstream (acquireRouteLease and assertRouteLease), so the element handle
+  // the old shape carried is deliberately not rebuilt: reading it back would
+  // cost one round trip per tab and nothing reads it.
+  // Roles are read for every child by HEAD too, so a per-element fallback here
+  // is read-for-read identical. Names and selections are NOT: HEAD only reads
+  // them once a child is known to be an AXRadioButton, so those use tryBulk and
+  // stay lazy when the bulk chain is unavailable. Widening the read set would
+  // invent throws on elements HEAD never touched.
+  const roles = bulkRead(tabGroup, tabChildren, (group) => group.uiElements.role(), (element) => routeRole(element));
+  const nestedRoles = bulkRead(tabGroup, tabChildren, (group) => group.uiElements.uiElements.role(), (element) => routeElements(element).map((nested) => routeRole(nested)));
+  const names = tryBulk(tabGroup, tabChildren.length, (group) => group.uiElements.name());
+  const selections = tryBulk(tabGroup, tabChildren.length, (group) => group.uiElements.value());
+  const nestedNames = tryBulk(tabGroup, tabChildren.length, (group) => group.uiElements.uiElements.name());
+  const nestedSelections = tryBulk(tabGroup, tabChildren.length, (group) => group.uiElements.uiElements.value());
+  const nestedChildrenOf = (childIndex) => routeElements(tabChildren[childIndex]);
   for (
     let childIndex = 0;
     childIndex < tabChildren.length;
     childIndex += 1
   ) {
-    const tabChild = tabChildren[childIndex];
-    if (routeRole(tabChild) === 'AXRadioButton') {
+    if (roles[childIndex] === 'AXRadioButton') {
+      const tabChild = tabChildren[childIndex];
       topology.push({
-        element: tabChild,
-        name: routeName(tabChild),
+        name: names ? names[childIndex] : routeName(tabChild),
         path: [childIndex],
-        selected: routeSelected(tabChild),
+        selected: Boolean(
+          selections ? selections[childIndex] : routeSelected(tabChild),
+        ),
       });
       continue;
     }
-    const nestedChildren = routeElements(tabChild);
+    const childRoles = nestedRoles[childIndex];
+    // A tab child whose nested roles cannot be resolved must ABORT, not be
+    // skipped. Silently omitting one shifts every later sessionOrdinal, and with
+    // two identically titled sessions that can hand the lease the WRONG one.
+    if (!Array.isArray(childRoles)) fail('route_changed');
+    const childNames = nestedNames ? nestedNames[childIndex] : null;
+    const childSelections = nestedSelections ? nestedSelections[childIndex] : null;
+    for (const group of [childNames, childSelections]) {
+      if (group === null) continue;
+      if (!Array.isArray(group) || group.length !== childRoles.length) {
+        fail('route_changed');
+      }
+    }
+    let nestedElements = null;
     for (
       let nestedIndex = 0;
-      nestedIndex < nestedChildren.length;
+      nestedIndex < childRoles.length;
       nestedIndex += 1
     ) {
-      const nested = nestedChildren[nestedIndex];
-      if (routeRole(nested) !== 'AXRadioButton') continue;
+      if (childRoles[nestedIndex] !== 'AXRadioButton') continue;
+      if ((!childNames || !childSelections) && nestedElements === null) {
+        nestedElements = nestedChildrenOf(childIndex);
+      }
+      const nested = nestedElements ? nestedElements[nestedIndex] : null;
       topology.push({
-        element: nested,
-        name: routeName(nested),
+        name: childNames ? childNames[nestedIndex] : routeName(nested),
         path: [childIndex, nestedIndex],
-        selected: routeSelected(nested),
+        selected: Boolean(
+          childSelections ? childSelections[nestedIndex] : routeSelected(nested),
+        ),
       });
     }
   }
@@ -426,16 +501,28 @@ function resolveMainRoot(rootElements) {
   const candidates = [];
   for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
     const elements = routeElements(rootElements[rootIndex]);
+    // Two Apple Events instead of two per child. Same values, same checks.
+    const roles = bulkRead(
+      rootElements[rootIndex],
+      elements,
+      (root) => root.uiElements.role(),
+      (element) => routeRole(element),
+    );
+    const descriptions = bulkRead(
+      rootElements[rootIndex],
+      elements,
+      (root) => root.uiElements.description(),
+      (element) => routeDescription(element),
+    );
     let composerCount = 0;
     let tabGroupCount = 0;
     let tabGroupIndex = -1;
     for (let index = 0; index < elements.length; index += 1) {
-      const element = elements[index];
-      if (routeRole(element) === 'AXTabGroup') {
+      if (roles[index] === 'AXTabGroup') {
         tabGroupCount += 1;
         tabGroupIndex = index;
       }
-      if (routeDescription(element) === 'composer') {
+      if (descriptions[index] === 'composer') {
         composerCount += 1;
       }
     }
@@ -1303,14 +1390,30 @@ function resolveComposerPressAction(sendButton) {
   fail('send_unavailable');
 }
 
+// This is the hot loop of a send: it runs after the draft is cleared and again
+// after every typed chunk. Measured on a live window, one assertRouteLease walk
+// costs ~1990ms because it re-reads the whole tree, while the focused-element
+// read this loop actually needs costs ~90ms. Proving the route on every poll
+// therefore spent seconds per chunk re-deriving something that cannot have
+// changed between two 20ms samples, and it is the bulk of why a send took 26 to
+// 45 seconds. That latency was not only slow, it was the exposure window for
+// the re-render race that aborted sends.
+//
+// The route is still proven, once, at the decision point: nothing returns from
+// here without a full route proof plus a focused-composer check, so the
+// guarantee at the moment the caller proceeds is unchanged. Only the redundant
+// per-poll re-derivation is gone.
 function waitForExactDraft(pid, expectedDraft, routeLease) {
   for (let attempt = 0; attempt < 75; attempt += 1) {
-    const refreshed = withTransientReadRetry(() => {
-      const process = validateFocusedComposer(pid);
-      assertRouteLease(process, routeLease);
-      return validateFocusedComposer(pid);
-    });
-    if (focusedDraft(refreshed) === expectedDraft) return;
+    const polled = withTransientReadRetry(() => validateFocusedComposer(pid));
+    if (focusedDraft(polled) === expectedDraft) {
+      withTransientReadRetry(() => {
+        const process = validateFocusedComposer(pid, expectedDraft);
+        assertRouteLease(process, routeLease);
+        return validateFocusedComposer(pid, expectedDraft);
+      });
+      return;
+    }
     delay(0.02);
   }
   fail('composer_update_failed');

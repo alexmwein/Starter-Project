@@ -17,6 +17,43 @@ import {
 } from './lib/sidecar.mjs';
 
 const execFileAsync = promisify(execFile);
+
+// process.execPath on a Homebrew install is a VERSION-PINNED Cellar path
+// (/opt/homebrew/Cellar/node/26.0.0/bin/node) and `brew upgrade node` deletes
+// it. Baking that into the LaunchAgent means a routine upgrade silently kills
+// the relay forever, with no error anyone sees, which for an operator who is
+// not at the Mac means the bridge is simply gone until they get home.
+// Homebrew re-points the unversioned symlink on upgrade, so prefer a stable
+// sibling that resolves to the SAME binary today, and fall back to execPath
+// (with a warning) rather than guessing.
+const STABLE_INTERPRETER_CANDIDATES = [
+  '/opt/homebrew/bin/node',
+  '/usr/local/bin/node',
+  '/usr/bin/node',
+];
+
+async function resolveInterpreterPath() {
+  let actual;
+  try {
+    actual = await fs.realpath(process.execPath);
+  } catch {
+    return process.execPath;
+  }
+  for (const candidate of STABLE_INTERPRETER_CANDIDATES) {
+    try {
+      if ((await fs.realpath(candidate)) !== actual) continue;
+      await fs.access(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Candidate missing, pointing elsewhere, or not executable.
+    }
+  }
+  console.warn(
+    `[install-relay] no stable interpreter symlink resolves to ${actual}; ` +
+      'pinning the versioned path, which a package-manager upgrade may delete.',
+  );
+  return process.execPath;
+}
 const packageRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const RELAY_START_ATTEMPTS = 150;
 const configPath =
@@ -180,6 +217,7 @@ async function install() {
   const stdoutPath = path.join(dataDirectory, 'relay.out.log');
   const stderrPath = path.join(dataDirectory, 'relay.err.log');
   const cliPath = path.join(runtimeDirectory, 'src', 'cli.mjs');
+  const interpreterPath = await resolveInterpreterPath();
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -188,7 +226,7 @@ async function install() {
   <string>${label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${xml(process.execPath)}</string>
+    <string>${xml(interpreterPath)}</string>
     <string>--no-warnings=ExperimentalWarning</string>
     <string>${xml(cliPath)}</string>
     <string>serve</string>

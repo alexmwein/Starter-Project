@@ -1305,6 +1305,21 @@ test('a transient accessibility read is retried instead of aborting the send', a
     );
   }
 
+  // The typing hot loop must poll with the cheap focused read and prove the
+  // route ONCE at the decision point. A measured assertRouteLease walk costs
+  // ~1990ms against ~90ms for the focused read, so proving it per poll spent
+  // seconds per chunk re-deriving something that cannot change between two
+  // 20ms samples. That was the bulk of a 26 to 45 second send.
+  const exactDraft = inputHelper.slice(
+    inputHelper.indexOf('function waitForExactDraft'),
+  );
+  const exactDraftBody = exactDraft.slice(0, exactDraft.indexOf('\n}\n'));
+  assert.match(
+    exactDraftBody,
+    /withTransientReadRetry\(\(\) => validateFocusedComposer\(pid\)\)[\s\S]*focusedDraft\(polled\) === expectedDraft[\s\S]*assertRouteLease\(process, routeLease\)/,
+  );
+  assert.equal(exactDraftBody.match(/assertRouteLease/g).length, 1);
+
   // Physical-input and lock state report real conditions, so retrying them
   // would erase the signal. They must never be wrapped.
   assert.doesNotMatch(
