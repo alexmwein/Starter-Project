@@ -730,10 +730,22 @@ function assertRouteLease(process, lease) {
     fail('route_changed', `mainRootIndex ${main.rootIndex}!=${lease.mainRootIndex}`);
   }
   const mainElements = main.elements;
-  if (mainElements.length !== lease.mainChildCount) {
-    fail('route_changed', `mainChildCount ${mainElements.length}!=${lease.mainChildCount}`);
-  }
-  const tabGroup = mainElements[lease.tabGroupIndex];
+  // Conductor's toolbar gains and loses chrome while a send is in flight, as git
+  // diff counts and check badges update. Both the child count and the tab-group
+  // index drift with it: observed at 17, 18, 19 and 20 children, and the index
+  // moving from 11 to 13, inside one session. Requiring the count to still equal
+  // the value captured at lease time therefore turned unrelated chrome into a
+  // PERMANENT route_changed. Evidence: a send whose message was already fully
+  // delivered died on "mainChildCount 19!=20", then burned the transport timeout
+  // because the mismatch could never resolve.
+  //
+  // Session identity does not live in the toolbar. It is proven by the workspace
+  // root check above and by the tab topology below (names, paths, ordinal, and
+  // exactly one selected), every one of which is kept. So take the tab group
+  // from the FRESH resolution, which resolveMainRoot already proved unique by
+  // requiring exactly one AXTabGroup, instead of trusting a stale index guarded
+  // by a brittle count.
+  const tabGroup = mainElements[main.tabGroupIndex];
   if (!tabGroup || routeRole(tabGroup) !== 'AXTabGroup') {
     fail('route_changed', 'tabGroupRole');
   }
