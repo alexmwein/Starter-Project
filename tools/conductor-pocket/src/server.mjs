@@ -2107,6 +2107,34 @@ export function createPocketServer({
                   sendResult.code !== 'send_interrupted' &&
                   !attributedTransportFailure
                 ) {
+                  // A killed automation reports no press and owns no composer,
+                  // so the only open question is whether anything landed. If
+                  // Conductor's own transcript also gained no user row, the
+                  // message provably did not send, and the phone should offer
+                  // Retry instead of a Check that can only ever answer
+                  // "unconfirmed" about a message that never existed. Without
+                  // this, a 45s timeout is a dead end with no way forward.
+                  if (
+                    sendResult.safeToRetry !== true &&
+                    sendResult.code === 'automation_timeout' &&
+                    sendResult.composerOwned !== true &&
+                    !(
+                      Number.isSafeInteger(sendResult.pressedAt) &&
+                      sendResult.pressedAt > 0
+                    )
+                  ) {
+                    let nothingLanded = false;
+                    try {
+                      nothingLanded =
+                        database.listUserMessagesAfter(route.id, beforeRowId)
+                          .length === 0;
+                    } catch {
+                      // An unreadable transcript proves nothing. Stay unconfirmed.
+                    }
+                    if (nothingLanded) {
+                      sendResult = { ...sendResult, safeToRetry: true };
+                    }
+                  }
                   if (sendResult.safeToRetry === true) {
                     await markDefinitelyUnsent();
                   }
