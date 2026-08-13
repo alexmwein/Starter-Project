@@ -706,7 +706,7 @@ function assertRouteLease(process, lease) {
     lease.sidebarRootIndex >= lease.rootCount ||
     lease.mainRootIndex === lease.sidebarRootIndex
   ) {
-    fail('route_changed');
+    fail('route_changed', 'leaseShape');
   }
 
   const rootElements = webAreaRootElements(process);
