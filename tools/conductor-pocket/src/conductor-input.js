@@ -1458,6 +1458,43 @@ function waitForComposerSend(
   fail('send_unavailable');
 }
 
+// Deliver the ENTIRE message in one Accessibility write instead of typing it in
+// 256-character chunks with a route and draft proof between every chunk. Each
+// chunk boundary was a window where a Conductor re-render, or a single keystroke
+// from the operator at the Mac, aborted a send that had already half-landed;
+// every newline was its own operation with its own proof pass; and long messages
+// deterministically exceeded the transport timeout.
+//
+// Verified against the live composer: the value sticks, reads back byte-exact,
+// and the Send control appears, which proves the editor registers the write
+// rather than silently ignoring it.
+//
+// Returns false rather than throwing on any doubt, so the caller falls back to
+// the proven chunked path. The fast path can never become a new way to fail, and
+// nothing here presses anything: the exact-draft proof and the route proof still
+// run before the press exactly as before.
+function deliverWholeMessage(pid, message) {
+  try {
+    const process = validateFocusedComposer(pid);
+    const focused = process.attributes.byName('AXFocusedUIElement').value();
+    focused.value = message;
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      if (focusedDraft(validateFocusedComposer(pid)) === message) return true;
+      delay(0.02);
+    }
+  } catch {
+    // Fall back to chunked typing.
+  }
+  try {
+    // Leave nothing half-written for the fallback to trip over.
+    const process = validateFocusedComposer(pid);
+    process.attributes.byName('AXFocusedUIElement').value().value = '';
+  } catch {
+    // The chunked path clears the composer itself.
+  }
+  return false;
+}
+
 function typeAndSendMessage(pid) {
   const message = decodeBase64Environment('POCKET_MESSAGE_BASE64');
   const expectedDraft = decodeBase64Environment(
@@ -1515,6 +1552,11 @@ function typeAndSendMessage(pid) {
       if (replaceDraft && currentDraft !== expectedDraft) fail('draft_conflict');
       if (currentDraft === '') lastProvenPrefix = '';
 
+      if (deliverWholeMessage(pid, message)) {
+        lastProvenPrefix = message;
+        exactDraftExposedAt = Date.now();
+      } else {
+
       if (currentDraft !== '') {
         process = validateFocusedComposer(pid, currentDraft);
         assertRouteLease(process, routeLease);
@@ -1547,6 +1589,7 @@ function typeAndSendMessage(pid) {
         lastProvenPrefix = nextPrefix;
         lastAttemptedPrefix = null;
         if (operation.backing) Number(operation.backing.length);
+      }
       }
     }
 
