@@ -710,10 +710,12 @@ function assertRouteLease(process, lease) {
   }
 
   const rootElements = webAreaRootElements(process);
-  if (rootElements.length !== lease.rootCount) fail('route_changed');
+  if (rootElements.length !== lease.rootCount) {
+    fail('route_changed', `rootCount ${rootElements.length}!=${lease.rootCount}`);
+  }
   const sidebarRoot = rootElements[lease.sidebarRootIndex];
   if (!sidebarRoot || !rootElements[lease.mainRootIndex]) {
-    fail('route_changed');
+    fail('route_changed', 'rootHandleMissing');
   }
   resolveWorkspaceRoot([sidebarRoot], {
     workspaceHint: {
@@ -724,42 +726,56 @@ function assertRouteLease(process, lease) {
     workspaceName: lease.workspaceName,
   });
   const main = resolveMainRoot(rootElements);
-  if (main.rootIndex !== lease.mainRootIndex) fail('route_changed');
+  if (main.rootIndex !== lease.mainRootIndex) {
+    fail('route_changed', `mainRootIndex ${main.rootIndex}!=${lease.mainRootIndex}`);
+  }
   const mainElements = main.elements;
   if (mainElements.length !== lease.mainChildCount) {
-    fail('route_changed');
+    fail('route_changed', `mainChildCount ${mainElements.length}!=${lease.mainChildCount}`);
   }
   const tabGroup = mainElements[lease.tabGroupIndex];
   if (!tabGroup || routeRole(tabGroup) !== 'AXTabGroup') {
-    fail('route_changed');
+    fail('route_changed', 'tabGroupRole');
   }
   const currentTopology = sessionRadioTopology(tabGroup);
   if (currentTopology.length !== lease.sessionTopology.length) {
-    fail('route_changed');
+    fail('route_changed', `topologyLength ${currentTopology.length}!=${lease.sessionTopology.length}`);
   }
   for (let index = 0; index < currentTopology.length; index += 1) {
     const current = currentTopology[index];
     const expected = lease.sessionTopology[index];
-    if (
-      current.name !== expected.name ||
-      !sameRoutePath(current.path, expected.path)
-    ) {
-      fail('route_changed');
+    if (current.name !== expected.name) {
+      fail(
+        'route_changed',
+        `tabName[${index}] "${String(current.name).slice(0, 40)}"!="${String(expected.name).slice(0, 40)}"`,
+      );
+    }
+    if (!sameRoutePath(current.path, expected.path)) {
+      fail(
+        'route_changed',
+        `tabPath[${index}] ${JSON.stringify(current.path)}!=${JSON.stringify(expected.path)}`,
+      );
     }
   }
   const matchingSessions = currentTopology.filter(
     (entry) => entry.name === lease.sessionName,
   );
   if (matchingSessions.length < lease.sessionOrdinal) {
-    fail('route_changed');
+    fail(
+      'route_changed',
+      `ordinal ${matchingSessions.length}<${lease.sessionOrdinal}`,
+    );
   }
   const targetSession = matchingSessions[lease.sessionOrdinal - 1];
-  if (
-    !sameRoutePath(targetSession.path, lease.targetSessionPath) ||
-    !targetSession.selected ||
-    currentTopology.filter((entry) => entry.selected).length !== 1
-  ) {
-    fail('route_changed');
+  if (!sameRoutePath(targetSession.path, lease.targetSessionPath)) {
+    fail('route_changed', 'targetPath');
+  }
+  if (!targetSession.selected) {
+    fail('route_changed', 'targetDeselected');
+  }
+  const selectedCount = currentTopology.filter((entry) => entry.selected).length;
+  if (selectedCount !== 1) {
+    fail('route_changed', `selectedCount ${selectedCount}`);
   }
 }
 
