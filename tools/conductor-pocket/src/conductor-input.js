@@ -1369,7 +1369,7 @@ function isSpeechControl(candidate) {
   return false;
 }
 
-function isComposerSendButton(candidate, preceding) {
+function isComposerSendButton(candidate, preceding, requireSpeechAnchor = true) {
   try {
     const classes = candidate.attributes
       .byName('AXDOMClassList')
@@ -1384,7 +1384,7 @@ function isComposerSendButton(candidate, preceding) {
       classes.includes(SEND_POSITION_CLASS) &&
       SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
       NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
-      isSpeechControl(preceding) &&
+      (!requireSpeechAnchor || isSpeechControl(preceding)) &&
       pressActions.length === 1
     );
   } catch {
@@ -1411,12 +1411,49 @@ function resolveComposerSend(process, expectedDraft) {
       return false;
     }
   });
-  if (textAreas.length !== 1) fail('send_unavailable');
+  if (textAreas.length !== 1) {
+    // Name WHY zero (or several) qualified, or every send failure here reads
+    // as the same opaque word. Focus and draft state are the two that actually
+    // vary at runtime.
+    const states = composerElements
+      .filter((candidate) => {
+        try {
+          return candidate.role() === 'AXTextArea';
+        } catch {
+          return false;
+        }
+      })
+      .map((candidate) => {
+        try {
+          const draft = normalizedDraft(candidate.value());
+          return `focused=${candidate.focused()},draftLen=${draft.length},want=${expectedDraft.length}`;
+        } catch {
+          return 'unreadable';
+        }
+      });
+    fail('send_unavailable', `textAreas=${textAreas.length} [${states.join(' | ')}]`);
+  }
 
-  const buttons = composerElements.filter((candidate, index) =>
+  let buttons = composerElements.filter((candidate, index) =>
     isComposerSendButton(candidate, composerElements[index - 1]),
   );
-  if (buttons.length !== 1) fail('send_unavailable');
+  if (buttons.length === 0) {
+    // The speech anchor requires the sibling before Send to be an AXButton
+    // labeled "Speech to text". Conductor stopped exposing that label (it now
+    // reads name=null, description=""), so the anchored matcher found ZERO
+    // buttons and every send died at the press step: proven live by a fully
+    // delivered draft failing with `buttons=0` until the deadline. The anchor
+    // still runs first so it keeps working the moment the label returns; the
+    // fallback drops ONLY the label requirement and keeps every discriminating
+    // condition (position class, active classes, none of the disabled-state
+    // classes, enabled, exactly one press action), and it is accepted ONLY
+    // when it identifies exactly one candidate, so ambiguity still fails
+    // closed rather than pressing a guess.
+    buttons = composerElements.filter((candidate, index) =>
+      isComposerSendButton(candidate, composerElements[index - 1], false),
+    );
+  }
+  if (buttons.length !== 1) fail('send_unavailable', `buttons=${buttons.length}`);
   return buttons[0];
 }
 
@@ -1478,8 +1515,18 @@ function waitForComposerSend(
   // fails, in seconds instead of never returning, and the window in which a
   // keystroke at the Mac can abort the send shrinks by the same factor.
   const deadlineAt = automationDeadline();
+  // Each iteration's send_unavailable is swallowed by design (the button may
+  // simply not be ready yet), which meant a loop that died of exhaustion or
+  // deadline reported nothing about WHY no iteration ever succeeded. Carry the
+  // last swallowed failure into the terminal one.
+  let lastSwallowed = null;
   for (let attempt = 0; attempt < 250; attempt += 1) {
-    assertDeadline(deadlineAt);
+    if (deadlineAt !== null && Date.now() >= deadlineAt) {
+      fail(
+        'deadline_exceeded',
+        `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
     assertInputLease(inputLease);
     let sendReady = false;
     try {
@@ -1488,6 +1535,7 @@ function waitForComposerSend(
       sendReady = true;
     } catch (error) {
       if (error?.pocketCode !== 'send_unavailable') throw error;
+      lastSwallowed = lastFailure;
     }
     if (sendReady) {
       return withTransientReadRetry(() => {
@@ -1499,7 +1547,10 @@ function waitForComposerSend(
     }
     delay(0.02);
   }
-  fail('send_unavailable');
+  fail(
+    'send_unavailable',
+    `press-wait exhausted; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+  );
 }
 
 // Deliver the ENTIRE message in one Accessibility write instead of typing it in
