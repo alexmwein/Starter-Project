@@ -310,6 +310,10 @@ on commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPi
 	on error errorText
 		if errorText contains "draft_conflict" then return "draft_conflict"
 		if errorText contains "session_locked" then return "session_locked"
+		-- The helper self-terminates before the transport's kill would orphan
+		-- it. Pass the code through so the relay sees a structured pre-press
+		-- failure instead of an opaque automation_failed.
+		if errorText contains "deadline_exceeded" then return "code:deadline_exceeded"
 		return "automation_failed"
 	end try
 	if helperResult starts with "pressed:" then return helperResult
@@ -495,6 +499,8 @@ else if commitResult starts with "retryable:" then
 	return "{\"ok\":false,\"code\":\"composer_changed_pre_send\",\"retryCertificate\":\"" & retryCertificate & "\"}"
 else if commitResult is "session_locked" then
 	return "{\"ok\":false,\"code\":\"session_locked\"}"
+else if commitResult is "code:deadline_exceeded" then
+	return "{\"ok\":false,\"code\":\"deadline_exceeded\"}"
 else
 	return "{\"ok\":false,\"code\":\"automation_failed\"}"
 end if

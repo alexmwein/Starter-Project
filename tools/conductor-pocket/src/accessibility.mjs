@@ -344,6 +344,16 @@ export class AccessibilityTransport {
           POCKET_PRESS_MARKER_PATH: pressMarkerPath,
           POCKET_REPLACE_DRAFT: replaceDraft ? 'true' : 'false',
           POCKET_ATTEMPT_STARTED_AT: String(attemptStartedAt),
+          // The execFile timeout kills the OUTER osascript; the inner JXA
+          // helper it spawned survives as an orphan. One was observed still
+          // walking the tree 2.5 minutes after the transport had already
+          // reported automation_timeout, which is both wasted work and a
+          // phantom-press risk. Give the helper its own deadline safely inside
+          // the transport's, so it terminates itself with a structured code
+          // and nothing outlives the send.
+          POCKET_DEADLINE_AT: String(
+            Date.now() + Math.max(timeoutMs - 5_000, 5_000),
+          ),
           POCKET_EXPECTED_DRAFT_BASE64: Buffer.from(
             expectedMacDraft,
             'utf8',

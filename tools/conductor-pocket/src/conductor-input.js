@@ -114,6 +114,20 @@ function fail(code, tag = null) {
   throw error;
 }
 
+// The transport's kill only reaches the outer osascript, so this helper must
+// bound its own lifetime: check the deadline in every polling loop and refuse
+// to press past it. Null when the relay did not provide one (unit tests).
+function automationDeadline() {
+  const at = Number(environmentValue('POCKET_DEADLINE_AT'));
+  return Number.isSafeInteger(at) && at > 0 ? at : null;
+}
+
+function assertDeadline(deadlineAt) {
+  if (deadlineAt !== null && Date.now() >= deadlineAt) {
+    fail('deadline_exceeded');
+  }
+}
+
 const TRANSIENT_READ_ATTEMPTS = 5;
 const TRANSIENT_READ_DELAY_SECONDS = 0.05;
 
@@ -1453,17 +1467,35 @@ function waitForComposerSend(
   inputLease,
   routeLease,
 ) {
+  // Split into a cheap poll and a single decision-point proof. The old shape
+  // proved the whole route on EVERY iteration, so a persistent mismatch
+  // multiplied into 250 iterations x 5 transient retries x a full route walk:
+  // minutes of spinning, and one orphaned helper was observed still running
+  // 2.5 minutes after the transport gave up at 45s. The poll now reads only
+  // the focused composer and the Send control (~100ms), and the full route
+  // proof runs ONCE, when the button is actually present, immediately before
+  // the caller's own pinned pre-press proof. A genuine route change still
+  // fails, in seconds instead of never returning, and the window in which a
+  // keystroke at the Mac can abort the send shrinks by the same factor.
+  const deadlineAt = automationDeadline();
   for (let attempt = 0; attempt < 250; attempt += 1) {
+    assertDeadline(deadlineAt);
     assertInputLease(inputLease);
-    const refreshed = withTransientReadRetry(() => {
-      const process = validateFocusedComposer(pid, expectedDraft);
-      assertRouteLease(process, routeLease);
-      return validateFocusedComposer(pid, expectedDraft);
-    });
+    let sendReady = false;
     try {
-      return resolveComposerSend(refreshed, expectedDraft);
+      const polled = validateFocusedComposer(pid, expectedDraft);
+      resolveComposerSend(polled, expectedDraft);
+      sendReady = true;
     } catch (error) {
       if (error?.pocketCode !== 'send_unavailable') throw error;
+    }
+    if (sendReady) {
+      return withTransientReadRetry(() => {
+        const process = validateFocusedComposer(pid, expectedDraft);
+        assertRouteLease(process, routeLease);
+        const refreshed = validateFocusedComposer(pid, expectedDraft);
+        return resolveComposerSend(refreshed, expectedDraft);
+      });
     }
     delay(0.02);
   }
@@ -1617,6 +1649,10 @@ function typeAndSendMessage(pid) {
     assertRouteLease(process, routeLease);
     assertInputLease(inputLease);
     assertSessionUnlocked();
+    // Never press past the deadline: the transport has already (or is about
+    // to) report this attempt failed, and a press after that report is a
+    // phantom send the operator would then duplicate by retrying.
+    assertDeadline(automationDeadline());
     pressInvokedAt = Date.now();
     pressAction.perform();
     recordPressProvenance(attemptStartedAt, pressInvokedAt);
