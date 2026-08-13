@@ -57,14 +57,39 @@ on isMainGroup(candidate)
 		on error
 			return false
 		end try
-		repeat with childElement in candidateElements
-			try
-				if (role of childElement as text) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
-			end try
-			try
-				if (description of childElement as text) is "composer" then set composerCount to composerCount + 1
-			end try
-		end repeat
+		-- One Apple Event per attribute for the whole child list instead of two
+		-- per child. Every AX read costs the same round trip regardless of what
+		-- it returns, so cost here is round-trip count, and this handler runs for
+		-- every candidate root on every main-group and sidebar resolution.
+		-- Falls back to the per-child reads below on any throw or length
+		-- mismatch, so behaviour is identical and merely slower.
+		set childCount to count of candidateElements
+		set bulkRoles to missing value
+		set bulkDescriptions to missing value
+		try
+			set candidateRoles to role of UI elements of candidate
+			set candidateDescriptions to description of UI elements of candidate
+			if (count of candidateRoles) is childCount and (count of candidateDescriptions) is childCount then
+				set bulkRoles to candidateRoles
+				set bulkDescriptions to candidateDescriptions
+			end if
+		end try
+		if bulkRoles is not missing value then
+			repeat with bulkIndex from 1 to childCount
+				if (item bulkIndex of bulkRoles) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
+				if (item bulkIndex of bulkDescriptions) is "composer" then set composerCount to composerCount + 1
+				if tabGroupCount > 1 or composerCount > 1 then return false
+			end repeat
+		else
+			repeat with childElement in candidateElements
+				try
+					if (role of childElement as text) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
+				end try
+				try
+					if (description of childElement as text) is "composer" then set composerCount to composerCount + 1
+				end try
+			end repeat
+		end if
 	end tell
 	return tabGroupCount is 1 and composerCount is 1
 end isMainGroup
