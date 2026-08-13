@@ -1,3 +1,12 @@
+-- Held ONLY for the duration of the stabilization loop below. That loop polls
+-- the same main group up to 50 times to watch the route settle, and re-deriving
+-- it per iteration meant a full tree resolution per poll, which is the bulk of
+-- the 45s automation timeouts. The held value is an AX specifier, so every read
+-- through it still resolves live values and the loop still observes real change.
+-- It is cleared the moment the loop exits, and every decision point afterwards
+-- re-resolves from scratch.
+property heldMainGroup : missing value
+
 property cachedWorkspaceName : missing value
 property cachedWorkspaceGroup : missing value
 property cachedWorkspaceRoute : missing value
@@ -127,6 +136,7 @@ on findSidebarGroup(workspaceName)
 end findSidebarGroup
 
 on getMainGroup()
+	if my heldMainGroup is not missing value then return my heldMainGroup
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
 	set matchingGroups to {}
@@ -428,6 +438,7 @@ if routeAlreadySelected is false then
 end if
 
 set stableRouteChecks to 0
+set my heldMainGroup to getMainGroup()
 repeat with waitIndex from 1 to 50
 	delay 0.1
 	if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
@@ -437,6 +448,7 @@ repeat with waitIndex from 1 to 50
 		set stableRouteChecks to 0
 	end if
 end repeat
+set my heldMainGroup to missing value
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
 set textArea to missing value
