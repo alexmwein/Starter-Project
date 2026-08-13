@@ -66,10 +66,81 @@ const CERTIFIABLE_PRE_SEND_CODES = [
   'send_unavailable',
 ];
 
-function fail(code) {
+// send_unavailable is thrown from roughly fifteen separate assertions here, and
+// once typing has started the outer catch collapses all of them into
+// send_not_confirmed. The relay therefore logged the same opaque string no
+// matter which invariant actually broke, so a failing send could never be
+// traced to a cause. This records the throwing function chain to a side file
+// and deliberately does not touch the strings the AppleScript and relay parse,
+// so the wire contract is unchanged and diagnostics can never alter a send.
+let lastFailure = null;
+
+function diagnosticsPath() {
+  return `${ObjC.unwrap($.NSHomeDirectory())}/.config/conductor-pocket/send-diagnostics.jsonl`;
+}
+
+function recordDiagnostic(entry) {
+  try {
+    const path = diagnosticsPath();
+    const data = $(`${JSON.stringify(entry)}\n`).dataUsingEncoding(
+      $.NSUTF8StringEncoding,
+    );
+    if (!data) return;
+    if ($.NSFileManager.defaultManager.fileExistsAtPath(path)) {
+      const handle = $.NSFileHandle.fileHandleForWritingAtPath(path);
+      handle.seekToEndOfFile;
+      handle.writeData(data);
+      handle.closeFile;
+    } else {
+      data.writeToFileAtomically(path, true);
+    }
+  } catch {
+    // Diagnostics are best effort and must never fail a send.
+  }
+}
+
+function fail(code, tag = null) {
   const error = new Error(code);
   error.pocketCode = code;
+  lastFailure = {
+    code,
+    tag,
+    via:
+      typeof error.stack === 'string'
+        ? error.stack.split('\n').map((frame) => frame.replace(/@$/, ''))
+            .filter(Boolean).slice(0, 6).join(' < ')
+        : null,
+  };
   throw error;
+}
+
+const TRANSIENT_READ_ATTEMPTS = 5;
+const TRANSIENT_READ_DELAY_SECONDS = 0.05;
+
+// Conductor re-renders its transcript continuously while an agent streams, so
+// an AX element is routinely replaced between the moment a walk enumerates it
+// and the moment an attribute is read off it. Those reads throw, and every
+// check in this file treats a throw as proof that an invariant broke, which
+// aborted otherwise healthy sends: send_unavailable out of
+// assertNotQueuedEditMode before typing, route_changed out of assertRouteLease
+// after it.
+//
+// Re-running a READ-ONLY check against a settled tree separates the two cases:
+// a genuine structural change fails every attempt and still aborts the send,
+// while a re-render blip passes on the next one. This never relaxes what a
+// check asserts and never re-runs a mutation, so it cannot send twice. Only
+// wrap read-only inspection with it. assertInputLease and assertSessionUnlocked
+// are deliberately excluded: those report real physical-input and lock state,
+// and retrying them would erase the signal they exist to carry.
+function withTransientReadRetry(readOnlyCheck) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return readOnlyCheck();
+    } catch (error) {
+      if (attempt >= TRANSIENT_READ_ATTEMPTS) throw error;
+      delay(TRANSIENT_READ_DELAY_SECONDS);
+    }
+  }
 }
 
 function environmentValue(name) {
@@ -1038,26 +1109,34 @@ function composerSendContext(process) {
   return { composer, contextElements };
 }
 
+// This walk reads dozens of attributes off a transcript that re-renders while
+// an agent streams, and every read that throws is treated as a failed
+// assertion. That made a re-render blip indistinguishable from real queued-edit
+// mode and was the single largest cause of aborted sends. Each attempt re-walks
+// from `process` with a fresh node budget, so a genuine queued-edit state still
+// fails every attempt and still blocks the send.
 function assertNotQueuedEditMode(process) {
-  const { composer, contextElements } = composerSendContext(process);
-  const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
-  if (
-    contextElements.slice(0, -1).some((candidate) =>
+  return withTransientReadRetry(() => {
+    const { composer, contextElements } = composerSendContext(process);
+    const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
+    if (
+      contextElements.slice(0, -1).some((candidate) =>
+        hasStaticTextInBoundedTree(
+          candidate,
+          [QUEUED_EDIT_MARKER],
+          budget,
+        )
+      ) ||
       hasStaticTextInBoundedTree(
-        candidate,
-        [QUEUED_EDIT_MARKER],
+        composer,
+        [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
         budget,
       )
-    ) ||
-    hasStaticTextInBoundedTree(
-      composer,
-      [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
-      budget,
-    )
-  ) {
-    fail('send_unavailable');
-  }
-  return composer;
+    ) {
+      fail('send_unavailable');
+    }
+    return composer;
+  });
 }
 
 function uniqueComposerDraft(process) {
@@ -1226,9 +1305,11 @@ function resolveComposerPressAction(sendButton) {
 
 function waitForExactDraft(pid, expectedDraft, routeLease) {
   for (let attempt = 0; attempt < 75; attempt += 1) {
-    const process = validateFocusedComposer(pid);
-    assertRouteLease(process, routeLease);
-    const refreshed = validateFocusedComposer(pid);
+    const refreshed = withTransientReadRetry(() => {
+      const process = validateFocusedComposer(pid);
+      assertRouteLease(process, routeLease);
+      return validateFocusedComposer(pid);
+    });
     if (focusedDraft(refreshed) === expectedDraft) return;
     delay(0.02);
   }
@@ -1243,9 +1324,11 @@ function waitForComposerSend(
 ) {
   for (let attempt = 0; attempt < 250; attempt += 1) {
     assertInputLease(inputLease);
-    const process = validateFocusedComposer(pid, expectedDraft);
-    assertRouteLease(process, routeLease);
-    const refreshed = validateFocusedComposer(pid, expectedDraft);
+    const refreshed = withTransientReadRetry(() => {
+      const process = validateFocusedComposer(pid, expectedDraft);
+      assertRouteLease(process, routeLease);
+      return validateFocusedComposer(pid, expectedDraft);
+    });
     try {
       return resolveComposerSend(refreshed, expectedDraft);
     } catch (error) {
@@ -1377,6 +1460,19 @@ function typeAndSendMessage(pid) {
     ) {
       exactDraftExposedAt = possibleExposureAt;
     }
+    // attemptStartedAt joins this row to the relay's traceId in relay.out.log,
+    // so a send_not_confirmed there can be resolved to the assertion that
+    // actually broke rather than the phase that swallowed it.
+    recordDiagnostic({
+      at: new Date().toISOString(),
+      attemptStartedAt,
+      failure: lastFailure,
+      draftFullyTyped: exactDraftExposedAt > 0,
+      pressInvoked: pressInvokedAt > 0,
+      provenPrefixLength:
+        typeof lastProvenPrefix === 'string' ? lastProvenPrefix.length : null,
+      messageLength: message.length,
+    });
     let inputInterrupted = error?.pocketCode === 'user_input_active';
     if (!inputInterrupted && inputLease) {
       try {

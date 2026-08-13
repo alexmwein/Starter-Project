@@ -1232,3 +1232,87 @@ function run(argv) {
     assert.equal(stdout.trim(), sample);
   },
 );
+
+test('a transient accessibility read is retried instead of aborting the send', async () => {
+  const inputHelper = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+
+  const fnStart = inputHelper.indexOf('function withTransientReadRetry');
+  assert.ok(fnStart >= 0);
+  const fnEnd = inputHelper.indexOf('\n}\n', fnStart) + 2;
+  const readAttempts = Number(
+    inputHelper.match(/const TRANSIENT_READ_ATTEMPTS = (\d+)/)[1],
+  );
+  const readDelaySeconds = Number(
+    inputHelper.match(/const TRANSIENT_READ_DELAY_SECONDS = ([\d.]+)/)[1],
+  );
+  assert.ok(readAttempts >= 3);
+  assert.ok(readDelaySeconds > 0);
+  const sandbox = {
+    delays: 0,
+    TRANSIENT_READ_ATTEMPTS: readAttempts,
+    TRANSIENT_READ_DELAY_SECONDS: readDelaySeconds,
+  };
+  sandbox.delay = () => {
+    sandbox.delays += 1;
+  };
+  vm.createContext(sandbox);
+  const withTransientReadRetry = vm.runInContext(
+    `(${inputHelper.slice(fnStart, fnEnd)})`,
+    sandbox,
+  );
+
+  // A re-render blip resolves once the tree settles.
+  let reads = 0;
+  const recovered = withTransientReadRetry(() => {
+    reads += 1;
+    if (reads < 3) throw new Error('transient');
+    return 'settled';
+  });
+  assert.equal(recovered, 'settled');
+  assert.equal(reads, 3);
+  assert.equal(sandbox.delays, 2);
+
+  // A genuine structural mismatch still fails, and still fails closed.
+  let attempts = 0;
+  assert.throws(
+    () =>
+      withTransientReadRetry(() => {
+        attempts += 1;
+        const error = new Error('send_unavailable');
+        error.pocketCode = 'send_unavailable';
+        throw error;
+      }),
+    /send_unavailable/,
+  );
+  assert.equal(attempts, readAttempts);
+
+  // The read-only checks that were aborting healthy sends now re-walk.
+  const queuedEditMode = inputHelper.slice(
+    inputHelper.indexOf('function assertNotQueuedEditMode'),
+  );
+  assert.match(
+    queuedEditMode.slice(0, queuedEditMode.indexOf('\n}\n')),
+    /withTransientReadRetry\(\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES/,
+  );
+  for (const waiter of ['waitForExactDraft', 'waitForComposerSend']) {
+    const body = inputHelper.slice(inputHelper.indexOf(`function ${waiter}`));
+    assert.match(
+      body.slice(0, body.indexOf('\n}\n')),
+      /withTransientReadRetry\(\(\) => \{[\s\S]*assertRouteLease\(process, routeLease\)/,
+    );
+  }
+
+  // Physical-input and lock state report real conditions, so retrying them
+  // would erase the signal. They must never be wrapped.
+  assert.doesNotMatch(
+    inputHelper,
+    /withTransientReadRetry\([^)]*assertInputLease/,
+  );
+  assert.doesNotMatch(
+    inputHelper,
+    /withTransientReadRetry\([^)]*assertSessionUnlocked/,
+  );
+});
