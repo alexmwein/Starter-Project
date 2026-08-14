@@ -160,6 +160,44 @@ on getMainGroup()
 	return item 1 of matchingGroups
 end getMainGroup
 
+-- Bounded deep search for the workspace's sidebar link, used ONLY to escape
+-- the 0.81 Dashboard screen. The budget caps total AX reads so a huge
+-- Dashboard cannot spin; pressing a link that matches workspaceMatches is
+-- exactly what a human click on the sidebar entry does, and everything after
+-- it still goes through the full route proof.
+on deepPressWorkspaceLink(el, workspaceName, depthLeft, budget)
+	if depthLeft is 0 then return false
+	set remaining to item 1 of budget
+	if remaining is 0 then return false
+	set item 1 of budget to remaining - 1
+	tell application "System Events"
+		try
+			if (role of el as text) is "AXLink" then
+				if my workspaceMatches(workspaceName, (name of el as text)) then
+					perform action "AXPress" of el
+					return true
+				end if
+				return false
+			end if
+		end try
+		try
+			set childElements to UI elements of el
+		on error
+			return false
+		end try
+	end tell
+	repeat with childElement in childElements
+		if my deepPressWorkspaceLink(childElement, workspaceName, depthLeft - 1, budget) then return true
+	end repeat
+	return false
+end deepPressWorkspaceLink
+
+on escapeDashboard(workspaceName)
+	set webArea to getWebArea()
+	if webArea is missing value then return false
+	return my deepPressWorkspaceLink(webArea, workspaceName, 14, {400})
+end escapeDashboard
+
 on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
 	set cachedName to my cachedWorkspaceName
@@ -391,6 +429,25 @@ set inputReadiness to my waitForInputIdle(inputScriptPath, conductorPid)
 if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
 if inputReadiness is "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
 if inputReadiness is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
+
+-- Conductor 0.81 introduced a Dashboard/Home screen and lands on it after an
+-- update restart. On that screen no main group (tab strip + composer) exists,
+-- so every send strands with nobody at the Mac to click a workspace. The
+-- workspace links are still in the sidebar, just nested deeper than the
+-- two-level route scan reads. When and only when the main group is absent,
+-- deep-search for the workspace link, press it, and wait for the session view.
+-- This runs after the input-idle and lock gates and before any route
+-- resolution, so the readiness-before-route ordering is unchanged, and a
+-- genuine absence still fails with the same codes it always did.
+if getMainGroup() is missing value then
+	set escaped to my escapeDashboard(workspaceName)
+	if escaped then
+		repeat with waitIndex from 1 to 40
+			if getMainGroup() is not missing value then exit repeat
+			delay 0.25
+		end repeat
+	end if
+end if
 
 set sidebarGroup to getSidebarGroup()
 if sidebarGroup is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
