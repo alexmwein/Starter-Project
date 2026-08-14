@@ -710,6 +710,57 @@
   .module-card .card-stat .stat-value { color: #F2F3F6 !important; }
   .module-card .card-stat .stat-desc { color: #7E8794 !important; }
 
+  /* ---- agent console (crawlers) ---- */
+  .agent-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-top: 14px;
+    padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+  .agent { display: flex; align-items: center; gap: 4px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 8px; font-weight: 600;
+    color: #7FDCA0; background: rgba(34,197,94,0.07); border: 1px solid rgba(34,197,94,0.22);
+    border-radius: 4px; padding: 3px 5px; animation: swarmPulse 2.2s ease-in-out infinite; }
+  .agent i { width: 4px; height: 4px; border-radius: 50%; background: #22C55E; flex: 0 0 4px; }
+  .agent.amber { color: #F5C169; background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.3); }
+  .agent.amber i { background: #F59E0B; }
+  .crawler-feed { margin-top: 10px; padding: 8px 10px; background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; }
+  .feed-line { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 9px;
+    color: #6EE7A0; padding: 2px 0; animation: feedGlow 6s ease-in-out infinite; }
+  .feed-caret { color: #22C55E; margin-right: 6px; font-weight: 700; }
+  @keyframes feedGlow { 0%, 100% { opacity: 0.45; } 15%, 35% { opacity: 1; } }
+  .crawler-stats { margin-top: 9px; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 8.5px; font-weight: 600; letter-spacing: 1.4px; color: #7E8794; }
+
+  /* ---- intake pipeline (scraping hub) ---- */
+  .flow { display: flex; align-items: center; gap: 10px; margin-top: 14px;
+    padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+  .f-srcs { display: flex; gap: 4px; }
+  .f-srcs span { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 8px; font-weight: 700;
+    color: #A6ADB8; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px; padding: 3px 6px; }
+  .f-track { position: relative; flex: 1; height: 2px; background: rgba(255,255,255,0.09); border-radius: 1px; }
+  .f-track i { position: absolute; top: -2px; left: 0; width: 6px; height: 6px; border-radius: 50%;
+    background: #22C55E; animation: flowMove 2.4s linear infinite; }
+  @keyframes flowMove { 0% { left: 0; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { left: calc(100% - 6px); opacity: 0; } }
+  .f-core { width: 16px; height: 16px; border-radius: 5px; background: #22C55E;
+    box-shadow: 0 0 0 4px rgba(34,197,94,0.15); animation: setterPulse 2s infinite; }
+  .f-progress { margin-top: 10px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.07); overflow: hidden; }
+  .f-progress i { display: block; height: 100%; width: 40%; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, #22C55E, transparent);
+    animation: shimmer 2.8s linear infinite; }
+  @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+
+  /* ---- analytics example rows ---- */
+  .ex { display: block; }
+  .ex-top { display: flex; align-items: baseline; gap: 8px; }
+  .ex-head { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 10.5px; color: #C4CAD4; font-weight: 600; }
+  .ex-bar { display: flex; gap: 1px; height: 4px; margin: 6px 0 4px 20px; border-radius: 1px; overflow: hidden; }
+  .ex-bar i { height: 100%; }
+  .ex-bar .lead-ok { background: #22C55E; }
+  .ex-bar .lead-no { background: #F87181; }
+  .ex-bar .seg2 { background: #7E8794; }
+  .ex-bar .seg3 { background: #565D68; }
+  .ex-bar .seg4 { background: #33383F; }
+  .ex-sub { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 9px; color: #7E8794; margin-left: 20px; padding-bottom: 2px; }
+
   /* ---- presenter chrome, darkened ---- */
   #toolbar, #minimap, #draw-open-btn, #shortcuts {
     background: rgba(18,20,26,0.94) !important; color: #C4CAD4 !important;
@@ -822,11 +873,11 @@ const CANVAS_H = 7000;
 
 const MODULES = [
   {"id": "sig-sources", "num": "STEP 01", "title": "SIGNAL SOURCES", "shortTitle": "Signal Sources", "color": "#5B6472", "timestamp": "", "x": 2450, "y": 480, "points": ["Every platform mined, around the clock"], "chips": ["Viral Reels Miner", "Hashtag Graph Crawl", "Competitor Audience Pulls", "Sound & Trend Velocity", "TikTok Crossover Radar", "YouTube Shorts Scan", "Brand Collab Tag Watch", "Niche & Location Packs", "Creator Lookalikes", "Engagement Spike Alerts"], "w": 460, "badges": [{"cls": "b-ig", "svg": "<svg viewBox='0 0 24 24' fill='none' stroke='#fff' stroke-width='2'><rect x='3' y='3' width='18' height='18' rx='5'/><circle cx='12' cy='12' r='4.2'/><circle cx='17.4' cy='6.6' r='1.3' fill='#fff' stroke='none'/></svg>"}, {"cls": "b-tt", "svg": "<svg viewBox='0 0 24 24' fill='#fff'><path d='M14 3v9.2a3.4 3.4 0 1 1-2.6-3.3V6.4A6.4 6.4 0 1 0 17 12.7V8.9c1 .8 2.2 1.3 3.6 1.4V7.2C18.6 7 17 5.3 16.7 3H14z'/></svg>"}, {"cls": "b-yt", "svg": "<svg viewBox='0 0 24 24'><path fill='#fff' d='M9.5 8v8l7-4-7-4z'/></svg>"}, {"cls": "b-x", "svg": "<svg viewBox='0 0 24 24' stroke='#fff' stroke-width='2.6' stroke-linecap='round'><path d='M5 5l14 14M19 5L5 19'/></svg>"}, {"cls": "b-rd", "svg": "<svg viewBox='0 0 24 24' fill='#fff'><ellipse cx='12' cy='14.5' rx='7' ry='4.8'/><circle cx='9.4' cy='13.9' r='1.2' fill='#FF4500'/><circle cx='14.6' cy='13.9' r='1.2' fill='#FF4500'/><circle cx='18.4' cy='8' r='1.6'/><path d='M12 9.7l1-4.2 3.4 1' stroke='#fff' stroke-width='1.4' fill='none'/></svg>"}, {"cls": "b-li", "svg": "<svg viewBox='0 0 24 24'><text x='12' y='16.5' text-anchor='middle' font-size='12' font-weight='800' fill='#fff' font-family='Arial'>in</text></svg>"}, {"cls": "b-pin", "svg": "<svg viewBox='0 0 24 24'><text x='12' y='17' text-anchor='middle' font-size='14' font-weight='800' fill='#fff' font-family='Georgia'>P</text></svg>"}, {"cls": "b-sc", "svg": "<svg viewBox='0 0 24 24' fill='#1A1A1A'><path d='M12 4c2.6 0 4.4 1.9 4.4 4.6 0 .9-.1 1.7-.2 2.3.5.4 1.5.5 2.3.6-.2.8-1.2 1.3-2.2 1.6.5 1 1.6 1.8 2.7 2-.7 1-2.2 1.4-3.5 1.5-.6.8-1.9 1.4-3.5 1.4s-2.9-.6-3.5-1.4c-1.3-.1-2.8-.5-3.5-1.5 1.1-.2 2.2-1 2.7-2-1-.3-2-.8-2.2-1.6.8-.1 1.8-.2 2.3-.6-.1-.6-.2-1.4-.2-2.3C7.6 5.9 9.4 4 12 4z'/></svg>"}]},
-  {"id": "scrape-hub", "num": "STEP 02", "title": "CENTRAL SCRAPING SYSTEM", "shortTitle": "Scraping", "color": "#5B6472", "timestamp": "", "x": 3300, "y": 520, "points": ["One engine feeds every lane", "Runs around the clock, unattended", "Self-heals and dedupes automatically"], "stat": {"value": "24,000+/mo", "desc": "qualified profiles scraped monthly"}, "pill": true},
-  {"id": "qualify", "num": "STEP 03", "title": "QUALIFICATION ENGINE", "shortTitle": "Qualification Engine", "color": "#5B6472", "timestamp": "", "x": 4150, "y": 520, "points": ["Follower band + engagement floor, set per campaign brief", "View-to-follower + comment-authenticity screens", "Region, niche and brand-safety filters", "Thresholds re-tuned every campaign — nothing is generic"], "examples": [{"ok": true, "text": "82K · 6.1% ER · US · fitness → fits supplement brief"}, {"ok": true, "text": "148K · 4.4% ER · UK · lifestyle → fits app launch"}, {"ok": false, "text": "210K · 0.3% ER · botted comments → rejected"}, {"ok": false, "text": "64K · strong ER · niche mismatch for brief → parked"}], "w": 520},
+  {"id": "scrape-hub", "num": "STEP 02", "title": "CENTRAL SCRAPING SYSTEM", "shortTitle": "Scraping", "color": "#5B6472", "timestamp": "", "x": 3300, "y": 520, "points": ["One engine feeds every lane", "Runs around the clock, unattended", "Self-heals and dedupes automatically"], "stat": {"value": "24,000+/mo", "desc": "qualified profiles scraped monthly"}, "pill": true, "flow": true},
+  {"id": "qualify", "num": "STEP 03", "title": "QUALIFICATION ENGINE", "shortTitle": "Qualification Engine", "color": "#5B6472", "timestamp": "", "x": 4150, "y": 520, "points": ["Follower band + engagement floor, set per campaign brief", "View-to-follower + comment-authenticity screens", "Region, niche and brand-safety filters", "Thresholds re-tuned every campaign — nothing is generic"], "examples": [{"ok": true, "head": "82K · 6.1% ER · auth 94 → supplement brief", "bar": [["us", 71, "lead-ok"], ["uk", 9, "seg2"], ["ca", 6, "seg3"], ["rest", 14, "seg4"]], "sub": "US 71% · UK 9% · CA 6% · core W 25–34 58% · M 21%"}, {"ok": true, "head": "148K · 4.4% ER · auth 91 → app launch", "bar": [["uk", 64, "lead-ok"], ["us", 18, "seg2"], ["eu", 11, "seg3"], ["rest", 7, "seg4"]], "sub": "UK 64% · US 18% · EU 11% · core 18–24 47% · F 62%"}, {"ok": false, "head": "210K · 0.3% ER · auth 31 → rejected", "bar": [["farm", 55, "lead-no"], ["mixed", 45, "seg4"]], "sub": "geo fragmented · comment clusters flagged · engagement farms"}, {"ok": false, "head": "64K · 5.8% ER · auth 89 → parked", "bar": [["us", 52, "lead-no"], ["latam", 31, "seg3"], ["rest", 17, "seg4"]], "sub": "audience fits · niche mismatch for THIS brief · queued for next"}], "w": 520},
   {"id": "enrich", "num": "STEP 04", "title": "ENRICHMENT & SCORING", "shortTitle": "Enrichment & Scoring", "color": "#5B6472", "timestamp": "", "x": 5000, "y": 560, "points": ["Contact + profile enrichment", "Fit score on every prospect", "Priority tiers set the queue"], "stat": {"value": "31 fields", "desc": "appended per accepted profile"}},
   {"id": "router", "num": "STEP 05", "title": "LANE ROUTER", "shortTitle": "Router", "color": "#5B6472", "timestamp": "", "x": 5850, "y": 520, "points": ["Splits every prospect into a lane", "IG fleet or verified email", "Load-balanced across 15 accounts"], "stat": {"value": "2 lanes", "desc": "IG DMs + verified email"}, "pill": true},
-  {"id": "crawlers", "num": "STEP 01B · ALWAYS ON", "title": "36 CUSTOM AI SOURCING AGENTS", "shortTitle": "AI Crawlers", "color": "#5B6472", "timestamp": "", "x": 2450, "y": 960, "points": ["Custom-coded crawlers, built in-house", "Scanning web + social 24/7 for sourcing signals", "Self-directed — they find pockets we never briefed"], "stat": {"value": "24/7", "desc": "never sleeps, never stops crawling"}, "pill": true, "w": 460, "swarm": 36},
+  {"id": "crawlers", "num": "STEP 01B · ALWAYS ON", "title": "36 CUSTOM AI SOURCING AGENTS", "shortTitle": "AI Crawlers", "color": "#5B6472", "timestamp": "", "x": 2450, "y": 960, "points": ["Custom-coded crawlers, built in-house", "Scanning web + social 24/7 for sourcing signals", "Self-directed — they find pockets we never briefed"], "stat": {"value": "24/7", "desc": "never sleeps, never stops crawling"}, "pill": true, "w": 460, "swarm": 36, "feed": ["A14 · surfaced 212 profiles · pilates micro-niche", "A29 · new pocket: marathon-prep creators, UK", "A07 · 3,041 pages crawled last hour · 0 dupes"], "cstats": "36 ACTIVE · 61K PAGES / DAY · 14 NICHES LIVE"},
   {"id": "ig-1", "num": "INSTAGRAM 01", "title": "ALEX", "shortTitle": "IG Fleet", "color": "#B0566E", "timestamp": "", "x": 380, "y": 1780, "points": [], "pill": true, "ig": {"name": "Alex", "handle": "@imalexgunnar", "verified": true, "posts": 214, "followers": "96.2K", "following": 486, "setters": [{"name": "Maya R.", "shift": "00–08", "img": "assets/board/team/setter01.jpg", "live": false}, {"name": "Tomas K.", "shift": "08–16", "img": "assets/board/team/setter02.jpg", "live": false}, {"name": "Lena P.", "shift": "16–24", "img": "assets/board/team/setter03.jpg", "live": true}], "active": 17, "bars": [4, 9, 5, 10, 6, 11], "lead": {"name": "Elena V.", "img": "assets/board/team/elena.jpg"}, "img": "assets/creators/alex.jpg"}},
   {"id": "dm-1", "num": "IG 01 · TOUCH 1", "title": "DM 1 · OPENER", "shortTitle": "Dm 1 · Opener", "color": "#9A5B77", "timestamp": "", "x": 380, "y": 2560, "points": ["Personalized opener, written per profile", "Sent from a warmed, aged account"]},
   {"id": "fu2-1", "num": "IG 01 · TOUCH 2", "title": "FOLLOW-UP 2", "shortTitle": "Follow-Up 2", "color": "#83607F", "timestamp": "", "x": 380, "y": 3010, "points": ["Fires at 48h of silence", "New angle — never a bump"]},
@@ -1027,10 +1078,11 @@ MODULES.forEach((m, i) => {
         <div class="card-title">${m.title}</div>
         <ul class="card-points">${m.points.map(p => typeof p === 'string' ? `<li>${p}</li>` : `<li class="${p.class || ''}">${p.text}</li>`).join('')}</ul>
         ${m.badges ? `<div class="src-badges">${m.badges.map((b, k) => `<span class="src-badge ${b.cls}" style="animation-delay:${k * 0.28}s">${b.svg}</span>`).join('')}</div>` : ''}
-        ${m.swarm ? `<div class="swarm">${Array.from({length: m.swarm}, (_, k) => `<i class="${[7, 19, 29].includes(k) ? 'amber' : ''}" style="animation-delay:${(k * 0.11) % 1.8}s"></i>`).join('')}</div>` : ''}
+        ${m.swarm ? `<div class="agent-matrix">${Array.from({length: m.swarm}, (_, k) => `<span class="agent${[7, 19, 29].includes(k) ? ' amber' : ''}" style="animation-delay:${(k * 0.13) % 2.2}s"><i></i>A${String(k + 1).padStart(2, '0')}</span>`).join('')}</div>${m.feed ? `<div class="crawler-feed">${m.feed.map((f, k) => `<div class="feed-line" style="animation-delay:${k * 2}s"><span class="feed-caret">›</span>${f}</div>`).join('')}</div>` : ''}${m.cstats ? `<div class="crawler-stats">${m.cstats}</div>` : ''}` : ''}
+        ${m.flow ? `<div class="flow"><div class="f-srcs"><span>IG</span><span>TT</span><span>YT</span><span>WEB</span></div><div class="f-track"><i style="animation-delay:0s"></i><i style="animation-delay:0.6s"></i><i style="animation-delay:1.2s"></i><i style="animation-delay:1.8s"></i></div><div class="f-core"></div></div><div class="f-progress"><i></i></div>` : ''}
         ${m.live ? `<div class="ig-live"><span class="live-dot"></span><div class="live-meta"><b>${m.live.count}</b><span>${m.live.label}</span></div><div class="eq">${m.live.bars.map((h, k) => `<i style="height:${h}px;animation-delay:${k * 0.22}s"></i>`).join('')}</div></div>` : ''}
         ${m.chips ? `<div class="chip-grid">${m.chips.map(c => `<div class="chip">${c}</div>`).join('')}</div>` : ''}
-        ${m.examples ? `<div class="ex-rows">${m.examples.map(e => `<div class="ex"><span class="tick ${e.ok ? 'ok' : 'no'}">${e.ok ? '✓' : '✕'}</span>${e.text}</div>`).join('')}</div>` : ''}
+        ${m.examples ? `<div class="ex-rows">${m.examples.map(e => `<div class="ex"><div class="ex-top"><span class="tick ${e.ok ? 'ok' : 'no'}">${e.ok ? '✓' : '✕'}</span><span class="ex-head">${e.head}</span></div>${e.bar ? `<div class="ex-bar">${e.bar.map(s => `<i class="${s[2]}" style="width:${s[1]}%"></i>`).join('')}</div>` : ''}${e.sub ? `<div class="ex-sub">${e.sub}</div>` : ''}</div>`).join('')}</div>` : ''}
         ${statHTML}
         ${m.people ? `<div class="people"><div class="people-label">${m.peopleLabel || 'TEAM'}</div>${m.people.map(p => `<div class="person">${p.img ? `<img src="${p.img}" alt="">` : `<div class="p-initial">${p.initial}</div>`}<div class="p-meta"><b>${p.name}</b><span>${p.role}</span></div></div>`).join('')}</div>` : ''}
       </div>
