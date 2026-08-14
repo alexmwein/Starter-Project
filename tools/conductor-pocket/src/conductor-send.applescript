@@ -793,7 +793,21 @@ if operationMode is "menu-open" or operationMode is "menu-choose" then
 	delay 0.9
 	if operationMode is "menu-open" then
 		set foundItems to my menuItemsAfter(rootsBefore)
+		set rootsAfter to my webRootCount()
 		my closeAnyMenu()
+		-- Conductor's model and effort dropdowns render without exposing their
+		-- items to accessibility: the root count changes but not one labelled
+		-- element appears anywhere in the tree (verified three ways: new-root
+		-- scan, deep nested walk, and a full before/after label-set diff).
+		-- Returning ok with an empty list would let the phone show "no options"
+		-- as though that were the truth, so say plainly that the menu opened
+		-- and could not be read instead.
+		if (count of foundItems) is 0 then
+			if rootsAfter is not rootsBefore then
+				return "{\"ok\":false,\"code\":\"menu_not_readable\"}"
+			end if
+			return "{\"ok\":false,\"code\":\"menu_did_not_open\"}"
+		end if
 		set jsonItems to ""
 		repeat with anItem in foundItems
 			if jsonItems is not "" then set jsonItems to jsonItems & ","

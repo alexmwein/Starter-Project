@@ -36,6 +36,8 @@ const safeToRetryCodes = new Set([
   'menu_item_not_found',
   'menu_item_required',
   'new_tab_control_unavailable',
+  'menu_not_readable',
+  'menu_did_not_open',
 ]);
 
 function byteLength(value) {
