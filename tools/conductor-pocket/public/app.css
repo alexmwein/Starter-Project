@@ -1137,6 +1137,17 @@ button:active {
   font-weight: 400;
 }
 
+/* The plain-words reason under a failed send. Block-level so it wraps under
+   the Retry and Delete controls instead of crowding them. */
+.failure-reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  overflow-wrap: anywhere;
+}
+
 .message-retry {
   min-height: 44px;
   margin: -12px -8px -12px 0;
@@ -1870,6 +1881,23 @@ button:active {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   line-height: 1rem;
+  overflow-wrap: anywhere;
+}
+
+/* Draft-conflict previews clamp so every resolution button stays on screen no
+   matter how long either text runs; each preview scrolls on its own instead of
+   pushing the actions below the fold. */
+.draft-preview {
+  max-height: 22vh;
+  margin-top: 4px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.draft-preview p {
+  margin: 0;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

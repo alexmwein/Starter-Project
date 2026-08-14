@@ -85,8 +85,28 @@ export function parseResult(stdout) {
   }
 }
 
+// Message text and transcript content are protected assets (SECURITY.md),
+// and the audit log deliberately carries codes, never content. osascript
+// error text can quote the exact value it choked on, so before any of it may
+// leave this module as a diagnostic, quoted spans and base64-looking runs
+// (how the message and draft travel to the script) are redacted. The code
+// recovery below runs on the unredacted text, so redaction never costs a
+// recognized code.
+function sanitizeAutomationDetail(raw) {
+  return raw
+    .replace(/[A-Za-z0-9+/=]{20,}/g, '[b64]')
+    .replace(/"[^"\n]*"/g, '"[redacted]"')
+    .replace(/\u201c[^\u201d\n]*\u201d/g, '"[redacted]"')
+    .slice(0, 500);
+}
+
 export function mapAutomationError(error, markerContext) {
-  const details = `${error?.stderr || ''}\n${error?.message || ''}`.toLowerCase();
+  const rawDetail = `${error?.stderr || ''}\n${error?.message || ''}`.trim();
+  const details = rawDetail.toLowerCase();
+  // detail is additive diagnostics: absent when there is nothing to carry,
+  // never an empty string a deep-equal consumer must know about.
+  const detailProps =
+    rawDetail === '' ? {} : { detail: sanitizeAutomationDetail(rawDetail) };
   const pressedAt = validatedPressedAt(markerContext);
   const permissionDenied =
     details.includes('not authorized to send apple events') ||
@@ -113,7 +133,32 @@ export function mapAutomationError(error, markerContext) {
       composerOwned: true,
     };
   }
-  return result;
+  if (pressedAt !== null) {
+    return {
+      ...result,
+      pressedAt,
+      composerOwned: true,
+      ...detailProps,
+    };
+  }
+  // No proven press. The helpers throw typed pocket codes whose text survives
+  // into osascript's stderr even when the run dies before the AppleScript can
+  // map them. Recover the code rather than collapsing every distinct failure
+  // into automation_failed, which is undiagnosable and always treated as
+  // maybe-sent. Only codes from the proven safe-to-retry set are recovered, so
+  // this can never loosen delivery semantics for an unrecognized failure, and
+  // never for an attempt whose press marker exists (handled above).
+  for (const code of safeToRetryCodes) {
+    if (details.includes(code)) {
+      return {
+        ok: false,
+        code,
+        safeToRetry: true,
+        ...detailProps,
+      };
+    }
+  }
+  return { ...result, ...detailProps };
 }
 
 function validatedPressedAt({
@@ -199,9 +244,50 @@ function attributeStructuredFailure(result, markerContext) {
 
 export class AccessibilityTransport {
   #queue = Promise.resolve();
+  #busy = 0;
+  #currentChild = null;
 
   doctor() {
     return this.#run({ operation: 'doctor' });
+  }
+
+  // True while an osascript run is in flight. Shutdown uses this pair to
+  // avoid the worst outcome of a dying relay: the parent exiting while its
+  // osascript child keeps typing into Conductor with no relay left to record
+  // the result.
+  get busy() {
+    return this.#busy > 0;
+  }
+
+  // Wait for the in-flight operation (the queue is serialized, so there is at
+  // most one) to settle, up to budgetMs. Resolves true when the transport is
+  // idle, false when the budget expired first.
+  drain(budgetMs) {
+    if (this.#busy === 0) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(this.#busy === 0), budgetMs);
+      timer.unref?.();
+      const settle = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.#queue.then(settle, settle);
+    });
+  }
+
+  // Last resort for a forced exit: without this, the orphaned child survives
+  // the parent and finishes the send with nobody left to observe it.
+  killCurrentAutomation() {
+    const child = this.#currentChild;
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      return false;
+    }
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   send({
@@ -318,8 +404,10 @@ export class AccessibilityTransport {
       }
     }
     const attemptStartedAt = Date.now();
+    this.#busy += 1;
     try {
-      const { stdout } = await execFileAsync('/usr/bin/osascript', [scriptPath], {
+    try {
+      const pending = execFileAsync('/usr/bin/osascript', [scriptPath], {
         encoding: 'utf8',
         timeout: timeoutMs,
         maxBuffer: 64 * 1024,
@@ -361,6 +449,8 @@ export class AccessibilityTransport {
           POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
+      this.#currentChild = pending.child;
+      const { stdout } = await pending;
       const result = parseResult(stdout);
       if (!pressMarkerPath) return result;
       return attributeStructuredFailure(
@@ -374,6 +464,10 @@ export class AccessibilityTransport {
           ? await pressMarkerContext(pressMarkerPath, attemptStartedAt)
           : undefined,
       );
+    } finally {
+      this.#busy -= 1;
+      this.#currentChild = null;
+    }
     } finally {
       if (pressMarkerDirectory) {
         await rm(pressMarkerDirectory, {

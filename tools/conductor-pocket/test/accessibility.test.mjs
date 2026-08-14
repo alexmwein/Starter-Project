@@ -247,7 +247,11 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
   );
   assert.deepEqual(
     mapAutomationError({ message: 'Unexpected automation failure' }),
-    { ok: false, code: 'automation_failed' },
+    {
+      ok: false,
+      code: 'automation_failed',
+      detail: 'Unexpected automation failure',
+    },
   );
 
   const attemptStartedAt = 1_785_093_000_000;
@@ -311,7 +315,13 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
         markerContent: `${attemptStartedAt}\n${markerContext.observedAt + 1}\n`,
       },
     ),
-    { ok: false, code: 'automation_failed' },
+    // The marker is invalid so no press may be attributed; the underlying
+    // text still travels as sanitized detail per the diagnostics contract.
+    {
+      ok: false,
+      code: 'automation_failed',
+      detail: 'Unexpected automation failure',
+    },
   );
 });
 
@@ -370,6 +380,66 @@ test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after eac
     inputHelper.indexOf('function decodeBase64Environment'),
   );
   assert.doesNotMatch(markerWriter, /message|draft|base64/i);
+});
+
+
+test('the workspace matcher accepts owner-prefixed sidebar titles', async () => {
+  // Conductor titles some workspaces "Owner/name" while the relay-side name
+  // is just "name"; every send then fails workspace resolution. The matcher
+  // must accept the slash-anchored form (with or without a diff badge) and
+  // stay anchored so partial names can never cross-match.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('on workspaceMatches');
+  const block = source.slice(start, source.indexOf('end workspaceMatches'));
+  assert.ok(block.includes('ends with ("/" & workspaceName)'));
+  assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
+});
+
+test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
+  const mapped = mapAutomationError({
+    stderr:
+      'conductor-input.js: execution error: Error: send_unavailable (-2700)',
+  });
+  assert.equal(mapped.code, 'send_unavailable');
+  assert.equal(mapped.safeToRetry, true);
+  assert.ok(mapped.detail.includes('send_unavailable (-2700)'));
+});
+
+test('an unrecognized automation failure keeps its underlying text as detail', () => {
+  const mapped = mapAutomationError({
+    stderr: 'execution error: Error: route_lookup exploded at depth 3 (-1719)',
+  });
+  assert.equal(mapped.code, 'automation_failed');
+  assert.equal(mapped.safeToRetry, undefined);
+  assert.ok(mapped.detail.includes('exploded at depth 3'));
+});
+
+test('automation detail redacts quoted content and base64 runs before it can reach a log', () => {
+  // Message text and transcript content are protected assets. AppleScript
+  // error text quotes the value it choked on, and the message travels to the
+  // script as base64, so both shapes must never survive into the audit log.
+  const secret = Buffer.from('the private message body', 'utf8').toString('base64');
+  const mapped = mapAutomationError({
+    stderr: `execution error: Can't make "the private message body" into type integer. env ${secret} (-1700)`,
+  });
+  assert.equal(mapped.code, 'automation_failed');
+  assert.ok(!mapped.detail.includes('the private message body'));
+  assert.ok(!mapped.detail.includes(secret));
+  assert.ok(mapped.detail.includes('"[redacted]"'));
+  assert.ok(mapped.detail.includes('[b64]'));
+  assert.ok(mapped.detail.includes('(-1700)'));
+});
+
+test('redaction never costs a recognized code recovery', () => {
+  const mapped = mapAutomationError({
+    stderr: 'execution error: Error: user_input_active while typing "something private" (-2700)',
+  });
+  assert.equal(mapped.code, 'user_input_active');
+  assert.equal(mapped.safeToRetry, true);
+  assert.ok(!mapped.detail.includes('something private'));
 });
 
 test('message submission waits for and presses Conductor’s unique enabled Send control', async () => {

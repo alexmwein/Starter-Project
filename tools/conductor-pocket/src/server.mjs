@@ -75,6 +75,10 @@ const staticFiles = new Map([
     '/delivery-receipts.js',
     ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
   ],
+  [
+    '/draft-conflict.js',
+    ['draft-conflict.js', 'text/javascript; charset=utf-8'],
+  ],
   ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
   [
@@ -1836,6 +1840,13 @@ export function createPocketServer({
                         ? sendResult.composerOwned
                         : null,
                     elapsedMs: Date.now() - sendStartedAt,
+                    // The underlying osascript failure text, when the
+                    // transport preserved one. Without it every automation
+                    // failure is undiagnosable from this log.
+                    ...(typeof sendResult.detail === 'string' &&
+                    sendResult.detail !== ''
+                      ? { detail: sendResult.detail.slice(0, 500) }
+                      : {}),
                   });
                 };
                 deliveryTransportStarted = true;
@@ -2269,6 +2280,12 @@ export function createPocketServer({
                 retrySafe: result.safeToRetry === true,
                 ...(result.safeToRetry === true
                   ? { definitelyUnsent: true }
+                  : {}),
+                // Already redacted at the source (quoted spans and base64
+                // runs stripped), so the phone can show why the Mac failed
+                // instead of pointing the user at a log they cannot see.
+                ...(typeof result.detail === 'string' && result.detail !== ''
+                  ? { detail: result.detail.slice(0, 300) }
                   : {}),
               },
             },

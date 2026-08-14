@@ -14,6 +14,7 @@ import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
 } from './bootstrap-recovery.js?v=0.2.0-delivery-recovery-20260811';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-delivery-recovery-20260811';
 import { fetchJson } from './http.js?v=0.2.0-delivery-recovery-20260811';
 import {
   attachmentMessageByteLength,
@@ -109,6 +110,7 @@ const state = {
   attachmentsBySession: loadAttachmentDrafts(),
   attachmentSendIntents: new Set(),
   composerSendErrors: new Map(),
+  sendInFlight: new Set(),
   searchQuery: '',
   shell: null,
   hiddenAt: null,
@@ -205,6 +207,28 @@ const ICONS = {
   warn: 'i-warn',
   wifiOff: 'i-wifi-off',
 };
+
+// Why a send failed, in words a phone user can act on. Codes come from the
+// Mac's automation layer; anything unmapped falls back to the sanitized
+// detail when the relay preserved one.
+const SEND_FAILURE_REASONS = Object.freeze({
+  session_locked: 'The Mac is locked.',
+  accessibility_disabled: 'Automation permission is off on the Mac.',
+  conductor_not_running: 'Conductor is not running on the Mac.',
+  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  composer_unavailable: 'The message box was not found in Conductor.',
+  workspace_list_unavailable: 'The workspace list was not found in Conductor.',
+  workspace_not_visible: 'This workspace is not visible in Conductor.',
+  session_not_visible: 'This chat is not visible in Conductor.',
+  user_input_active: 'Someone was using the Mac keyboard.',
+  send_unavailable: 'The send button was not available in Conductor.',
+  route_changed: 'The Conductor window changed mid-send.',
+  composer_focus_changed: 'The message box lost focus mid-send.',
+  draft_changed: 'The Mac draft changed mid-send.',
+  input_helper_unavailable: 'The automation helper failed on the Mac.',
+  automation_timeout: 'The Mac took too long.',
+  automation_failed: 'Automation failed on the Mac.',
+});
 
 const AGENT_ERROR_PRESENTATIONS = Object.freeze({
   provider_reconnecting: {
@@ -1935,6 +1959,10 @@ function sanitizePendingDelivery(value) {
       value.deliveryAttempt > 0
         ? value.deliveryAttempt
         : 1,
+    errorDetail:
+      typeof value.errorDetail === 'string'
+        ? value.errorDetail.slice(0, 300)
+        : null,
     replaceDraft: value.replaceDraft === true,
     macDraft:
       typeof value.macDraft === 'string'
@@ -3885,6 +3913,18 @@ function renderMessage(message, toolResults) {
         summary,
         actions,
       );
+      const reason = SEND_FAILURE_REASONS[message.errorCode] || null;
+      const detail =
+        typeof message.errorDetail === 'string' && message.errorDetail !== ''
+          ? message.errorDetail
+          : null;
+      const reasonText =
+        message.errorCode === 'automation_failed' && detail ? detail : reason;
+      if (reasonText) {
+        meta.append(
+          node('span', { className: 'failure-reason', text: reasonText }),
+        );
+      }
     } else if (
       message.kind === 'optimistic' &&
       message.delivery === 'delivered'
@@ -4271,6 +4311,15 @@ async function sendCurrentMessage() {
     );
     return;
   }
+  // Synchronous re-entrancy gate for the window between here and the field
+  // clearing after the durable persist below. A second tap or an
+  // auto-repeating Enter landing in that window would otherwise re-read the
+  // still-populated field and send the same text twice under two different
+  // idempotency keys, which the server cannot dedupe. Released after the
+  // field clears (a later tap then reads an empty field), never held through
+  // delivery, so composing the next message is not blocked.
+  if (state.sendInFlight.has(sessionId)) return;
+  state.sendInFlight.add(sessionId);
   const idempotencyKey = randomIdempotencyKey();
   const optimistic = {
     id: `optimistic:${randomIdempotencyKey()}`,
@@ -4298,9 +4347,10 @@ async function sendCurrentMessage() {
     state.optimistic = state.optimistic.filter(
       (item) => item !== optimistic,
     );
+    state.sendInFlight.delete(sessionId);
     showComposerSendError(
       sessionId,
-      'Not sent — the message is still here because secure delivery storage is unavailable.',
+      'Not sent: the message is still here because secure delivery storage is unavailable.',
     );
     return;
   }
@@ -4311,6 +4361,7 @@ async function sendCurrentMessage() {
   state.shell?.composer.resize();
   renderComposerAttachments();
   renderTranscript();
+  state.sendInFlight.delete(sessionId);
   await deliverOptimistic(optimistic, { deliveryIdentityPersisted: true });
 }
 
@@ -4457,6 +4508,10 @@ async function deliverOptimistic(
       error.retrySafe = payload.error?.retrySafe === true;
       error.definitelyUnsent =
         payload.error?.definitelyUnsent === true;
+      error.detail =
+        typeof payload.error?.detail === 'string'
+          ? payload.error.detail.slice(0, 300)
+          : null;
       throw error;
     }
     applyDeliveryReceipt(optimistic, payload);
@@ -4483,6 +4538,10 @@ async function deliverOptimistic(
     optimistic.errorCode = error.code;
     optimistic.deliveryPhase = null;
     optimistic.definitelyUnsent = error.definitelyUnsent === true;
+    optimistic.errorDetail =
+      typeof error.detail === 'string' && error.detail !== ''
+        ? error.detail
+        : null;
     if (error.definitelyUnsent === true) {
       await markDefinitelyUnsent(optimistic, error);
       if (error.status === 401 || error.status === 423) {
@@ -4498,7 +4557,16 @@ async function deliverOptimistic(
       optimistic.replaceDraft = false;
       await persistPendingDeliveries({ upserts: [optimistic] });
       renderTranscript();
-      openDraftConflict(optimistic);
+      if (optimistic.origin === 'macDraft') {
+        // This entry's text belongs to the Mac composer, not the phone. The
+        // conflict sheet would label it "from this phone" and offer to
+        // overwrite the phone composer with it, so a re-conflict (the Mac
+        // draft changed between reading and sending) settles as a plain
+        // retryable failure instead.
+        announce('The Mac draft changed before it could send. Nothing was replaced.');
+      } else {
+        openDraftConflict(optimistic);
+      }
     } else if (error.status === 401 || error.status === 423) {
       optimistic.delivery = 'failed';
       optimistic.retrySafe = false;
@@ -4810,7 +4878,108 @@ async function retryMessage(message) {
   });
 }
 
+// Every conflict-sheet action first verifies this delivery is still the
+// authoritative terminal record and claims it, exactly like the plain Retry
+// and Edit paths: two Pocket windows can show the same sheet, and the claim
+// is what keeps them from both acting on it.
+async function claimConflictAction(message, action) {
+  if (!(await verifyTerminalDeliveryAction(message))) {
+    closeOverlay();
+    return null;
+  }
+  let claimed;
+  try {
+    claimed = await claimTerminalDeliveryActionRequired(message, action);
+  } catch {
+    announce('Could not safely send this message yet. Try again.');
+    return null;
+  }
+  if (!claimed) {
+    announce('This delivery changed in another Pocket window.');
+    await restorePendingDeliveries();
+    closeOverlay();
+    renderTranscript();
+    return null;
+  }
+  applyAuthoritativePendingDelivery(message, claimed);
+  closeOverlay();
+  renderTranscript();
+  return claimed;
+}
+
+const draftConflictFlow = createDraftConflictFlow({
+  deliver: (optimistic, options) => deliverOptimistic(optimistic, options),
+  makeOptimistic: (sessionId, text) => {
+    const idempotencyKey = randomIdempotencyKey();
+    return {
+      id: `optimistic:${randomIdempotencyKey()}`,
+      idempotencyKey,
+      activeDeliveryKey: idempotencyKey,
+      kind: 'optimistic',
+      sessionId,
+      text,
+      attachments: [],
+      draftAttachmentItems: null,
+      delivery: 'delivering',
+      createdAt: new Date().toISOString(),
+    };
+  },
+  insertBefore: (entry, reference) => {
+    const at = state.optimistic.indexOf(reference);
+    state.optimistic.splice(at === -1 ? state.optimistic.length : at, 0, entry);
+  },
+  remove: (entry) => {
+    state.optimistic = state.optimistic.filter((item) => item !== entry);
+  },
+  // Merged, never overwritten: a conflict can come back tens of seconds
+  // after the send, and the user may have typed something new in the phone
+  // composer meanwhile. Same combined-draft shape restoreDefinitelyUnsentDraft
+  // uses: restored text first, newer typing after, no duplication when they
+  // already match.
+  restoreComposer: (sessionId, text) => {
+    const current =
+      state.route.sessionId === sessionId && state.shell?.composer.field
+        ? state.shell.composer.field.value
+        : draftFor(sessionId);
+    const combined =
+      current && current !== text
+        ? `${text}${text ? '\n\n' : ''}${current}`
+        : text || current;
+    saveDraft(sessionId, combined);
+    if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+      state.shell.composer.field.value = combined;
+      state.shell.composer.resize();
+    }
+  },
+  // Same merge restoreDefinitelyUnsentDraft uses: without it, photos on the
+  // conflicted phone message silently vanish (and their server-side uploads
+  // leak) whenever the resolution returns the message to the composer.
+  restoreAttachments: (optimistic) => {
+    const restoredItems = restoredAttachmentItems(optimistic, null);
+    if (restoredItems.length === 0) return;
+    const currentItems = attachmentsFor(optimistic.sessionId);
+    const seen = new Set();
+    const mergedItems = [...currentItems, ...restoredItems].filter((item) => {
+      const key = item.localId || item.id;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    state.attachmentsBySession.set(optimistic.sessionId, mergedItems);
+    optimistic.draftAttachmentItems = null;
+    persistAttachmentDrafts();
+    renderComposerAttachments();
+  },
+  persist: (options) => persistPendingDeliveries(options),
+  render: () => renderTranscript(),
+  announce,
+});
+
 function openDraftConflict(message) {
+  const act = (run) => () => {
+    closeOverlay();
+    run();
+  };
   const content = node('div', {}, [
     node('p', {
       className: 'gate-lede',
@@ -4819,49 +4988,48 @@ function openDraftConflict(message) {
     }),
     node('section', { className: 'pair-card' }, [
       node('div', { className: 'micro-caps', text: 'On your Mac' }),
-      node('p', {
-        className: 'machine-fact',
-        text: message.macDraft || 'Conductor has an unsent draft.',
-      }),
+      node('div', { className: 'draft-preview' }, [
+        node('p', {
+          className: 'machine-fact',
+          text: message.macDraft || 'Conductor has an unsent draft.',
+        }),
+      ]),
       node('div', { className: 'pair-divider' }),
       node('div', { className: 'micro-caps', text: 'From this phone' }),
-      node('p', { text: message.text }),
+      node('div', { className: 'draft-preview' }, [
+        node('p', { text: message.text }),
+      ]),
     ]),
     node('button', {
       className: 'primary-button',
       type: 'button',
-      text: 'Replace and send',
+      text: 'Replace and send mine',
       on: {
         click: async () => {
-          if (!await verifyTerminalDeliveryAction(message)) {
-            closeOverlay();
-            return;
-          }
-          let claimed;
-          try {
-            claimed = await claimTerminalDeliveryActionRequired(
-              message,
-              'retry',
-            );
-          } catch {
-            announce('Could not safely send this message yet. Try again.');
-            return;
-          }
-          if (!claimed) {
-            announce('This delivery changed in another Pocket window.');
-            await restorePendingDeliveries();
-            closeOverlay();
-            renderTranscript();
-            return;
-          }
-          applyAuthoritativePendingDelivery(message, claimed);
-          closeOverlay();
-          renderTranscript();
-          deliverOptimistic(message, {
-            replaceDraft: true,
-            expectedMacDraft: message.macDraft,
-            deliveryIdentityPersisted: true,
-          });
+          if (!(await claimConflictAction(message, 'retry'))) return;
+          void draftConflictFlow.replaceAndSend(message);
+        },
+      },
+    }),
+    node('button', {
+      className: 'secondary-button',
+      type: 'button',
+      text: 'Send the Mac draft, then mine',
+      on: {
+        click: async () => {
+          if (!(await claimConflictAction(message, 'retry'))) return;
+          void draftConflictFlow.sendMacDraft(message, { thenPhone: true });
+        },
+      },
+    }),
+    node('button', {
+      className: 'secondary-button',
+      type: 'button',
+      text: 'Send only the Mac draft',
+      on: {
+        click: async () => {
+          if (!(await claimConflictAction(message, 'retry'))) return;
+          void draftConflictFlow.sendMacDraft(message);
         },
       },
     }),
@@ -4871,8 +5039,8 @@ function openDraftConflict(message) {
       text: 'Keep the Mac draft',
       on: {
         click: async () => {
-          await editFailedMessage(message);
-          closeOverlay();
+          if (!(await claimConflictAction(message, 'edit'))) return;
+          draftConflictFlow.keepMacDraft(message);
         },
       },
     }),
@@ -5567,6 +5735,15 @@ document.addEventListener('visibilitychange', () => {
   }
   recheckAmbiguousDeliveries();
   if (!appUpdateCoordinator?.foreground()) revealApplication();
+  // Pending deliveries were only reconciled at boot, so a send whose response
+  // was lost while the phone was pocketed stayed at "Delivering" until a full
+  // restart. checkDelivery is a status probe, never a resend, so this is safe
+  // to run on every return to the foreground.
+  void recoverPendingDeliveries();
+});
+
+window.addEventListener('online', () => {
+  void recoverPendingDeliveries();
 });
 
 window.addEventListener('pagehide', shieldApplication);
