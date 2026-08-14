@@ -559,6 +559,15 @@
     border: 2px solid #16181F; margin-left: -9px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
   .face-pile img:first-child { margin-left: 0; }
   .pile-more { margin-left: 14px; font-size: 12px; font-weight: 600; color: #7E8794; }
+  .face-pile .pile-init { width: 38px; height: 38px; border-radius: 50%; margin-left: -9px;
+    border: 2px solid #16181F; background: #22242C; color: #fff; font-weight: 800; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+  .mgmt-crew { position: absolute; display: flex; gap: 26px; align-items: center; z-index: 10; }
+  .mgmt-crew .crew-p { display: flex; gap: 9px; align-items: center; }
+  .mgmt-crew img, .mgmt-crew .pile-init { width: 36px; height: 36px; border-radius: 50%; object-fit: cover;
+    border: 1px solid rgba(255,255,255,0.16); margin: 0; box-shadow: none; }
+  .mgmt-crew .pile-init { background: #22242C; color: #fff; font-weight: 800; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center; }
 
   /* ---- math card ---- */
   .math-card {
@@ -886,11 +895,10 @@ const MODULES = [
   {"id": "qual-call", "num": "CLOSE 01", "title": "QUALIFICATION CALL", "shortTitle": "Qualification Call", "color": "#5B7A65", "timestamp": "", "x": 4750, "y": 4560, "points": ["Run by trained account executives", "Graded against the closer script", "No-show → auto-rebook sequence"], "stat": {"value": "84%", "desc": "show rate on booked calls"}, "people": [{"name": "Kennedy", "role": "Lead Closer", "initial": "K"}, {"name": "JC", "role": "Closer", "img": "assets/creator-proof/juan.jpg"}, {"name": "Dane W.", "role": "Account Executive", "img": "assets/board/team/dane.jpg"}, {"name": "Mia F.", "role": "Account Executive", "img": "assets/board/team/mia.jpg"}], "peopleLabel": "CLOSING TEAM"},
   {"id": "proposal", "num": "CLOSE 02", "title": "STRATEGY & PROPOSAL", "shortTitle": "Strategy & Proposal", "color": "#5B7A65", "timestamp": "", "x": 5600, "y": 4560, "points": ["Custom roadmap per creator", "Terms aligned on the call"], "stat": {"value": "48h", "desc": "brief → proposal turnaround"}},
   {"id": "signed", "num": "CLOSE 03", "title": "CONTRACT SIGNED", "shortTitle": "Close", "color": "#5B7A65", "timestamp": "", "x": 6450, "y": 4560, "points": ["E-sign in session", "Handed to management same day"], "stat": {"value": "Same day", "desc": "signed → onboarded, no gap"}, "pill": true},
-  {"id": "oversight", "num": "MGMT 00 · OVERSIGHT", "title": "WHO OVERSEES EVERYONE", "shortTitle": "Who Oversees Everyone", "color": "#5F6486", "timestamp": "", "x": 4350, "y": 5380, "points": ["Small senior layer, full visibility", "Every desk below reports up daily"], "people": [{"name": "Patricia", "role": "Head of Management — everything runs through her", "initial": "P"}, {"name": "Elena V.", "role": "Ops Oversight", "img": "assets/board/team/elena.jpg"}, {"name": "Ben C.", "role": "Fleet Oversight", "img": "assets/board/team/ben.jpg"}], "peopleLabel": "OVERSIGHT", "w": 900},
-  {"id": "setter-qa", "num": "MGMT 01", "title": "SETTER QA & TRAINING", "shortTitle": "Setter Qa & Training", "color": "#5F6486", "timestamp": "", "x": 3050, "y": 5660, "points": ["Every conversation reviewed weekly", "Setters graded and coached"], "people": [{"name": "Josh T.", "role": "Script & QA Coach", "img": "assets/board/team/josh.jpg"}], "peopleLabel": "QA"},
-  {"id": "talent-desk", "num": "MGMT 02", "title": "TALENT MANAGEMENT DESK", "shortTitle": "Talent Management Desk", "color": "#5F6486", "timestamp": "", "x": 3950, "y": 5660, "points": ["Email replies land here", "Owns the relationship end-to-end"], "people": [{"name": "Nadia R.", "role": "Talent Manager", "img": "assets/board/team/nadia.jpg"}, {"name": "Chris P.", "role": "Talent Manager", "img": "assets/board/team/chris.jpg"}], "peopleLabel": "TALENT MANAGERS"},
-  {"id": "patricia", "num": "MGMT 03", "title": "PATRICIA · DEAL MANAGEMENT", "shortTitle": "Patricia", "color": "#5F6486", "timestamp": "", "x": 4850, "y": 5660, "points": ["Every term logged before signature", "Nothing moves without her sign-off"], "stickies": [{"text": "Every deal term logged before signature.", "color": "yellow", "dx": 400, "dy": 20}], "pill": true, "people": [{"name": "Lea M.", "role": "Contracts", "img": "assets/board/team/lea.jpg"}, {"name": "Sana P.", "role": "Deal Analyst", "img": "assets/board/team/sana.jpg"}], "peopleLabel": "DEAL DESK"},
-  {"id": "pipeline", "num": "MGMT 04", "title": "CENTRAL PIPELINE", "shortTitle": "Central Pipeline", "color": "#5F6486", "timestamp": "", "x": 5750, "y": 5660, "points": ["Every touch on every lane logged", "One record per human — no dupes"], "stat": {"value": "0 lost", "desc": "nothing slips, nothing forgotten"}, "people": [{"name": "Devon K.", "role": "RevOps", "img": "assets/board/team/devon.jpg"}], "peopleLabel": "PIPELINE OPS"},
+  {"id": "setter-qa", "num": "MGMT 01", "title": "SETTER QA & TRAINING", "shortTitle": "Setter Qa & Training", "color": "#5F6486", "timestamp": "", "x": 3050, "y": 5480, "points": ["Every conversation reviewed weekly", "Setters graded and coached", "Scripts versioned centrally"]},
+  {"id": "talent-desk", "num": "MGMT 02", "title": "TALENT MANAGEMENT DESK", "shortTitle": "Talent Management Desk", "color": "#5F6486", "timestamp": "", "x": 3950, "y": 5480, "points": ["Email replies land here", "Owns the relationship end-to-end"]},
+  {"id": "patricia", "num": "MGMT 03", "title": "PATRICIA · DEAL MANAGEMENT", "shortTitle": "Patricia", "color": "#5F6486", "timestamp": "", "x": 4850, "y": 5480, "points": ["Runs the deal desk end-to-end", "Every term logged before signature", "Nothing moves without her sign-off"], "stickies": [{"text": "Every deal term logged before signature.", "color": "yellow", "dx": 400, "dy": 20}], "pill": true},
+  {"id": "pipeline", "num": "MGMT 04", "title": "CENTRAL PIPELINE", "shortTitle": "Central Pipeline", "color": "#5F6486", "timestamp": "", "x": 5750, "y": 5480, "points": ["Every touch on every lane logged", "One record per human — no dupes"], "stat": {"value": "0 lost", "desc": "nothing slips, nothing forgotten"}},
   {"id": "roster", "num": "DELIVERY 01", "title": "SIGNED CREATOR ROSTER", "shortTitle": "Creators", "color": "#57748A", "timestamp": "", "x": 2550, "y": 6240, "points": ["Every signed creator onboarded here", "Deliverables mapped to the deal"], "stat": {"value": "200+", "desc": "creators under management"}, "pill": true, "people": [{"name": "Lina F.", "role": "Creator Success", "img": "assets/board/team/lina.jpg"}], "peopleLabel": "CREATOR SUCCESS"},
   {"id": "drafts", "num": "DELIVERY 02", "title": "DRAFT UPLOADS", "shortTitle": "Draft Uploads", "color": "#57748A", "timestamp": "", "x": 3450, "y": 6240, "points": ["Creators push drafts into the system", "Auto-collected — nothing lost in DMs"]},
   {"id": "review", "num": "DELIVERY 03", "title": "CENTRAL REVIEW SYSTEM", "shortTitle": "Review", "color": "#57748A", "timestamp": "", "x": 4350, "y": 6240, "points": ["Every draft reviewed before it ships", "Brand-safety + hook quality pass", "One-click approve or revise"], "stat": {"value": "100%", "desc": "content reviewed before it ships"}, "stickies": [{"text": "Nothing goes live without review sign-off.", "color": "yellow", "dx": -40, "dy": -135}], "pill": true, "people": [{"name": "Rico B.", "role": "Content Review", "img": "assets/board/team/rico.jpg"}, {"name": "Anna L.", "role": "Brand Safety", "img": "assets/board/team/anna.jpg"}], "peopleLabel": "REVIEW DESK"},
@@ -937,6 +945,14 @@ SECTIONS.forEach(s => {
   );
 });
 
+canvas.insertAdjacentHTML('beforeend', `
+  <div class="mgmt-crew" style="left:3560px;top:5228px;">
+    <div class="crew-p"><span class="pile-init">P</span><div class="p-meta"><b>Patricia</b><span>runs management</span></div></div>
+    <div class="crew-p"><img src="assets/board/team/elena.jpg" alt=""><div class="p-meta"><b>Elena V.</b><span>Ops</span></div></div>
+    <div class="crew-p"><img src="assets/board/team/ben.jpg" alt=""><div class="p-meta"><b>Ben C.</b><span>Fleet</span></div></div>
+  </div>
+`);
+
 // Title
 canvas.insertAdjacentHTML('beforeend', `
   <div class="title-card" style="left:4300px;top:40px;">
@@ -950,7 +966,7 @@ canvas.insertAdjacentHTML('beforeend', `
       <div class="stat-item"><div class="stat-num">600+</div><div class="stat-label">Convos / day</div></div>
     </div>
     <div class="face-pile">
-      <img src="assets/creators/alex.jpg"><img src="assets/board/team/elena.jpg"><img src="assets/board/team/dane.jpg"><img src="assets/board/team/nadia.jpg"><img src="assets/board/team/mia.jpg"><img src="assets/board/team/chris.jpg"><img src="assets/board/team/josh.jpg"><img src="assets/board/team/ava.jpg">
+      <img src="assets/creators/alex.jpg"><span class="pile-init">P</span><img src="assets/creator-proof/juan.jpg"><span class="pile-init">K</span><img src="assets/board/team/elena.jpg"><img src="assets/board/team/dane.jpg"><img src="assets/board/team/mia.jpg"><img src="assets/board/team/nadia.jpg"><img src="assets/board/team/josh.jpg"><img src="assets/board/team/ava.jpg">
       <span class="pile-more">the floor behind every campaign</span>
     </div>
     <div class="by-line">by <strong>OVO Talent</strong> &nbsp;|&nbsp; Master Architecture &nbsp;|&nbsp; Confidential — shown live only</div>
@@ -1202,8 +1218,7 @@ const EDGES = [
   {"from": "cta", "to": "qual-call"},
   {"from": "qual-call", "to": "proposal"},
   {"from": "proposal", "to": "signed"},
-  {"from": "signed", "to": "oversight", "mode": "v", "bus": 5265},
-  {"from": "oversight", "to": "patricia"},
+  {"from": "signed", "to": "patricia", "mode": "v", "bus": 5265},
   {"from": "setter-qa", "to": "talent-desk"},
   {"from": "talent-desk", "to": "patricia"},
   {"from": "patricia", "to": "pipeline"},
