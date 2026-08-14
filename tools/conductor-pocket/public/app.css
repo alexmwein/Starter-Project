@@ -2469,3 +2469,65 @@ button:active {
   font-size: 0.75rem;
   line-height: 1rem;
 }
+
+/* One place for chats: switch, create, close. Rows are full-width touch
+   targets with the close affordance separated, so switching and deleting are
+   never adjacent taps. */
+.chats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.chat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+}
+
+.chat-row.is-active {
+  background: var(--surface-raised, rgba(127, 127, 127, 0.12));
+}
+
+.chat-row-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 48px;
+  padding: 8px 10px;
+  min-width: 0;
+  text-align: left;
+}
+
+.chat-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.chat-row-meta {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 0.95rem;
+}
+
+.chat-row-close {
+  min-width: 48px;
+  min-height: 48px;
+  color: var(--text-tertiary);
+  border-radius: 10px;
+}
+
+/* Armed state is unmistakable: a close is irreversible and a phone mis-tap has
+   no undo. */
+.chat-row-close.is-armed {
+  color: var(--danger, #d92d20);
+  border: 1px solid currentColor;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
