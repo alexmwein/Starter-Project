@@ -58,6 +58,8 @@ const PHYSICAL_INPUT_EVENT_TYPES = [
 const KEY_A = 0;
 const KEY_DELETE = 51;
 const KEY_RETURN = 36;
+const KEY_T = 17;
+const KEY_W = 13;
 const CERTIFIABLE_PRE_SEND_CODES = [
   'composer_focus_changed',
   'composer_update_failed',
@@ -1850,6 +1852,28 @@ function typeAndSendMessage(pid) {
   }
 }
 
+// Tab shortcuts are posted as events TARGETED at Conductor's process, exactly
+// like typed text, never as a global System Events keystroke. A global
+// keystroke goes wherever focus happens to be, so a focus change mid-operation
+// would send Cmd-W to another app; CGEventPostToPid cannot. Verified live:
+// Cmd-T creates a chat in the current workspace, Cmd-W closes the SELECTED tab
+// and leaves the window open, which is why the caller must prove the intended
+// session is selected first.
+//
+// Gated exactly like a send: process identity and frontmost, screen unlocked,
+// and a physical-input lease, so it can never fight the operator for the
+// keyboard. It types nothing and presses no Send control.
+function postTabShortcut(pid, virtualKey) {
+  const inputLease = acquireInputLease();
+  assertSessionUnlocked();
+  validatedConductorProcess(pid);
+  const source = $.CGEventSourceCreate($.kCGEventSourceStatePrivate);
+  if (!source) fail('event_source_failed');
+  const events = eventPair(source, virtualKey, $.kCGEventFlagMaskCommand);
+  postToConductor(pid, inputLease, events);
+  return 'ready';
+}
+
 function run(argv) {
   if (!Boolean($.AXIsProcessTrusted())) fail('accessibility_disabled');
 
@@ -1875,6 +1899,8 @@ function run(argv) {
     assertSessionUnlocked();
     return waitForInputIdle() ? 'ready' : 'busy';
   }
+  if (operation === 'tab-new') return postTabShortcut(pid, KEY_T);
+  if (operation === 'tab-close') return postTabShortcut(pid, KEY_W);
   if (operation === 'type-and-send') return typeAndSendMessage(pid);
   fail('invalid_operation');
 }

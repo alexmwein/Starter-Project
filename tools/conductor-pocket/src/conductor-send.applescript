@@ -813,81 +813,82 @@ if operationMode is "menu-open" or operationMode is "menu-choose" then
 end if
 
 if operationMode is "tab-new" then
-	set mainGroup to getMainGroup()
-	if mainGroup is missing value then return "{\"ok\":false,\"code\":\"composer_unavailable\"}"
-	set tabTrailing to missing value
-	tell application "System Events"
-		try
-			repeat with candidate in (UI elements of mainGroup)
-				if (role of candidate as text) is "AXTabGroup" then
-					set tabChildren to UI elements of candidate
-					set trailing to item (count of tabChildren) of tabChildren
-					if (role of trailing as text) is not "AXRadioButton" then set tabTrailing to trailing
-					exit repeat
-				end if
-			end repeat
-		end try
-	end tell
-	if tabTrailing is missing value then return "{\"ok\":false,\"code\":\"new_tab_control_unavailable\"}"
-	set rootsBefore to my webRootCount()
+	-- Cmd-T. Verified live: creates a chat in the CURRENT workspace, which the
+	-- route proof above has already selected. A shortcut is used deliberately
+	-- rather than hunting a button: the tab strip's trailing control does
+	-- nothing when pressed, and every icon-only control in this app is
+	-- unlabelled and has moved between releases, which is the exact pattern
+	-- that broke sending twice. A shortcut has no CSS classes to rot.
+	set beforeTabs to count of my getSessionTabs()
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
-		try
-			perform action "AXPress" of tabTrailing
-		on error
-			return "{\"ok\":false,\"code\":\"control_press_failed\"}"
-		end try
 	end tell
-	delay 0.9
-	set foundItems to my menuItemsAfter(rootsBefore)
-	if (count of foundItems) is 0 then return "{\"ok\":true,\"code\":\"tab_created\"}"
-	set jsonItems to ""
-	repeat with anItem in foundItems
-		if jsonItems is not "" then set jsonItems to jsonItems & ","
-		set jsonItems to jsonItems & "\"" & my jsonEscape(anItem as text) & "\""
+	delay 0.2
+	try
+		do shell script "/usr/bin/env POCKET_OPERATION=tab-new /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+	end try
+	repeat with waitIndex from 1 to 30
+		delay 0.1
+		if (count of my getSessionTabs()) > beforeTabs then
+			return "{\"ok\":true,\"code\":\"tab_created\"}"
+		end if
 	end repeat
-	my closeAnyMenu()
-	return "{\"ok\":true,\"code\":\"tab_menu\",\"items\":[" & jsonItems & "]}"
+	return "{\"ok\":false,\"code\":\"tab_not_created\"}"
 end if
 
 if operationMode is "tab-close" then
-	-- Destructive and irreversible. Only ever closes the tab whose accessible
-	-- name matches the caller's session EXACTLY, and refuses if the caller did
-	-- not pass the explicit confirmation token, so a stray request can never
-	-- delete a conversation.
+	-- Irreversible. Cmd-W closes the SELECTED tab, so this is only safe because
+	-- the route proof above has already selected exactly the requested session
+	-- and held it stable. Re-verify that selection immediately before the
+	-- shortcut, refuse without an explicit confirmation token, and then prove
+	-- afterwards that exactly one tab went away and it was the right one.
 	if (system attribute "POCKET_CONFIRM_CLOSE") is not "yes" then
 		return "{\"ok\":false,\"code\":\"close_not_confirmed\"}"
 	end if
+	if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then
+		return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+	end if
 	set wantedTabName to "Close chat " & sessionTitle
-	set matchedCount to 0
-	set targetTab to missing value
+	set beforeTabs to count of my getSessionTabs()
+	set beforeMatching to 0
 	repeat with candidate in my getSessionTabs()
 		try
-			if (name of candidate as text) is wantedTabName then
-				set matchedCount to matchedCount + 1
-				if matchedCount is sessionOrdinal then set targetTab to candidate
-			end if
+			if (name of candidate as text) is wantedTabName then set beforeMatching to beforeMatching + 1
 		end try
 	end repeat
-	if targetTab is missing value then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
-	set rootsBefore to my webRootCount()
+	if beforeMatching < sessionOrdinal then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
-		try
-			perform action "AXShowMenu" of targetTab
-		on error
-			return "{\"ok\":false,\"code\":\"control_press_failed\"}"
-		end try
 	end tell
-	delay 0.9
-	set foundItems to my menuItemsAfter(rootsBefore)
-	set jsonItems to ""
-	repeat with anItem in foundItems
-		if jsonItems is not "" then set jsonItems to jsonItems & ","
-		set jsonItems to jsonItems & "\"" & my jsonEscape(anItem as text) & "\""
+	delay 0.2
+	try
+		do shell script "/usr/bin/env POCKET_OPERATION=tab-close /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+	end try
+	repeat with waitIndex from 1 to 30
+		delay 0.1
+		set afterTabs to count of my getSessionTabs()
+		if afterTabs < beforeTabs then
+			set afterMatching to 0
+			repeat with candidate in my getSessionTabs()
+				try
+					if (name of candidate as text) is wantedTabName then set afterMatching to afterMatching + 1
+				end try
+			end repeat
+			if afterTabs is (beforeTabs - 1) and afterMatching is (beforeMatching - 1) then
+				return "{\"ok\":true,\"code\":\"tab_closed\"}"
+			end if
+			return "{\"ok\":false,\"code\":\"tab_close_unverified\"}"
+		end if
 	end repeat
-	my closeAnyMenu()
-	return "{\"ok\":true,\"code\":\"tab_menu\",\"items\":[" & jsonItems & "]}"
+	return "{\"ok\":false,\"code\":\"tab_not_closed\"}"
 end if
 
 set textArea to missing value
