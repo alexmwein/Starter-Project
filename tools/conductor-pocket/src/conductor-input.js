@@ -543,7 +543,9 @@ function resolveMainRoot(rootElements) {
     if (tabGroupCount !== 1) continue;
     if (composerCount === 1) {
       candidates.push({
+        descriptions,
         elements,
+        roles,
         rootIndex,
         tabGroupIndex,
       });
@@ -1132,8 +1134,27 @@ function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
 
 function composerSendContext(process) {
   let mainElements;
+  // resolveMainRoot has already bulk-read the role and description of every
+  // main child in two Apple Events. Re-deriving them one element at a time
+  // below costs ~40 round trips, and this function runs three times per send
+  // (the queued-edit check, the press-wait decision point, and the pre-press
+  // proof), so the duplication was ~1s of every send. Same values, same
+  // checks, and the per-element loop is kept verbatim as the fallback for any
+  // resolution that could not supply them.
+  let bulkRoles = null;
+  let bulkDescriptions = null;
   try {
-    mainElements = resolveMainRoot(webAreaRootElements(process)).elements;
+    const main = resolveMainRoot(webAreaRootElements(process));
+    mainElements = main.elements;
+    if (
+      Array.isArray(main.roles) &&
+      Array.isArray(main.descriptions) &&
+      main.roles.length === mainElements.length &&
+      main.descriptions.length === mainElements.length
+    ) {
+      bulkRoles = main.roles;
+      bulkDescriptions = main.descriptions;
+    }
   } catch {
     fail('send_unavailable');
   }
@@ -1143,6 +1164,20 @@ function composerSendContext(process) {
   let tabGroupIndex = -1;
   const mainRoles = [];
   for (let index = 0; index < mainElements.length; index += 1) {
+    if (bulkRoles) {
+      const bulkRole = bulkRoles[index];
+      mainRoles.push(bulkRole);
+      if (bulkRole === 'AXTabGroup') {
+        tabGroupCount += 1;
+        tabGroupIndex = index;
+      }
+      if (bulkDescriptions[index] === 'composer') {
+        if (composer) fail('send_unavailable');
+        composer = mainElements[index];
+        composerIndex = index;
+      }
+      continue;
+    }
     const candidate = mainElements[index];
     let role;
     let description;
@@ -1244,9 +1279,21 @@ function composerSendContext(process) {
 // mode and was the single largest cause of aborted sends. Each attempt re-walks
 // from `process` with a fresh node budget, so a genuine queued-edit state still
 // fails every attempt and still blocks the send.
+// Queued-edit mode is entered only by a human clicking "edit queued message"
+// in Conductor. Every step of a send is gated on assertInputLease, which aborts
+// on any physical input, so once an attempt has proven the composer is not in
+// queued-edit mode it cannot enter it before the press without first failing
+// that lease. Re-running the bounded subtree scan on the press-wait decision
+// point and again on the pre-press proof was therefore pure duplication of a
+// ~400ms walk. The structural resolution above still runs every time; only the
+// scan is proven once, and the flag is per-process so it cannot outlive the
+// attempt that set it.
+let queuedEditProven = false;
+
 function assertNotQueuedEditMode(process) {
   return withTransientReadRetry(() => {
     const { composer, contextElements } = composerSendContext(process);
+    if (queuedEditProven) return composer;
     const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
     if (
       contextElements.slice(0, -1).some((candidate) =>
@@ -1264,6 +1311,7 @@ function assertNotQueuedEditMode(process) {
     ) {
       fail('send_unavailable');
     }
+    queuedEditProven = true;
     return composer;
   });
 }
@@ -1498,6 +1546,47 @@ function waitForExactDraft(pid, expectedDraft, routeLease) {
   fail('composer_update_failed');
 }
 
+// A poll only needs to answer "has the Send control appeared yet", and the
+// full resolveComposerSend answer costs ~1s because it re-derives the whole
+// main-root structure and re-runs the bounded queued-edit scan on every
+// iteration. Measured: the press wait spent 6.8s of an 18.5s send doing exactly
+// that. This reaches the composer through the focused textarea's AXParent and
+// bulk-reads the class lists of its children in a SINGLE Apple Event, so the
+// probe costs a handful of round trips instead of a full walk.
+//
+// It is deliberately NOT a proof: a true result only ends the wait, and the
+// caller then runs the complete resolveComposerSend plus route proof at the
+// decision point before anything is pressed. A false negative just costs one
+// more 20ms poll.
+function sendControlLikelyReady(pid, expectedDraft) {
+  try {
+    const process = validateFocusedComposer(pid, expectedDraft);
+    const focused = process.attributes.byName('AXFocusedUIElement').value();
+    const composer = focused.attributes.byName('AXParent').value();
+    const children = childElements(composer);
+    if (children.length === 0) return false;
+    const classGroups = tryBulk(composer, children.length, (group) =>
+      group.uiElements.attributes.byName('AXDOMClassList').value(),
+    );
+    if (!classGroups) return true;
+    let matches = 0;
+    for (const classes of classGroups) {
+      if (!Array.isArray(classes)) continue;
+      if (
+        classes.includes(SEND_POSITION_CLASS) &&
+        SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
+        NON_SEND_CLASSES.every((name) => !classes.includes(name))
+      ) {
+        matches += 1;
+      }
+    }
+    return matches === 1;
+  } catch {
+    // Unreadable is not evidence of absence; let the full check decide.
+    return true;
+  }
+}
+
 function waitForComposerSend(
   pid,
   expectedDraft,
@@ -1528,22 +1617,21 @@ function waitForComposerSend(
       );
     }
     assertInputLease(inputLease);
-    let sendReady = false;
-    try {
-      const polled = validateFocusedComposer(pid, expectedDraft);
-      resolveComposerSend(polled, expectedDraft);
-      sendReady = true;
-    } catch (error) {
-      if (error?.pocketCode !== 'send_unavailable') throw error;
-      lastSwallowed = lastFailure;
-    }
-    if (sendReady) {
-      return withTransientReadRetry(() => {
-        const process = validateFocusedComposer(pid, expectedDraft);
-        assertRouteLease(process, routeLease);
-        const refreshed = validateFocusedComposer(pid, expectedDraft);
-        return resolveComposerSend(refreshed, expectedDraft);
-      });
+    if (sendControlLikelyReady(pid, expectedDraft)) {
+      try {
+        return withTransientReadRetry(() => {
+          const process = validateFocusedComposer(pid, expectedDraft);
+          assertRouteLease(process, routeLease);
+          const refreshed = validateFocusedComposer(pid, expectedDraft);
+          return resolveComposerSend(refreshed, expectedDraft);
+        });
+      } catch (error) {
+        // The probe is a hint, not a proof. When the full check disagrees the
+        // control simply is not ready yet, so keep polling exactly as before
+        // rather than turning a cheap false positive into a failed send.
+        if (error?.pocketCode !== 'send_unavailable') throw error;
+        lastSwallowed = lastFailure;
+      }
     }
     delay(0.02);
   }

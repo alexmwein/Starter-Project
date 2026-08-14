@@ -1401,3 +1401,61 @@ test('a transient accessibility read is retried instead of aborting the send', a
     /withTransientReadRetry\([^)]*assertSessionUnlocked/,
   );
 });
+
+test('the send path does not re-derive work it already has', async () => {
+  const inputHelper = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+
+  // resolveMainRoot bulk-reads role and description for every main child, so
+  // composerSendContext must consume those arrays instead of spending ~40
+  // Apple Events re-deriving them. It runs three times per send, so this was
+  // about a second of every send.
+  assert.match(
+    inputHelper,
+    /candidates\.push\(\{[\s\S]*descriptions,[\s\S]*roles,[\s\S]*\}\)/,
+  );
+  const context = inputHelper.slice(
+    inputHelper.indexOf('function composerSendContext'),
+  );
+  const contextBody = context.slice(0, context.indexOf('\n}\n'));
+  assert.match(contextBody, /main\.roles[\s\S]*main\.descriptions/);
+  assert.match(contextBody, /bulkRoles\[index\]/);
+  // The pinned per-element loop must survive as the fallback.
+  assert.match(contextBody, /role = candidate\.role\(\)/);
+  assert.match(contextBody, /description = candidate\.description\(\)/);
+
+  // The press wait polls with the cheap probe, never the full resolution.
+  const wait = inputHelper.slice(
+    inputHelper.indexOf('function waitForComposerSend'),
+  );
+  const waitBody = wait.slice(0, wait.indexOf('\n}\n'));
+  assert.match(waitBody, /sendControlLikelyReady\(pid, expectedDraft\)/);
+  // A cheap false positive must keep polling, never fail the send.
+  assert.match(waitBody, /pocketCode !== 'send_unavailable'\) throw error/);
+
+  // The probe is a hint: it must not be what authorizes a press. The full
+  // resolveComposerSend plus route proof still gates the decision point.
+  const probe = inputHelper.slice(
+    inputHelper.indexOf('function sendControlLikelyReady'),
+  );
+  const probeBody = probe.slice(0, probe.indexOf('\n}\n'));
+  assert.doesNotMatch(probeBody, /AXPress|perform\(\)/);
+  assert.match(waitBody, /assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend/);
+
+  // The queued-edit scan is proven once per attempt, and only the scan: the
+  // structural resolution still runs on every call.
+  const queued = inputHelper.slice(
+    inputHelper.indexOf('function assertNotQueuedEditMode'),
+  );
+  const queuedBody = queued.slice(0, queued.indexOf('\n}\n'));
+  assert.match(queuedBody, /composerSendContext\(process\)/);
+  assert.match(queuedBody, /if \(queuedEditProven\) return composer/);
+  assert.match(queuedBody, /queuedEditProven = true/);
+  // It must sit AFTER the structural resolution, never short-circuit it.
+  assert.ok(
+    queuedBody.indexOf('composerSendContext(process)') <
+      queuedBody.indexOf('if (queuedEditProven)'),
+  );
+});
