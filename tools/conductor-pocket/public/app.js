@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-chats-sheet-20260814';
+} from './delivery-receipts.js?v=0.2.0-chat-strip-20260814';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-chats-sheet-20260814';
+} from './app-update.js?v=0.2.0-chat-strip-20260814';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-chats-sheet-20260814';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chats-sheet-20260814';
-import { fetchJson } from './http.js?v=0.2.0-chats-sheet-20260814';
+} from './bootstrap-recovery.js?v=0.2.0-chat-strip-20260814';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chat-strip-20260814';
+import { fetchJson } from './http.js?v=0.2.0-chat-strip-20260814';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-chats-sheet-20260814';
+} from './image-attachments.js?v=0.2.0-chat-strip-20260814';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-chats-sheet-20260814';
+} from './live-refresh.js?v=0.2.0-chat-strip-20260814';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-chats-sheet-20260814';
+} from './rich-text.js?v=0.2.0-chat-strip-20260814';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-chats-sheet-20260814';
+} from './read-state.js?v=0.2.0-chat-strip-20260814';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-chats-sheet-20260814';
+} from './transcript-focus.js?v=0.2.0-chat-strip-20260814';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-chats-sheet-20260814';
+} from './swipe-navigation.js?v=0.2.0-chat-strip-20260814';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -80,7 +80,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-chats-sheet-20260814';
+const CLIENT_SHELL_REVISION = '0.2.0-chat-strip-20260814';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -2532,8 +2532,17 @@ function ensureShell() {
     [icon('chevronDown'), 'Latest'],
   );
   const composer = createComposer();
+  // Switching chats was a sheet: open, scan, tap, dismiss. On a phone that is
+  // four interactions to do the single most common thing. This strip puts every
+  // chat one tap away without leaving the conversation, and scrolls
+  // horizontally so a full tab bar costs no vertical room.
+  const chatStrip = node('div', {
+    className: 'chat-strip',
+    'aria-label': 'Switch chat',
+  });
   transcriptPanel.append(
     transcriptNav.root,
+    chatStrip,
     transcriptBanner,
     transcriptScroll,
     latestButton,
@@ -2575,6 +2584,7 @@ function ensureShell() {
     sessionNav,
     transcriptPanel,
     transcriptNav,
+    chatStrip,
     transcriptBanner,
     transcriptScroll,
     messageList,
@@ -3037,7 +3047,10 @@ async function loadSessions(
         !state.sessionsByWorkspace.has(workspaceId)
       ) {
         state.sessionsByWorkspace.set(workspaceId, cached);
-        if (state.route.workspaceId === workspaceId) renderSessionsPanel();
+        if (state.route.workspaceId === workspaceId) {
+          renderSessionsPanel();
+          renderChatStrip();
+        }
       }
     });
   }
@@ -3049,6 +3062,7 @@ async function loadSessions(
     state.sessionsByWorkspace.set(workspaceId, data.sessions);
     if (state.route.workspaceId === workspaceId) renderSessionsPanel();
     void cacheSet(`sessions:${workspaceId}`, data.sessions);
+    if (state.route.workspaceId === workspaceId) renderChatStrip();
     scheduleReadEvaluation();
     return data.sessions;
   } catch (error) {
@@ -3495,7 +3509,67 @@ function chronologicalTranscriptMessages(messages) {
     .map(({ message }) => message);
 }
 
+
+// One tap to switch, rendered from the workspace's own session list. The active
+// chip scrolls itself into view so the current chat is always visible after a
+// switch or a fresh open. Closing deliberately stays in the Chats sheet: an
+// irreversible action does not belong in a strip you swipe through.
+function renderChatStrip() {
+  const strip = state.shell?.chatStrip;
+  if (!strip) return;
+  const workspaceId = state.route.workspaceId;
+  const sessions = sessionsFor(workspaceId) || [];
+  if (sessions.length === 0) {
+    strip.replaceChildren();
+    strip.hidden = true;
+    return;
+  }
+  strip.hidden = false;
+  let activeChip = null;
+  const chips = sessions.map((session) => {
+    const active = session.id === state.route.sessionId;
+    const chip = node('button', {
+      className: `chat-chip${active ? ' is-active' : ''}`,
+      type: 'button',
+      text: session.title,
+      'aria-current': active ? 'page' : undefined,
+      on: {
+        click: () => {
+          if (active) return;
+          navigate({
+            view: 'transcript',
+            workspaceId,
+            sessionId: session.id,
+          });
+        },
+      },
+    });
+    if (active) activeChip = chip;
+    return chip;
+  });
+  chips.push(
+    node('button', {
+      className: 'chat-chip is-new',
+      type: 'button',
+      text: '+',
+      'aria-label': 'New chat',
+      on: {
+        click: async () => {
+          const done = await runTabAction('new');
+          if (done) {
+            announce('New chat created on the Mac.');
+            void loadSessions(workspaceId);
+          }
+        },
+      },
+    }),
+  );
+  strip.replaceChildren(...chips);
+  activeChip?.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
 function renderTranscript() {
+  renderChatStrip();
   if (!state.shell) return;
   const session = currentSession();
   const workspace = state.workspaces.find((item) => item.id === state.route.workspaceId);

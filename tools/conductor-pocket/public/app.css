@@ -2531,3 +2531,53 @@ button:active {
   font-size: 0.72rem;
   font-weight: 600;
 }
+
+/* One-tap chat switching, pinned under the conversation header. Horizontal so
+   a full tab bar costs no vertical space on a phone, and momentum-scrolls with
+   the scrollbar hidden so it reads as a strip rather than a list. */
+.chat-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 6px 10px 8px;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--hairline, rgba(127, 127, 127, 0.18));
+}
+
+.chat-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-chip {
+  flex: 0 0 auto;
+  max-width: 46vw;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-chip.is-active {
+  color: var(--on-copper);
+  background: var(--copper-fill);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* The new-chat affordance sits at the end of the strip and stays square so it
+   never reads as a chat name. */
+.chat-chip.is-new {
+  min-width: 34px;
+  padding: 6px 10px;
+  font-size: 1rem;
+  font-weight: 600;
+}
