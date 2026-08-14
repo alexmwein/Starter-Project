@@ -131,3 +131,23 @@ test('streaming transcript and metadata refresh on separate schedules', async ()
     /eventSource\.addEventListener\('change'[\s\S]*transcriptRefresh\.schedule\(\)[\s\S]*metadataRefresh\.schedule\(\)/,
   );
 });
+
+test('chat UI styles do not hijack the app’s existing rows', async () => {
+  const [css, js] = await Promise.all([
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+  ]);
+  // Every session row in the switcher and the sessions panel carries
+  // "data-row chat-row". A bare .chat-row rule therefore restyles all of them,
+  // which is what left Recent chats with a right-aligned title and a floating
+  // timestamp. Sheet-specific styling must stay namespaced.
+  assert.match(js, /className: 'data-row chat-row'/);
+  assert.doesNotMatch(css, /^\.chat-row\s*\{/m);
+  assert.doesNotMatch(css, /^\.chat-row\.is-active\s*\{/m);
+  assert.match(css, /^\.chats-sheet-row\s*\{/m);
+
+  // The strip is a flex child of a column panel whose scroll area grows, so it
+  // must refuse to shrink or the chips render clipped at half height.
+  const strip = css.slice(css.indexOf('.chat-strip {'));
+  assert.match(strip.slice(0, strip.indexOf('}')), /flex:\s*0\s+0\s+auto/);
+});

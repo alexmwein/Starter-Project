@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-loop-breaker-20260814';
+} from './delivery-receipts.js?v=0.2.0-ui-fixes-20260814';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-loop-breaker-20260814';
+} from './app-update.js?v=0.2.0-ui-fixes-20260814';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-loop-breaker-20260814';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-loop-breaker-20260814';
-import { fetchJson } from './http.js?v=0.2.0-loop-breaker-20260814';
+} from './bootstrap-recovery.js?v=0.2.0-ui-fixes-20260814';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-ui-fixes-20260814';
+import { fetchJson } from './http.js?v=0.2.0-ui-fixes-20260814';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-loop-breaker-20260814';
+} from './image-attachments.js?v=0.2.0-ui-fixes-20260814';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-loop-breaker-20260814';
+} from './live-refresh.js?v=0.2.0-ui-fixes-20260814';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-loop-breaker-20260814';
+} from './rich-text.js?v=0.2.0-ui-fixes-20260814';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-loop-breaker-20260814';
+} from './read-state.js?v=0.2.0-ui-fixes-20260814';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-loop-breaker-20260814';
+} from './transcript-focus.js?v=0.2.0-ui-fixes-20260814';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-loop-breaker-20260814';
+} from './swipe-navigation.js?v=0.2.0-ui-fixes-20260814';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-loop-breaker-20260814';
+const CLIENT_SHELL_REVISION = '0.2.0-ui-fixes-20260814';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -5496,9 +5496,9 @@ function openChatsSheet() {
       const meta = [session.model, active ? 'open' : null]
         .filter(Boolean)
         .join(' · ');
-      return node('div', { className: `chat-row${active ? ' is-active' : ''}` }, [
+      return node('div', { className: `chats-sheet-row${active ? ' is-active' : ''}` }, [
         node('button', {
-          className: 'chat-row-main',
+          className: 'chats-sheet-row-main',
           type: 'button',
           on: {
             click: () => {
@@ -5511,11 +5511,11 @@ function openChatsSheet() {
             },
           },
         }, [
-          node('span', { className: 'chat-row-title', text: session.title }),
-          meta ? node('span', { className: 'chat-row-meta', text: meta }) : null,
+          node('span', { className: 'chats-sheet-row-title', text: session.title }),
+          meta ? node('span', { className: 'chats-sheet-row-meta', text: meta }) : null,
         ].filter(Boolean)),
         node('button', {
-          className: `chat-row-close${armed ? ' is-armed' : ''}`,
+          className: `chats-sheet-row-close${armed ? ' is-armed' : ''}`,
           type: 'button',
           'aria-label': armed
             ? `Confirm closing ${session.title}`

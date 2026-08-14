@@ -545,7 +545,7 @@ button:active {
   color: var(--canvas);
 }
 
-.chat-row {
+.chats-sheet-row {
   min-height: 64px;
 }
 
@@ -2480,7 +2480,7 @@ button:active {
   margin-top: 6px;
 }
 
-.chat-row {
+.chats-sheet-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -2488,11 +2488,11 @@ button:active {
   border-radius: 10px;
 }
 
-.chat-row.is-active {
+.chats-sheet-row.is-active {
   background: var(--surface-raised, rgba(127, 127, 127, 0.12));
 }
 
-.chat-row-main {
+.chats-sheet-row-main {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2503,20 +2503,20 @@ button:active {
   text-align: left;
 }
 
-.chat-row-title {
+.chats-sheet-row-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
 }
 
-.chat-row-meta {
+.chats-sheet-row-meta {
   color: var(--text-secondary);
   font-size: 0.72rem;
   line-height: 0.95rem;
 }
 
-.chat-row-close {
+.chats-sheet-row-close {
   min-width: 48px;
   min-height: 48px;
   color: var(--text-tertiary);
@@ -2525,7 +2525,7 @@ button:active {
 
 /* Armed state is unmistakable: a close is irreversible and a phone mis-tap has
    no undo. */
-.chat-row-close.is-armed {
+.chats-sheet-row-close.is-armed {
   color: var(--danger, #d92d20);
   border: 1px solid currentColor;
   font-size: 0.72rem;
@@ -2537,6 +2537,10 @@ button:active {
    the scrollbar hidden so it reads as a strip rather than a list. */
 .chat-strip {
   display: flex;
+  /* The transcript panel is a flex column and the scroll area grows, so a
+     default flex child gets squeezed. Without this the chips render clipped at
+     roughly half height behind the transcript. */
+  flex: 0 0 auto;
   gap: 6px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
