@@ -28,6 +28,14 @@ const safeToRetryCodes = new Set([
   'user_input_active',
   'workspace_list_unavailable',
   'workspace_not_visible',
+  // Control-operation outcomes. None of these touch the composer text or the
+  // Send control, so a retry can never duplicate a message.
+  'close_not_confirmed',
+  'control_not_found',
+  'control_press_failed',
+  'menu_item_not_found',
+  'menu_item_required',
+  'new_tab_control_unavailable',
 ]);
 
 function byteLength(value) {
@@ -126,13 +134,6 @@ export function mapAutomationError(error, markerContext) {
     error?.killed || error?.signal === 'SIGTERM'
       ? { ok: false, code: 'automation_timeout' }
       : { ok: false, code: 'automation_failed' };
-  if (pressedAt !== null) {
-    return {
-      ...result,
-      pressedAt,
-      composerOwned: true,
-    };
-  }
   if (pressedAt !== null) {
     return {
       ...result,
@@ -249,6 +250,35 @@ export class AccessibilityTransport {
 
   doctor() {
     return this.#run({ operation: 'doctor' });
+  }
+
+  // Control operations reuse the send path's navigation, so each one acts on
+  // exactly the workspace and session named, and they run through the same
+  // serialized queue so one can never interleave with a send.
+  listControls(route) {
+    return this.#run({ ...route, operation: 'list-controls' });
+  }
+
+  openControlMenu(route, controlLabel) {
+    return this.#run({ ...route, operation: 'menu-open', controlLabel });
+  }
+
+  chooseControlMenuItem(route, controlLabel, menuItem) {
+    return this.#run({
+      ...route,
+      operation: 'menu-choose',
+      controlLabel,
+      menuItem,
+    });
+  }
+
+  newTab(route) {
+    return this.#run({ ...route, operation: 'tab-new' });
+  }
+
+  // Irreversible. confirmClose must be explicitly true or the script refuses.
+  closeTab(route, { confirmClose = false } = {}) {
+    return this.#run({ ...route, operation: 'tab-close', confirmClose });
   }
 
   // True while an osascript run is in flight. Shutdown uses this pair to
@@ -382,6 +412,9 @@ export class AccessibilityTransport {
     replaceDraft = false,
     expectedMacDraft = '',
     expectedInputCounters = '',
+    controlLabel = '',
+    menuItem = '',
+    confirmClose = false,
     timeoutMs = 45_000,
   }) {
     let pressMarkerDirectory = '';
@@ -431,6 +464,16 @@ export class AccessibilityTransport {
           POCKET_INPUT_SCRIPT: inputScriptPath,
           POCKET_PRESS_MARKER_PATH: pressMarkerPath,
           POCKET_REPLACE_DRAFT: replaceDraft ? 'true' : 'false',
+          POCKET_CONTROL_LABEL_BASE64: Buffer.from(
+            controlLabel,
+            'utf8',
+          ).toString('base64'),
+          POCKET_MENU_ITEM_BASE64: Buffer.from(menuItem, 'utf8').toString(
+            'base64',
+          ),
+          // Explicit and positive: closing a chat is irreversible, so the
+          // script refuses unless this exact token is present.
+          POCKET_CONFIRM_CLOSE: confirmClose === true ? 'yes' : 'no',
           POCKET_ATTEMPT_STARTED_AT: String(attemptStartedAt),
           // The execFile timeout kills the OUTER osascript; the inner JXA
           // helper it spawned survives as an orphan. One was observed still

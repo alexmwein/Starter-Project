@@ -198,6 +198,189 @@ on escapeDashboard(workspaceName)
 	return my deepPressWorkspaceLink(webArea, workspaceName, 14, {400})
 end escapeDashboard
 
+-- Conductor renders its dropdowns into the page, not as native menus, so an
+-- opened menu appears as a NEW ROOT in the web area whose children are the
+-- items. Verified live. Escape closes it. These handlers are used only by the
+-- control operations below and never by the send path.
+-- Conductor leaves the model and effort buttons with no accessible name; their
+-- text lives in descendant AXStaticText. Targeting them by name therefore fails
+-- on exactly the two controls this feature exists for, so derive a label from
+-- the inner text when the name is empty. Bounded depth and item count so a
+-- control with a large subtree cannot spin.
+on controlLabelFor(el)
+	tell application "System Events"
+		try
+			if (name of el) is not missing value then
+				set directName to name of el as text
+				if directName is not "" then return directName
+			end if
+		end try
+	end tell
+	set collected to my collectStaticText(el, 4, {12})
+	set labelText to ""
+	repeat with piece in collected
+		set pieceText to piece as text
+		if pieceText is not "" then
+			if labelText is "" then
+				set labelText to pieceText
+			else
+				set labelText to labelText & " " & pieceText
+			end if
+		end if
+	end repeat
+	return labelText
+end controlLabelFor
+
+on collectStaticText(el, depthLeft, budget)
+	set found to {}
+	if depthLeft is 0 then return found
+	set remaining to item 1 of budget
+	if remaining is 0 then return found
+	set item 1 of budget to remaining - 1
+	tell application "System Events"
+		try
+			if (role of el as text) is "AXStaticText" then
+				try
+					if (value of el) is not missing value then
+						set v to value of el as text
+						if v is not "" then return {v}
+					end if
+				end try
+				try
+					if (name of el) is not missing value then return {name of el as text}
+				end try
+				return found
+			end if
+		end try
+		try
+			set kids to UI elements of el
+		on error
+			return found
+		end try
+	end tell
+	repeat with kid in kids
+		set deeper to my collectStaticText(kid, depthLeft - 1, budget)
+		repeat with d in deeper
+			copy (d as text) to end of found
+		end repeat
+	end repeat
+	return found
+end collectStaticText
+
+on webRootCount()
+	set webArea to getWebArea()
+	if webArea is missing value then return -1
+	tell application "System Events"
+		try
+			return count of (UI elements of webArea)
+		on error
+			return -1
+		end try
+	end tell
+end webRootCount
+
+on jsonEscape(rawText)
+	set outText to ""
+	repeat with charIndex from 1 to (length of rawText)
+		set c to character charIndex of rawText
+		if c is "\"" then
+			set outText to outText & "\\\""
+		else if c is "\\" then
+			set outText to outText & "\\\\"
+		else if (id of c) < 32 then
+			set outText to outText & " "
+		else
+			set outText to outText & c
+		end if
+	end repeat
+	return outText
+end jsonEscape
+
+-- Items of any menu roots that appeared at or after beforeCount.
+on menuItemsAfter(beforeCount)
+	set foundItems to {}
+	set webArea to getWebArea()
+	if webArea is missing value then return foundItems
+	tell application "System Events"
+		try
+			set rootList to UI elements of webArea
+		on error
+			return foundItems
+		end try
+		set rootTotal to count of rootList
+		repeat with rootIndex from (beforeCount + 1) to rootTotal
+			try
+				set menuRoot to item rootIndex of rootList
+				set itemRoles to role of UI elements of menuRoot
+				set itemNames to name of UI elements of menuRoot
+				repeat with itemIndex from 1 to (count of itemRoles)
+					set itemRole to item itemIndex of itemRoles
+					if itemRole is "AXButton" or itemRole is "AXRadioButton" or itemRole is "AXMenuItem" or itemRole is "AXCheckBox" then
+						set itemName to item itemIndex of itemNames
+						if itemName is not missing value then copy (itemName as text) to end of foundItems
+					end if
+				end repeat
+			end try
+		end repeat
+	end tell
+	return foundItems
+end menuItemsAfter
+
+on closeAnyMenu()
+	tell application "System Events"
+		try
+			key code 53
+		end try
+	end tell
+	delay 0.35
+end closeAnyMenu
+
+-- Presses an item by exact name in any menu root that opened at or after
+-- beforeCount. Exact match only: a prefix match could select "Opus" when the
+-- caller asked for a different entry that merely starts the same way.
+on pressMenuItemNamed(beforeCount, wantedName)
+	set webArea to getWebArea()
+	if webArea is missing value then return false
+	tell application "System Events"
+		try
+			set rootList to UI elements of webArea
+		on error
+			return false
+		end try
+		set rootTotal to count of rootList
+		repeat with rootIndex from (beforeCount + 1) to rootTotal
+			try
+				set menuRoot to item rootIndex of rootList
+				repeat with candidate in (UI elements of menuRoot)
+					try
+						if (name of candidate as text) is wantedName then
+							perform action "AXPress" of candidate
+							return true
+						end if
+					end try
+				end repeat
+			end try
+		end repeat
+	end tell
+	return false
+end pressMenuItemNamed
+
+on composerControls()
+	set mainGroup to getMainGroup()
+	if mainGroup is missing value then return {}
+	tell application "System Events"
+		try
+			set mainElements to UI elements of mainGroup
+			repeat with candidate in mainElements
+				if (description of candidate as text) is "composer" then
+					return UI elements of candidate
+				end if
+			end repeat
+		end try
+	end tell
+	return {}
+end composerControls
+
 on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
 	set cachedName to my cachedWorkspaceName
@@ -522,6 +705,190 @@ repeat with waitIndex from 1 to 50
 end repeat
 set my heldMainGroup to missing value
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+
+-- Control operations run HERE, after the route is proven and before any
+-- send-specific logic, so they act on exactly the workspace and session the
+-- caller named. Each returns immediately; the send path below is untouched.
+if operationMode is "list-controls" then
+	set controlList to my composerControls()
+	set jsonItems to ""
+	tell application "System Events"
+		repeat with candidate in controlList
+			try
+				set candidateRole to role of candidate as text
+				if candidateRole is not "AXTextArea" then
+					set candidateName to my controlLabelFor(candidate)
+					set candidateValue to ""
+					try
+						if (value of candidate) is not missing value then set candidateValue to (value of candidate as text)
+					end try
+					if jsonItems is not "" then set jsonItems to jsonItems & ","
+					set jsonItems to jsonItems & "{\"role\":\"" & my jsonEscape(candidateRole) & "\",\"label\":\"" & my jsonEscape(candidateName) & "\",\"value\":\"" & my jsonEscape(candidateValue) & "\"}"
+				end if
+			end try
+		end repeat
+	end tell
+	return "{\"ok\":true,\"code\":\"controls\",\"controls\":[" & jsonItems & "]}"
+end if
+
+if operationMode is "menu-open" or operationMode is "menu-choose" then
+	set controlLabel to my decodeBase64(system attribute "POCKET_CONTROL_LABEL_BASE64")
+	set itemLabel to my decodeBase64(system attribute "POCKET_MENU_ITEM_BASE64")
+	set controlList to my composerControls()
+	set targetControl to missing value
+	-- Model and effort are icon-only buttons with no accessible name and no
+	-- inner text, so a label cannot address them. Accept "#N" to target the
+	-- Nth control from list-controls, which is what the phone shows. Label
+	-- matching still runs first so the named controls stay stable across
+	-- reorders, and the index path is exact: it never falls back to a guess.
+	if controlLabel starts with "#" then
+		try
+			set wantedIndex to (text 2 thru -1 of controlLabel) as integer
+			if wantedIndex >= 0 and wantedIndex < (count of controlList) then
+				set targetControl to item (wantedIndex + 1) of controlList
+			end if
+		end try
+		if targetControl is missing value then return "{\"ok\":false,\"code\":\"control_not_found\"}"
+	else
+		tell application "System Events"
+			repeat with candidate in controlList
+				try
+					if my controlLabelFor(candidate) is controlLabel then
+						set targetControl to candidate
+						exit repeat
+					end if
+				end try
+			end repeat
+		end tell
+	end if
+	if targetControl is missing value then return "{\"ok\":false,\"code\":\"control_not_found\"}"
+	-- A checkbox has no menu; pressing it IS the toggle.
+	set targetRole to ""
+	tell application "System Events"
+		try
+			set targetRole to role of targetControl as text
+		end try
+	end tell
+	if targetRole is "AXCheckBox" then
+		if operationMode is "menu-open" then return "{\"ok\":true,\"code\":\"menu\",\"toggle\":true,\"items\":[]}"
+		tell application "System Events"
+			try
+				perform action "AXPress" of targetControl
+			on error
+				return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+			end try
+		end tell
+		return "{\"ok\":true,\"code\":\"toggled\"}"
+	end if
+	set rootsBefore to my webRootCount()
+	if rootsBefore is -1 then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		try
+			perform action "AXPress" of targetControl
+		on error
+			return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+		end try
+	end tell
+	delay 0.9
+	if operationMode is "menu-open" then
+		set foundItems to my menuItemsAfter(rootsBefore)
+		my closeAnyMenu()
+		set jsonItems to ""
+		repeat with anItem in foundItems
+			if jsonItems is not "" then set jsonItems to jsonItems & ","
+			set jsonItems to jsonItems & "\"" & my jsonEscape(anItem as text) & "\""
+		end repeat
+		return "{\"ok\":true,\"code\":\"menu\",\"items\":[" & jsonItems & "]}"
+	end if
+	if itemLabel is "" then
+		my closeAnyMenu()
+		return "{\"ok\":false,\"code\":\"menu_item_required\"}"
+	end if
+	set didPress to my pressMenuItemNamed(rootsBefore, itemLabel)
+	-- Always leave no menu open, whether or not the item was found.
+	my closeAnyMenu()
+	if didPress is false then return "{\"ok\":false,\"code\":\"menu_item_not_found\"}"
+	return "{\"ok\":true,\"code\":\"chosen\"}"
+end if
+
+if operationMode is "tab-new" then
+	set mainGroup to getMainGroup()
+	if mainGroup is missing value then return "{\"ok\":false,\"code\":\"composer_unavailable\"}"
+	set tabTrailing to missing value
+	tell application "System Events"
+		try
+			repeat with candidate in (UI elements of mainGroup)
+				if (role of candidate as text) is "AXTabGroup" then
+					set tabChildren to UI elements of candidate
+					set trailing to item (count of tabChildren) of tabChildren
+					if (role of trailing as text) is not "AXRadioButton" then set tabTrailing to trailing
+					exit repeat
+				end if
+			end repeat
+		end try
+	end tell
+	if tabTrailing is missing value then return "{\"ok\":false,\"code\":\"new_tab_control_unavailable\"}"
+	set rootsBefore to my webRootCount()
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		try
+			perform action "AXPress" of tabTrailing
+		on error
+			return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+		end try
+	end tell
+	delay 0.9
+	set foundItems to my menuItemsAfter(rootsBefore)
+	if (count of foundItems) is 0 then return "{\"ok\":true,\"code\":\"tab_created\"}"
+	set jsonItems to ""
+	repeat with anItem in foundItems
+		if jsonItems is not "" then set jsonItems to jsonItems & ","
+		set jsonItems to jsonItems & "\"" & my jsonEscape(anItem as text) & "\""
+	end repeat
+	my closeAnyMenu()
+	return "{\"ok\":true,\"code\":\"tab_menu\",\"items\":[" & jsonItems & "]}"
+end if
+
+if operationMode is "tab-close" then
+	-- Destructive and irreversible. Only ever closes the tab whose accessible
+	-- name matches the caller's session EXACTLY, and refuses if the caller did
+	-- not pass the explicit confirmation token, so a stray request can never
+	-- delete a conversation.
+	if (system attribute "POCKET_CONFIRM_CLOSE") is not "yes" then
+		return "{\"ok\":false,\"code\":\"close_not_confirmed\"}"
+	end if
+	set wantedTabName to "Close chat " & sessionTitle
+	set matchedCount to 0
+	set targetTab to missing value
+	repeat with candidate in my getSessionTabs()
+		try
+			if (name of candidate as text) is wantedTabName then
+				set matchedCount to matchedCount + 1
+				if matchedCount is sessionOrdinal then set targetTab to candidate
+			end if
+		end try
+	end repeat
+	if targetTab is missing value then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+	set rootsBefore to my webRootCount()
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		try
+			perform action "AXShowMenu" of targetTab
+		on error
+			return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+		end try
+	end tell
+	delay 0.9
+	set foundItems to my menuItemsAfter(rootsBefore)
+	set jsonItems to ""
+	repeat with anItem in foundItems
+		if jsonItems is not "" then set jsonItems to jsonItems & ","
+		set jsonItems to jsonItems & "\"" & my jsonEscape(anItem as text) & "\""
+	end repeat
+	my closeAnyMenu()
+	return "{\"ok\":true,\"code\":\"tab_menu\",\"items\":[" & jsonItems & "]}"
+end if
 
 set textArea to missing value
 repeat with waitIndex from 1 to 50

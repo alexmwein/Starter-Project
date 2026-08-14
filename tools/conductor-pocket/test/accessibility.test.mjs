@@ -278,11 +278,16 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
       { message: 'Unexpected automation failure' },
       markerContext,
     ),
+    // A proven press still refuses to be called anything but maybe-sent, and
+    // now also carries the sanitized underlying text. A duplicated early
+    // return used to shadow that, silently dropping the diagnostic on exactly
+    // the ambiguous failures where it is most needed.
     {
       ok: false,
       code: 'automation_failed',
       pressedAt,
       composerOwned: true,
+      detail: 'Unexpected automation failure',
     },
   );
   assert.deepEqual(
@@ -293,6 +298,7 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
     {
       ok: false,
       code: 'automation_failed',
+      detail: 'Not authorized to send Apple events. (-1743)',
       pressedAt,
       composerOwned: true,
     },
