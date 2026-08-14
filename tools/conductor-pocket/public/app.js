@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-delivery-recovery-20260811';
+} from './delivery-receipts.js?v=0.2.0-tab-control-20260813';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-delivery-recovery-20260811';
+} from './app-update.js?v=0.2.0-tab-control-20260813';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-delivery-recovery-20260811';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-delivery-recovery-20260811';
-import { fetchJson } from './http.js?v=0.2.0-delivery-recovery-20260811';
+} from './bootstrap-recovery.js?v=0.2.0-tab-control-20260813';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-tab-control-20260813';
+import { fetchJson } from './http.js?v=0.2.0-tab-control-20260813';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-delivery-recovery-20260811';
+} from './image-attachments.js?v=0.2.0-tab-control-20260813';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-delivery-recovery-20260811';
+} from './live-refresh.js?v=0.2.0-tab-control-20260813';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-delivery-recovery-20260811';
+} from './rich-text.js?v=0.2.0-tab-control-20260813';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-delivery-recovery-20260811';
+} from './read-state.js?v=0.2.0-tab-control-20260813';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-delivery-recovery-20260811';
+} from './transcript-focus.js?v=0.2.0-tab-control-20260813';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-delivery-recovery-20260811';
+} from './swipe-navigation.js?v=0.2.0-tab-control-20260813';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -80,7 +80,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-delivery-recovery-20260811';
+const CLIENT_SHELL_REVISION = '0.2.0-tab-control-20260813';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -5365,7 +5365,7 @@ function openChatsSheet() {
     closeRow.replaceChildren(
       armed
         ? node('button', {
-            className: 'secondary-button danger',
+            className: 'secondary-button danger sheet-chats-action',
             type: 'button',
             text: `Yes, close "${title}"`,
             on: {
@@ -5380,7 +5380,7 @@ function openChatsSheet() {
             },
           })
         : node('button', {
-            className: 'secondary-button',
+            className: 'secondary-button sheet-chats-action',
             type: 'button',
             text: 'Close this chat',
             on: { click: () => renderClose(true) },
@@ -5392,7 +5392,7 @@ function openChatsSheet() {
     'Chats',
     node('div', {}, [
       node('button', {
-        className: 'primary-button',
+        className: 'primary-button sheet-chats-action',
         type: 'button',
         text: 'New chat',
         on: {

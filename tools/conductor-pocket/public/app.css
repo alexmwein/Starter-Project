@@ -180,7 +180,11 @@ button:active {
   position: relative;
   z-index: 5;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  /* The trailing column sizes to its contents so a second action (Chats) fits
+     on a phone. It was a fixed 48px, exactly one button wide, which squashed
+     both. minmax(0, 1fr) on the title still lets long chat names truncate
+     rather than push the actions off-screen. */
+  grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
   min-height: calc(var(--nav-height) + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 4px 0;
@@ -2440,6 +2444,16 @@ button:active {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  justify-self: end;
+}
+
+/* Sheet actions are full width and thumb-sized on a phone, stacked rather than
+   inline, so the destructive confirm can never sit flush against New chat. */
+.sheet-chats-action {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin-bottom: 10px;
 }
 
 /* Closing a chat on the Mac cannot be undone, so the armed confirm reads as
