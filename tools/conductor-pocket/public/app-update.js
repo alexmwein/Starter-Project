@@ -91,9 +91,52 @@ export function createAppUpdateCoordinator({
   let lastCheckAt = Number.NEGATIVE_INFINITY;
   let started = false;
 
+  // A reload can land on a shell that still reports the old revision (the
+  // document is served cache first), which makes the coordinator see the same
+  // update again and reload again, forever. reloadStarted only guards within a
+  // single page life, so it cannot see that pattern. This counter persists
+  // across reloads for the tab, so after a couple of attempts for the SAME
+  // revision the app stops reloading itself and waits to be applied manually
+  // rather than spinning. A genuinely new revision resets the count.
+  const RELOAD_ATTEMPT_KEY = 'pocket:update-attempts';
+  const MAX_RELOAD_ATTEMPTS = 2;
+
+  function reloadAttempts(revision) {
+    try {
+      const raw = globalThis.sessionStorage?.getItem(RELOAD_ATTEMPT_KEY);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw);
+      return parsed?.revision === revision && Number.isSafeInteger(parsed.count)
+        ? parsed.count
+        : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function recordReloadAttempt(revision) {
+    try {
+      globalThis.sessionStorage?.setItem(
+        RELOAD_ATTEMPT_KEY,
+        JSON.stringify({ revision, count: reloadAttempts(revision) + 1 }),
+      );
+    } catch {
+      // Storage being unavailable must never block a legitimate update.
+    }
+  }
+
+  function clearReloadAttempts() {
+    try {
+      globalThis.sessionStorage?.removeItem(RELOAD_ATTEMPT_KEY);
+    } catch {
+      // Nothing to clean up.
+    }
+  }
+
   function applyIfSafe() {
     if (!updatePending || reloadStarted) return false;
     if (isHidden()) return false;
+    if (reloadAttempts(pendingRevision) >= MAX_RELOAD_ATTEMPTS) return false;
     let safe = false;
     try {
       safe = canReload() === true;
@@ -103,6 +146,7 @@ export function createAppUpdateCoordinator({
     if (!safe) return false;
     reloadStarted = true;
     try {
+      recordReloadAttempt(pendingRevision);
       reload(pendingRevision);
       return true;
     } catch {
@@ -130,6 +174,11 @@ export function createAppUpdateCoordinator({
   }
 
   function serverRevision(revision) {
+    if (typeof revision === 'string' && revision === clientRevision) {
+      // The running shell is current, so any earlier attempts succeeded and the
+      // counter must not leak into the next genuine update.
+      clearReloadAttempts();
+    }
     if (
       !clientRevision ||
       typeof revision !== 'string' ||

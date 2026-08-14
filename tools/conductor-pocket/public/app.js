@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-chat-strip-20260814';
+} from './delivery-receipts.js?v=0.2.0-loop-breaker-20260814';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-chat-strip-20260814';
+} from './app-update.js?v=0.2.0-loop-breaker-20260814';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-chat-strip-20260814';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chat-strip-20260814';
-import { fetchJson } from './http.js?v=0.2.0-chat-strip-20260814';
+} from './bootstrap-recovery.js?v=0.2.0-loop-breaker-20260814';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-loop-breaker-20260814';
+import { fetchJson } from './http.js?v=0.2.0-loop-breaker-20260814';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-chat-strip-20260814';
+} from './image-attachments.js?v=0.2.0-loop-breaker-20260814';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-chat-strip-20260814';
+} from './live-refresh.js?v=0.2.0-loop-breaker-20260814';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-chat-strip-20260814';
+} from './rich-text.js?v=0.2.0-loop-breaker-20260814';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-chat-strip-20260814';
+} from './read-state.js?v=0.2.0-loop-breaker-20260814';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-chat-strip-20260814';
+} from './transcript-focus.js?v=0.2.0-loop-breaker-20260814';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-chat-strip-20260814';
+} from './swipe-navigation.js?v=0.2.0-loop-breaker-20260814';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -63,6 +63,18 @@ const RESUME_REQUEST_MS = 6 * 1000;
 const LIVE_REFRESH_DEBOUNCE_MS = 100;
 const METADATA_REFRESH_DEBOUNCE_MS = 800;
 const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
+// Spacing between attempts to rebuild a dead event stream. Long enough that a
+// relay that is genuinely down is not hammered once per second, short enough
+// that a dropped stream recovers before it is worth reaching for the app
+// switcher.
+const STREAM_REVIVE_MS = 15 * 1000;
+// Backstop refresh while the app is on screen. The stream revive above only
+// triggers once the connection is detectably dead; a stream that stays open but
+// silently stops delivering change events looks perfectly healthy, and finished
+// output then sits invisible until the app is backgrounded and foregrounded.
+// This bounds that staleness without replacing the stream, which still delivers
+// the common case in about two seconds.
+const TRANSCRIPT_BACKSTOP_MS = 8 * 1000;
 const APP_UPDATE_CHECK_INTERVAL_MS = 30 * 1000;
 const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
 const CLIENT_VERSION = '0.2.0';
@@ -80,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-chat-strip-20260814';
+const CLIENT_SHELL_REVISION = '0.2.0-loop-breaker-20260814';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -5216,6 +5228,28 @@ function startEvents() {
       if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
       state.connection = state.lastHeartbeat ? 'offline' : 'connecting';
       renderConnectionState();
+      // Losing the stream used to be reported and then left alone: EventSource
+      // does not reliably reopen one that iOS tore down, and startEvents is
+      // otherwise only reached from revealApplication. That is why a stale app
+      // recovered only after being backgrounded and foregrounded. Rebuild here.
+      //
+      // Gated on a heartbeat having arrived at least once, so a first load that
+      // has not connected yet is left to its original attempt rather than being
+      // restarted out from under itself.
+      if (
+        state.lastHeartbeat &&
+        !document.hidden &&
+        state.auth &&
+        state.shell &&
+        Date.now() - (state.lastStreamRevive || 0) > STREAM_REVIVE_MS
+      ) {
+        state.lastStreamRevive = Date.now();
+        // startEvents clears this interval through stopEvents and installs a
+        // fresh one, so nothing below may touch timer state.
+        startEvents();
+        transcriptRefresh.schedule();
+        metadataRefresh.schedule();
+      }
     }
   }, 1_000);
   state.activityTimer = setInterval(() => {
@@ -5235,6 +5269,15 @@ function startEvents() {
       }
     });
   }, ACTIVITY_HEARTBEAT_MS);
+  // Only while on screen, so a backgrounded phone costs nothing. The refresh
+  // coordinators debounce and drop duplicates against an in-flight request, so
+  // this cannot stack up behind a slow response or race the stream's own
+  // refresh: whichever arrives first wins and the other is dropped.
+  state.backstopTimer = setInterval(() => {
+    if (document.hidden || !state.auth || !state.shell) return;
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
+  }, TRANSCRIPT_BACKSTOP_MS);
 }
 
 function stopEvents() {
@@ -5244,8 +5287,12 @@ function stopEvents() {
   metadataRefresh.stop();
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   if (state.activityTimer) clearInterval(state.activityTimer);
+  // Cleared with the rest. startEvents calls stopEvents first, so leaking this
+  // would start a second backstop on every stream revive.
+  if (state.backstopTimer) clearInterval(state.backstopTimer);
   state.heartbeatTimer = null;
   state.activityTimer = null;
+  state.backstopTimer = null;
 }
 
 function renderConnectionState() {
