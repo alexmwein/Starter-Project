@@ -2503,6 +2503,7 @@ function ensureShell() {
       }),
     onSwitcher: openSwitcher,
     titleClick: openSwitcher,
+    onChats: openChatsSheet,
   });
   const transcriptBanner = node('div');
   const transcriptScroll = node('div', { className: 'transcript-scroll' });
@@ -2782,7 +2783,7 @@ function installRecentChatsSwipe(element) {
   element.addEventListener('touchcancel', reset, { passive: true });
 }
 
-function createPanelNav({ backLabel, onBack, onSwitcher, titleClick }) {
+function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) {
   const back = button(backLabel, {
     iconName: 'back',
     className: 'icon-button nav-back',
@@ -2801,7 +2802,17 @@ function createPanelNav({ backLabel, onBack, onSwitcher, titleClick }) {
     iconName: 'squares',
     onClick: onSwitcher,
   });
-  const root = node('header', { className: 'panel-nav' }, [back, title, switcher]);
+  const actions = [switcher];
+  if (onChats) {
+    actions.unshift(
+      button('Chats: new or close', { iconName: 'plus', onClick: onChats }),
+    );
+  }
+  const root = node('header', { className: 'panel-nav' }, [
+    back,
+    title,
+    node('div', { className: 'panel-nav-actions' }, actions),
+  ]);
   return { root, heading, subtitle, back, switcher };
 }
 
@@ -5302,6 +5313,106 @@ async function openSwitcher() {
     { className: 'switcher' },
   );
   void pending.then(render);
+}
+
+
+// Tab control from the phone. New chat is one tap. Closing is irreversible, so
+// it is deliberately two taps with the chat's own name shown in the confirm
+// label: a fat-fingered delete on a phone has no undo, and every other
+// destructive path in this app fails closed the same way.
+async function runTabAction(action, { confirm = false } = {}) {
+  const sessionId = state.route.sessionId;
+  if (!sessionId) {
+    announce('Open a chat first.');
+    return null;
+  }
+  const { response, payload } = await fetchJson(
+    `/api/sessions/${encodeURIComponent(sessionId)}/tab`,
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': state.csrfToken,
+      },
+      body: JSON.stringify({ action, confirm }),
+    },
+  );
+  if (!response.ok || payload?.ok !== true) {
+    announce(TAB_ACTION_MESSAGES[payload?.code] || 'That did not work on the Mac.');
+    return null;
+  }
+  return payload;
+}
+
+const TAB_ACTION_MESSAGES = {
+  close_not_confirmed: 'Not closed. Confirm first.',
+  tab_close_unverified: 'Could not confirm the chat closed. Nothing assumed.',
+  tab_not_closed: 'The chat did not close.',
+  tab_not_created: 'The chat was not created.',
+  session_not_visible: 'That chat is not open on the Mac.',
+  user_input_active: 'Someone is using the Mac. Try again in a moment.',
+  session_locked: 'The Mac is locked.',
+  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+};
+
+function openChatsSheet() {
+  const title = state.route.sessionTitle || 'this chat';
+  const closeRow = node('div', {});
+  const renderClose = (armed) => {
+    closeRow.replaceChildren(
+      armed
+        ? node('button', {
+            className: 'secondary-button danger',
+            type: 'button',
+            text: `Yes, close "${title}"`,
+            on: {
+              click: async () => {
+                const done = await runTabAction('close', { confirm: true });
+                if (done) {
+                  announce('Chat closed on the Mac.');
+                  closeOverlay();
+                  void refreshWorkspaces();
+                }
+              },
+            },
+          })
+        : node('button', {
+            className: 'secondary-button',
+            type: 'button',
+            text: 'Close this chat',
+            on: { click: () => renderClose(true) },
+          }),
+    );
+  };
+  renderClose(false);
+  openSheet(
+    'Chats',
+    node('div', {}, [
+      node('button', {
+        className: 'primary-button',
+        type: 'button',
+        text: 'New chat',
+        on: {
+          click: async () => {
+            const done = await runTabAction('new');
+            if (done) {
+              announce('New chat created on the Mac.');
+              closeOverlay();
+              void refreshWorkspaces();
+            }
+          },
+        },
+      }),
+      closeRow,
+      node('p', {
+        className: 'sheet-note',
+        text: 'Closing a chat on the Mac cannot be undone.',
+      }),
+    ]),
+  );
 }
 
 async function openConnectionSheet() {

@@ -2433,3 +2433,25 @@ button:active {
     animation: none !important;
   }
 }
+
+/* Chat-header action cluster. The Chats button sits beside the switcher so
+   creating or closing a chat is reachable without leaving the conversation. */
+.panel-nav-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Closing a chat on the Mac cannot be undone, so the armed confirm reads as
+   destructive rather than looking like every other secondary action. */
+.secondary-button.danger {
+  color: var(--danger, #d92d20);
+  border-color: currentColor;
+}
+
+.sheet-note {
+  margin: 10px 2px 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}

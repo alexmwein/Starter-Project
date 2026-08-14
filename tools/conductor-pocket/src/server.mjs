@@ -1666,6 +1666,50 @@ export function createPocketServer({
         response.end();
         return;
       }
+      // Tab control. Same origin, session, unlock and CSRF gates as every other
+      // write path, and the transport's own route proof decides which chat is
+      // acted on, so a request can never reach a session the caller did not
+      // name. Closing is irreversible, so it additionally requires an explicit
+      // confirm flag in the body and the transport re-verifies the selection
+      // before and after acting.
+      const sessionTabAction = pathMatch(
+        requestUrl.pathname,
+        /^\/api\/sessions\/([^/]+)\/tab$/,
+      );
+      if (request.method === 'POST' && sessionTabAction) {
+        security.assertOrigin(request);
+        security.session(request, {
+          requireUnlocked: true,
+          requireCsrf: true,
+        });
+        const route = database.getSessionRoute(sessionTabAction[0]);
+        if (!route) throw new HttpError(404, 'session_not_found');
+        const body = await readJson(request);
+        const action = body?.action;
+        const target = {
+          workspaceName: route.workspaceName,
+          sessionTitle: route.title,
+          sessionOrdinal: route.titleOrdinal,
+        };
+        let result;
+        if (action === 'new') {
+          result = await transport.newTab(target);
+        } else if (action === 'close') {
+          result = await transport.closeTab(target, {
+            confirmClose: body?.confirm === true,
+          });
+        } else {
+          throw new HttpError(400, 'unknown_tab_action');
+        }
+        recordAudit({
+          phase: 'tab-action',
+          action,
+          ok: result.ok === true,
+          code: result.code,
+        });
+        return sendJson(response, result.ok ? 200 : 409, result, config);
+      }
+
       if (request.method === 'POST' && deliveryStatus) {
         security.assertOrigin(request);
         const auth = security.session(request, {
