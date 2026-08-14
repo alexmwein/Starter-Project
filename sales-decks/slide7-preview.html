@@ -519,5 +519,11 @@
   <script src="assets/pretext.js"></script>
   <script src="brand-personalize.js"></script>
   <script src="deck.js" defer></script>
-</body>
+<style>
+#page-curtain{display:none !important}
+.slide{display:none !important}
+.slide.operating-map-slide{display:grid !important;opacity:1 !important;visibility:visible !important}
+.reveal{opacity:1 !important;transform:none !important}
+</style>
+<script>window.addEventListener('load',()=>{setTimeout(()=>{document.querySelector('.operating-map-slide').classList.add('is-active');},400);});</script></body>
 </html>
