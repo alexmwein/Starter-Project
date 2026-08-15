@@ -151,3 +151,19 @@ test('chat UI styles do not hijack the app’s existing rows', async () => {
   const strip = css.slice(css.indexOf('.chat-strip {'));
   assert.match(strip.slice(0, strip.indexOf('}')), /flex:\s*0\s+0\s+auto/);
 });
+
+test('the chat strip never scrolls the transcript', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('function renderChatStrip()');
+  const body = js.slice(start, js.indexOf('\n}\n', start));
+  // scrollIntoView walks ancestors, so calling it on a chip scrolls the
+  // transcript. This runs on every transcript render, which reads as the screen
+  // jumping to the top mid-conversation.
+  assert.doesNotMatch(body, /scrollIntoView\(/);
+  assert.match(body, /strip\.scrollLeft = /);
+  // Recentring on every render would fight a manual scroll of the strip.
+  assert.match(body, /lastCentredSessionId !== state\.route\.sessionId/);
+});
