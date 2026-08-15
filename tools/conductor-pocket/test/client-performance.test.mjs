@@ -189,3 +189,24 @@ test('closing a chat is never an inline second tap', async () => {
   // No armed-in-place state may return.
   assert.doesNotMatch(js, /is-armed/);
 });
+
+test('chat strip status costs nothing extra and never animates', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+  // Status must come from the session rows already in memory. A dedicated fetch
+  // or timer here would put a poll behind every chip.
+  const start = js.indexOf('function renderChatStrip()');
+  const body = js.slice(start, js.indexOf('\n}\n', start));
+  assert.match(body, /STRIP_STATUS\[session\.status\]/);
+  assert.doesNotMatch(body, /fetch\(|setInterval\(|request\(/);
+  // idle must render nothing, or a dot stops meaning anything.
+  assert.doesNotMatch(js, /STRIP_STATUS = \{[\s\S]*\bidle:/);
+  // The strip's dots must not inherit the pulsing .status-dot animation.
+  const dot = css.slice(css.indexOf('.chip-dot {'));
+  assert.doesNotMatch(dot.slice(0, dot.indexOf('}')), /animation/);
+  assert.doesNotMatch(body, /status-dot/);
+  // The meaning has to reach screen readers, not just sighted users.
+  assert.match(body, /aria-label.*state_\.label|state_ \? `\$\{session\.title\}, \$\{state_\.label\}`/);
+});

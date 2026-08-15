@@ -2588,3 +2588,57 @@ button:active {
   font-size: 1rem;
   font-weight: 600;
 }
+
+/* Status on the chat strip. Deliberately still: the existing .status-dot
+   pulses, which is right for a single focused indicator but wrong for a row of
+   them, where several animating dots read as an alarm rather than information.
+   idle renders nothing at all, so a dot always means something is happening. */
+.chip-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+}
+
+.chat-chip {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Working is the calm case: the agent is busy and needs nothing from you. */
+.chip-dot.is-working {
+  color: var(--copper);
+}
+
+/* Waiting is the one that should catch the eye, because it is blocked ON YOU.
+   A ring rather than a fill so it reads differently at a glance without motion. */
+.chip-dot.is-waiting {
+  background: transparent;
+  border: 2px solid var(--copper);
+  width: 8px;
+  height: 8px;
+}
+
+.chip-dot.is-error {
+  color: var(--danger, #d92d20);
+}
+
+/* The active chip inverts to a filled background, so its dot must switch to the
+   foreground colour or it disappears against the fill. */
+.chat-chip.is-active .chip-dot {
+  color: var(--on-copper);
+}
+
+.chat-chip.is-active .chip-dot.is-waiting {
+  border-color: var(--on-copper);
+}

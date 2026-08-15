@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-safe-close-20260815';
+} from './delivery-receipts.js?v=0.2.0-status-dots-20260815';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-safe-close-20260815';
+} from './app-update.js?v=0.2.0-status-dots-20260815';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-safe-close-20260815';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-safe-close-20260815';
-import { fetchJson } from './http.js?v=0.2.0-safe-close-20260815';
+} from './bootstrap-recovery.js?v=0.2.0-status-dots-20260815';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-status-dots-20260815';
+import { fetchJson } from './http.js?v=0.2.0-status-dots-20260815';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-safe-close-20260815';
+} from './image-attachments.js?v=0.2.0-status-dots-20260815';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-safe-close-20260815';
+} from './live-refresh.js?v=0.2.0-status-dots-20260815';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-safe-close-20260815';
+} from './rich-text.js?v=0.2.0-status-dots-20260815';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-safe-close-20260815';
+} from './read-state.js?v=0.2.0-status-dots-20260815';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-safe-close-20260815';
+} from './transcript-focus.js?v=0.2.0-status-dots-20260815';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-safe-close-20260815';
+} from './swipe-navigation.js?v=0.2.0-status-dots-20260815';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-safe-close-20260815';
+const CLIENT_SHELL_REVISION = '0.2.0-status-dots-20260815';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3526,6 +3526,18 @@ function chronologicalTranscriptMessages(messages) {
 // chip scrolls itself into view so the current chat is always visible after a
 // switch or a fresh open. Closing deliberately stays in the Chats sheet: an
 // irreversible action does not belong in a strip you swipe through.
+// Only states worth interrupting for. idle is absent on purpose: a strip where
+// most chips carry a dot communicates nothing.
+const STRIP_STATUS = {
+  working: { className: 'is-working', dot: 'is-working', label: 'working' },
+  needs_plan_response: {
+    className: 'is-waiting',
+    dot: 'is-waiting',
+    label: 'waiting for you',
+  },
+  error: { className: 'is-error', dot: 'is-error', label: 'error' },
+};
+
 let lastCentredSessionId = null;
 
 function renderChatStrip() {
@@ -3542,11 +3554,18 @@ function renderChatStrip() {
   let activeChip = null;
   const chips = sessions.map((session) => {
     const active = session.id === state.route.sessionId;
+    // Status rides along on the session rows the app already loads, and
+    // metadataRefresh reloads those on every live change event, so this costs
+    // no extra query, no polling and no accessibility work: it renders state
+    // already in memory. idle deliberately shows nothing, so the strip stays
+    // quiet and a dot always means something is happening.
+    const state_ = STRIP_STATUS[session.status] || null;
     const chip = node('button', {
-      className: `chat-chip${active ? ' is-active' : ''}`,
+      className: `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}`,
       type: 'button',
-      text: session.title,
       'aria-current': active ? 'page' : undefined,
+      // Screen readers get the meaning; sighted users get the dot.
+      'aria-label': state_ ? `${session.title}, ${state_.label}` : session.title,
       on: {
         click: () => {
           if (active) return;
@@ -3557,7 +3576,10 @@ function renderChatStrip() {
           });
         },
       },
-    });
+    }, [
+      state_ ? node('span', { className: `chip-dot ${state_.dot}` }) : null,
+      node('span', { className: 'chip-label', text: session.title }),
+    ].filter(Boolean));
     if (active) activeChip = chip;
     return chip;
   });
