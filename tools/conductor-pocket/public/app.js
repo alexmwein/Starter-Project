@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-header-status-20260815';
+} from './delivery-receipts.js?v=0.2.0-never-blank-20260815';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-header-status-20260815';
+} from './app-update.js?v=0.2.0-never-blank-20260815';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-header-status-20260815';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-header-status-20260815';
-import { fetchJson } from './http.js?v=0.2.0-header-status-20260815';
+} from './bootstrap-recovery.js?v=0.2.0-never-blank-20260815';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-never-blank-20260815';
+import { fetchJson } from './http.js?v=0.2.0-never-blank-20260815';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-header-status-20260815';
+} from './image-attachments.js?v=0.2.0-never-blank-20260815';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-header-status-20260815';
+} from './live-refresh.js?v=0.2.0-never-blank-20260815';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-header-status-20260815';
+} from './rich-text.js?v=0.2.0-never-blank-20260815';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-header-status-20260815';
+} from './read-state.js?v=0.2.0-never-blank-20260815';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-header-status-20260815';
+} from './transcript-focus.js?v=0.2.0-never-blank-20260815';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-header-status-20260815';
+} from './swipe-navigation.js?v=0.2.0-never-blank-20260815';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-header-status-20260815';
+const CLIENT_SHELL_REVISION = '0.2.0-never-blank-20260815';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3724,8 +3724,23 @@ function renderTranscript() {
         top: transcriptScroll.scrollHeight,
         behavior: 'auto',
       });
+    } else {
+      // The whole list is rebuilt on every render, so scroll anchoring is lost
+      // and the view lands wherever the new content puts it: that is the
+      // reading position jumping for no reason. distanceBefore was already
+      // measured to decide pinning; reusing it to restore the SAME distance
+      // from the end keeps the reader where they were, even as messages stream
+      // in. Anchoring to the end rather than to scrollTop is what makes it
+      // stable when content grows.
+      const restored =
+        transcriptScroll.scrollHeight -
+        transcriptScroll.clientHeight -
+        distanceBefore;
+      if (Math.abs(restored - transcriptScroll.scrollTop) > 1) {
+        transcriptScroll.scrollTop = Math.max(0, restored);
+      }
+      state.shell.latestButton.hidden = false;
     }
-    else state.shell.latestButton.hidden = false;
     scheduleReadEvaluation();
   });
   renderComposerState();
@@ -5978,6 +5993,31 @@ function shieldApplication() {
   }
 }
 
+// A visible page must never stay shielded. revealApplication bails early on
+// several legitimate races, and it awaits a network call before it reaches the
+// removal, so any of them can leave the overlay in place with no further event
+// coming to clear it. This is the backstop: if the document is visible and the
+// shield is still there shortly after, it goes. Cheap, idempotent, and it can
+// only ever remove an overlay that should not be showing.
+const SHIELD_FAILSAFE_MS = 2_500;
+let shieldFailsafeTimer = null;
+
+function ensureNotShielded() {
+  clearTimeout(shieldFailsafeTimer);
+  shieldFailsafeTimer = setTimeout(() => {
+    if (document.hidden) return;
+    const shield = document.querySelector('#privacy-shield');
+    if (!shield) return;
+    shield.remove();
+    app.removeAttribute('aria-hidden');
+    // The stream is stopped while shielded, so a rescued page also needs its
+    // live data back or it would sit there stale and look broken instead.
+    startEvents();
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
+  }, SHIELD_FAILSAFE_MS);
+}
+
 async function revealApplication() {
   const revealEpoch = state.visibilityEpoch;
   const persistedHiddenAt = Number(localStorage.getItem(HIDDEN_AT_KEY) || 0);
@@ -6081,7 +6121,15 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   recheckAmbiguousDeliveries();
-  if (!appUpdateCoordinator?.foreground()) revealApplication();
+  // Reveal unconditionally. This used to be skipped whenever the update
+  // coordinator said a reload was starting, on the theory that the page was
+  // about to be replaced anyway. When that reload did not land, and on iOS
+  // returning from the background it often does not, the privacy shield stayed
+  // over the app and the only way out was force-quitting. A brief flash before
+  // a reload is a far better failure than a blank app.
+  appUpdateCoordinator?.foreground();
+  revealApplication();
+  ensureNotShielded();
   // Pending deliveries were only reconciled at boot, so a send whose response
   // was lost while the phone was pocketed stayed at "Delivering" until a full
   // restart. checkDelivery is a status probe, never a resend, so this is safe
@@ -6098,15 +6146,17 @@ window.addEventListener('online', () => {
   recheckAmbiguousDeliveries();
 });
 window.addEventListener('pageshow', () => {
-  const reloading = appUpdateCoordinator?.foreground() === true;
-  if (!reloading) recheckAmbiguousDeliveries();
+  appUpdateCoordinator?.foreground();
+  recheckAmbiguousDeliveries();
   if (
-    !reloading &&
     !document.hidden &&
     (state.hiddenAt || localStorage.getItem(HIDDEN_AT_KEY))
   ) {
     revealApplication();
   }
+  // Covers the restore-from-bfcache case, where revealApplication's own guards
+  // can bail before it reaches the shield removal.
+  ensureNotShielded();
 });
 
 if ('serviceWorker' in navigator) {

@@ -226,3 +226,23 @@ test('the header reports the current chat’s state, including waiting', async (
   // chat marker must not be layered on top of it.
   assert.match(js, /state\.connection === 'live' && headerStatus/);
 });
+
+test('the app can never be left blank, and reading position survives a render', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // Revealing must never be conditional on a reload that may not land. That
+  // left the privacy shield over the app until it was force-quit.
+  assert.doesNotMatch(js, /if \(!appUpdateCoordinator\?\.foreground\(\)\) revealApplication\(\)/);
+  assert.match(js, /appUpdateCoordinator\?\.foreground\(\);\s*\n\s*revealApplication\(\);/);
+  // A visible page with a shield over it must self-correct.
+  assert.match(js, /function ensureNotShielded\(\)/);
+  assert.match(js, /#privacy-shield'\)[\s\S]*shield\.remove\(\)/);
+  // A rescued page needs its stream back or it sits stale and looks broken.
+  const fn = js.slice(js.indexOf('function ensureNotShielded()'));
+  assert.match(fn.slice(0, fn.indexOf('\n}\n')), /startEvents\(\)/);
+  // The transcript is fully rebuilt each render, so an unpinned reader must be
+  // restored to the same distance from the end.
+  assert.match(js, /transcriptScroll\.scrollHeight -\s*\n\s*transcriptScroll\.clientHeight -\s*\n\s*distanceBefore/);
+});
