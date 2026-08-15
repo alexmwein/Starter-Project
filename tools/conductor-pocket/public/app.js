@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-scroll-fix-20260814';
+} from './delivery-receipts.js?v=0.2.0-safe-close-20260815';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-scroll-fix-20260814';
+} from './app-update.js?v=0.2.0-safe-close-20260815';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-scroll-fix-20260814';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-scroll-fix-20260814';
-import { fetchJson } from './http.js?v=0.2.0-scroll-fix-20260814';
+} from './bootstrap-recovery.js?v=0.2.0-safe-close-20260815';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-safe-close-20260815';
+import { fetchJson } from './http.js?v=0.2.0-safe-close-20260815';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-scroll-fix-20260814';
+} from './image-attachments.js?v=0.2.0-safe-close-20260815';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-scroll-fix-20260814';
+} from './live-refresh.js?v=0.2.0-safe-close-20260815';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-scroll-fix-20260814';
+} from './rich-text.js?v=0.2.0-safe-close-20260815';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-scroll-fix-20260814';
+} from './read-state.js?v=0.2.0-safe-close-20260815';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-scroll-fix-20260814';
+} from './transcript-focus.js?v=0.2.0-safe-close-20260815';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-scroll-fix-20260814';
+} from './swipe-navigation.js?v=0.2.0-safe-close-20260815';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-scroll-fix-20260814';
+const CLIENT_SHELL_REVISION = '0.2.0-safe-close-20260815';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -2827,7 +2827,7 @@ function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) 
   const actions = [switcher];
   if (onChats) {
     actions.unshift(
-      button('Chats: new or close', { iconName: 'plus', onClick: onChats }),
+      button('New chat or close chats', { iconName: 'plus', onClick: onChats }),
     );
   }
   const root = node('header', { className: 'panel-nav' }, [
@@ -5493,76 +5493,98 @@ const TAB_ACTION_MESSAGES = {
   conductor_window_unavailable: 'Conductor has no window open on the Mac.',
 };
 
+function confirmCloseChat(session, { onClosed } = {}) {
+  // Closing is irreversible and this is a phone, so the confirmation is a
+  // separate sheet rather than an inline second tap: an armed control sitting
+  // where the first tap landed can be double-tapped by accident, and on a
+  // scrolling list the row can move under the finger between taps. Cancel is
+  // listed first and styled as the primary action so the destructive choice is
+  // never the default or the easiest target.
+  openSheet(
+    'Close this chat?',
+    node('div', {}, [
+      node('p', {
+        className: 'confirm-target',
+        text: session.title,
+      }),
+      node('p', {
+        className: 'sheet-note',
+        text: 'This closes the chat on your Mac. It cannot be undone.',
+      }),
+      node('button', {
+        className: 'primary-button sheet-chats-action',
+        type: 'button',
+        text: 'Keep it',
+        on: { click: () => closeOverlay() },
+      }),
+      node('button', {
+        className: 'secondary-button danger sheet-chats-action',
+        type: 'button',
+        text: 'Close it',
+        on: {
+          click: async () => {
+            const done = await runTabAction('close', {
+              confirm: true,
+              sessionId: session.id,
+            });
+            closeOverlay();
+            if (done) {
+              announce(`Closed ${session.title}.`);
+              onClosed?.();
+            }
+          },
+        },
+      }),
+    ]),
+  );
+}
+
 function openChatsSheet() {
   const workspaceId = state.route.workspaceId;
   const sessions = (sessionsFor(workspaceId) || []).slice();
   const list = node('div', { className: 'chats-list' });
-  let armedId = null;
 
-  const render = () => {
-    const rows = sessions.map((session) => {
-      const active = session.id === state.route.sessionId;
-      const armed = session.id === armedId;
-      // The model is read from Conductor's own database, so it reflects what
-      // that chat is actually running. It cannot be changed from here:
-      // Conductor's model and effort menus expose nothing to accessibility,
-      // and guessing by screen position is how sending broke before.
-      const meta = [session.model, active ? 'open' : null]
-        .filter(Boolean)
-        .join(' · ');
-      return node('div', { className: `chats-sheet-row${active ? ' is-active' : ''}` }, [
-        node('button', {
-          className: 'chats-sheet-row-main',
-          type: 'button',
-          on: {
-            click: () => {
-              closeOverlay();
-              navigate({
-                view: 'transcript',
-                workspaceId,
-                sessionId: session.id,
-              });
-            },
+  const rows = sessions.map((session) => {
+    const active = session.id === state.route.sessionId;
+    // The model comes from Conductor's own database, so it reflects what this
+    // chat is actually running. It cannot be changed from the phone: Conductor
+    // exposes nothing for its model and effort menus to accessibility.
+    const meta = [session.model, active ? 'open' : null]
+      .filter(Boolean)
+      .join(' \u00b7 ');
+    return node('div', { className: `chats-sheet-row${active ? ' is-active' : ''}` }, [
+      node('button', {
+        className: 'chats-sheet-row-main',
+        type: 'button',
+        on: {
+          click: () => {
+            closeOverlay();
+            navigate({ view: 'transcript', workspaceId, sessionId: session.id });
           },
-        }, [
-          node('span', { className: 'chats-sheet-row-title', text: session.title }),
-          meta ? node('span', { className: 'chats-sheet-row-meta', text: meta }) : null,
-        ].filter(Boolean)),
-        node('button', {
-          className: `chats-sheet-row-close${armed ? ' is-armed' : ''}`,
-          type: 'button',
-          'aria-label': armed
-            ? `Confirm closing ${session.title}`
-            : `Close ${session.title}`,
-          text: armed ? 'Sure?' : '✕',
-          on: {
-            click: async () => {
-              if (!armed) {
-                armedId = session.id;
-                render();
-                return;
-              }
-              const done = await runTabAction('close', {
-                confirm: true,
-                sessionId: session.id,
-              });
-              if (done) {
-                announce(`Closed ${session.title}.`);
-                closeOverlay();
-                void loadSessions(workspaceId);
-              }
-            },
-          },
-        }),
-      ]);
-    });
-    list.replaceChildren(
-      ...(rows.length
-        ? rows
-        : [node('p', { className: 'sheet-note', text: 'No chats in this workspace yet.' })]),
-    );
-  };
-  render();
+        },
+      }, [
+        node('span', { className: 'chats-sheet-row-title', text: session.title }),
+        meta ? node('span', { className: 'chats-sheet-row-meta', text: meta }) : null,
+      ].filter(Boolean)),
+      node('button', {
+        className: 'chats-sheet-row-close',
+        type: 'button',
+        'aria-label': `Close ${session.title}`,
+        text: 'Close',
+        on: {
+          click: () =>
+            confirmCloseChat(session, {
+              onClosed: () => void loadSessions(workspaceId),
+            }),
+        },
+      }),
+    ]);
+  });
+  list.replaceChildren(
+    ...(rows.length
+      ? rows
+      : [node('p', { className: 'sheet-note', text: 'No chats in this workspace yet.' })]),
+  );
 
   openSheet(
     'Chats',
@@ -5585,7 +5607,7 @@ function openChatsSheet() {
       list,
       node('p', {
         className: 'sheet-note',
-        text: 'Tap a chat to switch. Closing cannot be undone. Model is set on the Mac.',
+        text: 'Tap a chat to switch. Model is set on the Mac.',
       }),
     ]),
     { className: 'chats' },

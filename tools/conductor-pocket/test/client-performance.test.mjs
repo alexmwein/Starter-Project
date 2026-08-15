@@ -167,3 +167,25 @@ test('the chat strip never scrolls the transcript', async () => {
   // Recentring on every render would fight a manual scroll of the strip.
   assert.match(body, /lastCentredSessionId !== state\.route\.sessionId/);
 });
+
+
+test('closing a chat is never an inline second tap', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // An armed control that appears where the first tap landed can be
+  // double-tapped by accident, and on a scrolling list the row can move under
+  // the finger between taps. Confirmation must be its own sheet.
+  assert.match(js, /function confirmCloseChat\(/);
+  assert.match(js, /openSheet\(\s*'Close this chat\?'/);
+  // The chat is named, so the destructive choice cannot be ambiguous.
+  assert.match(js, /className: 'confirm-target'[\s\S]*text: session\.title/);
+  // Keep is offered before Close, and Close is the only path that confirms.
+  const keep = js.indexOf("text: 'Keep it'");
+  const shut = js.indexOf("text: 'Close it'");
+  assert.ok(keep >= 0 && shut > keep);
+  assert.match(js, /text: 'Close it'[\s\S]*confirm: true/);
+  // No armed-in-place state may return.
+  assert.doesNotMatch(js, /is-armed/);
+});

@@ -2517,19 +2517,22 @@ button:active {
 }
 
 .chats-sheet-row-close {
-  min-width: 48px;
+  min-width: 64px;
   min-height: 48px;
-  color: var(--text-tertiary);
+  padding: 0 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
   border-radius: 10px;
+  font-size: 0.78rem;
 }
 
-/* Armed state is unmistakable: a close is irreversible and a phone mis-tap has
-   no undo. */
-.chats-sheet-row-close.is-armed {
-  color: var(--danger, #d92d20);
-  border: 1px solid currentColor;
-  font-size: 0.72rem;
+/* The chat being closed, named in the confirmation sheet so the destructive
+   choice is never ambiguous about which conversation it affects. */
+.confirm-target {
+  margin: 2px 2px 6px;
+  font-size: 1rem;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 /* One-tap chat switching, pinned under the conversation header. Horizontal so

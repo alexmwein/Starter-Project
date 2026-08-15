@@ -52,7 +52,7 @@ export function sidecarCliArguments(
 
 // Tailscale's documented default listening port. Kept as a named constant so
 // the plist generator and its test can never drift apart.
-export const SIDECAR_TAILSCALE_PORT = 41641;
+export const SIDECAR_TAILSCALE_PORT = 0;
 
 export function sidecarDaemonArguments(
   daemon,
