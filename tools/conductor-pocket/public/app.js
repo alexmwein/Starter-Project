@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-status-dots-20260815';
+} from './delivery-receipts.js?v=0.2.0-header-status-20260815';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-status-dots-20260815';
+} from './app-update.js?v=0.2.0-header-status-20260815';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-status-dots-20260815';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-status-dots-20260815';
-import { fetchJson } from './http.js?v=0.2.0-status-dots-20260815';
+} from './bootstrap-recovery.js?v=0.2.0-header-status-20260815';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-header-status-20260815';
+import { fetchJson } from './http.js?v=0.2.0-header-status-20260815';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-status-dots-20260815';
+} from './image-attachments.js?v=0.2.0-header-status-20260815';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-status-dots-20260815';
+} from './live-refresh.js?v=0.2.0-header-status-20260815';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-status-dots-20260815';
+} from './rich-text.js?v=0.2.0-header-status-20260815';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-status-dots-20260815';
+} from './read-state.js?v=0.2.0-header-status-20260815';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-status-dots-20260815';
+} from './transcript-focus.js?v=0.2.0-header-status-20260815';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-status-dots-20260815';
+} from './swipe-navigation.js?v=0.2.0-header-status-20260815';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-status-dots-20260815';
+const CLIENT_SHELL_REVISION = '0.2.0-header-status-20260815';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3624,14 +3624,29 @@ function renderTranscript() {
   const { transcriptNav, transcriptBanner, transcriptScroll, messageList, statusRow } =
     state.shell;
   transcriptNav.heading.textContent = session?.title || 'Transcript';
+  // The header is the one thing always on screen: the strip scrolls, so the
+  // current chat's chip can sit off to the side while you are reading it.
+  // needs_plan_response was previously unhandled here and fell through to the
+  // workspace name, which hid the one state actually blocked ON YOU.
+  const headerStatus = STRIP_STATUS[session?.status] || null;
   updateNavSubtitle(
     transcriptNav.subtitle,
     session?.status === 'error'
       ? 'Error'
       : session?.status === 'working'
         ? 'Working'
-        : workspace?.name || 'Live',
+        : session?.status === 'needs_plan_response'
+          ? 'Waiting for you'
+          : workspace?.name || 'Live',
   );
+  // A still marker, matching the strip, so status is scannable rather than
+  // something you have to read. Only while live: during a connection problem
+  // the subtitle is reporting the connection, not the chat.
+  if (state.connection === 'live' && headerStatus && session?.status !== 'error') {
+    transcriptNav.subtitle.prepend(
+      node('span', { className: `chip-dot ${headerStatus.dot}` }),
+    );
+  }
   if (state.connection === 'live' && session?.status === 'error') {
     transcriptNav.subtitle.className = 'nav-subtitle down';
     transcriptNav.subtitle.replaceChildren(

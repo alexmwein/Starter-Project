@@ -210,3 +210,19 @@ test('chat strip status costs nothing extra and never animates', async () => {
   // The meaning has to reach screen readers, not just sighted users.
   assert.match(body, /aria-label.*state_\.label|state_ \? `\$\{session\.title\}, \$\{state_\.label\}`/);
 });
+
+test('the header reports the current chat’s state, including waiting', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // needs_plan_response used to fall through to the workspace name, hiding the
+  // one state that is blocked on the operator.
+  assert.match(js, /needs_plan_response'\s*\?\s*'Waiting for you'/);
+  // The header marker reuses the strip's still dot, never the pulsing one.
+  assert.match(js, /transcriptNav\.subtitle\.prepend\(/);
+  assert.match(js, /className: `chip-dot \$\{headerStatus\.dot\}`/);
+  // During a connection problem the subtitle describes the connection, so the
+  // chat marker must not be layered on top of it.
+  assert.match(js, /state\.connection === 'live' && headerStatus/);
+});

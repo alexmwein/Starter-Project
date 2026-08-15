@@ -2642,3 +2642,11 @@ button:active {
 .chat-chip.is-active .chip-dot.is-waiting {
   border-color: var(--on-copper);
 }
+
+/* The header marker sits on the subtitle line, which is smaller than a chip, so
+   it needs its own alignment rather than inheriting the chip's. Still, like the
+   strip: this is the one indicator always on screen and it must never nag. */
+.nav-subtitle .chip-dot {
+  margin-right: 5px;
+  vertical-align: baseline;
+}
