@@ -1,6 +1,6 @@
 # Founder HQ, Location, and Team-Culture Context
 
-*Last updated: August 10, 2026*
+*Last updated: August 15, 2026*
 
 ## Status
 
@@ -47,6 +47,20 @@ Do not turn that thesis into the unsupported claim that most PB residents are ch
 - San Diego's lower density of competing agencies may reduce immediate poaching, but loyalty must still be earned through compensation, coaching, advancement, competent management, and trust.
 - Los Angeles has a larger pool of trained creators, marketers, actors, and agency employees, but also higher competition, compensation expectations, and company-hopping risk.
 - Fort Lauderdale may have useful phone-sales pockets, but Alex has a stronger personal connection to San Diego and has not yet established that South Florida offers a superior, repeatable recruiting channel for the specific company.
+
+## The retention arbitrage: why the floor is San Diego, not LA
+
+*Added August 15, 2026. Alex ratified this framing and asked for it to be saved verbatim in spirit.*
+
+The founding sales-floor model is: hire raw, train hard, promote fast, retain through culture and progression. That model lives or dies on **outside-option density**, and that is the decisive argument for San Diego over Los Angeles.
+
+- In San Diego, OVO is plausibly the most interesting employer an ambitious 24-year-old can find without leaving the city they chose for the lifestyle. That is the PB arbitrage: educated, underemployed, socially skilled people with few local career-track employers. "Build a real career and stay in San Diego" is a recruiting pitch with no strong local counter-bid.
+- In LA, the identical floor is a commodity. Roughly 4x the competing agency establishments, about five times the office-employer density per young resident on the Westside, and roughly ten times the advertising-agency employment. Every rep OVO trains can see multiple agencies within two miles that pay more. A train-and-retain model is the worst possible model to run in the highest-poaching market, before adding the ~15% compensation premium, worse commute shed, flakier applicant pool, and identical California tax.
+- Conclusion: moving the floor to LA means paying more to build a leakier version of the machine. The floor stays where the arbitrage is.
+
+**LA is on subscription, not ownership, and the subscription must be structural.** Alex has honestly acknowledged he will not do the 2 to 2.5-hour drive on willpower. The fix is pre-commitment, not discipline: one recurring LA anchor with fixed dates that other people expect him at, ideally an event he hosts (a monthly creator or operator dinner), with all LA meetings, shoots, and recruiting stacked onto those same one or two days. If the anchor exists the trips happen; if it does not, they will not. Fallback check: OVO's pipeline is online (IG outbound, inbound funnels, phone closes), so LA is an amplifier, not the engine. Under-using LA costs some networking; moving the floor to LA breaks the retention model. Those failure modes are not symmetric.
+
+**Peer group is rooms, not cities.** The legitimate kernel in Alex's recurring "would a faster city grow me more" question is that no one currently makes him feel mediocre on a weekly basis. The fix is buying rooms where he is the least impressive person (paid founder masterminds and operator peer groups, mentor cadence, quarterly fly-ins), plus importing senior hires who can tell him he is wrong. Relocation is the expensive, low-precision version of this; curated rooms are the cheap, high-precision version. Reopening the city question is the recognized loop; redirect to orbit curation.
 
 ## Recommended founding sales-floor composition
 
