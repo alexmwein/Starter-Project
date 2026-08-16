@@ -30,7 +30,15 @@ const NON_SEND_CLASSES = [
 ];
 const QUEUED_EDIT_MARKER = 'Editing queued message';
 const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
-const MAX_PRE_TRANSCRIPT_CONTROLS = 1;
+// Conductor renders workspace chrome (branch pickers, status pills, agent
+// selectors) between the tab group and the transcript. This budget was 1, and
+// the live window measures exactly 1, so a single added control failed every
+// send before a character was typed, deterministically, for as long as that
+// control stayed on screen. Retrying could not clear it. The band carries no
+// safety weight: the composer is proven by its own AXDescription, and the
+// queued-edit scan happens after the transcript boundary. So it is budgeted
+// like its sibling band rather than pinned to the exact shape of one release.
+const MAX_PRE_TRANSCRIPT_CONTROLS = 8;
 const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8;
 const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
 const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
@@ -1158,7 +1166,7 @@ function composerSendContext(process) {
       bulkDescriptions = main.descriptions;
     }
   } catch {
-    fail('send_unavailable');
+    fail('send_unavailable', 'main-root-unresolved');
   }
   let composer = null;
   let composerIndex = -1;
@@ -1174,7 +1182,9 @@ function composerSendContext(process) {
         tabGroupIndex = index;
       }
       if (bulkDescriptions[index] === 'composer') {
-        if (composer) fail('send_unavailable');
+        if (composer) {
+          fail('send_unavailable', `two-composers bulk@${index}`);
+        }
         composer = mainElements[index];
         composerIndex = index;
       }
@@ -1187,7 +1197,7 @@ function composerSendContext(process) {
       role = candidate.role();
       description = candidate.description();
     } catch {
-      fail('send_unavailable');
+      fail('send_unavailable', `main-child-unreadable@${index}`);
     }
     mainRoles.push(role);
     if (role === 'AXTabGroup') {
@@ -1195,7 +1205,7 @@ function composerSendContext(process) {
       tabGroupIndex = index;
     }
     if (description !== 'composer') continue;
-    if (composer) fail('send_unavailable');
+    if (composer) fail('send_unavailable', `two-composers@${index}`);
     composer = candidate;
     composerIndex = index;
   }
@@ -1205,7 +1215,14 @@ function composerSendContext(process) {
     tabGroupIndex < 0 ||
     tabGroupIndex >= composerIndex - 1
   ) {
-    fail('send_unavailable');
+    // Named individually: "no composer" and "two tab groups" are different
+    // outages with different fixes, and a bare send_unavailable hid that
+    // difference for three failed retries of the same message.
+    fail(
+      'send_unavailable',
+      `layout composer=${composerIndex} tabGroups=${tabGroupCount} ` +
+        `tabGroup=${tabGroupIndex} mainChildren=${mainElements.length}`,
+    );
   }
 
   let transcriptBoundaryIndex = -1;
@@ -1218,33 +1235,46 @@ function composerSendContext(process) {
       transcriptBoundaryIndex = index;
       break;
     }
+    // Whatever sits here is workspace chrome. Its role and action set are
+    // Conductor's design decision and change between releases, so pinning
+    // them (AXPopUpButton with exactly one AXPress and no children) turned
+    // every redesign into a total send outage. Only size is load bearing: a
+    // container here would mean the boundary found below is not the
+    // transcript, and that would move the queued-edit scan off its region.
     let candidateChildren;
-    let pressActionCount;
     try {
       candidateChildren = mainElements[index].uiElements();
-      pressActionCount = mainElements[index]
-        .actions()
-        .filter((action) => action.name() === 'AXPress')
-        .length;
     } catch {
-      fail('send_unavailable');
+      fail('send_unavailable', `pre-transcript-unreadable@${index}`);
     }
     if (
-      mainRoles[index] !== 'AXPopUpButton' ||
       !candidateChildren ||
       typeof candidateChildren.length !== 'number' ||
-      candidateChildren.length !== 0 ||
-      pressActionCount !== 1
+      candidateChildren.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN
     ) {
-      fail('send_unavailable');
+      fail(
+        'send_unavailable',
+        `pre-transcript-container@${index} role=${mainRoles[index]} ` +
+          `kids=${candidateChildren ? candidateChildren.length : 'unreadable'}`,
+      );
     }
   }
+  if (transcriptBoundaryIndex < 0) {
+    fail(
+      'send_unavailable',
+      `no-transcript-boundary tabGroup=${tabGroupIndex} ` +
+        `composer=${composerIndex}`,
+    );
+  }
   if (
-    transcriptBoundaryIndex < 0 ||
     transcriptBoundaryIndex - tabGroupIndex - 1 >
-      MAX_PRE_TRANSCRIPT_CONTROLS
+    MAX_PRE_TRANSCRIPT_CONTROLS
   ) {
-    fail('send_unavailable');
+    fail(
+      'send_unavailable',
+      `pre-transcript-overflow=${transcriptBoundaryIndex - tabGroupIndex - 1} ` +
+        `max=${MAX_PRE_TRANSCRIPT_CONTROLS}`,
+    );
   }
 
   const contextElements = mainElements.slice(
@@ -1255,7 +1285,11 @@ function composerSendContext(process) {
     contextElements.length < 1 ||
     contextElements.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS + 1
   ) {
-    fail('send_unavailable');
+    fail(
+      'send_unavailable',
+      `context-band=${contextElements.length} ` +
+        `max=${MAX_QUEUED_EDIT_CONTEXT_SIBLINGS + 1}`,
+    );
   }
   for (const candidate of contextElements.slice(0, -1)) {
     let candidateChildren;
@@ -1269,7 +1303,12 @@ function composerSendContext(process) {
       typeof candidateChildren.length !== 'number' ||
       candidateChildren.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN
     ) {
-      fail('send_unavailable');
+      fail(
+        'send_unavailable',
+        `context-sibling-oversized kids=` +
+          `${candidateChildren ? candidateChildren.length : 'unreadable'} ` +
+          `max=${MAX_QUEUED_EDIT_CONTEXT_CHILDREN}`,
+      );
     }
   }
   return { composer, contextElements };

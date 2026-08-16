@@ -484,9 +484,12 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     inputHelper,
     /QUEUED_EDIT_PLACEHOLDER = 'Edit queued message'/,
   );
+  // Deliberately not 1. At 1 the budget exactly equalled what Conductor 0.81
+  // renders, so one added control failed every send before any text was typed.
+  // Behavior is covered in accessibility-layout.regression-2.test.mjs.
   assert.match(
     inputHelper,
-    /const MAX_PRE_TRANSCRIPT_CONTROLS = 1/,
+    /const MAX_PRE_TRANSCRIPT_CONTROLS = (?![01];)\d+;/,
   );
   assert.match(
     inputHelper,
@@ -502,7 +505,10 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function composerSendContext[\s\S]*tabGroupCount !== 1[\s\S]*mainRoles\[index\] === 'AXGroup'[\s\S]*transcriptBoundaryIndex = index[\s\S]*mainRoles\[index\] !== 'AXPopUpButton'[\s\S]*candidateChildren\.length !== 0[\s\S]*pressActionCount !== 1[\s\S]*transcriptBoundaryIndex < 0[\s\S]*MAX_PRE_TRANSCRIPT_CONTROLS[\s\S]*mainElements\.slice\(\s*transcriptBoundaryIndex \+ 1,\s*composerIndex \+ 1[\s\S]*contextElements\.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS \+ 1[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN/,
+    // The chrome band no longer pins role, child count or action set. What
+    // stays: one tab group, the transcript boundary found by role, a bounded
+    // band, and the queued-edit scan region taken from that boundary.
+    /function composerSendContext[\s\S]*tabGroupCount !== 1[\s\S]*mainRoles\[index\] === 'AXGroup'[\s\S]*transcriptBoundaryIndex = index[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN[\s\S]*transcriptBoundaryIndex < 0[\s\S]*MAX_PRE_TRANSCRIPT_CONTROLS[\s\S]*mainElements\.slice\(\s*transcriptBoundaryIndex \+ 1,\s*composerIndex \+ 1[\s\S]*contextElements\.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS \+ 1[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN/,
   );
   assert.match(
     inputHelper,
@@ -1081,17 +1087,31 @@ globalThis.__routeLeaseTest = {
   state.webArea = makeGuardTree({ transcriptThrows: true }).webArea;
   assert.doesNotThrow(() => composerSendContext(process));
 
+  // These three shapes used to fail closed, pinning the chrome band to the
+  // exact role, child count and action set Conductor 0.81 happened to render.
+  // That is not a safety property: the composer is proven by its own
+  // AXDescription, and the queued-edit scan reads the band after the
+  // transcript boundary, which is still found by role. Pinning it did cause a
+  // real outage, on 2026-08-16 a single added control failed every send before
+  // any text was typed, identically across three retries of one message. So
+  // unknown chrome is now tolerated here.
   for (const options of [
     { popupRole: 'AXButton' },
     { popupChildCount: 1 },
     { popupActionNames: [] },
   ]) {
     state.webArea = makeGuardTree(options).webArea;
-    assert.throws(
-      () => composerSendContext(process),
-      (error) => error?.pocketCode === 'send_unavailable',
-    );
+    assert.doesNotThrow(() => composerSendContext(process));
   }
+
+  // What remains load bearing: a container in the band would mean the element
+  // taken as the transcript is not the transcript, which would move the
+  // queued-edit scan off its region. That still fails closed.
+  state.webArea = makeGuardTree({ popupChildCount: 9 }).webArea;
+  assert.throws(
+    () => composerSendContext(process),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
 
   for (const directMarker of ['name', 'value', 'unreadable-value']) {
     state.webArea = makeGuardTree({ directMarker }).webArea;
