@@ -180,7 +180,11 @@ button:active {
   position: relative;
   z-index: 5;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  /* The trailing column sizes to its contents so a second action (Chats) fits
+     on a phone. It was a fixed 48px, exactly one button wide, which squashed
+     both. minmax(0, 1fr) on the title still lets long chat names truncate
+     rather than push the actions off-screen. */
+  grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
   min-height: calc(var(--nav-height) + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 4px 0;
@@ -541,7 +545,7 @@ button:active {
   color: var(--canvas);
 }
 
-.chat-row {
+.chats-sheet-row {
   min-height: 64px;
 }
 
@@ -1135,6 +1139,17 @@ button:active {
   margin-right: 8px;
   color: var(--text-tertiary);
   font-weight: 400;
+}
+
+/* The plain-words reason under a failed send. Block-level so it wraps under
+   the Retry and Delete controls instead of crowding them. */
+.failure-reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  overflow-wrap: anywhere;
 }
 
 .message-retry {
@@ -1873,6 +1888,23 @@ button:active {
   overflow-wrap: anywhere;
 }
 
+/* Draft-conflict previews clamp so every resolution button stays on screen no
+   matter how long either text runs; each preview scrolls on its own instead of
+   pushing the actions below the fold. */
+.draft-preview {
+  max-height: 22vh;
+  margin-top: 4px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.draft-preview p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .pair-divider {
   height: 1px;
   margin: 16px 0;
@@ -2404,4 +2436,217 @@ button:active {
     opacity: 1;
     animation: none !important;
   }
+}
+
+/* Chat-header action cluster. The Chats button sits beside the switcher so
+   creating or closing a chat is reachable without leaving the conversation. */
+.panel-nav-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  justify-self: end;
+}
+
+/* Sheet actions are full width and thumb-sized on a phone, stacked rather than
+   inline, so the destructive confirm can never sit flush against New chat. */
+.sheet-chats-action {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin-bottom: 10px;
+}
+
+/* Closing a chat on the Mac cannot be undone, so the armed confirm reads as
+   destructive rather than looking like every other secondary action. */
+.secondary-button.danger {
+  color: var(--danger, #d92d20);
+  border-color: currentColor;
+}
+
+.sheet-note {
+  margin: 10px 2px 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+/* One place for chats: switch, create, close. Rows are full-width touch
+   targets with the close affordance separated, so switching and deleting are
+   never adjacent taps. */
+.chats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.chats-sheet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+}
+
+.chats-sheet-row.is-active {
+  background: var(--surface-raised, rgba(127, 127, 127, 0.12));
+}
+
+.chats-sheet-row-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 48px;
+  padding: 8px 10px;
+  min-width: 0;
+  text-align: left;
+}
+
+.chats-sheet-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.chats-sheet-row-meta {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 0.95rem;
+}
+
+.chats-sheet-row-close {
+  min-width: 64px;
+  min-height: 48px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  font-size: 0.78rem;
+}
+
+/* The chat being closed, named in the confirmation sheet so the destructive
+   choice is never ambiguous about which conversation it affects. */
+.confirm-target {
+  margin: 2px 2px 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* One-tap chat switching, pinned under the conversation header. Horizontal so
+   a full tab bar costs no vertical space on a phone, and momentum-scrolls with
+   the scrollbar hidden so it reads as a strip rather than a list. */
+.chat-strip {
+  display: flex;
+  /* The transcript panel is a flex column and the scroll area grows, so a
+     default flex child gets squeezed. Without this the chips render clipped at
+     roughly half height behind the transcript. */
+  flex: 0 0 auto;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 6px 10px 8px;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--hairline, rgba(127, 127, 127, 0.18));
+}
+
+.chat-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-chip {
+  flex: 0 0 auto;
+  max-width: 46vw;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-chip.is-active {
+  color: var(--on-copper);
+  background: var(--copper-fill);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* The new-chat affordance sits at the end of the strip and stays square so it
+   never reads as a chat name. */
+.chat-chip.is-new {
+  min-width: 34px;
+  padding: 6px 10px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Status on the chat strip. Deliberately still: the existing .status-dot
+   pulses, which is right for a single focused indicator but wrong for a row of
+   them, where several animating dots read as an alarm rather than information.
+   idle renders nothing at all, so a dot always means something is happening. */
+.chip-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+}
+
+.chat-chip {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Working is the calm case: the agent is busy and needs nothing from you. */
+.chip-dot.is-working {
+  color: var(--copper);
+}
+
+/* Waiting is the one that should catch the eye, because it is blocked ON YOU.
+   A ring rather than a fill so it reads differently at a glance without motion. */
+.chip-dot.is-waiting {
+  background: transparent;
+  border: 2px solid var(--copper);
+  width: 8px;
+  height: 8px;
+}
+
+.chip-dot.is-error {
+  color: var(--danger, #d92d20);
+}
+
+/* The active chip inverts to a filled background, so its dot must switch to the
+   foreground colour or it disappears against the fill. */
+.chat-chip.is-active .chip-dot {
+  color: var(--on-copper);
+}
+
+.chat-chip.is-active .chip-dot.is-waiting {
+  border-color: var(--on-copper);
+}
+
+/* The header marker sits on the subtitle line, which is smaller than a chip, so
+   it needs its own alignment rather than inheriting the chip's. Still, like the
+   strip: this is the one indicator always on screen and it must never nag. */
+.nav-subtitle .chip-dot {
+  margin-right: 5px;
+  vertical-align: baseline;
 }

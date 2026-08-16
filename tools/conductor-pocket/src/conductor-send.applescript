@@ -1,3 +1,12 @@
+-- Held ONLY for the duration of the stabilization loop below. That loop polls
+-- the same main group up to 50 times to watch the route settle, and re-deriving
+-- it per iteration meant a full tree resolution per poll, which is the bulk of
+-- the 45s automation timeouts. The held value is an AX specifier, so every read
+-- through it still resolves live values and the loop still observes real change.
+-- It is cleared the moment the loop exits, and every decision point afterwards
+-- re-resolves from scratch.
+property heldMainGroup : missing value
+
 property cachedWorkspaceName : missing value
 property cachedWorkspaceGroup : missing value
 property cachedWorkspaceRoute : missing value
@@ -11,6 +20,12 @@ end clearWorkspaceRouteCache
 on workspaceMatches(workspaceName, candidateName)
 	if candidateName is workspaceName then return true
 	if candidateName starts with (workspaceName & " +") then return true
+	-- Conductor titles some workspaces with the branch owner prefixed, e.g.
+	-- "Owner/name" for a workspace whose relay-side name is just "name". The
+	-- slash-anchored comparison keeps this tight: only a full path segment
+	-- match counts, so "name" can never match some other "other name".
+	if candidateName ends with ("/" & workspaceName) then return true
+	if candidateName contains ("/" & workspaceName & " +") then return true
 	return false
 end workspaceMatches
 
@@ -57,14 +72,39 @@ on isMainGroup(candidate)
 		on error
 			return false
 		end try
-		repeat with childElement in candidateElements
-			try
-				if (role of childElement as text) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
-			end try
-			try
-				if (description of childElement as text) is "composer" then set composerCount to composerCount + 1
-			end try
-		end repeat
+		-- One Apple Event per attribute for the whole child list instead of two
+		-- per child. Every AX read costs the same round trip regardless of what
+		-- it returns, so cost here is round-trip count, and this handler runs for
+		-- every candidate root on every main-group and sidebar resolution.
+		-- Falls back to the per-child reads below on any throw or length
+		-- mismatch, so behaviour is identical and merely slower.
+		set childCount to count of candidateElements
+		set bulkRoles to missing value
+		set bulkDescriptions to missing value
+		try
+			set candidateRoles to role of UI elements of candidate
+			set candidateDescriptions to description of UI elements of candidate
+			if (count of candidateRoles) is childCount and (count of candidateDescriptions) is childCount then
+				set bulkRoles to candidateRoles
+				set bulkDescriptions to candidateDescriptions
+			end if
+		end try
+		if bulkRoles is not missing value then
+			repeat with bulkIndex from 1 to childCount
+				if (item bulkIndex of bulkRoles) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
+				if (item bulkIndex of bulkDescriptions) is "composer" then set composerCount to composerCount + 1
+				if tabGroupCount > 1 or composerCount > 1 then return false
+			end repeat
+		else
+			repeat with childElement in candidateElements
+				try
+					if (role of childElement as text) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
+				end try
+				try
+					if (description of childElement as text) is "composer" then set composerCount to composerCount + 1
+				end try
+			end repeat
+		end if
 	end tell
 	return tabGroupCount is 1 and composerCount is 1
 end isMainGroup
@@ -102,6 +142,7 @@ on findSidebarGroup(workspaceName)
 end findSidebarGroup
 
 on getMainGroup()
+	if my heldMainGroup is not missing value then return my heldMainGroup
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
 	set matchingGroups to {}
@@ -118,6 +159,227 @@ on getMainGroup()
 	if (count of matchingGroups) is not 1 then return missing value
 	return item 1 of matchingGroups
 end getMainGroup
+
+-- Bounded deep search for the workspace's sidebar link, used ONLY to escape
+-- the 0.81 Dashboard screen. The budget caps total AX reads so a huge
+-- Dashboard cannot spin; pressing a link that matches workspaceMatches is
+-- exactly what a human click on the sidebar entry does, and everything after
+-- it still goes through the full route proof.
+on deepPressWorkspaceLink(el, workspaceName, depthLeft, budget)
+	if depthLeft is 0 then return false
+	set remaining to item 1 of budget
+	if remaining is 0 then return false
+	set item 1 of budget to remaining - 1
+	tell application "System Events"
+		try
+			if (role of el as text) is "AXLink" then
+				if my workspaceMatches(workspaceName, (name of el as text)) then
+					perform action "AXPress" of el
+					return true
+				end if
+				return false
+			end if
+		end try
+		try
+			set childElements to UI elements of el
+		on error
+			return false
+		end try
+	end tell
+	repeat with childElement in childElements
+		if my deepPressWorkspaceLink(childElement, workspaceName, depthLeft - 1, budget) then return true
+	end repeat
+	return false
+end deepPressWorkspaceLink
+
+on escapeDashboard(workspaceName)
+	set webArea to getWebArea()
+	if webArea is missing value then return false
+	return my deepPressWorkspaceLink(webArea, workspaceName, 14, {400})
+end escapeDashboard
+
+-- Conductor renders its dropdowns into the page, not as native menus, so an
+-- opened menu appears as a NEW ROOT in the web area whose children are the
+-- items. Verified live. Escape closes it. These handlers are used only by the
+-- control operations below and never by the send path.
+-- Conductor leaves the model and effort buttons with no accessible name; their
+-- text lives in descendant AXStaticText. Targeting them by name therefore fails
+-- on exactly the two controls this feature exists for, so derive a label from
+-- the inner text when the name is empty. Bounded depth and item count so a
+-- control with a large subtree cannot spin.
+on controlLabelFor(el)
+	tell application "System Events"
+		try
+			if (name of el) is not missing value then
+				set directName to name of el as text
+				if directName is not "" then return directName
+			end if
+		end try
+	end tell
+	set collected to my collectStaticText(el, 4, {12})
+	set labelText to ""
+	repeat with piece in collected
+		set pieceText to piece as text
+		if pieceText is not "" then
+			if labelText is "" then
+				set labelText to pieceText
+			else
+				set labelText to labelText & " " & pieceText
+			end if
+		end if
+	end repeat
+	return labelText
+end controlLabelFor
+
+on collectStaticText(el, depthLeft, budget)
+	set found to {}
+	if depthLeft is 0 then return found
+	set remaining to item 1 of budget
+	if remaining is 0 then return found
+	set item 1 of budget to remaining - 1
+	tell application "System Events"
+		try
+			if (role of el as text) is "AXStaticText" then
+				try
+					if (value of el) is not missing value then
+						set v to value of el as text
+						if v is not "" then return {v}
+					end if
+				end try
+				try
+					if (name of el) is not missing value then return {name of el as text}
+				end try
+				return found
+			end if
+		end try
+		try
+			set kids to UI elements of el
+		on error
+			return found
+		end try
+	end tell
+	repeat with kid in kids
+		set deeper to my collectStaticText(kid, depthLeft - 1, budget)
+		repeat with d in deeper
+			copy (d as text) to end of found
+		end repeat
+	end repeat
+	return found
+end collectStaticText
+
+on webRootCount()
+	set webArea to getWebArea()
+	if webArea is missing value then return -1
+	tell application "System Events"
+		try
+			return count of (UI elements of webArea)
+		on error
+			return -1
+		end try
+	end tell
+end webRootCount
+
+on jsonEscape(rawText)
+	set outText to ""
+	repeat with charIndex from 1 to (length of rawText)
+		set c to character charIndex of rawText
+		if c is "\"" then
+			set outText to outText & "\\\""
+		else if c is "\\" then
+			set outText to outText & "\\\\"
+		else if (id of c) < 32 then
+			set outText to outText & " "
+		else
+			set outText to outText & c
+		end if
+	end repeat
+	return outText
+end jsonEscape
+
+-- Items of any menu roots that appeared at or after beforeCount.
+on menuItemsAfter(beforeCount)
+	set foundItems to {}
+	set webArea to getWebArea()
+	if webArea is missing value then return foundItems
+	tell application "System Events"
+		try
+			set rootList to UI elements of webArea
+		on error
+			return foundItems
+		end try
+		set rootTotal to count of rootList
+		repeat with rootIndex from (beforeCount + 1) to rootTotal
+			try
+				set menuRoot to item rootIndex of rootList
+				set itemRoles to role of UI elements of menuRoot
+				set itemNames to name of UI elements of menuRoot
+				repeat with itemIndex from 1 to (count of itemRoles)
+					set itemRole to item itemIndex of itemRoles
+					if itemRole is "AXButton" or itemRole is "AXRadioButton" or itemRole is "AXMenuItem" or itemRole is "AXCheckBox" then
+						set itemName to item itemIndex of itemNames
+						if itemName is not missing value then copy (itemName as text) to end of foundItems
+					end if
+				end repeat
+			end try
+		end repeat
+	end tell
+	return foundItems
+end menuItemsAfter
+
+on closeAnyMenu()
+	tell application "System Events"
+		try
+			key code 53
+		end try
+	end tell
+	delay 0.35
+end closeAnyMenu
+
+-- Presses an item by exact name in any menu root that opened at or after
+-- beforeCount. Exact match only: a prefix match could select "Opus" when the
+-- caller asked for a different entry that merely starts the same way.
+on pressMenuItemNamed(beforeCount, wantedName)
+	set webArea to getWebArea()
+	if webArea is missing value then return false
+	tell application "System Events"
+		try
+			set rootList to UI elements of webArea
+		on error
+			return false
+		end try
+		set rootTotal to count of rootList
+		repeat with rootIndex from (beforeCount + 1) to rootTotal
+			try
+				set menuRoot to item rootIndex of rootList
+				repeat with candidate in (UI elements of menuRoot)
+					try
+						if (name of candidate as text) is wantedName then
+							perform action "AXPress" of candidate
+							return true
+						end if
+					end try
+				end repeat
+			end try
+		end repeat
+	end tell
+	return false
+end pressMenuItemNamed
+
+on composerControls()
+	set mainGroup to getMainGroup()
+	if mainGroup is missing value then return {}
+	tell application "System Events"
+		try
+			set mainElements to UI elements of mainGroup
+			repeat with candidate in mainElements
+				if (description of candidate as text) is "composer" then
+					return UI elements of candidate
+				end if
+			end repeat
+		end try
+	end tell
+	return {}
+end composerControls
 
 on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
@@ -275,6 +537,15 @@ on commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPi
 	on error errorText
 		if errorText contains "draft_conflict" then return "draft_conflict"
 		if errorText contains "session_locked" then return "session_locked"
+		-- The helper throws typed codes; passing them through names exactly
+		-- which AX assumption broke instead of collapsing every distinct
+		-- failure into automation_failed. The list mirrors the codes the
+		-- helper actually throws; anything unrecognized still falls through.
+		-- deadline_exceeded is the helper bounding its own lifetime so the
+		-- transport kill can never orphan it mid-send.
+		repeat with knownCode in {"send_unavailable", "user_input_active", "route_changed", "composer_focus_changed", "draft_changed", "composer_update_failed", "invalid_encoding", "unicode_roundtrip_failed", "target_not_active", "deadline_exceeded"}
+			if errorText contains knownCode then return "code:" & knownCode
+		end repeat
 		return "automation_failed"
 	end try
 	if helperResult starts with "pressed:" then return helperResult
@@ -342,6 +613,25 @@ if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_act
 if inputReadiness is "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
 if inputReadiness is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
 
+-- Conductor 0.81 introduced a Dashboard/Home screen and lands on it after an
+-- update restart. On that screen no main group (tab strip + composer) exists,
+-- so every send strands with nobody at the Mac to click a workspace. The
+-- workspace links are still in the sidebar, just nested deeper than the
+-- two-level route scan reads. When and only when the main group is absent,
+-- deep-search for the workspace link, press it, and wait for the session view.
+-- This runs after the input-idle and lock gates and before any route
+-- resolution, so the readiness-before-route ordering is unchanged, and a
+-- genuine absence still fails with the same codes it always did.
+if getMainGroup() is missing value then
+	set escaped to my escapeDashboard(workspaceName)
+	if escaped then
+		repeat with waitIndex from 1 to 40
+			if getMainGroup() is not missing value then exit repeat
+			delay 0.25
+		end repeat
+	end if
+end if
+
 set sidebarGroup to getSidebarGroup()
 if sidebarGroup is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
 set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
@@ -403,6 +693,7 @@ if routeAlreadySelected is false then
 end if
 
 set stableRouteChecks to 0
+set my heldMainGroup to getMainGroup()
 repeat with waitIndex from 1 to 50
 	delay 0.1
 	if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
@@ -412,7 +703,207 @@ repeat with waitIndex from 1 to 50
 		set stableRouteChecks to 0
 	end if
 end repeat
+set my heldMainGroup to missing value
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+
+-- Control operations run HERE, after the route is proven and before any
+-- send-specific logic, so they act on exactly the workspace and session the
+-- caller named. Each returns immediately; the send path below is untouched.
+if operationMode is "list-controls" then
+	set controlList to my composerControls()
+	set jsonItems to ""
+	tell application "System Events"
+		repeat with candidate in controlList
+			try
+				set candidateRole to role of candidate as text
+				if candidateRole is not "AXTextArea" then
+					set candidateName to my controlLabelFor(candidate)
+					set candidateValue to ""
+					try
+						if (value of candidate) is not missing value then set candidateValue to (value of candidate as text)
+					end try
+					if jsonItems is not "" then set jsonItems to jsonItems & ","
+					set jsonItems to jsonItems & "{\"role\":\"" & my jsonEscape(candidateRole) & "\",\"label\":\"" & my jsonEscape(candidateName) & "\",\"value\":\"" & my jsonEscape(candidateValue) & "\"}"
+				end if
+			end try
+		end repeat
+	end tell
+	return "{\"ok\":true,\"code\":\"controls\",\"controls\":[" & jsonItems & "]}"
+end if
+
+if operationMode is "menu-open" or operationMode is "menu-choose" then
+	set controlLabel to my decodeBase64(system attribute "POCKET_CONTROL_LABEL_BASE64")
+	set itemLabel to my decodeBase64(system attribute "POCKET_MENU_ITEM_BASE64")
+	set controlList to my composerControls()
+	set targetControl to missing value
+	-- Model and effort are icon-only buttons with no accessible name and no
+	-- inner text, so a label cannot address them. Accept "#N" to target the
+	-- Nth control from list-controls, which is what the phone shows. Label
+	-- matching still runs first so the named controls stay stable across
+	-- reorders, and the index path is exact: it never falls back to a guess.
+	if controlLabel starts with "#" then
+		try
+			set wantedIndex to (text 2 thru -1 of controlLabel) as integer
+			if wantedIndex >= 0 and wantedIndex < (count of controlList) then
+				set targetControl to item (wantedIndex + 1) of controlList
+			end if
+		end try
+		if targetControl is missing value then return "{\"ok\":false,\"code\":\"control_not_found\"}"
+	else
+		tell application "System Events"
+			repeat with candidate in controlList
+				try
+					if my controlLabelFor(candidate) is controlLabel then
+						set targetControl to candidate
+						exit repeat
+					end if
+				end try
+			end repeat
+		end tell
+	end if
+	if targetControl is missing value then return "{\"ok\":false,\"code\":\"control_not_found\"}"
+	-- A checkbox has no menu; pressing it IS the toggle.
+	set targetRole to ""
+	tell application "System Events"
+		try
+			set targetRole to role of targetControl as text
+		end try
+	end tell
+	if targetRole is "AXCheckBox" then
+		if operationMode is "menu-open" then return "{\"ok\":true,\"code\":\"menu\",\"toggle\":true,\"items\":[]}"
+		tell application "System Events"
+			try
+				perform action "AXPress" of targetControl
+			on error
+				return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+			end try
+		end tell
+		return "{\"ok\":true,\"code\":\"toggled\"}"
+	end if
+	set rootsBefore to my webRootCount()
+	if rootsBefore is -1 then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+		try
+			perform action "AXPress" of targetControl
+		on error
+			return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+		end try
+	end tell
+	delay 0.9
+	if operationMode is "menu-open" then
+		set foundItems to my menuItemsAfter(rootsBefore)
+		set rootsAfter to my webRootCount()
+		my closeAnyMenu()
+		-- Conductor's model and effort dropdowns render without exposing their
+		-- items to accessibility: the root count changes but not one labelled
+		-- element appears anywhere in the tree (verified three ways: new-root
+		-- scan, deep nested walk, and a full before/after label-set diff).
+		-- Returning ok with an empty list would let the phone show "no options"
+		-- as though that were the truth, so say plainly that the menu opened
+		-- and could not be read instead.
+		if (count of foundItems) is 0 then
+			if rootsAfter is not rootsBefore then
+				return "{\"ok\":false,\"code\":\"menu_not_readable\"}"
+			end if
+			return "{\"ok\":false,\"code\":\"menu_did_not_open\"}"
+		end if
+		set jsonItems to ""
+		repeat with anItem in foundItems
+			if jsonItems is not "" then set jsonItems to jsonItems & ","
+			set jsonItems to jsonItems & "\"" & my jsonEscape(anItem as text) & "\""
+		end repeat
+		return "{\"ok\":true,\"code\":\"menu\",\"items\":[" & jsonItems & "]}"
+	end if
+	if itemLabel is "" then
+		my closeAnyMenu()
+		return "{\"ok\":false,\"code\":\"menu_item_required\"}"
+	end if
+	set didPress to my pressMenuItemNamed(rootsBefore, itemLabel)
+	-- Always leave no menu open, whether or not the item was found.
+	my closeAnyMenu()
+	if didPress is false then return "{\"ok\":false,\"code\":\"menu_item_not_found\"}"
+	return "{\"ok\":true,\"code\":\"chosen\"}"
+end if
+
+if operationMode is "tab-new" then
+	-- Cmd-T. Verified live: creates a chat in the CURRENT workspace, which the
+	-- route proof above has already selected. A shortcut is used deliberately
+	-- rather than hunting a button: the tab strip's trailing control does
+	-- nothing when pressed, and every icon-only control in this app is
+	-- unlabelled and has moved between releases, which is the exact pattern
+	-- that broke sending twice. A shortcut has no CSS classes to rot.
+	set beforeTabs to count of my getSessionTabs()
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+	end tell
+	delay 0.2
+	try
+		do shell script "/usr/bin/env POCKET_OPERATION=tab-new /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+	end try
+	repeat with waitIndex from 1 to 30
+		delay 0.1
+		if (count of my getSessionTabs()) > beforeTabs then
+			return "{\"ok\":true,\"code\":\"tab_created\"}"
+		end if
+	end repeat
+	return "{\"ok\":false,\"code\":\"tab_not_created\"}"
+end if
+
+if operationMode is "tab-close" then
+	-- Irreversible. Cmd-W closes the SELECTED tab, so this is only safe because
+	-- the route proof above has already selected exactly the requested session
+	-- and held it stable. Re-verify that selection immediately before the
+	-- shortcut, refuse without an explicit confirmation token, and then prove
+	-- afterwards that exactly one tab went away and it was the right one.
+	if (system attribute "POCKET_CONFIRM_CLOSE") is not "yes" then
+		return "{\"ok\":false,\"code\":\"close_not_confirmed\"}"
+	end if
+	if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then
+		return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+	end if
+	set wantedTabName to "Close chat " & sessionTitle
+	set beforeTabs to count of my getSessionTabs()
+	set beforeMatching to 0
+	repeat with candidate in my getSessionTabs()
+		try
+			if (name of candidate as text) is wantedTabName then set beforeMatching to beforeMatching + 1
+		end try
+	end repeat
+	if beforeMatching < sessionOrdinal then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+	tell application "System Events"
+		tell process "Conductor" to set frontmost to true
+	end tell
+	delay 0.2
+	try
+		do shell script "/usr/bin/env POCKET_OPERATION=tab-close /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error errorText
+		if errorText contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+	end try
+	repeat with waitIndex from 1 to 30
+		delay 0.1
+		set afterTabs to count of my getSessionTabs()
+		if afterTabs < beforeTabs then
+			set afterMatching to 0
+			repeat with candidate in my getSessionTabs()
+				try
+					if (name of candidate as text) is wantedTabName then set afterMatching to afterMatching + 1
+				end try
+			end repeat
+			if afterTabs is (beforeTabs - 1) and afterMatching is (beforeMatching - 1) then
+				return "{\"ok\":true,\"code\":\"tab_closed\"}"
+			end if
+			return "{\"ok\":false,\"code\":\"tab_close_unverified\"}"
+		end if
+	end repeat
+	return "{\"ok\":false,\"code\":\"tab_not_closed\"}"
+end if
 
 set textArea to missing value
 repeat with waitIndex from 1 to 50
@@ -458,6 +949,8 @@ else if commitResult starts with "retryable:" then
 	return "{\"ok\":false,\"code\":\"composer_changed_pre_send\",\"retryCertificate\":\"" & retryCertificate & "\"}"
 else if commitResult is "session_locked" then
 	return "{\"ok\":false,\"code\":\"session_locked\"}"
+else if commitResult starts with "code:" then
+	return "{\"ok\":false,\"code\":\"" & (text 6 thru -1 of commitResult) & "\"}"
 else
 	return "{\"ok\":false,\"code\":\"automation_failed\"}"
 end if

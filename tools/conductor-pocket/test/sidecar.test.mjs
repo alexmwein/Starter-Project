@@ -16,6 +16,7 @@ import {
   removeVerifiedStaleSocket,
   sidecarCliArguments,
   sidecarDaemonArguments,
+  SIDECAR_TAILSCALE_PORT,
   statusVersion,
   validatedSidecarAuthUrl,
   versionAtLeast,
@@ -55,7 +56,10 @@ test('dedicated daemon launch arguments expose only the audited userspace socket
       '--tun=userspace-networking',
       '--statedir=/private/conductor-pocket/tailscale',
       '--socket=/private/conductor-pocket/tailscaled.sock',
-      '--port=0',
+      // Stable, not ephemeral: --port=0 changes on every restart, which throws
+      // away the peer's learned NAT mapping and drops the phone onto a DERP
+      // relay instead of a direct path to this Mac.
+      `--port=${SIDECAR_TAILSCALE_PORT}`,
     ],
   );
 });

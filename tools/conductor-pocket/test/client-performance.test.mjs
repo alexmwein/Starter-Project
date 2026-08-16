@@ -131,3 +131,118 @@ test('streaming transcript and metadata refresh on separate schedules', async ()
     /eventSource\.addEventListener\('change'[\s\S]*transcriptRefresh\.schedule\(\)[\s\S]*metadataRefresh\.schedule\(\)/,
   );
 });
+
+test('chat UI styles do not hijack the app’s existing rows', async () => {
+  const [css, js] = await Promise.all([
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+  ]);
+  // Every session row in the switcher and the sessions panel carries
+  // "data-row chat-row". A bare .chat-row rule therefore restyles all of them,
+  // which is what left Recent chats with a right-aligned title and a floating
+  // timestamp. Sheet-specific styling must stay namespaced.
+  assert.match(js, /className: 'data-row chat-row'/);
+  assert.doesNotMatch(css, /^\.chat-row\s*\{/m);
+  assert.doesNotMatch(css, /^\.chat-row\.is-active\s*\{/m);
+  assert.match(css, /^\.chats-sheet-row\s*\{/m);
+
+  // The strip is a flex child of a column panel whose scroll area grows, so it
+  // must refuse to shrink or the chips render clipped at half height.
+  const strip = css.slice(css.indexOf('.chat-strip {'));
+  assert.match(strip.slice(0, strip.indexOf('}')), /flex:\s*0\s+0\s+auto/);
+});
+
+test('the chat strip never scrolls the transcript', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('function renderChatStrip()');
+  const body = js.slice(start, js.indexOf('\n}\n', start));
+  // scrollIntoView walks ancestors, so calling it on a chip scrolls the
+  // transcript. This runs on every transcript render, which reads as the screen
+  // jumping to the top mid-conversation.
+  assert.doesNotMatch(body, /scrollIntoView\(/);
+  assert.match(body, /strip\.scrollLeft = /);
+  // Recentring on every render would fight a manual scroll of the strip.
+  assert.match(body, /lastCentredSessionId !== state\.route\.sessionId/);
+});
+
+
+test('closing a chat is never an inline second tap', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // An armed control that appears where the first tap landed can be
+  // double-tapped by accident, and on a scrolling list the row can move under
+  // the finger between taps. Confirmation must be its own sheet.
+  assert.match(js, /function confirmCloseChat\(/);
+  assert.match(js, /openSheet\(\s*'Close this chat\?'/);
+  // The chat is named, so the destructive choice cannot be ambiguous.
+  assert.match(js, /className: 'confirm-target'[\s\S]*text: session\.title/);
+  // Keep is offered before Close, and Close is the only path that confirms.
+  const keep = js.indexOf("text: 'Keep it'");
+  const shut = js.indexOf("text: 'Close it'");
+  assert.ok(keep >= 0 && shut > keep);
+  assert.match(js, /text: 'Close it'[\s\S]*confirm: true/);
+  // No armed-in-place state may return.
+  assert.doesNotMatch(js, /is-armed/);
+});
+
+test('chat strip status costs nothing extra and never animates', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+  // Status must come from the session rows already in memory. A dedicated fetch
+  // or timer here would put a poll behind every chip.
+  const start = js.indexOf('function renderChatStrip()');
+  const body = js.slice(start, js.indexOf('\n}\n', start));
+  assert.match(body, /STRIP_STATUS\[session\.status\]/);
+  assert.doesNotMatch(body, /fetch\(|setInterval\(|request\(/);
+  // idle must render nothing, or a dot stops meaning anything.
+  assert.doesNotMatch(js, /STRIP_STATUS = \{[\s\S]*\bidle:/);
+  // The strip's dots must not inherit the pulsing .status-dot animation.
+  const dot = css.slice(css.indexOf('.chip-dot {'));
+  assert.doesNotMatch(dot.slice(0, dot.indexOf('}')), /animation/);
+  assert.doesNotMatch(body, /status-dot/);
+  // The meaning has to reach screen readers, not just sighted users.
+  assert.match(body, /aria-label.*state_\.label|state_ \? `\$\{session\.title\}, \$\{state_\.label\}`/);
+});
+
+test('the header reports the current chat’s state, including waiting', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // needs_plan_response used to fall through to the workspace name, hiding the
+  // one state that is blocked on the operator.
+  assert.match(js, /needs_plan_response'\s*\?\s*'Waiting for you'/);
+  // The header marker reuses the strip's still dot, never the pulsing one.
+  assert.match(js, /transcriptNav\.subtitle\.prepend\(/);
+  assert.match(js, /className: `chip-dot \$\{headerStatus\.dot\}`/);
+  // During a connection problem the subtitle describes the connection, so the
+  // chat marker must not be layered on top of it.
+  assert.match(js, /state\.connection === 'live' && headerStatus/);
+});
+
+test('the app can never be left blank, and reading position survives a render', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // Revealing must never be conditional on a reload that may not land. That
+  // left the privacy shield over the app until it was force-quit.
+  assert.doesNotMatch(js, /if \(!appUpdateCoordinator\?\.foreground\(\)\) revealApplication\(\)/);
+  assert.match(js, /appUpdateCoordinator\?\.foreground\(\);\s*\n\s*revealApplication\(\);/);
+  // A visible page with a shield over it must self-correct.
+  assert.match(js, /function ensureNotShielded\(\)/);
+  assert.match(js, /#privacy-shield'\)[\s\S]*shield\.remove\(\)/);
+  // A rescued page needs its stream back or it sits stale and looks broken.
+  const fn = js.slice(js.indexOf('function ensureNotShielded()'));
+  assert.match(fn.slice(0, fn.indexOf('\n}\n')), /startEvents\(\)/);
+  // The transcript is fully rebuilt each render, so an unpinned reader must be
+  // restored to the same distance from the end.
+  assert.match(js, /transcriptScroll\.scrollHeight -\s*\n\s*transcriptScroll\.clientHeight -\s*\n\s*distanceBefore/);
+});

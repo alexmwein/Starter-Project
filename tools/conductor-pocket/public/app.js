@@ -4,17 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-delivery-recovery-20260811';
+} from './delivery-receipts.js?v=0.2.0-never-blank-20260815';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-delivery-recovery-20260811';
+} from './app-update.js?v=0.2.0-never-blank-20260815';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-delivery-recovery-20260811';
-import { fetchJson } from './http.js?v=0.2.0-delivery-recovery-20260811';
+} from './bootstrap-recovery.js?v=0.2.0-never-blank-20260815';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-never-blank-20260815';
+import { fetchJson } from './http.js?v=0.2.0-never-blank-20260815';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -24,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-delivery-recovery-20260811';
+} from './image-attachments.js?v=0.2.0-never-blank-20260815';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-delivery-recovery-20260811';
+} from './live-refresh.js?v=0.2.0-never-blank-20260815';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-delivery-recovery-20260811';
+} from './rich-text.js?v=0.2.0-never-blank-20260815';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -43,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-delivery-recovery-20260811';
+} from './read-state.js?v=0.2.0-never-blank-20260815';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-delivery-recovery-20260811';
+} from './transcript-focus.js?v=0.2.0-never-blank-20260815';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-delivery-recovery-20260811';
+} from './swipe-navigation.js?v=0.2.0-never-blank-20260815';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -62,6 +63,18 @@ const RESUME_REQUEST_MS = 6 * 1000;
 const LIVE_REFRESH_DEBOUNCE_MS = 100;
 const METADATA_REFRESH_DEBOUNCE_MS = 800;
 const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
+// Spacing between attempts to rebuild a dead event stream. Long enough that a
+// relay that is genuinely down is not hammered once per second, short enough
+// that a dropped stream recovers before it is worth reaching for the app
+// switcher.
+const STREAM_REVIVE_MS = 15 * 1000;
+// Backstop refresh while the app is on screen. The stream revive above only
+// triggers once the connection is detectably dead; a stream that stays open but
+// silently stops delivering change events looks perfectly healthy, and finished
+// output then sits invisible until the app is backgrounded and foregrounded.
+// This bounds that staleness without replacing the stream, which still delivers
+// the common case in about two seconds.
+const TRANSCRIPT_BACKSTOP_MS = 8 * 1000;
 const APP_UPDATE_CHECK_INTERVAL_MS = 30 * 1000;
 const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
 const CLIENT_VERSION = '0.2.0';
@@ -79,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-delivery-recovery-20260811';
+const CLIENT_SHELL_REVISION = '0.2.0-never-blank-20260815';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -109,6 +122,7 @@ const state = {
   attachmentsBySession: loadAttachmentDrafts(),
   attachmentSendIntents: new Set(),
   composerSendErrors: new Map(),
+  sendInFlight: new Set(),
   searchQuery: '',
   shell: null,
   hiddenAt: null,
@@ -205,6 +219,28 @@ const ICONS = {
   warn: 'i-warn',
   wifiOff: 'i-wifi-off',
 };
+
+// Why a send failed, in words a phone user can act on. Codes come from the
+// Mac's automation layer; anything unmapped falls back to the sanitized
+// detail when the relay preserved one.
+const SEND_FAILURE_REASONS = Object.freeze({
+  session_locked: 'The Mac is locked.',
+  accessibility_disabled: 'Automation permission is off on the Mac.',
+  conductor_not_running: 'Conductor is not running on the Mac.',
+  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  composer_unavailable: 'The message box was not found in Conductor.',
+  workspace_list_unavailable: 'The workspace list was not found in Conductor.',
+  workspace_not_visible: 'This workspace is not visible in Conductor.',
+  session_not_visible: 'This chat is not visible in Conductor.',
+  user_input_active: 'Someone was using the Mac keyboard.',
+  send_unavailable: 'The send button was not available in Conductor.',
+  route_changed: 'The Conductor window changed mid-send.',
+  composer_focus_changed: 'The message box lost focus mid-send.',
+  draft_changed: 'The Mac draft changed mid-send.',
+  input_helper_unavailable: 'The automation helper failed on the Mac.',
+  automation_timeout: 'The Mac took too long.',
+  automation_failed: 'Automation failed on the Mac.',
+});
 
 const AGENT_ERROR_PRESENTATIONS = Object.freeze({
   provider_reconnecting: {
@@ -1935,6 +1971,10 @@ function sanitizePendingDelivery(value) {
       value.deliveryAttempt > 0
         ? value.deliveryAttempt
         : 1,
+    errorDetail:
+      typeof value.errorDetail === 'string'
+        ? value.errorDetail.slice(0, 300)
+        : null,
     replaceDraft: value.replaceDraft === true,
     macDraft:
       typeof value.macDraft === 'string'
@@ -2475,6 +2515,7 @@ function ensureShell() {
       }),
     onSwitcher: openSwitcher,
     titleClick: openSwitcher,
+    onChats: openChatsSheet,
   });
   const transcriptBanner = node('div');
   const transcriptScroll = node('div', { className: 'transcript-scroll' });
@@ -2503,8 +2544,17 @@ function ensureShell() {
     [icon('chevronDown'), 'Latest'],
   );
   const composer = createComposer();
+  // Switching chats was a sheet: open, scan, tap, dismiss. On a phone that is
+  // four interactions to do the single most common thing. This strip puts every
+  // chat one tap away without leaving the conversation, and scrolls
+  // horizontally so a full tab bar costs no vertical room.
+  const chatStrip = node('div', {
+    className: 'chat-strip',
+    'aria-label': 'Switch chat',
+  });
   transcriptPanel.append(
     transcriptNav.root,
+    chatStrip,
     transcriptBanner,
     transcriptScroll,
     latestButton,
@@ -2546,6 +2596,7 @@ function ensureShell() {
     sessionNav,
     transcriptPanel,
     transcriptNav,
+    chatStrip,
     transcriptBanner,
     transcriptScroll,
     messageList,
@@ -2754,7 +2805,7 @@ function installRecentChatsSwipe(element) {
   element.addEventListener('touchcancel', reset, { passive: true });
 }
 
-function createPanelNav({ backLabel, onBack, onSwitcher, titleClick }) {
+function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) {
   const back = button(backLabel, {
     iconName: 'back',
     className: 'icon-button nav-back',
@@ -2773,7 +2824,17 @@ function createPanelNav({ backLabel, onBack, onSwitcher, titleClick }) {
     iconName: 'squares',
     onClick: onSwitcher,
   });
-  const root = node('header', { className: 'panel-nav' }, [back, title, switcher]);
+  const actions = [switcher];
+  if (onChats) {
+    actions.unshift(
+      button('New chat or close chats', { iconName: 'plus', onClick: onChats }),
+    );
+  }
+  const root = node('header', { className: 'panel-nav' }, [
+    back,
+    title,
+    node('div', { className: 'panel-nav-actions' }, actions),
+  ]);
   return { root, heading, subtitle, back, switcher };
 }
 
@@ -2998,7 +3059,10 @@ async function loadSessions(
         !state.sessionsByWorkspace.has(workspaceId)
       ) {
         state.sessionsByWorkspace.set(workspaceId, cached);
-        if (state.route.workspaceId === workspaceId) renderSessionsPanel();
+        if (state.route.workspaceId === workspaceId) {
+          renderSessionsPanel();
+          renderChatStrip();
+        }
       }
     });
   }
@@ -3010,6 +3074,7 @@ async function loadSessions(
     state.sessionsByWorkspace.set(workspaceId, data.sessions);
     if (state.route.workspaceId === workspaceId) renderSessionsPanel();
     void cacheSet(`sessions:${workspaceId}`, data.sessions);
+    if (state.route.workspaceId === workspaceId) renderChatStrip();
     scheduleReadEvaluation();
     return data.sessions;
   } catch (error) {
@@ -3456,21 +3521,132 @@ function chronologicalTranscriptMessages(messages) {
     .map(({ message }) => message);
 }
 
+
+// One tap to switch, rendered from the workspace's own session list. The active
+// chip scrolls itself into view so the current chat is always visible after a
+// switch or a fresh open. Closing deliberately stays in the Chats sheet: an
+// irreversible action does not belong in a strip you swipe through.
+// Only states worth interrupting for. idle is absent on purpose: a strip where
+// most chips carry a dot communicates nothing.
+const STRIP_STATUS = {
+  working: { className: 'is-working', dot: 'is-working', label: 'working' },
+  needs_plan_response: {
+    className: 'is-waiting',
+    dot: 'is-waiting',
+    label: 'waiting for you',
+  },
+  error: { className: 'is-error', dot: 'is-error', label: 'error' },
+};
+
+let lastCentredSessionId = null;
+
+function renderChatStrip() {
+  const strip = state.shell?.chatStrip;
+  if (!strip) return;
+  const workspaceId = state.route.workspaceId;
+  const sessions = sessionsFor(workspaceId) || [];
+  if (sessions.length === 0) {
+    strip.replaceChildren();
+    strip.hidden = true;
+    return;
+  }
+  strip.hidden = false;
+  let activeChip = null;
+  const chips = sessions.map((session) => {
+    const active = session.id === state.route.sessionId;
+    // Status rides along on the session rows the app already loads, and
+    // metadataRefresh reloads those on every live change event, so this costs
+    // no extra query, no polling and no accessibility work: it renders state
+    // already in memory. idle deliberately shows nothing, so the strip stays
+    // quiet and a dot always means something is happening.
+    const state_ = STRIP_STATUS[session.status] || null;
+    const chip = node('button', {
+      className: `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}`,
+      type: 'button',
+      'aria-current': active ? 'page' : undefined,
+      // Screen readers get the meaning; sighted users get the dot.
+      'aria-label': state_ ? `${session.title}, ${state_.label}` : session.title,
+      on: {
+        click: () => {
+          if (active) return;
+          navigate({
+            view: 'transcript',
+            workspaceId,
+            sessionId: session.id,
+          });
+        },
+      },
+    }, [
+      state_ ? node('span', { className: `chip-dot ${state_.dot}` }) : null,
+      node('span', { className: 'chip-label', text: session.title }),
+    ].filter(Boolean));
+    if (active) activeChip = chip;
+    return chip;
+  });
+  chips.push(
+    node('button', {
+      className: 'chat-chip is-new',
+      type: 'button',
+      text: '+',
+      'aria-label': 'New chat',
+      on: {
+        click: async () => {
+          const done = await runTabAction('new');
+          if (done) {
+            announce('New chat created on the Mac.');
+            void loadSessions(workspaceId);
+          }
+        },
+      },
+    }),
+  );
+  strip.replaceChildren(...chips);
+  // scrollIntoView can scroll ANCESTORS, so calling it here scrolled the
+  // transcript itself, and this runs on every transcript render: that is the
+  // screen jumping to the top while reading. Drive the strip's own scrollLeft
+  // instead, which cannot touch anything outside the strip.
+  //
+  // Only recentre when the active chat actually changed, or every incoming
+  // message would yank the strip back and fight a manual scroll.
+  if (activeChip && lastCentredSessionId !== state.route.sessionId) {
+    lastCentredSessionId = state.route.sessionId;
+    const centred =
+      activeChip.offsetLeft - (strip.clientWidth - activeChip.offsetWidth) / 2;
+    strip.scrollLeft = Math.max(0, centred);
+  }
+}
+
 function renderTranscript() {
+  renderChatStrip();
   if (!state.shell) return;
   const session = currentSession();
   const workspace = state.workspaces.find((item) => item.id === state.route.workspaceId);
   const { transcriptNav, transcriptBanner, transcriptScroll, messageList, statusRow } =
     state.shell;
   transcriptNav.heading.textContent = session?.title || 'Transcript';
+  // The header is the one thing always on screen: the strip scrolls, so the
+  // current chat's chip can sit off to the side while you are reading it.
+  // needs_plan_response was previously unhandled here and fell through to the
+  // workspace name, which hid the one state actually blocked ON YOU.
+  const headerStatus = STRIP_STATUS[session?.status] || null;
   updateNavSubtitle(
     transcriptNav.subtitle,
     session?.status === 'error'
       ? 'Error'
       : session?.status === 'working'
         ? 'Working'
-        : workspace?.name || 'Live',
+        : session?.status === 'needs_plan_response'
+          ? 'Waiting for you'
+          : workspace?.name || 'Live',
   );
+  // A still marker, matching the strip, so status is scannable rather than
+  // something you have to read. Only while live: during a connection problem
+  // the subtitle is reporting the connection, not the chat.
+  if (state.connection === 'live' && headerStatus && session?.status !== 'error') {
+    transcriptNav.subtitle.prepend(
+      node('span', { className: `chip-dot ${headerStatus.dot}` }),
+    );
+  }
   if (state.connection === 'live' && session?.status === 'error') {
     transcriptNav.subtitle.className = 'nav-subtitle down';
     transcriptNav.subtitle.replaceChildren(
@@ -3548,8 +3724,23 @@ function renderTranscript() {
         top: transcriptScroll.scrollHeight,
         behavior: 'auto',
       });
+    } else {
+      // The whole list is rebuilt on every render, so scroll anchoring is lost
+      // and the view lands wherever the new content puts it: that is the
+      // reading position jumping for no reason. distanceBefore was already
+      // measured to decide pinning; reusing it to restore the SAME distance
+      // from the end keeps the reader where they were, even as messages stream
+      // in. Anchoring to the end rather than to scrollTop is what makes it
+      // stable when content grows.
+      const restored =
+        transcriptScroll.scrollHeight -
+        transcriptScroll.clientHeight -
+        distanceBefore;
+      if (Math.abs(restored - transcriptScroll.scrollTop) > 1) {
+        transcriptScroll.scrollTop = Math.max(0, restored);
+      }
+      state.shell.latestButton.hidden = false;
     }
-    else state.shell.latestButton.hidden = false;
     scheduleReadEvaluation();
   });
   renderComposerState();
@@ -3885,6 +4076,18 @@ function renderMessage(message, toolResults) {
         summary,
         actions,
       );
+      const reason = SEND_FAILURE_REASONS[message.errorCode] || null;
+      const detail =
+        typeof message.errorDetail === 'string' && message.errorDetail !== ''
+          ? message.errorDetail
+          : null;
+      const reasonText =
+        message.errorCode === 'automation_failed' && detail ? detail : reason;
+      if (reasonText) {
+        meta.append(
+          node('span', { className: 'failure-reason', text: reasonText }),
+        );
+      }
     } else if (
       message.kind === 'optimistic' &&
       message.delivery === 'delivered'
@@ -4271,6 +4474,15 @@ async function sendCurrentMessage() {
     );
     return;
   }
+  // Synchronous re-entrancy gate for the window between here and the field
+  // clearing after the durable persist below. A second tap or an
+  // auto-repeating Enter landing in that window would otherwise re-read the
+  // still-populated field and send the same text twice under two different
+  // idempotency keys, which the server cannot dedupe. Released after the
+  // field clears (a later tap then reads an empty field), never held through
+  // delivery, so composing the next message is not blocked.
+  if (state.sendInFlight.has(sessionId)) return;
+  state.sendInFlight.add(sessionId);
   const idempotencyKey = randomIdempotencyKey();
   const optimistic = {
     id: `optimistic:${randomIdempotencyKey()}`,
@@ -4298,9 +4510,10 @@ async function sendCurrentMessage() {
     state.optimistic = state.optimistic.filter(
       (item) => item !== optimistic,
     );
+    state.sendInFlight.delete(sessionId);
     showComposerSendError(
       sessionId,
-      'Not sent — the message is still here because secure delivery storage is unavailable.',
+      'Not sent: the message is still here because secure delivery storage is unavailable.',
     );
     return;
   }
@@ -4311,6 +4524,7 @@ async function sendCurrentMessage() {
   state.shell?.composer.resize();
   renderComposerAttachments();
   renderTranscript();
+  state.sendInFlight.delete(sessionId);
   await deliverOptimistic(optimistic, { deliveryIdentityPersisted: true });
 }
 
@@ -4457,6 +4671,10 @@ async function deliverOptimistic(
       error.retrySafe = payload.error?.retrySafe === true;
       error.definitelyUnsent =
         payload.error?.definitelyUnsent === true;
+      error.detail =
+        typeof payload.error?.detail === 'string'
+          ? payload.error.detail.slice(0, 300)
+          : null;
       throw error;
     }
     applyDeliveryReceipt(optimistic, payload);
@@ -4483,6 +4701,10 @@ async function deliverOptimistic(
     optimistic.errorCode = error.code;
     optimistic.deliveryPhase = null;
     optimistic.definitelyUnsent = error.definitelyUnsent === true;
+    optimistic.errorDetail =
+      typeof error.detail === 'string' && error.detail !== ''
+        ? error.detail
+        : null;
     if (error.definitelyUnsent === true) {
       await markDefinitelyUnsent(optimistic, error);
       if (error.status === 401 || error.status === 423) {
@@ -4498,7 +4720,16 @@ async function deliverOptimistic(
       optimistic.replaceDraft = false;
       await persistPendingDeliveries({ upserts: [optimistic] });
       renderTranscript();
-      openDraftConflict(optimistic);
+      if (optimistic.origin === 'macDraft') {
+        // This entry's text belongs to the Mac composer, not the phone. The
+        // conflict sheet would label it "from this phone" and offer to
+        // overwrite the phone composer with it, so a re-conflict (the Mac
+        // draft changed between reading and sending) settles as a plain
+        // retryable failure instead.
+        announce('The Mac draft changed before it could send. Nothing was replaced.');
+      } else {
+        openDraftConflict(optimistic);
+      }
     } else if (error.status === 401 || error.status === 423) {
       optimistic.delivery = 'failed';
       optimistic.retrySafe = false;
@@ -4810,7 +5041,108 @@ async function retryMessage(message) {
   });
 }
 
+// Every conflict-sheet action first verifies this delivery is still the
+// authoritative terminal record and claims it, exactly like the plain Retry
+// and Edit paths: two Pocket windows can show the same sheet, and the claim
+// is what keeps them from both acting on it.
+async function claimConflictAction(message, action) {
+  if (!(await verifyTerminalDeliveryAction(message))) {
+    closeOverlay();
+    return null;
+  }
+  let claimed;
+  try {
+    claimed = await claimTerminalDeliveryActionRequired(message, action);
+  } catch {
+    announce('Could not safely send this message yet. Try again.');
+    return null;
+  }
+  if (!claimed) {
+    announce('This delivery changed in another Pocket window.');
+    await restorePendingDeliveries();
+    closeOverlay();
+    renderTranscript();
+    return null;
+  }
+  applyAuthoritativePendingDelivery(message, claimed);
+  closeOverlay();
+  renderTranscript();
+  return claimed;
+}
+
+const draftConflictFlow = createDraftConflictFlow({
+  deliver: (optimistic, options) => deliverOptimistic(optimistic, options),
+  makeOptimistic: (sessionId, text) => {
+    const idempotencyKey = randomIdempotencyKey();
+    return {
+      id: `optimistic:${randomIdempotencyKey()}`,
+      idempotencyKey,
+      activeDeliveryKey: idempotencyKey,
+      kind: 'optimistic',
+      sessionId,
+      text,
+      attachments: [],
+      draftAttachmentItems: null,
+      delivery: 'delivering',
+      createdAt: new Date().toISOString(),
+    };
+  },
+  insertBefore: (entry, reference) => {
+    const at = state.optimistic.indexOf(reference);
+    state.optimistic.splice(at === -1 ? state.optimistic.length : at, 0, entry);
+  },
+  remove: (entry) => {
+    state.optimistic = state.optimistic.filter((item) => item !== entry);
+  },
+  // Merged, never overwritten: a conflict can come back tens of seconds
+  // after the send, and the user may have typed something new in the phone
+  // composer meanwhile. Same combined-draft shape restoreDefinitelyUnsentDraft
+  // uses: restored text first, newer typing after, no duplication when they
+  // already match.
+  restoreComposer: (sessionId, text) => {
+    const current =
+      state.route.sessionId === sessionId && state.shell?.composer.field
+        ? state.shell.composer.field.value
+        : draftFor(sessionId);
+    const combined =
+      current && current !== text
+        ? `${text}${text ? '\n\n' : ''}${current}`
+        : text || current;
+    saveDraft(sessionId, combined);
+    if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+      state.shell.composer.field.value = combined;
+      state.shell.composer.resize();
+    }
+  },
+  // Same merge restoreDefinitelyUnsentDraft uses: without it, photos on the
+  // conflicted phone message silently vanish (and their server-side uploads
+  // leak) whenever the resolution returns the message to the composer.
+  restoreAttachments: (optimistic) => {
+    const restoredItems = restoredAttachmentItems(optimistic, null);
+    if (restoredItems.length === 0) return;
+    const currentItems = attachmentsFor(optimistic.sessionId);
+    const seen = new Set();
+    const mergedItems = [...currentItems, ...restoredItems].filter((item) => {
+      const key = item.localId || item.id;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    state.attachmentsBySession.set(optimistic.sessionId, mergedItems);
+    optimistic.draftAttachmentItems = null;
+    persistAttachmentDrafts();
+    renderComposerAttachments();
+  },
+  persist: (options) => persistPendingDeliveries(options),
+  render: () => renderTranscript(),
+  announce,
+});
+
 function openDraftConflict(message) {
+  const act = (run) => () => {
+    closeOverlay();
+    run();
+  };
   const content = node('div', {}, [
     node('p', {
       className: 'gate-lede',
@@ -4819,49 +5151,48 @@ function openDraftConflict(message) {
     }),
     node('section', { className: 'pair-card' }, [
       node('div', { className: 'micro-caps', text: 'On your Mac' }),
-      node('p', {
-        className: 'machine-fact',
-        text: message.macDraft || 'Conductor has an unsent draft.',
-      }),
+      node('div', { className: 'draft-preview' }, [
+        node('p', {
+          className: 'machine-fact',
+          text: message.macDraft || 'Conductor has an unsent draft.',
+        }),
+      ]),
       node('div', { className: 'pair-divider' }),
       node('div', { className: 'micro-caps', text: 'From this phone' }),
-      node('p', { text: message.text }),
+      node('div', { className: 'draft-preview' }, [
+        node('p', { text: message.text }),
+      ]),
     ]),
     node('button', {
       className: 'primary-button',
       type: 'button',
-      text: 'Replace and send',
+      text: 'Replace and send mine',
       on: {
         click: async () => {
-          if (!await verifyTerminalDeliveryAction(message)) {
-            closeOverlay();
-            return;
-          }
-          let claimed;
-          try {
-            claimed = await claimTerminalDeliveryActionRequired(
-              message,
-              'retry',
-            );
-          } catch {
-            announce('Could not safely send this message yet. Try again.');
-            return;
-          }
-          if (!claimed) {
-            announce('This delivery changed in another Pocket window.');
-            await restorePendingDeliveries();
-            closeOverlay();
-            renderTranscript();
-            return;
-          }
-          applyAuthoritativePendingDelivery(message, claimed);
-          closeOverlay();
-          renderTranscript();
-          deliverOptimistic(message, {
-            replaceDraft: true,
-            expectedMacDraft: message.macDraft,
-            deliveryIdentityPersisted: true,
-          });
+          if (!(await claimConflictAction(message, 'retry'))) return;
+          void draftConflictFlow.replaceAndSend(message);
+        },
+      },
+    }),
+    node('button', {
+      className: 'secondary-button',
+      type: 'button',
+      text: 'Send the Mac draft, then mine',
+      on: {
+        click: async () => {
+          if (!(await claimConflictAction(message, 'retry'))) return;
+          void draftConflictFlow.sendMacDraft(message, { thenPhone: true });
+        },
+      },
+    }),
+    node('button', {
+      className: 'secondary-button',
+      type: 'button',
+      text: 'Send only the Mac draft',
+      on: {
+        click: async () => {
+          if (!(await claimConflictAction(message, 'retry'))) return;
+          void draftConflictFlow.sendMacDraft(message);
         },
       },
     }),
@@ -4871,8 +5202,8 @@ function openDraftConflict(message) {
       text: 'Keep the Mac draft',
       on: {
         click: async () => {
-          await editFailedMessage(message);
-          closeOverlay();
+          if (!(await claimConflictAction(message, 'edit'))) return;
+          draftConflictFlow.keepMacDraft(message);
         },
       },
     }),
@@ -4963,6 +5294,28 @@ function startEvents() {
       if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
       state.connection = state.lastHeartbeat ? 'offline' : 'connecting';
       renderConnectionState();
+      // Losing the stream used to be reported and then left alone: EventSource
+      // does not reliably reopen one that iOS tore down, and startEvents is
+      // otherwise only reached from revealApplication. That is why a stale app
+      // recovered only after being backgrounded and foregrounded. Rebuild here.
+      //
+      // Gated on a heartbeat having arrived at least once, so a first load that
+      // has not connected yet is left to its original attempt rather than being
+      // restarted out from under itself.
+      if (
+        state.lastHeartbeat &&
+        !document.hidden &&
+        state.auth &&
+        state.shell &&
+        Date.now() - (state.lastStreamRevive || 0) > STREAM_REVIVE_MS
+      ) {
+        state.lastStreamRevive = Date.now();
+        // startEvents clears this interval through stopEvents and installs a
+        // fresh one, so nothing below may touch timer state.
+        startEvents();
+        transcriptRefresh.schedule();
+        metadataRefresh.schedule();
+      }
     }
   }, 1_000);
   state.activityTimer = setInterval(() => {
@@ -4982,6 +5335,15 @@ function startEvents() {
       }
     });
   }, ACTIVITY_HEARTBEAT_MS);
+  // Only while on screen, so a backgrounded phone costs nothing. The refresh
+  // coordinators debounce and drop duplicates against an in-flight request, so
+  // this cannot stack up behind a slow response or race the stream's own
+  // refresh: whichever arrives first wins and the other is dropped.
+  state.backstopTimer = setInterval(() => {
+    if (document.hidden || !state.auth || !state.shell) return;
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
+  }, TRANSCRIPT_BACKSTOP_MS);
 }
 
 function stopEvents() {
@@ -4991,8 +5353,12 @@ function stopEvents() {
   metadataRefresh.stop();
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   if (state.activityTimer) clearInterval(state.activityTimer);
+  // Cleared with the rest. startEvents calls stopEvents first, so leaking this
+  // would start a second backstop on every stream revive.
+  if (state.backstopTimer) clearInterval(state.backstopTimer);
   state.heartbeatTimer = null;
   state.activityTimer = null;
+  state.backstopTimer = null;
 }
 
 function renderConnectionState() {
@@ -5134,6 +5500,170 @@ async function openSwitcher() {
     { className: 'switcher' },
   );
   void pending.then(render);
+}
+
+
+// Tab control from the phone. New chat is one tap. Closing is irreversible, so
+// it is deliberately two taps with the chat's own name shown in the confirm
+// label: a fat-fingered delete on a phone has no undo, and every other
+// destructive path in this app fails closed the same way.
+async function runTabAction(action, { confirm = false, sessionId: explicitId } = {}) {
+  const sessionId = explicitId || state.route.sessionId;
+  if (!sessionId) {
+    announce('Open a chat first.');
+    return null;
+  }
+  const { response, payload } = await fetchJson(
+    `/api/sessions/${encodeURIComponent(sessionId)}/tab`,
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': state.csrfToken,
+      },
+      body: JSON.stringify({ action, confirm }),
+    },
+  );
+  if (!response.ok || payload?.ok !== true) {
+    announce(TAB_ACTION_MESSAGES[payload?.code] || 'That did not work on the Mac.');
+    return null;
+  }
+  return payload;
+}
+
+const TAB_ACTION_MESSAGES = {
+  close_not_confirmed: 'Not closed. Confirm first.',
+  tab_close_unverified: 'Could not confirm the chat closed. Nothing assumed.',
+  tab_not_closed: 'The chat did not close.',
+  tab_not_created: 'The chat was not created.',
+  session_not_visible: 'That chat is not open on the Mac.',
+  user_input_active: 'Someone is using the Mac. Try again in a moment.',
+  session_locked: 'The Mac is locked.',
+  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+};
+
+function confirmCloseChat(session, { onClosed } = {}) {
+  // Closing is irreversible and this is a phone, so the confirmation is a
+  // separate sheet rather than an inline second tap: an armed control sitting
+  // where the first tap landed can be double-tapped by accident, and on a
+  // scrolling list the row can move under the finger between taps. Cancel is
+  // listed first and styled as the primary action so the destructive choice is
+  // never the default or the easiest target.
+  openSheet(
+    'Close this chat?',
+    node('div', {}, [
+      node('p', {
+        className: 'confirm-target',
+        text: session.title,
+      }),
+      node('p', {
+        className: 'sheet-note',
+        text: 'This closes the chat on your Mac. It cannot be undone.',
+      }),
+      node('button', {
+        className: 'primary-button sheet-chats-action',
+        type: 'button',
+        text: 'Keep it',
+        on: { click: () => closeOverlay() },
+      }),
+      node('button', {
+        className: 'secondary-button danger sheet-chats-action',
+        type: 'button',
+        text: 'Close it',
+        on: {
+          click: async () => {
+            const done = await runTabAction('close', {
+              confirm: true,
+              sessionId: session.id,
+            });
+            closeOverlay();
+            if (done) {
+              announce(`Closed ${session.title}.`);
+              onClosed?.();
+            }
+          },
+        },
+      }),
+    ]),
+  );
+}
+
+function openChatsSheet() {
+  const workspaceId = state.route.workspaceId;
+  const sessions = (sessionsFor(workspaceId) || []).slice();
+  const list = node('div', { className: 'chats-list' });
+
+  const rows = sessions.map((session) => {
+    const active = session.id === state.route.sessionId;
+    // The model comes from Conductor's own database, so it reflects what this
+    // chat is actually running. It cannot be changed from the phone: Conductor
+    // exposes nothing for its model and effort menus to accessibility.
+    const meta = [session.model, active ? 'open' : null]
+      .filter(Boolean)
+      .join(' \u00b7 ');
+    return node('div', { className: `chats-sheet-row${active ? ' is-active' : ''}` }, [
+      node('button', {
+        className: 'chats-sheet-row-main',
+        type: 'button',
+        on: {
+          click: () => {
+            closeOverlay();
+            navigate({ view: 'transcript', workspaceId, sessionId: session.id });
+          },
+        },
+      }, [
+        node('span', { className: 'chats-sheet-row-title', text: session.title }),
+        meta ? node('span', { className: 'chats-sheet-row-meta', text: meta }) : null,
+      ].filter(Boolean)),
+      node('button', {
+        className: 'chats-sheet-row-close',
+        type: 'button',
+        'aria-label': `Close ${session.title}`,
+        text: 'Close',
+        on: {
+          click: () =>
+            confirmCloseChat(session, {
+              onClosed: () => void loadSessions(workspaceId),
+            }),
+        },
+      }),
+    ]);
+  });
+  list.replaceChildren(
+    ...(rows.length
+      ? rows
+      : [node('p', { className: 'sheet-note', text: 'No chats in this workspace yet.' })]),
+  );
+
+  openSheet(
+    'Chats',
+    node('div', {}, [
+      node('button', {
+        className: 'primary-button sheet-chats-action',
+        type: 'button',
+        text: 'New chat',
+        on: {
+          click: async () => {
+            const done = await runTabAction('new');
+            if (done) {
+              announce('New chat created on the Mac.');
+              closeOverlay();
+              void loadSessions(workspaceId);
+            }
+          },
+        },
+      }),
+      list,
+      node('p', {
+        className: 'sheet-note',
+        text: 'Tap a chat to switch. Model is set on the Mac.',
+      }),
+    ]),
+    { className: 'chats' },
+  );
 }
 
 async function openConnectionSheet() {
@@ -5463,6 +5993,31 @@ function shieldApplication() {
   }
 }
 
+// A visible page must never stay shielded. revealApplication bails early on
+// several legitimate races, and it awaits a network call before it reaches the
+// removal, so any of them can leave the overlay in place with no further event
+// coming to clear it. This is the backstop: if the document is visible and the
+// shield is still there shortly after, it goes. Cheap, idempotent, and it can
+// only ever remove an overlay that should not be showing.
+const SHIELD_FAILSAFE_MS = 2_500;
+let shieldFailsafeTimer = null;
+
+function ensureNotShielded() {
+  clearTimeout(shieldFailsafeTimer);
+  shieldFailsafeTimer = setTimeout(() => {
+    if (document.hidden) return;
+    const shield = document.querySelector('#privacy-shield');
+    if (!shield) return;
+    shield.remove();
+    app.removeAttribute('aria-hidden');
+    // The stream is stopped while shielded, so a rescued page also needs its
+    // live data back or it would sit there stale and look broken instead.
+    startEvents();
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
+  }, SHIELD_FAILSAFE_MS);
+}
+
 async function revealApplication() {
   const revealEpoch = state.visibilityEpoch;
   const persistedHiddenAt = Number(localStorage.getItem(HIDDEN_AT_KEY) || 0);
@@ -5566,7 +6121,24 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   recheckAmbiguousDeliveries();
-  if (!appUpdateCoordinator?.foreground()) revealApplication();
+  // Reveal unconditionally. This used to be skipped whenever the update
+  // coordinator said a reload was starting, on the theory that the page was
+  // about to be replaced anyway. When that reload did not land, and on iOS
+  // returning from the background it often does not, the privacy shield stayed
+  // over the app and the only way out was force-quitting. A brief flash before
+  // a reload is a far better failure than a blank app.
+  appUpdateCoordinator?.foreground();
+  revealApplication();
+  ensureNotShielded();
+  // Pending deliveries were only reconciled at boot, so a send whose response
+  // was lost while the phone was pocketed stayed at "Delivering" until a full
+  // restart. checkDelivery is a status probe, never a resend, so this is safe
+  // to run on every return to the foreground.
+  void recoverPendingDeliveries();
+});
+
+window.addEventListener('online', () => {
+  void recoverPendingDeliveries();
 });
 
 window.addEventListener('pagehide', shieldApplication);
@@ -5574,15 +6146,17 @@ window.addEventListener('online', () => {
   recheckAmbiguousDeliveries();
 });
 window.addEventListener('pageshow', () => {
-  const reloading = appUpdateCoordinator?.foreground() === true;
-  if (!reloading) recheckAmbiguousDeliveries();
+  appUpdateCoordinator?.foreground();
+  recheckAmbiguousDeliveries();
   if (
-    !reloading &&
     !document.hidden &&
     (state.hiddenAt || localStorage.getItem(HIDDEN_AT_KEY))
   ) {
     revealApplication();
   }
+  // Covers the restore-from-bfcache case, where revealApplication's own guards
+  // can bail before it reaches the shield removal.
+  ensureNotShielded();
 });
 
 if ('serviceWorker' in navigator) {

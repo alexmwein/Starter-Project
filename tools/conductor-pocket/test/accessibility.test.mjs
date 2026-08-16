@@ -247,7 +247,11 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
   );
   assert.deepEqual(
     mapAutomationError({ message: 'Unexpected automation failure' }),
-    { ok: false, code: 'automation_failed' },
+    {
+      ok: false,
+      code: 'automation_failed',
+      detail: 'Unexpected automation failure',
+    },
   );
 
   const attemptStartedAt = 1_785_093_000_000;
@@ -274,11 +278,16 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
       { message: 'Unexpected automation failure' },
       markerContext,
     ),
+    // A proven press still refuses to be called anything but maybe-sent, and
+    // now also carries the sanitized underlying text. A duplicated early
+    // return used to shadow that, silently dropping the diagnostic on exactly
+    // the ambiguous failures where it is most needed.
     {
       ok: false,
       code: 'automation_failed',
       pressedAt,
       composerOwned: true,
+      detail: 'Unexpected automation failure',
     },
   );
   assert.deepEqual(
@@ -289,6 +298,7 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
     {
       ok: false,
       code: 'automation_failed',
+      detail: 'Not authorized to send Apple events. (-1743)',
       pressedAt,
       composerOwned: true,
     },
@@ -311,7 +321,13 @@ test('a denied Accessibility permission is provably pre-send while unknown autom
         markerContent: `${attemptStartedAt}\n${markerContext.observedAt + 1}\n`,
       },
     ),
-    { ok: false, code: 'automation_failed' },
+    // The marker is invalid so no press may be attributed; the underlying
+    // text still travels as sanitized detail per the diagnostics contract.
+    {
+      ok: false,
+      code: 'automation_failed',
+      detail: 'Unexpected automation failure',
+    },
   );
 });
 
@@ -370,6 +386,66 @@ test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after eac
     inputHelper.indexOf('function decodeBase64Environment'),
   );
   assert.doesNotMatch(markerWriter, /message|draft|base64/i);
+});
+
+
+test('the workspace matcher accepts owner-prefixed sidebar titles', async () => {
+  // Conductor titles some workspaces "Owner/name" while the relay-side name
+  // is just "name"; every send then fails workspace resolution. The matcher
+  // must accept the slash-anchored form (with or without a diff badge) and
+  // stay anchored so partial names can never cross-match.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('on workspaceMatches');
+  const block = source.slice(start, source.indexOf('end workspaceMatches'));
+  assert.ok(block.includes('ends with ("/" & workspaceName)'));
+  assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
+});
+
+test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
+  const mapped = mapAutomationError({
+    stderr:
+      'conductor-input.js: execution error: Error: send_unavailable (-2700)',
+  });
+  assert.equal(mapped.code, 'send_unavailable');
+  assert.equal(mapped.safeToRetry, true);
+  assert.ok(mapped.detail.includes('send_unavailable (-2700)'));
+});
+
+test('an unrecognized automation failure keeps its underlying text as detail', () => {
+  const mapped = mapAutomationError({
+    stderr: 'execution error: Error: route_lookup exploded at depth 3 (-1719)',
+  });
+  assert.equal(mapped.code, 'automation_failed');
+  assert.equal(mapped.safeToRetry, undefined);
+  assert.ok(mapped.detail.includes('exploded at depth 3'));
+});
+
+test('automation detail redacts quoted content and base64 runs before it can reach a log', () => {
+  // Message text and transcript content are protected assets. AppleScript
+  // error text quotes the value it choked on, and the message travels to the
+  // script as base64, so both shapes must never survive into the audit log.
+  const secret = Buffer.from('the private message body', 'utf8').toString('base64');
+  const mapped = mapAutomationError({
+    stderr: `execution error: Can't make "the private message body" into type integer. env ${secret} (-1700)`,
+  });
+  assert.equal(mapped.code, 'automation_failed');
+  assert.ok(!mapped.detail.includes('the private message body'));
+  assert.ok(!mapped.detail.includes(secret));
+  assert.ok(mapped.detail.includes('"[redacted]"'));
+  assert.ok(mapped.detail.includes('[b64]'));
+  assert.ok(mapped.detail.includes('(-1700)'));
+});
+
+test('redaction never costs a recognized code recovery', () => {
+  const mapped = mapAutomationError({
+    stderr: 'execution error: Error: user_input_active while typing "something private" (-2700)',
+  });
+  assert.equal(mapped.code, 'user_input_active');
+  assert.equal(mapped.safeToRetry, true);
+  assert.ok(!mapped.detail.includes('something private'));
 });
 
 test('message submission waits for and presses Conductor’s unique enabled Send control', async () => {
@@ -1232,3 +1308,160 @@ function run(argv) {
     assert.equal(stdout.trim(), sample);
   },
 );
+
+test('a transient accessibility read is retried instead of aborting the send', async () => {
+  const inputHelper = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+
+  const fnStart = inputHelper.indexOf('function withTransientReadRetry');
+  assert.ok(fnStart >= 0);
+  const fnEnd = inputHelper.indexOf('\n}\n', fnStart) + 2;
+  const readAttempts = Number(
+    inputHelper.match(/const TRANSIENT_READ_ATTEMPTS = (\d+)/)[1],
+  );
+  const readDelaySeconds = Number(
+    inputHelper.match(/const TRANSIENT_READ_DELAY_SECONDS = ([\d.]+)/)[1],
+  );
+  assert.ok(readAttempts >= 3);
+  assert.ok(readDelaySeconds > 0);
+  const sandbox = {
+    delays: 0,
+    TRANSIENT_READ_ATTEMPTS: readAttempts,
+    TRANSIENT_READ_DELAY_SECONDS: readDelaySeconds,
+  };
+  sandbox.delay = () => {
+    sandbox.delays += 1;
+  };
+  vm.createContext(sandbox);
+  const withTransientReadRetry = vm.runInContext(
+    `(${inputHelper.slice(fnStart, fnEnd)})`,
+    sandbox,
+  );
+
+  // A re-render blip resolves once the tree settles.
+  let reads = 0;
+  const recovered = withTransientReadRetry(() => {
+    reads += 1;
+    if (reads < 3) throw new Error('transient');
+    return 'settled';
+  });
+  assert.equal(recovered, 'settled');
+  assert.equal(reads, 3);
+  assert.equal(sandbox.delays, 2);
+
+  // A genuine structural mismatch still fails, and still fails closed.
+  let attempts = 0;
+  assert.throws(
+    () =>
+      withTransientReadRetry(() => {
+        attempts += 1;
+        const error = new Error('send_unavailable');
+        error.pocketCode = 'send_unavailable';
+        throw error;
+      }),
+    /send_unavailable/,
+  );
+  assert.equal(attempts, readAttempts);
+
+  // The read-only checks that were aborting healthy sends now re-walk.
+  const queuedEditMode = inputHelper.slice(
+    inputHelper.indexOf('function assertNotQueuedEditMode'),
+  );
+  assert.match(
+    queuedEditMode.slice(0, queuedEditMode.indexOf('\n}\n')),
+    /withTransientReadRetry\(\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES/,
+  );
+  for (const waiter of ['waitForExactDraft', 'waitForComposerSend']) {
+    const body = inputHelper.slice(inputHelper.indexOf(`function ${waiter}`));
+    assert.match(
+      body.slice(0, body.indexOf('\n}\n')),
+      /withTransientReadRetry\(\(\) => \{[\s\S]*assertRouteLease\(process, routeLease\)/,
+    );
+  }
+
+  // The typing hot loop must poll with the cheap focused read and prove the
+  // route ONCE at the decision point. A measured assertRouteLease walk costs
+  // ~1990ms against ~90ms for the focused read, so proving it per poll spent
+  // seconds per chunk re-deriving something that cannot change between two
+  // 20ms samples. That was the bulk of a 26 to 45 second send.
+  const exactDraft = inputHelper.slice(
+    inputHelper.indexOf('function waitForExactDraft'),
+  );
+  const exactDraftBody = exactDraft.slice(0, exactDraft.indexOf('\n}\n'));
+  assert.match(
+    exactDraftBody,
+    /withTransientReadRetry\(\(\) => validateFocusedComposer\(pid\)\)[\s\S]*focusedDraft\(polled\) === expectedDraft[\s\S]*assertRouteLease\(process, routeLease\)/,
+  );
+  assert.equal(exactDraftBody.match(/assertRouteLease/g).length, 1);
+
+  // Physical-input and lock state report real conditions, so retrying them
+  // would erase the signal. They must never be wrapped.
+  assert.doesNotMatch(
+    inputHelper,
+    /withTransientReadRetry\([^)]*assertInputLease/,
+  );
+  assert.doesNotMatch(
+    inputHelper,
+    /withTransientReadRetry\([^)]*assertSessionUnlocked/,
+  );
+});
+
+test('the send path does not re-derive work it already has', async () => {
+  const inputHelper = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+
+  // resolveMainRoot bulk-reads role and description for every main child, so
+  // composerSendContext must consume those arrays instead of spending ~40
+  // Apple Events re-deriving them. It runs three times per send, so this was
+  // about a second of every send.
+  assert.match(
+    inputHelper,
+    /candidates\.push\(\{[\s\S]*descriptions,[\s\S]*roles,[\s\S]*\}\)/,
+  );
+  const context = inputHelper.slice(
+    inputHelper.indexOf('function composerSendContext'),
+  );
+  const contextBody = context.slice(0, context.indexOf('\n}\n'));
+  assert.match(contextBody, /main\.roles[\s\S]*main\.descriptions/);
+  assert.match(contextBody, /bulkRoles\[index\]/);
+  // The pinned per-element loop must survive as the fallback.
+  assert.match(contextBody, /role = candidate\.role\(\)/);
+  assert.match(contextBody, /description = candidate\.description\(\)/);
+
+  // The press wait polls with the cheap probe, never the full resolution.
+  const wait = inputHelper.slice(
+    inputHelper.indexOf('function waitForComposerSend'),
+  );
+  const waitBody = wait.slice(0, wait.indexOf('\n}\n'));
+  assert.match(waitBody, /sendControlLikelyReady\(pid, expectedDraft\)/);
+  // A cheap false positive must keep polling, never fail the send.
+  assert.match(waitBody, /pocketCode !== 'send_unavailable'\) throw error/);
+
+  // The probe is a hint: it must not be what authorizes a press. The full
+  // resolveComposerSend plus route proof still gates the decision point.
+  const probe = inputHelper.slice(
+    inputHelper.indexOf('function sendControlLikelyReady'),
+  );
+  const probeBody = probe.slice(0, probe.indexOf('\n}\n'));
+  assert.doesNotMatch(probeBody, /AXPress|perform\(\)/);
+  assert.match(waitBody, /assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend/);
+
+  // The queued-edit scan is proven once per attempt, and only the scan: the
+  // structural resolution still runs on every call.
+  const queued = inputHelper.slice(
+    inputHelper.indexOf('function assertNotQueuedEditMode'),
+  );
+  const queuedBody = queued.slice(0, queued.indexOf('\n}\n'));
+  assert.match(queuedBody, /composerSendContext\(process\)/);
+  assert.match(queuedBody, /if \(queuedEditProven\) return composer/);
+  assert.match(queuedBody, /queuedEditProven = true/);
+  // It must sit AFTER the structural resolution, never short-circuit it.
+  assert.ok(
+    queuedBody.indexOf('composerSendContext(process)') <
+      queuedBody.indexOf('if (queuedEditProven)'),
+  );
+});

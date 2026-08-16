@@ -50,6 +50,10 @@ export function sidecarCliArguments(
   return [`--socket=${socketPath}`, ...argumentsList];
 }
 
+// Tailscale's documented default listening port. Kept as a named constant so
+// the plist generator and its test can never drift apart.
+export const SIDECAR_TAILSCALE_PORT = 0;
+
 export function sidecarDaemonArguments(
   daemon,
   {
@@ -69,7 +73,16 @@ export function sidecarDaemonArguments(
     '--tun=userspace-networking',
     `--statedir=${stateDirectory}`,
     `--socket=${socketPath}`,
-    '--port=0',
+    // A STABLE port, not an ephemeral one. With --port=0 the daemon picks a
+    // fresh port on every restart, so each restart discards whatever NAT
+    // mapping the peer had learned and the connection falls back to a DERP
+    // relay: measured live, the phone was routed through the Los Angeles relay
+    // rather than straight to this Mac. netcheck reports UDP working and
+    // MappingVariesByDestIP false, which is the easy-NAT case where direct
+    // connections should succeed, and this router offers no port mapping, so a
+    // fixed port is the one lever available. 41641 is Tailscale's documented
+    // default, which is also what any manual port-forward would target.
+    `--port=${SIDECAR_TAILSCALE_PORT}`,
   ];
 }
 

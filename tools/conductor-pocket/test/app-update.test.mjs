@@ -6,6 +6,18 @@ import {
   createServiceWorkerRegistrationGetter,
 } from '../public/app-update.js';
 
+// The coordinator persists reload attempts so a cache-first document cannot
+// drive an endless reload loop. Node exposes a real sessionStorage, so that
+// state would otherwise carry between tests in this process and refuse the
+// first reload of every test after the first.
+test.beforeEach(() => {
+  try {
+    globalThis.sessionStorage?.removeItem('pocket:update-attempts');
+  } catch {
+    // No storage in this runtime means nothing to reset.
+  }
+});
+
 function fakeServiceWorker(controller = null) {
   const listeners = new Map();
   return {
