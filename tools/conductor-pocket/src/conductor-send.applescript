@@ -17,15 +17,28 @@ on clearWorkspaceRouteCache()
 	set my cachedWorkspaceRoute to missing value
 end clearWorkspaceRouteCache
 
+-- Conductor appends a live diff badge to a workspace label: "name +8",
+-- "name +3.7k -165", and, for a workspace whose changes are only deletions,
+-- "name -165" with no plus at all. Matching only the plus form left that last
+-- shape unroutable, which is a total send outage for that workspace that no
+-- retry can clear. Both signs are anchored on a leading space, so the
+-- boundary stays tight and "name" still cannot match "name two".
+on hasDiffBadge(baseName, candidateName)
+	if candidateName starts with (baseName & " +") then return true
+	if candidateName starts with (baseName & " -") then return true
+	return false
+end hasDiffBadge
+
 on workspaceMatches(workspaceName, candidateName)
 	if candidateName is workspaceName then return true
-	if candidateName starts with (workspaceName & " +") then return true
+	if my hasDiffBadge(workspaceName, candidateName) then return true
 	-- Conductor titles some workspaces with the branch owner prefixed, e.g.
 	-- "Owner/name" for a workspace whose relay-side name is just "name". The
 	-- slash-anchored comparison keeps this tight: only a full path segment
 	-- match counts, so "name" can never match some other "other name".
 	if candidateName ends with ("/" & workspaceName) then return true
 	if candidateName contains ("/" & workspaceName & " +") then return true
+	if candidateName contains ("/" & workspaceName & " -") then return true
 	return false
 end workspaceMatches
 

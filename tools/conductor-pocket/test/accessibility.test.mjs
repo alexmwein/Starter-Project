@@ -404,6 +404,57 @@ test('the workspace matcher accepts owner-prefixed sidebar titles', async () => 
   assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
 });
 
+test('workspace matching routes every diff-badge label Conductor renders', async () => {
+  // Executes the real handler text rather than asserting it contains a
+  // string. Labels observed live in the sidebar on 2026-08-16: "the plan",
+  // "Finance +8", "daemon +3.7k -165". A deletions-only workspace renders
+  // "name -165" with no plus, and matching only the plus form made that
+  // workspace unroutable, a total send outage no retry can clear.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const handlers = source.slice(
+    source.indexOf('on hasDiffBadge'),
+    source.indexOf('end workspaceMatches') + 'end workspaceMatches'.length,
+  );
+  const cases = [
+    ['daemon', 'daemon', true],
+    ['daemon', 'daemon +3.7k -165', true],
+    ['Finance', 'Finance +8', true],
+    ['daemon', 'daemon -165', true],
+    ['daemon', 'Owner/daemon', true],
+    ['daemon', 'Owner/daemon +8', true],
+    ['daemon', 'Owner/daemon -165', true],
+    // Still anchored: a prefix must not cross-match a different workspace.
+    ['daemon', 'daemon two', false],
+    ['daemon', 'daemonics +8', false],
+    ['plan', 'the plan', false],
+  ];
+  const probes = cases
+    .map(
+      ([base, candidate]) =>
+        `(my workspaceMatches(${JSON.stringify(base)}, ` +
+        `${JSON.stringify(candidate)}) as text)`,
+    )
+    .join(' & "," & ');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { stdout } = await promisify(execFile)(
+    '/usr/bin/osascript',
+    ['-e', `${handlers}\nreturn ${probes}`],
+    { timeout: 20_000 },
+  );
+  const actual = stdout.trim().split(',');
+  cases.forEach(([base, candidate, expected], index) => {
+    assert.equal(
+      actual[index],
+      String(expected),
+      `workspaceMatches(${base}, ${candidate}) should be ${expected}`,
+    );
+  });
+});
+
 test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
   const mapped = mapAutomationError({
     stderr:
