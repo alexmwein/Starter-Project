@@ -75,6 +75,10 @@ const staticFiles = new Map([
     '/delivery-receipts.js',
     ['delivery-receipts.js', 'text/javascript; charset=utf-8'],
   ],
+  [
+    '/draft-conflict.js',
+    ['draft-conflict.js', 'text/javascript; charset=utf-8'],
+  ],
   ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
   [
@@ -1662,6 +1666,50 @@ export function createPocketServer({
         response.end();
         return;
       }
+      // Tab control. Same origin, session, unlock and CSRF gates as every other
+      // write path, and the transport's own route proof decides which chat is
+      // acted on, so a request can never reach a session the caller did not
+      // name. Closing is irreversible, so it additionally requires an explicit
+      // confirm flag in the body and the transport re-verifies the selection
+      // before and after acting.
+      const sessionTabAction = pathMatch(
+        requestUrl.pathname,
+        /^\/api\/sessions\/([^/]+)\/tab$/,
+      );
+      if (request.method === 'POST' && sessionTabAction) {
+        security.assertOrigin(request);
+        security.session(request, {
+          requireUnlocked: true,
+          requireCsrf: true,
+        });
+        const route = database.getSessionRoute(sessionTabAction[0]);
+        if (!route) throw new HttpError(404, 'session_not_found');
+        const body = await readJson(request);
+        const action = body?.action;
+        const target = {
+          workspaceName: route.workspaceName,
+          sessionTitle: route.title,
+          sessionOrdinal: route.titleOrdinal,
+        };
+        let result;
+        if (action === 'new') {
+          result = await transport.newTab(target);
+        } else if (action === 'close') {
+          result = await transport.closeTab(target, {
+            confirmClose: body?.confirm === true,
+          });
+        } else {
+          throw new HttpError(400, 'unknown_tab_action');
+        }
+        recordAudit({
+          phase: 'tab-action',
+          action,
+          ok: result.ok === true,
+          code: result.code,
+        });
+        return sendJson(response, result.ok ? 200 : 409, result, config);
+      }
+
       if (request.method === 'POST' && deliveryStatus) {
         security.assertOrigin(request);
         const auth = security.session(request, {
@@ -1836,6 +1884,13 @@ export function createPocketServer({
                         ? sendResult.composerOwned
                         : null,
                     elapsedMs: Date.now() - sendStartedAt,
+                    // The underlying osascript failure text, when the
+                    // transport preserved one. Without it every automation
+                    // failure is undiagnosable from this log.
+                    ...(typeof sendResult.detail === 'string' &&
+                    sendResult.detail !== ''
+                      ? { detail: sendResult.detail.slice(0, 500) }
+                      : {}),
                   });
                 };
                 deliveryTransportStarted = true;
@@ -2107,6 +2162,34 @@ export function createPocketServer({
                   sendResult.code !== 'send_interrupted' &&
                   !attributedTransportFailure
                 ) {
+                  // A killed automation reports no press and owns no composer,
+                  // so the only open question is whether anything landed. If
+                  // Conductor's own transcript also gained no user row, the
+                  // message provably did not send, and the phone should offer
+                  // Retry instead of a Check that can only ever answer
+                  // "unconfirmed" about a message that never existed. Without
+                  // this, a 45s timeout is a dead end with no way forward.
+                  if (
+                    sendResult.safeToRetry !== true &&
+                    sendResult.code === 'automation_timeout' &&
+                    sendResult.composerOwned !== true &&
+                    !(
+                      Number.isSafeInteger(sendResult.pressedAt) &&
+                      sendResult.pressedAt > 0
+                    )
+                  ) {
+                    let nothingLanded = false;
+                    try {
+                      nothingLanded =
+                        database.listUserMessagesAfter(route.id, beforeRowId)
+                          .length === 0;
+                    } catch {
+                      // An unreadable transcript proves nothing. Stay unconfirmed.
+                    }
+                    if (nothingLanded) {
+                      sendResult = { ...sendResult, safeToRetry: true };
+                    }
+                  }
                   if (sendResult.safeToRetry === true) {
                     await markDefinitelyUnsent();
                   }
@@ -2241,6 +2324,12 @@ export function createPocketServer({
                 retrySafe: result.safeToRetry === true,
                 ...(result.safeToRetry === true
                   ? { definitelyUnsent: true }
+                  : {}),
+                // Already redacted at the source (quoted spans and base64
+                // runs stripped), so the phone can show why the Mac failed
+                // instead of pointing the user at a log they cannot see.
+                ...(typeof result.detail === 'string' && result.detail !== ''
+                  ? { detail: result.detail.slice(0, 300) }
                   : {}),
               },
             },
