@@ -254,19 +254,36 @@ export class AccessibilityTransport {
     return this.#run({ operation: 'doctor' });
   }
 
+  // Serializes an operation behind everything already queued. This used to be
+  // done only inside send(), while every control operation called #run
+  // directly, so the comment claiming they could not interleave with a send
+  // was false: a tab action arriving mid-send started a SECOND osascript
+  // driving the same Conductor window, and the route proof presses the
+  // workspace link and session tab, so it could move the window out from under
+  // an in-flight send. It also meant a double tap on the phone ran two Cmd+T
+  // concurrently and created two chats.
+  //
+  // doctor() stays off the queue deliberately: it takes no route, presses
+  // nothing, and answers the connection endpoint, which must not block behind
+  // a 45s send.
+  #enqueue(args) {
+    const task = () => this.#run(args);
+    this.#queue = this.#queue.then(task, task);
+    return this.#queue;
+  }
+
   // Control operations reuse the send path's navigation, so each one acts on
-  // exactly the workspace and session named, and they run through the same
-  // serialized queue so one can never interleave with a send.
+  // exactly the workspace and session named.
   listControls(route) {
-    return this.#run({ ...route, operation: 'list-controls' });
+    return this.#enqueue({ ...route, operation: 'list-controls' });
   }
 
   openControlMenu(route, controlLabel) {
-    return this.#run({ ...route, operation: 'menu-open', controlLabel });
+    return this.#enqueue({ ...route, operation: 'menu-open', controlLabel });
   }
 
   chooseControlMenuItem(route, controlLabel, menuItem) {
-    return this.#run({
+    return this.#enqueue({
       ...route,
       operation: 'menu-choose',
       controlLabel,
@@ -275,12 +292,12 @@ export class AccessibilityTransport {
   }
 
   newTab(route) {
-    return this.#run({ ...route, operation: 'tab-new' });
+    return this.#enqueue({ ...route, operation: 'tab-new' });
   }
 
   // Irreversible. confirmClose must be explicitly true or the script refuses.
   closeTab(route, { confirmClose = false } = {}) {
-    return this.#run({ ...route, operation: 'tab-close', confirmClose });
+    return this.#enqueue({ ...route, operation: 'tab-close', confirmClose });
   }
 
   // True while an osascript run is in flight. Shutdown uses this pair to
@@ -389,20 +406,17 @@ export class AccessibilityTransport {
         code: 'automation_invalid_response',
       });
     }
-    const task = () =>
-      this.#run({
-        operation: 'send',
-        workspaceName,
-        sessionTitle,
-        sessionOrdinal,
-        message: normalized,
-        replaceDraft,
-        expectedMacDraft: normalizedExpectedDraft || '',
-        expectedInputCounters: expectedInputCounters || '',
-        timeoutMs,
-      });
-    this.#queue = this.#queue.then(task, task);
-    return this.#queue;
+    return this.#enqueue({
+      operation: 'send',
+      workspaceName,
+      sessionTitle,
+      sessionOrdinal,
+      message: normalized,
+      replaceDraft,
+      expectedMacDraft: normalizedExpectedDraft || '',
+      expectedInputCounters: expectedInputCounters || '',
+      timeoutMs,
+    });
   }
 
   async #run({

@@ -4006,3 +4006,163 @@ test('pending sends persist before draft clearing and recover for the full send 
     /Promise\.all\(\[[\s\S]*refreshWorkspaces\(\)[\s\S]*loadRecentSessions\(\)[\s\S]*\]\)/,
   );
 });
+
+// Creating a chat from the phone used to return only "a tab was created", so
+// the phone refreshed the list and left the operator where they were, with the
+// new chat arriving as "Untitled" among the others. On a phone that reads as
+// nothing having happened, and the obvious response is to tap again, which
+// creates a second chat. Measured on 2026-08-16: by the time the Mac proves the
+// tab exists, Conductor has already written the row (+0ms), so the created chat
+// can be named rather than guessed.
+function createTabServer(config, { database, transport }) {
+  return createPocketServer({
+    configStore: { value: config },
+    security: {
+      bootstrap() {
+        return { authenticated: true, unlocked: false };
+      },
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database,
+    watcher: createWatcher(),
+    transport,
+  });
+}
+
+function tabDatabase(sessionListsInOrder) {
+  let call = 0;
+  return {
+    getSessionRoute() {
+      return {
+        id: 'session-a',
+        workspaceId: 'workspace-1',
+        workspaceName: 'daemon',
+        title: 'Existing chat',
+        titleOrdinal: 1,
+      };
+    },
+    listSessions() {
+      const list =
+        sessionListsInOrder[Math.min(call, sessionListsInOrder.length - 1)];
+      call += 1;
+      return list;
+    },
+  };
+}
+
+test('creating a chat names the chat it created', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  assert.equal(response.status, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.createdSessionId, 'session-new');
+  assert.equal(payload.createdSessionTitle, 'Untitled');
+  assert.equal(payload.workspaceId, 'workspace-1');
+});
+
+test('creating a chat stays silent when the new chat is ambiguous', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  // Two chats appeared, because the operator made one on the Mac at the same
+  // moment. Opening either could open the wrong one, so the phone is told
+  // nothing and simply refreshes. Taking the newest row would guess.
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+        { id: 'session-other', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  assert.equal(response.status, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.createdSessionId, undefined);
+});
+
+test('a failed creation never reports a created chat', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  // An unrelated chat appearing between the two reads must not be mistaken for
+  // one we created, so the identity lookup only runs on a successful create.
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-unrelated', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: false, code: 'tab_not_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  assert.equal(response.status, 409);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.createdSessionId, undefined);
+});

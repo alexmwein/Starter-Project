@@ -2650,3 +2650,43 @@ button:active {
   margin-right: 5px;
   vertical-align: baseline;
 }
+
+/* Visible counterpart to the screen-reader announcer. Bottom anchored so it
+   sits above the composer and clear of the notch, and it never blocks a tap:
+   a status message must not intercept the button the operator is reaching for. */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(92vw, 30rem);
+  padding: 0.65rem 0.95rem;
+  border-radius: 0.75rem;
+  background: rgba(20, 20, 22, 0.94);
+  color: #f5f5f7;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+#toast.is-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #toast {
+    transition: none;
+  }
+}
+
+/* Creating a chat is a Mac round trip of several seconds. Without a busy state
+   the control sat inert and invited a second tap, which created a second chat. */
+.chat-chip.is-new[aria-busy='true'],
+.sheet-chats-action[aria-busy='true'] {
+  opacity: 0.55;
+}

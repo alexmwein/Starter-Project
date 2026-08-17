@@ -846,24 +846,40 @@ if operationMode is "tab-new" then
 	-- nothing when pressed, and every icon-only control in this app is
 	-- unlabelled and has moved between releases, which is the exact pattern
 	-- that broke sending twice. A shortcut has no CSS classes to rot.
+	-- getSessionTabs returns an empty list when the main group cannot be
+	-- resolved, which a re-render blip can cause. Taken as a baseline that
+	-- reads as zero, and the very next successful read then looks like a tab
+	-- appeared, so a false tab_created was reported and no chat existed. The
+	-- route proof above already selected a session, so at least one tab must
+	-- exist: a zero baseline is a failed read, not an empty window.
 	set beforeTabs to count of my getSessionTabs()
+	if beforeTabs is 0 then return "{\"ok\":false,\"code\":\"tab_not_created\"}"
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
 	end tell
 	delay 0.2
+	set pressError to ""
 	try
 		do shell script "/usr/bin/env POCKET_OPERATION=tab-new /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error errorText
-		if errorText contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
-		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
-		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+		set pressError to errorText
 	end try
+	-- Observe before classifying, even when the helper reported an error. The
+	-- shortcut is posted before the final lease and unlock assertions, so a
+	-- throw after delivery used to return control_press_failed, which is
+	-- retry-safe, and the retry created a SECOND chat. What decides the
+	-- outcome is whether a tab actually appeared, not whether the helper threw.
 	repeat with waitIndex from 1 to 30
 		delay 0.1
 		if (count of my getSessionTabs()) > beforeTabs then
 			return "{\"ok\":true,\"code\":\"tab_created\"}"
 		end if
 	end repeat
+	if pressError is not "" then
+		if pressError contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+		if pressError contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+	end if
 	return "{\"ok\":false,\"code\":\"tab_not_created\"}"
 end if
 

@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-never-blank-20260815';
+} from './delivery-receipts.js?v=0.2.0-new-chat-lands-20260816';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-never-blank-20260815';
+} from './app-update.js?v=0.2.0-new-chat-lands-20260816';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-never-blank-20260815';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-never-blank-20260815';
-import { fetchJson } from './http.js?v=0.2.0-never-blank-20260815';
+} from './bootstrap-recovery.js?v=0.2.0-new-chat-lands-20260816';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-new-chat-lands-20260816';
+import { fetchJson } from './http.js?v=0.2.0-new-chat-lands-20260816';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-never-blank-20260815';
+} from './image-attachments.js?v=0.2.0-new-chat-lands-20260816';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-never-blank-20260815';
+} from './live-refresh.js?v=0.2.0-new-chat-lands-20260816';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-never-blank-20260815';
+} from './rich-text.js?v=0.2.0-new-chat-lands-20260816';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-never-blank-20260815';
+} from './read-state.js?v=0.2.0-new-chat-lands-20260816';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-never-blank-20260815';
+} from './transcript-focus.js?v=0.2.0-new-chat-lands-20260816';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-never-blank-20260815';
+} from './swipe-navigation.js?v=0.2.0-new-chat-lands-20260816';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-never-blank-20260815';
+const CLIENT_SHELL_REVISION = '0.2.0-new-chat-lands-20260816';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -433,11 +433,34 @@ function button(label, { iconName, className = 'icon-button', onClick } = {}) {
   return control;
 }
 
+const toastElement = document.querySelector('#toast');
+let toastTimer = null;
+
+// Announcements were screen-reader only, so on a phone a successful action and
+// a failed one looked identical: nothing moved. That is why a slow operation
+// read as broken and got tapped again. The visible half is deliberately plain,
+// no motion beyond a fade, because a status pill that animates is the thing
+// this app was asked not to do.
 function announce(message) {
   announcer.textContent = '';
   requestAnimationFrame(() => {
     announcer.textContent = message;
   });
+  if (!toastElement) return;
+  toastElement.textContent = message;
+  toastElement.hidden = false;
+  // Reflow between hidden=false and the class so the fade runs on a re-shown
+  // toast rather than being collapsed away by the style recalculation.
+  void toastElement.offsetHeight;
+  toastElement.classList.add('is-visible');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastElement.classList.remove('is-visible');
+    toastTimer = setTimeout(() => {
+      toastElement.hidden = true;
+      toastTimer = null;
+    }, 200);
+  }, 3200);
 }
 
 function legacyCopyText(text) {
@@ -3588,16 +3611,11 @@ function renderChatStrip() {
       className: 'chat-chip is-new',
       type: 'button',
       text: '+',
-      'aria-label': 'New chat',
-      on: {
-        click: async () => {
-          const done = await runTabAction('new');
-          if (done) {
-            announce('New chat created on the Mac.');
-            void loadSessions(workspaceId);
-          }
-        },
-      },
+      // Names the destination, because the strip shows chats and not the
+      // workspace they live in, and a new chat always lands in the workspace
+      // of the chat that is currently open.
+      'aria-label': `New chat in ${currentWorkspaceName() || 'this workspace'}`,
+      on: { click: (event) => void createChat({ control: event.currentTarget }) },
     }),
   );
   strip.replaceChildren(...chips);
@@ -5017,9 +5035,23 @@ function recheckAmbiguousDeliveries(sessionId = null) {
 }
 
 async function retryMessage(message) {
-  if (!deliveryCanRetry(message)) return;
-  if (!await verifyTerminalDeliveryAction(message)) return;
-  if (!deliveryCanRetry(message)) return;
+  // These three gates used to return silently, so tapping Retry could do
+  // literally nothing with no explanation: the button was there, the finger
+  // landed on it, and the app said nothing at all. Every exit now reports.
+  if (!deliveryCanRetry(message)) {
+    announce(
+      message?.definitelyUnsent === true
+        ? 'This one cannot be retried automatically. Edit it and send again.'
+        : 'Not retried, because it is not certain this message failed to send.',
+    );
+    return;
+  }
+  if (!(await verifyTerminalDeliveryAction(message))) return;
+  if (!deliveryCanRetry(message)) {
+    announce('This delivery changed. Check the chat before sending again.');
+    return;
+  }
+  announce('Retrying...');
   let claimed;
   try {
     claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
@@ -5534,6 +5566,73 @@ async function runTabAction(action, { confirm = false, sessionId: explicitId } =
   return payload;
 }
 
+function currentWorkspaceName() {
+  const workspace = state.workspaces.find(
+    (item) => item.id === state.route.workspaceId,
+  );
+  return workspace?.name || null;
+}
+
+// One helper behind both entry points (the + on the chat strip and the Chats
+// sheet), so creating a chat behaves identically wherever it is started.
+//
+// Creating a chat used to only refresh the list and leave the operator in the
+// chat they were already in, with the new one arriving as "Untitled" among the
+// others. On a phone that reads as nothing having happened, and the obvious
+// response is to tap again, which creates a second chat. The server now names
+// the chat it created, so we open it.
+let chatCreationInFlight = false;
+
+async function createChat({ onCreated, control } = {}) {
+  // The Mac round trip runs several seconds. A second tap during it posts a
+  // second shortcut and creates a second chat, so the whole operation is
+  // single-flight and the control says it is working.
+  if (chatCreationInFlight) return null;
+  chatCreationInFlight = true;
+  if (control) {
+    control.setAttribute('aria-busy', 'true');
+    control.disabled = true;
+  }
+  announce('Creating a chat on the Mac...');
+  try {
+    return await runCreateChat({ onCreated });
+  } finally {
+    chatCreationInFlight = false;
+    if (control) {
+      control.removeAttribute('aria-busy');
+      control.disabled = false;
+    }
+  }
+}
+
+async function runCreateChat({ onCreated } = {}) {
+  const workspaceId = state.route.workspaceId;
+  const done = await runTabAction('new');
+  if (!done) return null;
+  onCreated?.();
+  // The server reports the workspace it actually acted on. Local route state
+  // can disagree with it, because the Mac-side route proof presses the
+  // workspace link and can land somewhere else.
+  const where = done.workspaceName || currentWorkspaceName();
+  if (done.createdSessionId) {
+    announce(where ? `New chat in ${where}.` : 'New chat created.');
+    // Refresh first so the chat exists in state before routing to it,
+    // otherwise the transcript opens against a session the list does not know.
+    await loadSessions(workspaceId);
+    await openSession(done.createdSessionId, { workspaceId });
+    return done.createdSessionId;
+  }
+  // The Mac made a chat but it could not be uniquely identified, so say so
+  // plainly rather than opening something that might be the wrong chat.
+  announce(
+    where
+      ? `New chat created in ${where}. Pick it from the list.`
+      : 'New chat created on the Mac. Pick it from the list.',
+  );
+  void loadSessions(workspaceId);
+  return null;
+}
+
 const TAB_ACTION_MESSAGES = {
   close_not_confirmed: 'Not closed. Confirm first.',
   tab_close_unverified: 'Could not confirm the chat closed. Nothing assumed.',
@@ -5644,16 +5743,17 @@ function openChatsSheet() {
       node('button', {
         className: 'primary-button sheet-chats-action',
         type: 'button',
-        text: 'New chat',
+        // The destination is in the label, so the answer to "where does this
+        // land" is visible at the moment of the tap rather than after it.
+        text: currentWorkspaceName()
+          ? `New chat in ${currentWorkspaceName()}`
+          : 'New chat',
         on: {
-          click: async () => {
-            const done = await runTabAction('new');
-            if (done) {
-              announce('New chat created on the Mac.');
-              closeOverlay();
-              void loadSessions(workspaceId);
-            }
-          },
+          click: (event) =>
+            void createChat({
+              control: event.currentTarget,
+              onCreated: closeOverlay,
+            }),
         },
       }),
       list,

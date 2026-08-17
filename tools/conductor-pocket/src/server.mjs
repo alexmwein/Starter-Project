@@ -1693,7 +1693,34 @@ export function createPocketServer({
         };
         let result;
         if (action === 'new') {
+          // Snapshot before acting so the created chat can be named rather
+          // than guessed. Measured on 2026-08-16: by the time the Mac proves
+          // the tab exists, Conductor has already written the row, so the
+          // lookup below resolves on its first read. Taking the newest row
+          // instead would be wrong, since the operator can create a chat on
+          // the Mac at the same moment.
+          const before = new Set(
+            database.listSessions(route.workspaceId).map((row) => row.id),
+          );
           result = await transport.newTab(target);
+          if (result.ok === true) {
+            const appeared = database
+              .listSessions(route.workspaceId)
+              .filter((row) => !before.has(row.id));
+            // Exactly one, or the phone is told nothing and simply refreshes.
+            // Navigating to a chat we cannot uniquely identify is worse than
+            // leaving the operator where they are.
+            result =
+              appeared.length === 1
+                ? {
+                    ...result,
+                    createdSessionId: appeared[0].id,
+                    createdSessionTitle: appeared[0].title,
+                    workspaceId: route.workspaceId,
+                    workspaceName: route.workspaceName,
+                  }
+                : { ...result, workspaceId: route.workspaceId };
+          }
         } else if (action === 'close') {
           result = await transport.closeTab(target, {
             confirmClose: body?.confirm === true,

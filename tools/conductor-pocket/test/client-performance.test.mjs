@@ -246,3 +246,43 @@ test('the app can never be left blank, and reading position survives a render', 
   // restored to the same distance from the end.
   assert.match(js, /transcriptScroll\.scrollHeight -\s*\n\s*transcriptScroll\.clientHeight -\s*\n\s*distanceBefore/);
 });
+
+test('feedback reaches a sighted user, and retry never fails silently', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const html = await fs.readFile(
+    new URL('../public/index.html', import.meta.url),
+    'utf8',
+  );
+
+  // Everything the app says went only to an sr-only aria-live region, so a
+  // success and a failure looked identical on a phone: nothing moved. That is
+  // why a slow operation read as broken and got tapped again.
+  assert.match(html, /id="toast"/);
+  const announceStart = js.indexOf('function announce(message)');
+  assert.ok(announceStart > 0, 'announce must exist');
+  const announceBody = js.slice(announceStart, js.indexOf('\n}\n', announceStart));
+  assert.match(announceBody, /announcer\.textContent/);
+  assert.match(announceBody, /toastElement/);
+
+  // Tapping Retry used to be able to do nothing at all: three separate gates
+  // returned with no message. Every early exit must say something.
+  const retryStart = js.indexOf('async function retryMessage(message)');
+  assert.ok(retryStart > 0, 'retryMessage must exist');
+  const retryBody = js.slice(retryStart, js.indexOf('\n}\n', retryStart));
+  assert.doesNotMatch(
+    retryBody,
+    /if \(!deliveryCanRetry\(message\)\) return;/,
+    'a retry gate must not return without telling the operator why',
+  );
+
+  // Creating a chat is a multi-second Mac round trip. Without a single-flight
+  // guard a second tap posts a second shortcut and creates a second chat.
+  assert.match(js, /chatCreationInFlight/);
+  const createStart = js.indexOf('async function createChat(');
+  const createBody = js.slice(createStart, js.indexOf('\n}\n', createStart));
+  assert.match(createBody, /if \(chatCreationInFlight\) return null;/);
+  assert.match(createBody, /aria-busy/);
+})
