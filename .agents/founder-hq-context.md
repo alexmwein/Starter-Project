@@ -1,6 +1,6 @@
 # Founder HQ, Location, and Team-Culture Context
 
-*Last updated: August 15, 2026*
+*Last updated: August 16, 2026*
 
 ## Status
 
@@ -178,7 +178,29 @@ Listing: <https://qfcre.com/property/1660-logan-avenue/>
 
 References: <https://www.showcase.com/1027-1031-14th-st-san-diego-ca-92101/27801593/> and <https://libertystation.com/go/brick>
 
-**Locked interior reference (Alex, 2026-08-16: "this is my dream office"):** Cormac Hayden's Venice studio interior, reel <https://www.instagram.com/reel/Dajj9wLIpCK/>. The formula: exposed brick + cream walls + warm oak everything; one accent color (olive green) on Cesca-style chairs and poufs; a few genuine design icons instead of filler (Eames lounge + ottoman, Noguchi coffee table, Camaleonda-style sofa, Akari paper pendants); black track lighting plus statement paper lanterns; oversized art; analog culture props (vinyl + vintage stereo, surfboards mounted on brick — natively PB-appropriate); plants; an ELECTRIC motorbike (Maeving) parked indoors as decor-plus-errand-vehicle. Two standing implications: (1) this is a 5-8 seat creative-studio aesthetic — apply it to the lounge/content/entry zones; the call arena still requires the acoustic zoning in this brief, because brick+wood+communal tables are reverb hell for 10+ callers; (2) electric motorbikes indoors are a dramatically easier legal/insurance story than the gasoline GT3 (no fuel/fire-separation issue) — consider 1-2 e-motos inside as the everyday vehicle feature, GT3 in a glass bay or outside per existing rules.
+### Locked interior reference — the ratified dream-office look (Alex, 2026-08-16)
+
+Alex's exact words: "This is my dream office... This is the exact look and style that I want... This is exactly what I wanted it to look like." The reference is Cormac Hayden's Venice studio (reel <https://www.instagram.com/reel/Dajj9wLIpCK/>; Venice confirmed — his YouTube channel documents the build in a playlist titled "Venice Studio"). Every future design decision, buildout spec, and broker visual brief starts from this inventory.
+
+**The full inventory (from frame-by-frame analysis of the reel):**
+
+- **Shell:** ground-floor storefront; one long exposed red-brick wall; every other wall cream; hardwood floors. Character comes from the shell, not the fit-out.
+- **Wood:** warm oak as the ONLY wood species — the long communal work table (Apple Studio Displays on it, "main work setup"), the large open shelving unit, and the record console.
+- **One accent color:** olive green, repeated on Cesca-style cantilever chairs and flower-shaped poufs. Never a second accent color.
+- **Design icons instead of filler (~12 real objects carry the whole identity):** cream Eames lounge chair + ottoman; Noguchi glass coffee table; blue Camaleonda-style modular sofa; Noguchi Akari paper pendant lanterns; a brass mushroom table lamp.
+- **Lighting:** black track lighting plus the Akari paper pendants. No office troffers, ever.
+- **Props / analog culture:** oversized framed art; vintage stereo + turntable + vinyl collection; surfboards mounted on the brick (natively PB-appropriate); abundant plants; colorful grid rug.
+- **Vehicle indoors:** a Maeving electric motorbike parked inside as decor-plus-errand-vehicle.
+- **Operating principle:** furnished like the home of someone with taste, not fitted out like an office. Icons, not filler. In a shell with the right bones this is a roughly $60–120k furniture-and-lighting exercise, and everything except the brick moves in a truck (which is why abandoned-creative-buildout subleases matter).
+
+**Maeving pricing (US, verified 2026-08):** RM1 from $6,495 (single battery, 45 mph); RM1S from $9,995 (dual battery, 70 mph; Blackout edition $11,495); new RM2 two-up from $10,995. California delivery $195. One or two of these are simultaneously set dressing, daily errand vehicles, and a recruiting visual.
+
+**Alex's ratifications attached to this reference (2026-08-16):**
+
+1. The look and style are LOCKED. The office does not need a massive sales floor, but it must be able to fit 15–20 people if needed. Sizing honesty: the reel space itself is roughly 1,200–2,000 sq ft and would not seat 15–20 without destroying the aesthetic; holding this look at 15–20 capacity requires roughly 2,500–4,000 sq ft, which matches the Phase 2 flagship envelope below.
+2. The GT3 STILL comes to the office — the e-motos are additive, not a substitute. The GT3 keeps its existing screening gate (drive-in/roll-up access, insurance, code review); electric motorbikes indoors remain a dramatically easier legal/insurance story (no fuel, no fire-separation fight) and go anywhere.
+3. **New office-siting criterion (ratified):** the location must have real walkability and make the e-moto genuinely usable for errands — a dense, flat, walkable commercial strip where the bike leaves the building daily, not a display piece in a car-dependent flex park. This demotes pure Morena-corridor flex space from primary to functional fallback and elevates walkable character-storefront candidates (west Garnet / coastal Pacific Beach, Little Italy) in the screen. Final siting decision remains open.
+4. The call arena still requires the acoustic zoning in this brief — brick + wood + communal tables are reverb hell for 10+ simultaneous callers. The reel aesthetic governs the lounge, content, and entry zones; the call floor gets carpet, acoustic clouds, and separation behind it.
 
 The live market is thin. The working rule is: **recruit in PB, but search regionally for rare architecture. Start with authentic character; use design to elevate it, never to fake it.** A tenant-representation broker should conduct an off-market search using 4223–4225 30th Street, Assembly Hall, and BRICK as the visual brief. Do not send Alex generic flex listings merely because their size, rent, parking, or roll-up geometry works.
 
