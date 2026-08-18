@@ -45,6 +45,11 @@ cat > "$PLIST" <<PLIST
     <string>-lc</string>
     <string>cd \$HOME/.local/state/linkedin-applicants/repo &amp;&amp; git pull --ff-only &amp;&amp; node scripts/linkedin-applicant-sweep.mjs</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StartCalendarInterval</key>
   <array>
     <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
