@@ -286,3 +286,40 @@ test('feedback reaches a sighted user, and retry never fails silently', async ()
   assert.match(createBody, /if \(chatCreationInFlight\) return null;/);
   assert.match(createBody, /aria-busy/);
 })
+
+test('the composer growing a line does not move the transcript under the reader', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // The textarea was sized by newline count, so a long line that soft-wrapped
+  // still reported one row. Pressing Enter grew it correctly and wrapping did
+  // not, which is exactly why the jump happened sometimes and not others.
+  assert.doesNotMatch(
+    js,
+    /field\.rows = Math\.max\(1, Math\.min\(6, field\.value\.split\('\\n'\)\.length\)\)/,
+    'composer rows must account for soft wrapping, not just newlines',
+  );
+  const resizeStart = js.indexOf('const resize = () => {');
+  assert.ok(resizeStart > 0, 'composer resize must exist');
+  const resizeBody = js.slice(resizeStart, js.indexOf('\n  };', resizeStart));
+  assert.match(resizeBody, /scrollHeight/);
+  assert.match(resizeBody, /lineHeight/);
+
+  // The transcript is sized off --composer-height, so a taller composer shrinks
+  // it. Without compensation the text under the reader's eye shifts by exactly
+  // one line every time the composer grows.
+  const observerStart = js.indexOf('let lastComposerHeight = 0;');
+  assert.ok(observerStart > 0, 'composer height must be tracked across resizes');
+  const observerBody = js.slice(observerStart, js.indexOf('observer.observe(root);', observerStart));
+  assert.match(observerBody, /transcriptScroll/);
+  assert.match(observerBody, /wasPinned/);
+  // Position must be read BEFORE the variable is written, or it measures the
+  // layout it is trying to correct for.
+  assert.ok(
+    observerBody.indexOf('wasPinned') <
+      observerBody.indexOf("setProperty(\n      '--composer-height'"),
+    'scroll position must be measured before --composer-height changes',
+  );
+});
