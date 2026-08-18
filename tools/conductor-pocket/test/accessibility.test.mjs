@@ -1536,3 +1536,36 @@ test('the send path does not re-derive work it already has', async () => {
       queuedBody.indexOf('if (queuedEditProven)'),
   );
 });
+
+test('a missing Conductor window is recovered before the send gives up', async () => {
+  // conductor_window_unavailable is classified retry-safe, so the phone offered
+  // Retry, and the retry asked the same absent window again and failed again in
+  // under a second. Observed 2026-08-17: four such failures, each under 1.2s,
+  // each clearing only once a window came back on its own. The window is also
+  // absent for a moment while the Mac wakes and while Conductor relaunches,
+  // which is exactly when a phone send arrives.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /on restoreConductorWindow\(\)/);
+  assert.match(source, /tell application "Conductor" to activate/);
+  // The send path must attempt recovery, not report the failure immediately.
+  assert.match(
+    source,
+    /if not \(exists front window\) then\s*\n\s*if my restoreConductorWindow\(\) is false then return "\{\\"ok\\":false,\\"code\\":\\"conductor_window_unavailable\\"\}"/,
+  );
+  // Bounded: recovery must not be able to eat the whole automation budget.
+  const handler = source.slice(
+    source.indexOf('on restoreConductorWindow()'),
+    source.indexOf('end restoreConductorWindow'),
+  );
+  const repeatMatch = handler.match(/repeat with waitIndex from 1 to (\d+)/);
+  const delayMatch = handler.match(/delay ([\d.]+)/);
+  assert.ok(repeatMatch && delayMatch, 'recovery must be a bounded poll');
+  const budgetSeconds = Number(repeatMatch[1]) * Number(delayMatch[1]);
+  assert.ok(
+    budgetSeconds > 2 && budgetSeconds <= 10,
+    `recovery budget ${budgetSeconds}s must outlast a wake but stay well inside the 45s automation timeout`,
+  );
+});

@@ -29,6 +29,43 @@ on hasDiffBadge(baseName, candidateName)
 	return false
 end hasDiffBadge
 
+-- "front window" is false whenever Conductor is hidden, minimized, or has had
+-- its last window closed. All three are ordinary states the operator leaves the
+-- Mac in, and all three are recoverable, but the send used to fail immediately
+-- with conductor_window_unavailable. That failure is classified retry-safe, so
+-- the phone offered Retry, and the retry asked the same hidden window again and
+-- failed again in under a second. Observed 2026-08-17: four such failures, each
+-- under 1.2s, each clearing only once a window happened to come back.
+--
+-- Electron recreates its main window on activate when none is open, so
+-- activating is usually enough. Returns true when a usable window exists.
+on restoreConductorWindow()
+	try
+		tell application "Conductor" to activate
+	end try
+	-- Six seconds, not one. The window is also missing for a moment while the
+	-- Mac is waking and while Conductor is relaunching, which is exactly when a
+	-- phone send arrives: the operator wakes the Mac and sends. Failing in under
+	-- a second there is what made this look like a broken Retry. Six seconds is
+	-- well inside the 45s automation budget.
+	repeat with waitIndex from 1 to 30
+		delay 0.2
+		tell application "System Events"
+			tell process "Conductor"
+				if exists window 1 then
+					try
+						if (value of attribute "AXMinimized" of window 1) is true then
+							set value of attribute "AXMinimized" of window 1 to false
+						end if
+					end try
+					if exists front window then return true
+				end if
+			end tell
+		end tell
+	end repeat
+	return false
+end restoreConductorWindow
+
 on workspaceMatches(workspaceName, candidateName)
 	if candidateName is workspaceName then return true
 	if my hasDiffBadge(workspaceName, candidateName) then return true
@@ -589,7 +626,9 @@ tell application "System Events"
 	if UI elements enabled is false then return "{\"ok\":false,\"code\":\"accessibility_disabled\"}"
 	if not (exists process "Conductor") then return "{\"ok\":false,\"code\":\"conductor_not_running\"}"
 	tell process "Conductor"
-		if not (exists front window) then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+		if not (exists front window) then
+			if my restoreConductorWindow() is false then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+		end if
 		set conductorPid to unix id
 	end tell
 end tell
