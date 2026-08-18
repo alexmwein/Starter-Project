@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -45,7 +45,7 @@ function usage(message) {
   console.error(
     'Usage: node scripts/linkedin-applicant-scraper.mjs JOB_ID ' +
       '[--output PATH] [--csv PATH] [--delay-ms 1200] [--headed] ' +
-      '[--arc-profile PATH] [--chromium PATH] [--refresh-contacts]',
+      '[--arc-profile PATH] [--chromium PATH] [--refresh-contacts] [--no-resumes]',
   );
   process.exit(2);
 }
@@ -60,6 +60,7 @@ function parseArgs(argv) {
     arcProfile: DEFAULT_ARC_PROFILE,
     chromium: DEFAULT_CHROMIUM,
     refreshContacts: false,
+    resumes: true,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -72,6 +73,7 @@ function parseArgs(argv) {
     else if (value === '--arc-profile') options.arcProfile = argv[++i];
     else if (value === '--chromium') options.chromium = argv[++i];
     else if (value === '--refresh-contacts') options.refreshContacts = true;
+    else if (value === '--no-resumes') options.resumes = false;
     else usage(`unknown argument ${value}`);
   }
 
@@ -215,6 +217,8 @@ function atomicWriteCsv(path, applicants, jobId, jobTitle) {
     'school_location',
     'application_status',
     'linkedin_profile_url',
+    'resume_file',
+    'resume_filename',
   ];
   const rows = applicants.map((applicant) => [
     'Intern Applicants',
@@ -231,6 +235,8 @@ function atomicWriteCsv(path, applicants, jobId, jobTitle) {
     applicant.school_location,
     applicant.application_status,
     applicant.linkedin_profile_url,
+    applicant.resume_file,
+    applicant.resume_filename,
   ]);
   mkdirSync(dirname(path), { recursive: true });
   const pending = `${path}.pending`;
@@ -354,6 +360,127 @@ async function readContactInfo(page, delayMs) {
   return { email, phone };
 }
 
+function filenameFromContentDisposition(value) {
+  if (!value) return null;
+  const encoded = value.match(/filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return basename(decodeURIComponent(encoded.trim().replace(/^"|"$/g, '')));
+    } catch {
+      // Fall through to the plain filename parameter.
+    }
+  }
+  const plain = value.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+  return plain ? basename((plain[1] || plain[2]).trim()) : null;
+}
+
+function extensionForResume(contentType, ...filenames) {
+  const normalizedType = String(contentType || '').split(';')[0].trim().toLowerCase();
+  const extensionsByType = {
+    'application/pdf': 'pdf',
+    'application/msword': 'doc',
+    'application/rtf': 'rtf',
+    'application/vnd.oasis.opendocument.text': 'odt',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'text/plain': 'txt',
+  };
+  if (extensionsByType[normalizedType]) return extensionsByType[normalizedType];
+
+  for (const filename of filenames) {
+    const extension = extname(String(filename || '')).slice(1).toLowerCase();
+    if (/^[a-z0-9]{1,10}$/.test(extension)) return extension;
+  }
+  return 'bin';
+}
+
+async function findResumeLink(page) {
+  const links = await page.locator('a[href]:visible').evaluateAll((anchors) =>
+    anchors.map((anchor) => {
+      let context = '';
+      let container = anchor.parentElement;
+      for (let depth = 0; container && depth < 7; depth += 1) {
+        const text = (container.innerText || '').trim();
+        if (/\bresume\b/i.test(text) && text.length <= 1_500) {
+          context = text;
+          break;
+        }
+        container = container.parentElement;
+      }
+      return {
+        href: anchor.href,
+        text: (anchor.innerText || '').trim(),
+        ariaLabel: anchor.getAttribute('aria-label') || '',
+        title: anchor.getAttribute('title') || '',
+        download: anchor.getAttribute('download') || '',
+        context,
+      };
+    }),
+  );
+
+  return links
+    .map((link) => {
+      const label = `${link.text} ${link.ariaLabel} ${link.title} ${link.download}`;
+      const href = link.href.toLowerCase();
+      const explicitResume = /\bresume\b/i.test(label);
+      const resumeModule = /\bresume\b/i.test(link.context);
+      if (!explicitResume && !resumeModule) return { link, score: -1 };
+
+      let score = explicitResume ? 100 : 40;
+      if (/\b(download|view|open)\b/i.test(label)) score += 30;
+      if (link.download) score += 20;
+      if (/\.(?:pdf|docx?|rtf|odt|txt)(?:$|[?#])/i.test(link.href)) score += 20;
+      if (/(?:ambry|media|document|download|resume)/i.test(href)) score += 10;
+      return { link, score };
+    })
+    .filter(({ score }) => score >= 50)
+    .sort((a, b) => b.score - a.score)[0]?.link || null;
+}
+
+async function downloadApplicantResume(page, applicationId, outputPath) {
+  const link = await findResumeLink(page);
+  if (!link) return null;
+  if (!/^\d+$/.test(applicationId)) throw new Error('invalid application id for resume path');
+
+  const response = await page.request.get(link.href, {
+    failOnStatusCode: false,
+    headers: { referer: page.url() },
+    timeout: 30_000,
+  });
+  if (!response.ok()) {
+    throw new Error(`download returned HTTP ${response.status()}`);
+  }
+
+  const headers = response.headers();
+  const contentType = headers['content-type'] || '';
+  if (/^(?:text\/html|application\/json)\b/i.test(contentType)) {
+    throw new Error(`download returned ${contentType || 'an unexpected response'}`);
+  }
+
+  const dispositionName = filenameFromContentDisposition(headers['content-disposition']);
+  const urlName = basename(new URL(link.href).pathname);
+  const linkName = [link.download, link.text, link.ariaLabel, link.title]
+    .map((value) => basename(String(value || '').trim()))
+    .find((value) => extname(value));
+  const extension = extensionForResume(contentType, dispositionName, linkName, urlName);
+  const originalName = dispositionName || linkName || (extname(urlName) ? urlName : null);
+  const resumesDir = resolve(dirname(outputPath), 'resumes');
+  const resumePath = join(resumesDir, `${applicationId}.${extension}`);
+  const pending = `${resumePath}.pending`;
+
+  mkdirSync(resumesDir, { recursive: true });
+  try {
+    writeFileSync(pending, await response.body(), { mode: 0o600 });
+    renameSync(pending, resumePath);
+  } finally {
+    rmSync(pending, { force: true });
+  }
+
+  return {
+    file: resumePath,
+    filename: originalName || `resume.${extension}`,
+  };
+}
+
 async function goToNextPage(page, currentIds) {
   const next = page.getByRole('button', { name: 'Next', exact: true });
   if (!(await next.count()) || (await next.isDisabled())) return false;
@@ -446,6 +573,18 @@ async function main() {
             ? { email: prior.email || null, phone: prior.phone || null }
           : await readContactInfo(page, options.delayMs);
 
+        let resume = null;
+        if (options.resumes) {
+          try {
+            resume = await downloadApplicantResume(page, card.applicationId, options.output);
+          } catch (error) {
+            console.error(
+              `Resume download failed for application ${card.applicationId}: ` +
+                (error.message || String(error)),
+            );
+          }
+        }
+
         const profileLinks = page.locator('a[href*="/in/"]:visible');
         const profileUrl = (await profileLinks.count())
           ? (await profileLinks.last().getAttribute('href'))?.split('?')[0] || null
@@ -460,6 +599,8 @@ async function main() {
           school: card.school,
           location: card.location,
           linkedin_profile_url: profileUrl,
+          resume_file: resume?.file || null,
+          resume_filename: resume?.filename || null,
         };
         applicants.push(applicant);
         seen.add(card.applicationId);
