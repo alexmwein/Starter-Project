@@ -323,3 +323,30 @@ test('the composer growing a line does not move the transcript under the reader'
     'scroll position must be measured before --composer-height changes',
   );
 });
+
+test('opening a chat lands on the newest message, not the last chat position', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // Opening a chat has no scroll-to-bottom of its own; it relies entirely on
+  // the pinned check. That check is measured BEFORE the list is replaced, so it
+  // reads the previous chat's content and scroll position. Scrolled up in one
+  // chat, open another, and that distance from the end is restored against the
+  // new chat, leaving the newest message off screen.
+  assert.match(js, /let lastTranscriptSessionId = null;/);
+  assert.match(js, /const transcriptSessionChanged =\s*\n?\s*lastTranscriptSessionId !== state\.route\.sessionId;/);
+
+  // A hidden or backgrounded scroller reports clientHeight 0, which inflates
+  // the measured distance by exactly one viewport and scrolls a screen too high
+  // when restored.
+  assert.match(js, /const measurable = transcriptScroll\.clientHeight > 0;/);
+
+  const pinnedMatch = js.match(/const pinned =\s*\n?\s*([^;]+);/);
+  assert.ok(pinnedMatch, 'pinned must be derived');
+  const pinnedExpression = pinnedMatch[1];
+  assert.match(pinnedExpression, /transcriptSessionChanged/);
+  assert.match(pinnedExpression, /!measurable/);
+  assert.match(pinnedExpression, /distanceBefore < 48/);
+});

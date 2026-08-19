@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-composer-steady-20260817';
+} from './delivery-receipts.js?v=0.2.0-opens-at-newest-20260818';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-composer-steady-20260817';
+} from './app-update.js?v=0.2.0-opens-at-newest-20260818';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-composer-steady-20260817';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-composer-steady-20260817';
-import { fetchJson } from './http.js?v=0.2.0-composer-steady-20260817';
+} from './bootstrap-recovery.js?v=0.2.0-opens-at-newest-20260818';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-opens-at-newest-20260818';
+import { fetchJson } from './http.js?v=0.2.0-opens-at-newest-20260818';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-composer-steady-20260817';
+} from './image-attachments.js?v=0.2.0-opens-at-newest-20260818';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-composer-steady-20260817';
+} from './live-refresh.js?v=0.2.0-opens-at-newest-20260818';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-composer-steady-20260817';
+} from './rich-text.js?v=0.2.0-opens-at-newest-20260818';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-composer-steady-20260817';
+} from './read-state.js?v=0.2.0-opens-at-newest-20260818';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-composer-steady-20260817';
+} from './transcript-focus.js?v=0.2.0-opens-at-newest-20260818';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-composer-steady-20260817';
+} from './swipe-navigation.js?v=0.2.0-opens-at-newest-20260818';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-composer-steady-20260817';
+const CLIENT_SHELL_REVISION = '0.2.0-opens-at-newest-20260818';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3598,6 +3598,10 @@ const STRIP_STATUS = {
 };
 
 let lastCentredSessionId = null;
+// Which chat the transcript scroller currently holds. The scroll position is
+// measured before the list is replaced, so without this the reading position
+// from one chat is applied to the next one opened.
+let lastTranscriptSessionId = null;
 
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
@@ -3710,11 +3714,30 @@ function renderTranscript() {
   }
   renderBanner(transcriptBanner);
 
+  // Measured against the content still on screen, which is the PREVIOUS chat's
+  // when a different one is being opened. Two ways that lands the reader high
+  // up on a transcript instead of on the newest message:
+  //
+  //   1. Opening a chat while scrolled up in the last one. That distance from
+  //      the end gets restored against the new chat's content, so the newest
+  //      message is off screen and nothing ever asked to go there: opening a
+  //      chat has no scroll-to-bottom of its own, it relies on this pinning.
+  //   2. Measuring with no layout. A hidden or backgrounded scroller reports
+  //      clientHeight 0, which inflates the distance by exactly one viewport,
+  //      and restoring it later scrolls a full screen too high.
+  //
+  // Both mean the measurement is not about the content being rendered, so the
+  // newest message wins instead.
+  const transcriptSessionChanged =
+    lastTranscriptSessionId !== state.route.sessionId;
+  lastTranscriptSessionId = state.route.sessionId;
+  const measurable = transcriptScroll.clientHeight > 0;
   const distanceBefore =
     transcriptScroll.scrollHeight -
     transcriptScroll.clientHeight -
     transcriptScroll.scrollTop;
-  const pinned = distanceBefore < 48;
+  const pinned =
+    transcriptSessionChanged || !measurable || distanceBefore < 48;
   const messages = chronologicalTranscriptMessages([
     ...(state.messagesBySession.get(state.route.sessionId) || []),
     ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
