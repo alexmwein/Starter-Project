@@ -2157,11 +2157,18 @@ test('an ambiguous UI result is confirmed by the exact new Conductor row', async
     idempotencyKey: 'database_confirmed_key',
     deviceId: 'other-device',
   });
+  // A caller outside the owning scope gets the same answer it would get for a
+  // key that never existed, because the ledger key is device scoped: absence is
+  // absence within the caller's own namespace and reveals nothing about another
+  // device's or session's deliveries. Split from 'unknown' so the owning device
+  // can tell "never recorded" (retryable, the request never arrived) apart from
+  // "recorded but uninterpretable" (genuinely ambiguous).
   assert.deepEqual(JSON.parse(wrongSession.body).delivery, {
     state: 'unknown',
   });
   assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
-    state: 'unknown',
+    state: 'absent',
+    ledgerTtlMs: 7 * 24 * 60 * 60 * 1000,
   });
 });
 
@@ -2319,11 +2326,18 @@ test('delivery status recovers a late exact row without resending or exposing co
     idempotencyKey: 'late_database_confirmation_key',
     deviceId: 'other-device',
   });
+  // A caller outside the owning scope gets the same answer it would get for a
+  // key that never existed, because the ledger key is device scoped: absence is
+  // absence within the caller's own namespace and reveals nothing about another
+  // device's or session's deliveries. Split from 'unknown' so the owning device
+  // can tell "never recorded" (retryable, the request never arrived) apart from
+  // "recorded but uninterpretable" (genuinely ambiguous).
   assert.deepEqual(JSON.parse(wrongSession.body).delivery, {
     state: 'unknown',
   });
   assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
-    state: 'unknown',
+    state: 'absent',
+    ledgerTtlMs: 7 * 24 * 60 * 60 * 1000,
   });
   assert.equal(databaseReads, readsBeforeWrongScope);
 

@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-opens-at-newest-20260818';
+} from './delivery-receipts.js?v=0.2.0-retry-unreachable-20260819';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-opens-at-newest-20260818';
+} from './app-update.js?v=0.2.0-retry-unreachable-20260819';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-opens-at-newest-20260818';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-opens-at-newest-20260818';
-import { fetchJson } from './http.js?v=0.2.0-opens-at-newest-20260818';
+} from './bootstrap-recovery.js?v=0.2.0-retry-unreachable-20260819';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-retry-unreachable-20260819';
+import { fetchJson } from './http.js?v=0.2.0-retry-unreachable-20260819';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-opens-at-newest-20260818';
+} from './image-attachments.js?v=0.2.0-retry-unreachable-20260819';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-opens-at-newest-20260818';
+} from './live-refresh.js?v=0.2.0-retry-unreachable-20260819';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-opens-at-newest-20260818';
+} from './rich-text.js?v=0.2.0-retry-unreachable-20260819';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-opens-at-newest-20260818';
+} from './read-state.js?v=0.2.0-retry-unreachable-20260819';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-opens-at-newest-20260818';
+} from './transcript-focus.js?v=0.2.0-retry-unreachable-20260819';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-opens-at-newest-20260818';
+} from './swipe-navigation.js?v=0.2.0-retry-unreachable-20260819';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-opens-at-newest-20260818';
+const CLIENT_SHELL_REVISION = '0.2.0-retry-unreachable-20260819';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -330,6 +330,7 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   conductor_not_running: 'Conductor is not open on your Mac.',
   conductor_window_unavailable: 'Conductor has no open window on your Mac.',
   delivery_confirmation_timeout: 'Pocket could not verify delivery in time.',
+  never_reached_mac: 'This never reached your Mac, so nothing was sent.',
   delivery_unknown: 'Pocket could not verify whether Conductor accepted it.',
   draft_conflict: 'The Conductor composer already has unsent text.',
   draft_recheck_required: 'The Mac draft needs to be checked again.',
@@ -369,6 +370,22 @@ function safeDeliveryErrorCode(value) {
 function deliveryErrorCopy(code) {
   const safeCode = safeDeliveryErrorCode(code);
   return DELIVERY_ERROR_COPY[safeCode] || `Conductor reported ${safeCode.replaceAll('_', ' ')}.`;
+}
+
+// Absence of a ledger entry only proves a send never ran while the entry could
+// not already have been pruned. Everything unverifiable counts as older, so a
+// missing timestamp, a missing TTL or a skewed clock can never turn a pruned
+// entry into a false "never sent" and duplicate a message that did go out. The
+// margin is half the retention, and a stranded message is minutes old, so the
+// real cases sit nowhere near it.
+function messageOlderThanLedger(message, delivery) {
+  const ttlMs = Number(delivery?.ledgerTtlMs);
+  const createdAt = Date.parse(message?.createdAt || '');
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return true;
+  if (!Number.isFinite(createdAt)) return true;
+  const age = Date.now() - createdAt;
+  if (age < 0) return true;
+  return age >= ttlMs / 2;
 }
 
 function deliveryCanRetry(message) {
@@ -4887,6 +4904,23 @@ async function settleTerminalDeliveryStatus(message, delivery) {
     renderTranscript();
     announce('Message delivered');
     await refreshMessages(message.sessionId, { full: true });
+    return true;
+  }
+  if (delivery.state === 'absent' && messageOlderThanLedger(message, delivery) === false) {
+    // The relay has no record of this delivery, and this message is younger
+    // than the ledger's retention, so the send was never recorded and never
+    // ran. That is the most provably unsent case there is: the request never
+    // arrived. It used to read as "Delivery unknown" with only a Check button,
+    // which meant a send made while the Mac was unreachable could be neither
+    // retried nor edited, and the typed text was stranded.
+    message.errorCode = 'never_reached_mac';
+    message.delivery = 'failed';
+    message.deliveryPhase = null;
+    message.retrySafe = true;
+    message.definitelyUnsent = true;
+    message.deliveryRecoveryExhausted = true;
+    await persistPendingDeliveries({ upserts: [message] });
+    renderTranscript();
     return true;
   }
   if (delivery.state === 'failed') {

@@ -738,13 +738,28 @@ class IdempotencyStore {
   async status(key, sessionId, database) {
     if (this.#prune()) await this.#persist();
     const entry = this.#entries.get(this.#keyProof(key));
+    if (!entry) {
+      // No entry at all is different from an entry we cannot interpret, and
+      // conflating them stranded the operator. Every send that never reached
+      // this relay (Mac asleep, relay restarting, phone off network) landed
+      // here, the phone read "unknown", and it offered neither Retry nor Edit,
+      // so the typed text could not be recovered at all.
+      //
+      // The ledger is durable across relay restarts and only drops entries
+      // after its TTL, so within that window an absent key proves the send was
+      // never recorded, which means it never ran. The TTL is reported so the
+      // caller can check its own message is younger than it rather than
+      // trusting absence forever.
+      return { state: 'absent', ledgerTtlMs: DELIVERY_LEDGER_TTL_MS };
+    }
     if (
-      !entry ||
       !deliveryLedgerProofMatches(
         entry.sessionProof,
         this.#sessionProof(sessionId),
       )
     ) {
+      // The key exists but belongs to another session. Nothing can be proven
+      // about this one, so it stays ambiguous.
       return { state: 'unknown' };
     }
     if (entry.state === 'pending') {
