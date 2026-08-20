@@ -261,39 +261,47 @@ test('failed and definitely-unsent messages survive receipt reconciliation', () 
   assert.deepEqual(result.remaining, [unknown, definitelyUnsent]);
 });
 
-test('a send that never reached the Mac can be retried and edited', async () => {
+test('recovering typed text never requires proof, resending always does', async () => {
   const js = await fs.readFile(
     new URL('../public/app.js', import.meta.url),
     'utf8',
   );
 
-  // A send made while the Mac was unreachable (asleep, relay restarting, phone
-  // off network) never reaches the ledger, so every recovery check came back
-  // inconclusive and the delivery settled with retrySafe=false and
-  // definitelyUnsent=false. That renders "Delivery unknown" with only a Check
-  // button: no Retry, no Edit, and the typed text is stranded with no way to
-  // recover it. Absence in the ledger is the most provably unsent case there
-  // is, because the request never arrived.
-  assert.match(js, /delivery\.state === 'absent'/);
-  assert.match(js, /never_reached_mac/);
+  // An absent ledger entry looks like proof a message was never sent and is
+  // not: the ledger evicts on CAPACITY as well as age, so a delivered receipt
+  // can be dropped early and no age check can see that. Acting on it resends a
+  // message that already went out. An earlier version of this file did exactly
+  // that, so the invariant is pinned rather than left to memory.
   const settleStart = js.indexOf('async function settleTerminalDeliveryStatus');
+  assert.ok(settleStart > 0, 'settleTerminalDeliveryStatus must exist');
   const settleBody = js.slice(settleStart, js.indexOf('\n}\n', settleStart));
-  const absentBranch = settleBody.slice(settleBody.indexOf("delivery.state === 'absent'"));
-  assert.match(absentBranch, /message\.retrySafe = true;/);
-  assert.match(absentBranch, /message\.definitelyUnsent = true;/);
+  assert.doesNotMatch(
+    settleBody,
+    /delivery\.state === 'absent'[\s\S]*definitelyUnsent = true/,
+    'an absent ledger entry must never be treated as proof a message was unsent',
+  );
 
-  // Absence only proves anything while the entry could not already have been
-  // pruned, or a message that really did send could be duplicated.
-  assert.match(js, /function messageOlderThanLedger\(message, delivery\)/);
-  const guardStart = js.indexOf('function messageOlderThanLedger(message, delivery)');
-  const guardBody = js.slice(guardStart, js.indexOf('\n}\n', guardStart));
-  // Everything unverifiable must count as older, so absence is never trusted
-  // on a guess.
-  assert.match(guardBody, /if \(!Number\.isFinite\(ttlMs\) \|\| ttlMs <= 0\) return true;/);
-  assert.match(guardBody, /if \(!Number\.isFinite\(createdAt\)\) return true;/);
-  assert.match(guardBody, /if \(age < 0\) return true;/);
-  assert.match(guardBody, /ttlMs \/ 2/);
+  // Editing returns the text to the composer and sends nothing, so it is safe
+  // whatever happened to the original. Requiring proof left an ambiguous
+  // failure with no way to recover what was typed.
+  const editStart = js.indexOf('async function editFailedMessage(message)');
+  assert.ok(editStart > 0, 'editFailedMessage must exist');
+  const editBody = js.slice(editStart, js.indexOf('\n}\n', editStart));
+  assert.doesNotMatch(
+    editBody,
+    /message\.definitelyUnsent !== true/,
+    'recovering typed text must not require proof the send failed',
+  );
 
-  // Retry and Edit are gated on definitelyUnsent, which is what was false.
-  assert.match(js, /const definitelyUnsent = message\.definitelyUnsent === true;/);
+  // The claim gate must treat edit like delete, not like retry.
+  assert.match(
+    js,
+    /\(action === 'delete' \|\|\s*\n?\s*action === 'edit' \|\|/,
+  );
+
+  // Retry keeps its proof requirement, because it is the one that resends.
+  const canRetryStart = js.indexOf('function deliveryCanRetry(message) {');
+  const canRetryBody = js.slice(canRetryStart, js.indexOf('\n}\n', canRetryStart));
+  assert.match(canRetryBody, /message\.retrySafe === true/);
+  assert.match(canRetryBody, /message\.definitelyUnsent === true/);
 })

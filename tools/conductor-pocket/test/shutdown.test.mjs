@@ -60,12 +60,29 @@ test('the transport records its child while a run is in flight', async () => {
     new URL('../src/accessibility.mjs', import.meta.url),
     'utf8',
   );
-  assert.match(source, /this\.#currentChild = pending\.child/);
+  // A SET of children, not one slot. doctor() runs off the queue by design, so
+  // two runs overlap; with a single slot the fast doctor run cleared the field
+  // while a 45s send was still typing, and the killer then found nothing and
+  // orphaned exactly the child it exists to kill.
+  assert.match(source, /#currentChildren = new Set\(\)/);
+  assert.match(source, /this\.#currentChildren\.add\(pending\.child\)/);
   assert.match(source, /const \{ stdout \} = await pending/);
-  // The finally block clears both trackers so a settled run can never be
-  // mistaken for an in-flight one by drain or the killer.
+  // The finally block removes only THIS run's child, so a settled run cannot be
+  // mistaken for an in-flight one and a concurrent run is not un-tracked.
   assert.match(
     source,
-    /finally \{\s*this\.#busy -= 1;\s*this\.#currentChild = null;\s*\}/,
+    /finally \{\s*this\.#busy -= 1;\s*if \(pending\?\.child\) this\.#currentChildren\.delete\(pending\.child\);\s*\}/,
+  );
+  // drain must observe #busy, which counts every run including off-queue ones,
+  // rather than a queue tail that can be reassigned or bypassed.
+  const drainBody = source.slice(
+    source.indexOf('drain(budgetMs) {'),
+    source.indexOf('killCurrentAutomation()'),
+  );
+  assert.match(drainBody, /this\.#busy === 0/);
+  assert.doesNotMatch(
+    drainBody,
+    /this\.#queue\.then/,
+    'drain must not resolve on a captured queue tail',
   );
 });

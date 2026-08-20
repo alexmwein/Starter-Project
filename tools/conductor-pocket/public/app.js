@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-retry-unreachable-20260819';
+} from './delivery-receipts.js?v=0.2.0-edit-always-20260819';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-retry-unreachable-20260819';
+} from './app-update.js?v=0.2.0-edit-always-20260819';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-retry-unreachable-20260819';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-retry-unreachable-20260819';
-import { fetchJson } from './http.js?v=0.2.0-retry-unreachable-20260819';
+} from './bootstrap-recovery.js?v=0.2.0-edit-always-20260819';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-edit-always-20260819';
+import { fetchJson } from './http.js?v=0.2.0-edit-always-20260819';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-retry-unreachable-20260819';
+} from './image-attachments.js?v=0.2.0-edit-always-20260819';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-retry-unreachable-20260819';
+} from './live-refresh.js?v=0.2.0-edit-always-20260819';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-retry-unreachable-20260819';
+} from './rich-text.js?v=0.2.0-edit-always-20260819';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-retry-unreachable-20260819';
+} from './read-state.js?v=0.2.0-edit-always-20260819';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-retry-unreachable-20260819';
+} from './transcript-focus.js?v=0.2.0-edit-always-20260819';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-retry-unreachable-20260819';
+} from './swipe-navigation.js?v=0.2.0-edit-always-20260819';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-retry-unreachable-20260819';
+const CLIENT_SHELL_REVISION = '0.2.0-edit-always-20260819';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -330,7 +330,6 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   conductor_not_running: 'Conductor is not open on your Mac.',
   conductor_window_unavailable: 'Conductor has no open window on your Mac.',
   delivery_confirmation_timeout: 'Pocket could not verify delivery in time.',
-  never_reached_mac: 'This never reached your Mac, so nothing was sent.',
   delivery_unknown: 'Pocket could not verify whether Conductor accepted it.',
   draft_conflict: 'The Conductor composer already has unsent text.',
   draft_recheck_required: 'The Mac draft needs to be checked again.',
@@ -370,22 +369,6 @@ function safeDeliveryErrorCode(value) {
 function deliveryErrorCopy(code) {
   const safeCode = safeDeliveryErrorCode(code);
   return DELIVERY_ERROR_COPY[safeCode] || `Conductor reported ${safeCode.replaceAll('_', ' ')}.`;
-}
-
-// Absence of a ledger entry only proves a send never ran while the entry could
-// not already have been pruned. Everything unverifiable counts as older, so a
-// missing timestamp, a missing TTL or a skewed clock can never turn a pruned
-// entry into a false "never sent" and duplicate a message that did go out. The
-// margin is half the retention, and a stranded message is minutes old, so the
-// real cases sit nowhere near it.
-function messageOlderThanLedger(message, delivery) {
-  const ttlMs = Number(delivery?.ledgerTtlMs);
-  const createdAt = Date.parse(message?.createdAt || '');
-  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return true;
-  if (!Number.isFinite(createdAt)) return true;
-  const age = Date.now() - createdAt;
-  if (age < 0) return true;
-  return age >= ttlMs / 2;
 }
 
 function deliveryCanRetry(message) {
@@ -2105,7 +2088,9 @@ async function claimTerminalDeliveryActionRequired(message, action) {
         candidate?.delivery === 'failed' &&
         candidate.deliveryAttempt === message.deliveryAttempt &&
         candidate.activeDeliveryKey === message.activeDeliveryKey &&
-        (action === 'delete' || candidate.definitelyUnsent === true) &&
+        (action === 'delete' ||
+          action === 'edit' ||
+          candidate.definitelyUnsent === true) &&
         (action !== 'retry' || candidate.retrySafe === true);
       if (!matches) return;
       if (action === 'edit' || action === 'delete') {
@@ -2232,14 +2217,16 @@ function applyAuthoritativePendingDelivery(message, authoritative) {
 }
 
 async function editFailedMessage(message) {
-  if (
-    message?.kind !== 'optimistic' ||
-    message.delivery !== 'failed' ||
-    message.definitelyUnsent !== true
-  ) {
+  // definitelyUnsent is deliberately NOT required. This returns the text to the
+  // composer and sends nothing, so it is safe whatever happened to the original,
+  // and requiring proof was what left an ambiguous failure with no way to
+  // recover what was typed. Retry keeps its proof requirement, because it
+  // resends.
+  if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  if (!(await verifyTerminalDeliveryAction(message))) {
+    announce('Could not recover this text yet. Try again.');
     return;
   }
-  if (!await verifyTerminalDeliveryAction(message)) return;
   let claimed;
   try {
     claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
@@ -2943,12 +2930,18 @@ function createComposer() {
     if (height <= 0 || height === lastComposerHeight) return;
     const delta = lastComposerHeight === 0 ? 0 : height - lastComposerHeight;
     lastComposerHeight = height;
-    // The transcript's viewport is sized off --composer-height, so growing the
-    // composer by a line shrinks the transcript by the same amount. Nothing
-    // compensated for that, so the text under the reader's eye moved every time
-    // a line wrapped, and only when it wrapped, which is why it jumped
-    // sometimes and not others. Measure the position BEFORE the variable
-    // changes, then restore it once layout has settled.
+    // The dock is position: absolute (app.css .composer-dock), so it is out of
+    // flow and growing it does NOT shrink the scroller. --composer-height feeds
+    // only the transcript's padding-bottom, which grows scrollHeight while
+    // clientHeight, scrollTop and every rendered pixel stay exactly where they
+    // were. So a reader who is not at the bottom needs no correction at all:
+    // an earlier version of this handler assumed the viewport shrank and moved
+    // scrollTop to compensate, which yanked a transcript that was sitting
+    // still. Doing nothing is the correct behaviour there.
+    //
+    // A reader who IS at the bottom does need one: the extra padding is what
+    // keeps the last message clear of the dock, so without re-pinning, the
+    // message just sent slides behind a taller composer.
     const scroller = state.shell?.transcriptScroll;
     const wasPinned = scroller
       ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 48
@@ -2957,16 +2950,9 @@ function createComposer() {
       '--composer-height',
       `${height}px`,
     );
-    if (delta === 0 || !scroller) return;
+    if (delta <= 0 || !scroller || !wasPinned) return;
     requestAnimationFrame(() => {
-      if (wasPinned) {
-        scroller.scrollTop = scroller.scrollHeight;
-        return;
-      }
-      // clientHeight just changed by delta, so holding distance-from-bottom
-      // constant means moving scrollTop by the same delta. Anchoring to the
-      // bottom is what keeps the line being typed against a stable backdrop.
-      scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
+      scroller.scrollTop = scroller.scrollHeight;
     });
   });
   observer.observe(root);
@@ -2978,6 +2964,12 @@ function createComposer() {
     // content height, including wraps, and it also lets the box shrink again
     // when text is deleted. Both writes happen in one synchronous block, so no
     // intermediate state is ever painted.
+    // Where field-sizing: content is supported the box already tracks its own
+    // content, wraps included, and rows cannot change its height. Measuring
+    // anyway forced two style recalcs and a synchronous layout on every
+    // keystroke to compute a value with no effect, on exactly the browsers this
+    // runs on. The measurement is kept only as the fallback it always was.
+    if (supportsFieldSizing) return;
     const style = getComputedStyle(field);
     const lineHeight = parseFloat(style.lineHeight) || 24;
     const padding =
@@ -3614,6 +3606,14 @@ const STRIP_STATUS = {
   error: { className: 'is-error', dot: 'is-error', label: 'error' },
 };
 
+// field-sizing: content makes the textarea track its own content, wraps
+// included, so the manual row measurement below is only needed where it is
+// unsupported. Probed once rather than per keystroke.
+const supportsFieldSizing =
+  typeof CSS !== 'undefined' &&
+  typeof CSS.supports === 'function' &&
+  CSS.supports('field-sizing', 'content');
+
 let lastCentredSessionId = null;
 // Which chat the transcript scroller currently holds. The scroll position is
 // measured before the list is replaced, so without this the reading position
@@ -4154,6 +4154,18 @@ function renderMessage(message, toolResults) {
             on: {
               click: () => checkDelivery(message, { force: true }),
             },
+          }),
+          // Also offered when delivery is UNKNOWN. Editing returns the text to
+          // the composer and sends nothing, so it needs no proof the message
+          // failed, and withholding it was what stranded the typed text with no
+          // way to get it back. Retry stays gated on proof, because that one
+          // does resend.
+          node('button', {
+            className: 'message-retry',
+            type: 'button',
+            text: 'Edit',
+            'aria-label': 'Move this message back to the editor',
+            on: { click: () => editFailedMessage(message) },
           }),
         );
       }
@@ -4906,23 +4918,15 @@ async function settleTerminalDeliveryStatus(message, delivery) {
     await refreshMessages(message.sessionId, { full: true });
     return true;
   }
-  if (delivery.state === 'absent' && messageOlderThanLedger(message, delivery) === false) {
-    // The relay has no record of this delivery, and this message is younger
-    // than the ledger's retention, so the send was never recorded and never
-    // ran. That is the most provably unsent case there is: the request never
-    // arrived. It used to read as "Delivery unknown" with only a Check button,
-    // which meant a send made while the Mac was unreachable could be neither
-    // retried nor edited, and the typed text was stranded.
-    message.errorCode = 'never_reached_mac';
-    message.delivery = 'failed';
-    message.deliveryPhase = null;
-    message.retrySafe = true;
-    message.definitelyUnsent = true;
-    message.deliveryRecoveryExhausted = true;
-    await persistPendingDeliveries({ upserts: [message] });
-    renderTranscript();
-    return true;
-  }
+  // An 'absent' ledger entry is deliberately NOT treated as proof the message
+  // was never sent. It looks like proof and is not: the ledger evicts on
+  // CAPACITY as well as age (#makeRoomFor, 2048 entries, sorted by expiry and
+  // ignoring how old an entry is), so a delivered receipt can be dropped early,
+  // and an age check cannot see that. Acting on it would resend a message that
+  // already went out, which is worse than the problem it was meant to solve.
+  // Recovering the typed text is handled by making Edit available for ambiguous
+  // failures instead, which returns the text to the composer without sending
+  // anything and leaves the decision to a human who can see the transcript.
   if (delivery.state === 'failed') {
     if (!deliveryStatusIsTerminal(delivery)) return false;
     message.errorCode = delivery.code || 'delivery_unknown';

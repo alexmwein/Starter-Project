@@ -2657,7 +2657,10 @@ button:active {
 #toast {
   position: fixed;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+  /* Tracks the real dock height rather than a fixed 84px. The composer grows to
+     144px of field plus padding, so a hardcoded offset put the toast on top of
+     the text being typed for its whole 3.4s life. */
+  bottom: calc(var(--composer-height) + 12px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 60;
   max-width: min(92vw, 30rem);

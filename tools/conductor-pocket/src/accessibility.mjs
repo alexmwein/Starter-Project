@@ -248,7 +248,12 @@ function attributeStructuredFailure(result, markerContext) {
 export class AccessibilityTransport {
   #queue = Promise.resolve();
   #busy = 0;
-  #currentChild = null;
+  // A SET, not one slot. doctor() deliberately runs off the queue, so two runs
+  // can overlap; with a single slot the fast doctor run nulled the field while
+  // a 45s send was still typing, and killCurrentAutomation then found nothing
+  // and returned false. Shutdown's forced-exit path therefore orphaned exactly
+  // the child the mechanism exists to kill.
+  #currentChildren = new Set();
 
   doctor() {
     return this.#run({ operation: 'doctor' });
@@ -308,35 +313,54 @@ export class AccessibilityTransport {
     return this.#busy > 0;
   }
 
-  // Wait for the in-flight operation (the queue is serialized, so there is at
-  // most one) to settle, up to budgetMs. Resolves true when the transport is
-  // idle, false when the budget expired first.
+  // Wait until nothing is running, up to budgetMs. Resolves true only when the
+  // transport is actually idle.
+  //
+  // This used to attach to the queue tail and resolve TRUE unconditionally when
+  // that tail settled, which reported idle while an osascript was still typing
+  // in two ways: doctor() runs off the queue entirely, and the tail is captured
+  // at call time, so any operation enqueued afterwards reassigns it and drain
+  // settles on the older one. Its only consumer is shutdown, which skips the
+  // kill when drain says idle, so both cases could leave the relay exiting with
+  // a child still driving Conductor. Polling #busy cannot miss either, because
+  // #busy counts every run including the off-queue ones.
   drain(budgetMs) {
     if (this.#busy === 0) return Promise.resolve(true);
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(this.#busy === 0), budgetMs);
-      timer.unref?.();
-      const settle = () => {
-        clearTimeout(timer);
-        resolve(true);
+      const deadline = Date.now() + budgetMs;
+      const check = () => {
+        if (this.#busy === 0) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        const timer = setTimeout(check, 25);
+        timer.unref?.();
       };
-      this.#queue.then(settle, settle);
+      check();
     });
   }
 
   // Last resort for a forced exit: without this, the orphaned child survives
   // the parent and finishes the send with nobody left to observe it.
   killCurrentAutomation() {
-    const child = this.#currentChild;
-    if (!child || child.exitCode !== null || child.signalCode !== null) {
-      return false;
+    let killed = false;
+    for (const child of this.#currentChildren) {
+      if (!child || child.exitCode !== null || child.signalCode !== null) {
+        continue;
+      }
+      try {
+        child.kill('SIGKILL');
+        killed = true;
+      } catch {
+        // Already gone, or not ours to signal. Keep going: leaving another
+        // live child running is the outcome this exists to prevent.
+      }
     }
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      return false;
-    }
-    return true;
+    return killed;
   }
 
   send({
@@ -508,7 +532,7 @@ export class AccessibilityTransport {
           POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
-      this.#currentChild = pending.child;
+      this.#currentChildren.add(pending.child);
       const { stdout } = await pending;
       const result = parseResult(stdout);
       if (!pressMarkerPath) return result;
@@ -525,7 +549,7 @@ export class AccessibilityTransport {
       );
     } finally {
       this.#busy -= 1;
-      this.#currentChild = null;
+      if (pending?.child) this.#currentChildren.delete(pending.child);
     }
     } finally {
       if (pressMarkerDirectory) {
