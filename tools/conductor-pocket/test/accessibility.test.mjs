@@ -1569,3 +1569,26 @@ test('a missing Conductor window is recovered before the send gives up', async (
     `recovery budget ${budgetSeconds}s must outlast a wake but stay well inside the 45s automation timeout`,
   );
 });
+
+test('a windowless Conductor tells the operator the only thing that works', async () => {
+  // Verified live on 2026-08-19 against a real windowless Conductor (0 windows
+  // after 3 days uptime): `tell application "Conductor" to activate`,
+  // `open -a Conductor`, and clicking the Dock tile ALL leave it at zero
+  // windows, and no menu in the app creates one (File offers only Close Window
+  // and Close All). Only relaunching works. The recovery handler is still worth
+  // attempting for a wake or a relaunch in progress, but the copy must not tell
+  // the operator to do something that provably does not work.
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const copies = js.match(/conductor_window_unavailable:\s*\n?\s*'[^']+'/g) || [];
+  assert.ok(copies.length >= 2, 'the code must carry operator-facing copy');
+  for (const copy of copies) {
+    assert.match(
+      copy,
+      /reopen/i,
+      'windowless Conductor copy must name the action that actually works',
+    );
+  }
+});

@@ -227,7 +227,8 @@ const SEND_FAILURE_REASONS = Object.freeze({
   session_locked: 'The Mac is locked.',
   accessibility_disabled: 'Automation permission is off on the Mac.',
   conductor_not_running: 'Conductor is not running on the Mac.',
-  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  conductor_window_unavailable:
+    'Conductor has no window on the Mac. Quit and reopen it there.',
   composer_unavailable: 'The message box was not found in Conductor.',
   workspace_list_unavailable: 'The workspace list was not found in Conductor.',
   workspace_not_visible: 'This workspace is not visible in Conductor.',
@@ -328,7 +329,8 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   composer_changed_pre_send: 'The Conductor composer changed before sending.',
   composer_unavailable: 'The message box is not ready on your Mac.',
   conductor_not_running: 'Conductor is not open on your Mac.',
-  conductor_window_unavailable: 'Conductor has no open window on your Mac.',
+  conductor_window_unavailable:
+    'Conductor has no window on your Mac. Quit and reopen it there.',
   delivery_confirmation_timeout: 'Pocket could not verify delivery in time.',
   delivery_unknown: 'Pocket could not verify whether Conductor accepted it.',
   draft_conflict: 'The Conductor composer already has unsent text.',
@@ -5738,7 +5740,8 @@ const TAB_ACTION_MESSAGES = {
   session_not_visible: 'That chat is not open on the Mac.',
   user_input_active: 'Someone is using the Mac. Try again in a moment.',
   session_locked: 'The Mac is locked.',
-  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  conductor_window_unavailable:
+    'Conductor has no window on the Mac. Quit and reopen it there.',
 };
 
 function confirmCloseChat(session, { onClosed } = {}) {
