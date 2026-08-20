@@ -350,3 +350,35 @@ test('opening a chat lands on the newest message, not the last chat position', a
   assert.match(pinnedExpression, /!measurable/);
   assert.match(pinnedExpression, /distanceBefore < 48/);
 });
+
+test('returning to the app follows the newest message until moved by hand', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // A chat's messages arrive in two passes, a memory snapshot then the network
+  // refresh, and coming back to the app re-runs that. The first paint can hold
+  // a fraction of the messages, so every message landing afterwards is inserted
+  // ABOVE the reader. Measuring distance-from-bottom on that partial paint and
+  // then preserving it is what left the view stranded far up the page.
+  assert.match(js, /let transcriptMovedByHand = false;/);
+
+  // The signal must be a real gesture, never a programmatic scroll, or the
+  // app's own scroll writes would immediately clear it.
+  const gestureStart = js.indexOf('function noteReadGesture()');
+  assert.ok(gestureStart > 0, 'noteReadGesture must exist');
+  const gestureBody = js.slice(gestureStart, js.indexOf('\n}\n', gestureStart));
+  assert.match(gestureBody, /transcriptMovedByHand = true;/);
+
+  // Opening a different chat starts untouched again, so one chat's reading
+  // position can never be applied to another.
+  assert.match(js, /if \(transcriptSessionChanged\) transcriptMovedByHand = false;/);
+
+  const pinnedMatch = js.match(/const pinned =\s*\n?\s*([^;]+);/);
+  assert.ok(pinnedMatch, 'pinned must be derived');
+  assert.match(pinnedMatch[1], /!transcriptMovedByHand/);
+  // The deliberate preservation case survives: a reader who HAS scrolled keeps
+  // their distance from the end while messages stream in.
+  assert.match(pinnedMatch[1], /distanceBefore < 48/);
+})

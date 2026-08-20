@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-edit-always-20260819';
+} from './delivery-receipts.js?v=0.2.0-follows-newest-20260820';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-edit-always-20260819';
+} from './app-update.js?v=0.2.0-follows-newest-20260820';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-edit-always-20260819';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-edit-always-20260819';
-import { fetchJson } from './http.js?v=0.2.0-edit-always-20260819';
+} from './bootstrap-recovery.js?v=0.2.0-follows-newest-20260820';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-follows-newest-20260820';
+import { fetchJson } from './http.js?v=0.2.0-follows-newest-20260820';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-edit-always-20260819';
+} from './image-attachments.js?v=0.2.0-follows-newest-20260820';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-edit-always-20260819';
+} from './live-refresh.js?v=0.2.0-follows-newest-20260820';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-edit-always-20260819';
+} from './rich-text.js?v=0.2.0-follows-newest-20260820';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-edit-always-20260819';
+} from './read-state.js?v=0.2.0-follows-newest-20260820';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-edit-always-20260819';
+} from './transcript-focus.js?v=0.2.0-follows-newest-20260820';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-edit-always-20260819';
+} from './swipe-navigation.js?v=0.2.0-follows-newest-20260820';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-edit-always-20260819';
+const CLIENT_SHELL_REVISION = '0.2.0-follows-newest-20260820';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -2657,6 +2657,10 @@ function invalidateUnreadHeadEvidence({ render = true } = {}) {
 
 function noteReadGesture() {
   readGestureSequence += 1;
+  // A real touch, wheel or arrow key in the transcript, never a programmatic
+  // scroll. Until this happens the view follows the newest message, so content
+  // arriving after the first paint cannot strand the reader up the page.
+  transcriptMovedByHand = true;
   scheduleReadEvaluation();
 }
 
@@ -3621,6 +3625,16 @@ let lastCentredSessionId = null;
 // measured before the list is replaced, so without this the reading position
 // from one chat is applied to the next one opened.
 let lastTranscriptSessionId = null;
+// Whether the operator has moved this transcript themselves since it opened.
+// A chat's messages arrive in two passes, a memory snapshot and then the
+// network refresh, and returning from the background re-runs that. The first
+// paint can therefore hold a fraction of the messages, and every message that
+// lands afterwards is inserted ABOVE the reader, pushing them further from the
+// end. The old logic measured distance-from-bottom on that partial paint and
+// then faithfully preserved it, which is why coming back to the app left the
+// view stranded far up the page. Following the newest message until a real
+// gesture says otherwise is what makes that impossible.
+let transcriptMovedByHand = false;
 
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
@@ -3750,13 +3764,17 @@ function renderTranscript() {
   const transcriptSessionChanged =
     lastTranscriptSessionId !== state.route.sessionId;
   lastTranscriptSessionId = state.route.sessionId;
+  if (transcriptSessionChanged) transcriptMovedByHand = false;
   const measurable = transcriptScroll.clientHeight > 0;
   const distanceBefore =
     transcriptScroll.scrollHeight -
     transcriptScroll.clientHeight -
     transcriptScroll.scrollTop;
   const pinned =
-    transcriptSessionChanged || !measurable || distanceBefore < 48;
+    transcriptSessionChanged ||
+    !measurable ||
+    !transcriptMovedByHand ||
+    distanceBefore < 48;
   const messages = chronologicalTranscriptMessages([
     ...(state.messagesBySession.get(state.route.sessionId) || []),
     ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
