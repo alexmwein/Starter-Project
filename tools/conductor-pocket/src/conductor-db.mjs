@@ -163,20 +163,78 @@ function agentErrorSearchText(event) {
     .slice(0, 16_000);
 }
 
+// Causes that retrying cannot clear. Running out of session usage is the one
+// that matters most in practice: the client does keep retrying it, so it used
+// to be reported as "Reconnecting to agent", which tells the operator to wait
+// for a connection that was never broken. The limit resets on a clock, not when
+// a connection comes back, and nothing they do to the network helps.
+function definiteAgentErrorCode(searchText) {
+  if (
+    /\b(?:cybersecurity|trusted access for cyber)\b/i.test(searchText) &&
+    /\bchatgpt\.com\/cyber\b/i.test(searchText)
+  ) {
+    return 'cybersecurity_policy';
+  }
+  if (
+    /\b(?:usage limit|rate limit|quota|credits?|billing|resource exhausted|too many requests)\b/i.test(
+      searchText,
+    )
+  ) {
+    return 'usage_limit';
+  }
+  if (
+    /\bmodel\b.{0,80}\b(?:unavailable|not found|unsupported|unknown|disabled)\b/i.test(
+      searchText,
+    )
+  ) {
+    return 'model_unavailable';
+  }
+  if (
+    /\b(?:unauthori[sz]ed|authentication|credentials?|sign[ -]?in|log[ -]?in|api key)\b/i.test(
+      searchText,
+    )
+  ) {
+    return 'provider_auth_required';
+  }
+  if (
+    /\b(?:policy|safety|content filter|blocked by (?:the )?provider)\b/i.test(
+      searchText,
+    )
+  ) {
+    return 'policy_blocked';
+  }
+  return null;
+}
+
 export function classifyAgentError(event) {
   if (!event || typeof event !== 'object') return null;
   const systemSignal =
     event.type === 'system' ? event.subtype || event.status : null;
-  if (systemSignal === 'api_retry') {
-    return {
-      code: 'provider_reconnecting',
-      ...AGENT_ERROR_BEHAVIOR.provider_reconnecting,
-    };
-  }
+  // Cause before retry state. Both shortcuts below describe what the client is
+  // about to do, not why the turn failed, and they used to win outright: an
+  // api_retry returned immediately and willRetry skipped the entire text
+  // classification, so a usage limit could never be named even though its code
+  // and its retrying:false behaviour already existed.
+  // An explicit structured signal for a definite cause wins over text, so a
+  // permission prompt that happens to mention authentication is not re-read as
+  // something else.
   if (systemSignal === 'permission_denied') {
     return {
       code: 'permission_required',
       ...AGENT_ERROR_BEHAVIOR.permission_required,
+    };
+  }
+  const definiteCode = definiteAgentErrorCode(agentErrorSearchText(event));
+  if (definiteCode) {
+    return { code: definiteCode, ...AGENT_ERROR_BEHAVIOR[definiteCode] };
+  }
+  // api_retry is NOT such a signal: it says the client will try again, which is
+  // true of a usage limit too, and is exactly why one could masquerade as the
+  // other.
+  if (systemSignal === 'api_retry') {
+    return {
+      code: 'provider_reconnecting',
+      ...AGENT_ERROR_BEHAVIOR.provider_reconnecting,
     };
   }
   const isProviderError =
@@ -189,36 +247,9 @@ export function classifyAgentError(event) {
     code = 'provider_reconnecting';
   } else {
     const searchText = agentErrorSearchText(event);
-    if (
-      /\b(?:cybersecurity|trusted access for cyber)\b/i.test(searchText) &&
-      /\bchatgpt\.com\/cyber\b/i.test(searchText)
-    ) {
-      code = 'cybersecurity_policy';
-    } else if (
-      /\b(?:usage limit|rate limit|quota|credits?|billing|resource exhausted|too many requests)\b/i.test(
-        searchText,
-      )
-    ) {
-      code = 'usage_limit';
-    } else if (
-      /\bmodel\b.{0,80}\b(?:unavailable|not found|unsupported|unknown|disabled)\b/i.test(
-        searchText,
-      )
-    ) {
-      code = 'model_unavailable';
-    } else if (
-      /\b(?:unauthori[sz]ed|authentication|credentials?|sign[ -]?in|log[ -]?in|api key)\b/i.test(
-        searchText,
-      )
-    ) {
-      code = 'provider_auth_required';
-    } else if (
-      /\b(?:policy|safety|content filter|blocked by (?:the )?provider)\b/i.test(
-        searchText,
-      )
-    ) {
-      code = 'policy_blocked';
-    } else if (/\b(?:interrupt(?:ed)?|cancelled|canceled|aborted)\b/i.test(searchText)) {
+    // The definite causes were already ruled out above, so only the transient
+    // ones remain here.
+    if (/\b(?:interrupt(?:ed)?|cancelled|canceled|aborted)\b/i.test(searchText)) {
       code = 'turn_interrupted';
     } else if (
       /\b(?:capacity|overloaded|temporarily unavailable|service unavailable|upstream|server error)\b/i.test(

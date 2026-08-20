@@ -274,3 +274,58 @@ test('the browser renders only allowlisted error copy and a real cyber recovery 
   assert.match(stylesheet, /\.agent-error-copy a[\s\S]*text-decoration: underline/);
   assert.match(stylesheet, /\.agent-error-copy a:focus-visible/);
 });
+
+test('a usage limit is named as one even while the client keeps retrying', () => {
+  // Claude Code retries a usage limit, so the event carries willRetry:true or
+  // arrives as an api_retry. Both used to short-circuit to provider_reconnecting
+  // BEFORE the text was ever read, so the operator was told the agent was
+  // reconnecting when it had simply run out of session usage. A limit resets on
+  // a clock, not when a connection comes back, so nothing they do to the
+  // network helps and the wrong message sends them looking in the wrong place.
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'error',
+      content: 'Usage limit reached for this session',
+      willRetry: true,
+    }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'system',
+      subtype: 'api_retry',
+      content: 'rate limit reached, retrying',
+    }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+
+  // A genuine connection retry, with nothing in the text naming a definite
+  // cause, must still read as reconnecting.
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'system',
+      subtype: 'api_retry',
+      content: 'connection reset, retrying',
+    }),
+    { code: 'provider_reconnecting', severity: 'warning', retrying: true },
+  );
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'error',
+      content: 'socket hang up',
+      willRetry: true,
+    }),
+    { code: 'provider_reconnecting', severity: 'warning', retrying: true },
+  );
+
+  // An explicit permission signal outranks text inference, so a permission
+  // prompt mentioning authentication is not re-read as an auth failure.
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'system',
+      subtype: 'permission_denied',
+      content: 'needs authentication to approve this tool',
+    }),
+    { code: 'permission_required', severity: 'error', retrying: false },
+  );
+})
