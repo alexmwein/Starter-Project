@@ -478,6 +478,11 @@ export class AccessibilityTransport {
     }
     const attemptStartedAt = Date.now();
     this.#busy += 1;
+    // Hoisted so the finally below can untrack exactly THIS run's child. It
+    // cannot read a const scoped inside the try, and getting that wrong threw
+    // on every send while the suite stayed green, because the test guarding
+    // this reads the file as text instead of running it.
+    let runChild = null;
     try {
     try {
       const pending = execFileAsync('/usr/bin/osascript', [scriptPath], {
@@ -532,7 +537,8 @@ export class AccessibilityTransport {
           POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
-      this.#currentChildren.add(pending.child);
+      runChild = pending.child;
+      this.#currentChildren.add(runChild);
       const { stdout } = await pending;
       const result = parseResult(stdout);
       if (!pressMarkerPath) return result;
@@ -549,7 +555,7 @@ export class AccessibilityTransport {
       );
     } finally {
       this.#busy -= 1;
-      if (pending?.child) this.#currentChildren.delete(pending.child);
+      if (runChild) this.#currentChildren.delete(runChild);
     }
     } finally {
       if (pressMarkerDirectory) {

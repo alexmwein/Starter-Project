@@ -65,13 +65,14 @@ test('the transport records its child while a run is in flight', async () => {
   // while a 45s send was still typing, and the killer then found nothing and
   // orphaned exactly the child it exists to kill.
   assert.match(source, /#currentChildren = new Set\(\)/);
-  assert.match(source, /this\.#currentChildren\.add\(pending\.child\)/);
+  assert.match(source, /runChild = pending\.child;/);
+  assert.match(source, /this\.#currentChildren\.add\(runChild\)/);
   assert.match(source, /const \{ stdout \} = await pending/);
   // The finally block removes only THIS run's child, so a settled run cannot be
   // mistaken for an in-flight one and a concurrent run is not un-tracked.
   assert.match(
     source,
-    /finally \{\s*this\.#busy -= 1;\s*if \(pending\?\.child\) this\.#currentChildren\.delete\(pending\.child\);\s*\}/,
+    /finally \{\s*this\.#busy -= 1;\s*if \(runChild\) this\.#currentChildren\.delete\(runChild\);\s*\}/,
   );
   // drain must observe #busy, which counts every run including off-queue ones,
   // rather than a queue tail that can be reassigned or bypassed.
@@ -86,3 +87,29 @@ test('the transport records its child while a run is in flight', async () => {
     'drain must not resolve on a captured queue tail',
   );
 });
+
+test('the transport actually runs, which a source-text assertion cannot prove', async () => {
+  // The assertions above read accessibility.mjs as TEXT. That is why a change
+  // to the child tracking that threw ReferenceError on every single send left
+  // this whole file green. This one executes the real module against a target
+  // that is guaranteed absent, so it exercises #run end to end (including the
+  // finally block that untracks the child) without touching Conductor.
+  const { AccessibilityTransport } = await import('../src/accessibility.mjs');
+  const transport = new AccessibilityTransport();
+  const result = await transport.send({
+    workspaceName: `pocket-test-absent-${process.pid}`,
+    sessionTitle: `pocket-test-absent-${process.pid}`,
+    sessionOrdinal: 1,
+    message: 'shutdown tracking smoke test',
+    timeoutMs: 20_000,
+  });
+  // Any structured outcome proves #run completed. What must NOT happen is an
+  // exception escaping, which is exactly the regression this catches.
+  assert.equal(typeof result, 'object');
+  assert.equal(typeof result.code, 'string');
+  assert.equal(result.ok, false);
+  // The finally block must have untracked the child, so the transport reports
+  // idle and drain resolves true rather than hanging on a stale tail.
+  assert.equal(transport.busy, false);
+  assert.equal(await transport.drain(1_000), true);
+})
