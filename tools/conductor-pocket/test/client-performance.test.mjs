@@ -382,3 +382,32 @@ test('returning to the app follows the newest message until moved by hand', asyn
   // their distance from the end while messages stream in.
   assert.match(pinnedMatch[1], /distanceBefore < 48/);
 })
+
+test('the composer growing corrects scroll in the same frame it paints', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // A ResizeObserver callback runs after layout but BEFORE paint, so a scroll
+  // written there lands in the same frame as the taller composer. Deferring it
+  // into a requestAnimationFrame meant the browser first painted the grown dock
+  // over the last message and only then snapped the scroll: a visible flicker
+  // on every line wrap, which is the thing this handler exists to prevent.
+  const start = js.indexOf('let lastComposerHeight = 0;');
+  assert.ok(start > 0, 'composer height tracking must exist');
+  const body = js.slice(start, js.indexOf('observer.observe(root);', start));
+  assert.match(body, /scroller\.scrollTop = scroller\.scrollHeight;/);
+  // The CALL form, so the word may still appear in the comment explaining why
+  // it must not be used here.
+  assert.doesNotMatch(
+    body,
+    /requestAnimationFrame\(/,
+    'the correction must not be deferred a frame, that is the flicker',
+  );
+
+  // And it must stay conditional: a reader who is not at the bottom needs no
+  // correction at all, because the dock is out of flow and nothing they can see
+  // moved.
+  assert.match(body, /!wasPinned\) return;/);
+})
