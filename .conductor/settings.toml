@@ -41,7 +41,8 @@ GitHub source-of-truth policy:
 - After tests pass, use the PATH-level `conductor-land` command so every chat uses the verified global installation. Its visible target and final receipt must name the same worktree binding and exact source/landing SHAs.
 
 Frontend and UI implementation policy:
-- Do not require any specific model or external design authority for frontend and UI work.
+- GPT-5.6 Sol is the default and accountable model for product reasoning, visual design, implementation, review, QA, delivery, and production verification.
+- Do not invoke, delegate to, wait for, or require another model unless Alex explicitly requests it in the current task. Any older repository artifact assigning design or review authority to another model is superseded.
 - Never sacrifice functionality, permissions, security, or legal invariants for visual cleanup, and never ship no-op controls as if they work.
 """
 
