@@ -1263,6 +1263,73 @@ class ConnectionProbe {
   }
 }
 
+// Reads the local VDM seat producer. Everything is whitelisted into a small
+// fixed shape: the raw payload carries fingerprints, refresh state and full
+// history, none of which the phone needs, and none of which should cross the
+// wire just because it happened to be in the response.
+//
+// Loopback only, short timeout, and every failure degrades to available:false
+// rather than throwing. Usage is a convenience readout; it must never be able
+// to take down a screen the operator opened to diagnose something else.
+const SEAT_USAGE_URL = 'http://127.0.0.1:3333/api/profiles';
+const SEAT_USAGE_TIMEOUT_MS = 2_000;
+
+function seatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  // VDM reports utilization as a 0..1 fraction.
+  return Math.min(100, Math.round(number * 100));
+}
+
+function seatResetAt(value) {
+  const number = Number(value);
+  // Seconds since epoch in the producer, milliseconds everywhere here.
+  return Number.isSafeInteger(number) && number > 0 ? number * 1000 : null;
+}
+
+export async function readSeatUsage(fetchImpl = fetch) {
+  let payload;
+  try {
+    const response = await fetchImpl(SEAT_USAGE_URL, {
+      signal: AbortSignal.timeout(SEAT_USAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) return { available: false, reason: 'producer_error' };
+    payload = await response.json();
+  } catch {
+    return { available: false, reason: 'producer_unreachable' };
+  }
+  if (!payload || !Array.isArray(payload.profiles)) {
+    return { available: false, reason: 'producer_unreadable' };
+  }
+  const seats = payload.profiles
+    .filter((profile) => profile && typeof profile === 'object')
+    .map((profile) => {
+      const limits = profile.rateLimits || {};
+      const fiveHour = limits.fiveH || {};
+      const sevenDay = limits.sevenD || {};
+      return {
+        name: typeof profile.name === 'string' ? profile.name.slice(0, 64) : '',
+        label:
+          typeof profile.label === 'string' ? profile.label.slice(0, 120) : '',
+        active: profile.isActive === true,
+        // A seat can be fine on the 5 hour window and exhausted on the weekly
+        // one, which is exactly the state that reads as "out of usage" with no
+        // explanation, so both are reported rather than one summary number.
+        fiveHourPercent: seatPercent(fiveHour.utilization),
+        fiveHourBlocked: fiveHour.status === 'rejected',
+        fiveHourResetAt: seatResetAt(fiveHour.reset),
+        weeklyPercent: seatPercent(sevenDay.utilization),
+        weeklyBlocked: sevenDay.status === 'rejected',
+        weeklyResetAt: seatResetAt(sevenDay.reset),
+        blocked: limits.status === 'rejected',
+        dormant: profile.dormant === true,
+        expired: profile.expired === true,
+      };
+    })
+    .filter((seat) => seat.name !== '');
+  return { available: true, seats, fetchedAt: Date.now() };
+}
+
 export function createPocketServer({
   configStore,
   security,
@@ -2397,6 +2464,15 @@ export function createPocketServer({
       if (request.method === 'GET' && requestUrl.pathname === '/api/devices') {
         const devices = security.listDevices(request);
         return sendJson(response, 200, { devices }, config);
+      }
+
+      // Seat usage, read from the local VDM producer on 3333. Without it the
+      // phone can only report what the agent said at the moment it failed, and
+      // a limit that has since reset still reads as current. This is the live
+      // number, so "am I actually out?" is answerable from the phone.
+      if (request.method === 'GET' && requestUrl.pathname === '/api/usage') {
+        security.session(request, { requireUnlocked: true });
+        return sendJson(response, 200, await readSeatUsage(), config);
       }
 
       const revokeDevice = pathMatch(

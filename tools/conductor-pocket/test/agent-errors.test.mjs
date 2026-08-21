@@ -329,3 +329,44 @@ test('a usage limit is named as one even while the client keeps retrying', () =>
     { code: 'permission_required', severity: 'error', retrying: false },
   );
 })
+
+test('a superseded agent error stops giving advice, and seat usage is whitelisted', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // An agent error records a moment, not a running state. Once the agent has
+  // produced anything newer, "Out of usage for this session. This resets on a
+  // timer..." is no longer true, and leaving that advice on screen sent the
+  // operator chasing a limit that had already reset.
+  assert.match(js, /let newestRootEventRowId = 0;/);
+  assert.match(js, /superseded \? null : guidance/);
+  assert.match(js, /card\.classList\.add\('is-past'\)/);
+
+  // The raw producer payload carries fingerprints, refresh state and full
+  // history. None of it should cross the wire just because it was in the
+  // response, so the shape is a fixed whitelist.
+  const server = await fs.readFile(
+    new URL('../src/server.mjs', import.meta.url),
+    'utf8',
+  );
+  const readerStart = server.indexOf('export async function readSeatUsage');
+  assert.ok(readerStart > 0, 'readSeatUsage must exist');
+  const readerBody = server.slice(readerStart, server.indexOf('\n}\n', readerStart));
+  for (const leaked of ['fingerprint', 'refreshFailed', 'utilizationHistory', 'weeklyHistory']) {
+    assert.doesNotMatch(
+      readerBody,
+      new RegExp(leaked),
+      `${leaked} must not be forwarded to the phone`,
+    );
+  }
+  // Both windows are reported separately: a seat can sit at 0% on the five hour
+  // window while the weekly one is spent, which is the state that reads as
+  // unexplained. Observed live 2026-08-20: 5h 0%, weekly 100%, blocked.
+  assert.match(readerBody, /fiveHourPercent/);
+  assert.match(readerBody, /weeklyPercent/);
+  assert.match(readerBody, /weeklyBlocked/);
+  // A convenience readout must never take down the screen opened to diagnose
+  // something else.
+  assert.match(readerBody, /available: false, reason: 'producer_unreachable'/);
+})

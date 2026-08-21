@@ -2693,3 +2693,45 @@ button:active {
 .sheet-chats-action[aria-busy='true'] {
   opacity: 0.55;
 }
+
+/* Seat usage in the Connection sheet. Deliberately plain rows: this is a
+   readout the operator checks when something already went wrong, so it needs to
+   be scannable, not decorative. */
+.usage-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.usage-heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+
+.usage-seat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 0.875rem;
+}
+
+.usage-seat-name {
+  overflow-wrap: anywhere;
+}
+
+.usage-seat-value {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-seat.is-blocked .usage-seat-value {
+  color: var(--down);
+  font-weight: 600;
+}

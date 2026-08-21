@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-names-usage-limit-20260820';
+} from './delivery-receipts.js?v=0.2.0-seat-usage-20260820';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-names-usage-limit-20260820';
+} from './app-update.js?v=0.2.0-seat-usage-20260820';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-names-usage-limit-20260820';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-names-usage-limit-20260820';
-import { fetchJson } from './http.js?v=0.2.0-names-usage-limit-20260820';
+} from './bootstrap-recovery.js?v=0.2.0-seat-usage-20260820';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-seat-usage-20260820';
+import { fetchJson } from './http.js?v=0.2.0-seat-usage-20260820';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-names-usage-limit-20260820';
+} from './image-attachments.js?v=0.2.0-seat-usage-20260820';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-names-usage-limit-20260820';
+} from './live-refresh.js?v=0.2.0-seat-usage-20260820';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-names-usage-limit-20260820';
+} from './rich-text.js?v=0.2.0-seat-usage-20260820';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-names-usage-limit-20260820';
+} from './read-state.js?v=0.2.0-seat-usage-20260820';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-names-usage-limit-20260820';
+} from './transcript-focus.js?v=0.2.0-seat-usage-20260820';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-names-usage-limit-20260820';
+} from './swipe-navigation.js?v=0.2.0-seat-usage-20260820';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-names-usage-limit-20260820';
+const CLIENT_SHELL_REVISION = '0.2.0-seat-usage-20260820';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3633,6 +3633,10 @@ let lastCentredSessionId = null;
 // measured before the list is replaced, so without this the reading position
 // from one chat is applied to the next one opened.
 let lastTranscriptSessionId = null;
+// Row id of the newest root event on screen. An agent error is a record of a
+// moment, not a running state, so once anything newer exists its "do this now"
+// guidance is no longer true and must stop being shown as advice.
+let newestRootEventRowId = 0;
 // Whether the operator has moved this transcript themselves since it opened.
 // A chat's messages arrive in two passes, a memory snapshot and then the
 // network refresh, and returning from the background re-runs that. The first
@@ -3787,6 +3791,13 @@ function renderTranscript() {
     ...(state.messagesBySession.get(state.route.sessionId) || []),
     ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
   ]);
+  newestRootEventRowId = messages.reduce((newest, message) => {
+    if (!['user', 'assistant', 'agent-error', 'turn-result'].includes(message.kind)) {
+      return newest;
+    }
+    const rowId = Number(message.rowId);
+    return Number.isFinite(rowId) && rowId > newest ? rowId : newest;
+  }, 0);
   const { entries, toolResults } = buildFocusedTranscript(messages, {
     sessionStatus: session?.status || 'unknown',
   });
@@ -4313,7 +4324,14 @@ function renderMessage(message, toolResults) {
           text: 'Pocket grouped these repeated failures. They do not by themselves stop the main turn; open it on your Mac only if you need the private action details.',
         })
       : renderAgentErrorGuidance(presentation);
-    return node('li', {
+    // Superseded means the agent has produced something since, so whatever this
+    // said about the current state is over. "Out of usage for this session"
+    // sitting under a finished reply reads as a live state, and sent the
+    // operator chasing a limit that had already reset.
+    const rowId = Number(message.rowId);
+    const superseded =
+      Number.isFinite(rowId) && newestRootEventRowId > 0 && rowId < newestRootEventRowId;
+    const card = node('li', {
       className: 'message agent-error',
       role: 'alert',
     }, [
@@ -4321,14 +4339,16 @@ function renderMessage(message, toolResults) {
         icon('warn'),
         node('div', { className: 'agent-error-copy' }, [
           node('strong', { className: 'agent-error-title', text: title }),
-          guidance,
+          superseded ? null : guidance,
           node('code', {
             className: 'agent-error-code',
             text: presentation.code,
           }),
-        ]),
+        ].filter(Boolean)),
       ]),
     ]);
+    if (superseded) card.classList.add('is-past');
+    return card;
   }
   return null;
 }
@@ -5892,6 +5912,46 @@ function openChatsSheet() {
   );
 }
 
+
+async function appendSeatUsage(content) {
+  const section = node('div', { className: 'usage-section' }, [
+    node('div', { className: 'usage-heading', text: 'Claude seats' }),
+  ]);
+  content.append(section);
+  let usage;
+  try {
+    usage = await request('/api/usage');
+  } catch {
+    usage = { available: false, reason: 'producer_unreachable' };
+  }
+  if (!usage?.available || !Array.isArray(usage.seats) || usage.seats.length === 0) {
+    section.append(
+      node('p', { className: 'sheet-note', text: 'Seat usage is not being reported right now.' }),
+    );
+    return;
+  }
+  for (const seat of usage.seats) {
+    const parts = [];
+    if (seat.fiveHourPercent !== null) parts.push(`5h ${seat.fiveHourPercent}%`);
+    if (seat.weeklyPercent !== null) parts.push(`week ${seat.weeklyPercent}%`);
+    const blocked = seat.blocked || seat.fiveHourBlocked || seat.weeklyBlocked;
+    section.append(
+      node('div', { className: `usage-seat${blocked ? ' is-blocked' : ''}` }, [
+        node('span', { className: 'usage-seat-name', text: seat.label || seat.name }),
+        node('span', {
+          className: 'usage-seat-value',
+          // Naming which window is spent is the whole point: "out of usage"
+          // with no window named is what sent the operator looking in the
+          // wrong place.
+          text: blocked
+            ? `${seat.weeklyBlocked ? 'Weekly spent' : 'Limit hit'} · ${parts.join(' · ')}`
+            : parts.join(' · ') || 'No data',
+        }),
+      ]),
+    );
+  }
+}
+
 async function openConnectionSheet() {
   const startedAt = performance.now();
   const content = node('div', {}, skeletonRows(4));
@@ -5916,6 +5976,13 @@ async function openConnectionSheet() {
         ]),
       );
     });
+    // Seat usage, live from the local producer. The agent only reports a limit
+    // at the moment it hits one, so an exhausted seat and a long-since-reset
+    // one look identical afterwards. This answers "am I actually out" without
+    // going to the Mac, and it shows the two windows separately because a seat
+    // can sit at 0% on the five hour window while the weekly one is spent,
+    // which is precisely the state that reads as unexplained.
+    void appendSeatUsage(content);
     content.append(
       node('button', {
         className: 'text-button',
