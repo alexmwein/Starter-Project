@@ -13,7 +13,9 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+
+env:
+  ARTIFACT_BRANCH: automation/peptide-ai-output
 
 concurrency:
   group: peptide-content-ai
@@ -28,6 +30,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Restore the last generated digest
+        shell: bash
+        run: |
+          if git fetch origin "refs/heads/$ARTIFACT_BRANCH:refs/remotes/origin/$ARTIFACT_BRANCH"; then
+            if git cat-file -e "origin/$ARTIFACT_BRANCH:biologix-strategy-board/content-intel/ai-briefs.js"; then
+              git show "origin/$ARTIFACT_BRANCH:biologix-strategy-board/content-intel/ai-briefs.js" \
+                > biologix-strategy-board/content-intel/ai-briefs.js
+            fi
+          else
+            echo "No prior artifact branch exists; the first safe run will create it."
+          fi
 
       - name: Generate only when the Studio has headroom
         id: generate
@@ -48,33 +62,38 @@ jobs:
           if [[ "$generation_status" != "0" ]]; then
             exit "$generation_status"
           fi
-          if [[ -n "$(git status --porcelain -- biologix-strategy-board/content-intel/ai-briefs.js)" ]]; then
+          generation_state=$(node -e 'const fs=require("fs");const lines=fs.readFileSync("/tmp/peptide-content-ai-result.json","utf8").trim().split(/\n/);process.stdout.write(JSON.parse(lines.at(-1)).state)')
+          echo "state=$generation_state" >> "$GITHUB_OUTPUT"
+          if [[ "$generation_state" == "generated" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish the generated artifact through a pull request
+      - name: Update the dedicated artifact branch
         if: steps.generate.outputs.changed == 'true'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          source_digest=$(node -e 'const fs=require("fs");const s=fs.readFileSync("biologix-strategy-board/content-intel/ai-briefs.js","utf8");const d=JSON.parse(s.slice(s.indexOf("{"),s.lastIndexOf("}")+1));process.stdout.write(d.source_digest.slice(0,12))')
-          ai_branch="automation/peptide-ai-${source_digest}"
-          if git ls-remote --exit-code --heads origin "$ai_branch" >/dev/null 2>&1; then
-            echo "Generation branch already exists: $ai_branch"
-            exit 0
+          artifact_file=biologix-strategy-board/content-intel/ai-briefs.js
+          task_tmp=$(mktemp -d)
+          trap 'rm -rf "$task_tmp"' EXIT
+          cp "$artifact_file" "$task_tmp/ai-briefs.js"
+          git restore --source=HEAD --worktree -- "$artifact_file"
+
+          if git show-ref --verify --quiet "refs/remotes/origin/$ARTIFACT_BRANCH"; then
+            git switch -C "$ARTIFACT_BRANCH" "origin/$ARTIFACT_BRANCH"
+          else
+            git switch -c "$ARTIFACT_BRANCH"
           fi
-          git switch -c "$ai_branch"
+
+          mkdir -p "$(dirname "$artifact_file")"
+          cp "$task_tmp/ai-briefs.js" "$artifact_file"
           git config user.name "ovo-studio-ai[bot]"
           git config user.email "ovo-studio-ai[bot]@users.noreply.github.com"
-          git add biologix-strategy-board/content-intel/ai-briefs.js
+          git add "$artifact_file"
+          if git diff --cached --quiet; then
+            echo "The artifact branch already contains this digest."
+            exit 0
+          fi
           git commit -m "chore(intel): refresh background AI briefs"
-          git push -u origin "$ai_branch"
-          pr_url=$(gh pr create \
-            --base main \
-            --head "$ai_branch" \
-            --title "chore(intel): refresh background AI briefs" \
-            --body "Generated on the private ovo-studio runner by qwen3:1.7b. The model selected evidence and structural angles only; deterministic templates compiled the published briefs. No cloud inference or model-controlled publishing action was used.")
-          gh pr merge "$pr_url" --auto --squash --delete-branch
+          git push -u origin "$ARTIFACT_BRANCH"

@@ -16,6 +16,12 @@ retained in the browser artifact, and the model never controls repository
 actions. The request uses one 4K context, a 320-token output cap, one request at
 a time, and `keep_alive: 0` so the model unloads immediately.
 
+Generated output is updated with fast-forward commits on the dedicated
+`automation/peptide-ai-output` branch. It never writes to `main`, requests pull
+request permission, or weakens repository protection. Before inference, each
+run restores the latest artifact digest from that branch, so unchanged evidence
+exits without loading the model.
+
 Run the focused checks with:
 
 ```bash
