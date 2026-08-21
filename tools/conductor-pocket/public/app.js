@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-no-false-errors-20260820';
+} from './delivery-receipts.js?v=0.2.0-keeps-place-20260821';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-no-false-errors-20260820';
+} from './app-update.js?v=0.2.0-keeps-place-20260821';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-no-false-errors-20260820';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-no-false-errors-20260820';
-import { fetchJson } from './http.js?v=0.2.0-no-false-errors-20260820';
+} from './bootstrap-recovery.js?v=0.2.0-keeps-place-20260821';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-keeps-place-20260821';
+import { fetchJson } from './http.js?v=0.2.0-keeps-place-20260821';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-no-false-errors-20260820';
+} from './image-attachments.js?v=0.2.0-keeps-place-20260821';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-no-false-errors-20260820';
+} from './live-refresh.js?v=0.2.0-keeps-place-20260821';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-no-false-errors-20260820';
+} from './rich-text.js?v=0.2.0-keeps-place-20260821';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-no-false-errors-20260820';
+} from './read-state.js?v=0.2.0-keeps-place-20260821';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-no-false-errors-20260820';
+} from './transcript-focus.js?v=0.2.0-keeps-place-20260821';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-no-false-errors-20260820';
+} from './swipe-navigation.js?v=0.2.0-keeps-place-20260821';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-no-false-errors-20260820';
+const CLIENT_SHELL_REVISION = '0.2.0-keeps-place-20260821';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3032,9 +3032,27 @@ function createComposer() {
 function updateRoutePanels() {
   if (!state.shell) return;
   const { view } = state.route;
+  const scroller = state.shell.transcriptScroll;
+  const wasShowingTranscript =
+    state.shell.transcriptPanel.classList.contains('is-active');
+  // Measured BEFORE the class flips, because after it the position is already
+  // gone. Anchored to the end rather than to scrollTop so it survives messages
+  // arriving while the transcript was hidden.
+  if (wasShowingTranscript && view !== 'transcript' && scroller?.clientHeight > 0) {
+    transcriptHiddenAnchor =
+      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+  }
   state.shell.workspacePanel.classList.toggle('is-active', view === 'workspaces');
   state.shell.sessionPanel.classList.toggle('is-active', view === 'sessions');
   state.shell.transcriptPanel.classList.toggle('is-active', view === 'transcript');
+  if (view !== 'transcript' || transcriptHiddenAnchor === null || !scroller) return;
+  // Reading scrollHeight forces the layout the panel just gained, so this lands
+  // in the same frame the panel becomes visible and nothing renders at the top
+  // first. renderTranscript measures afterwards and sees the restored position.
+  const restored =
+    scroller.scrollHeight - scroller.clientHeight - transcriptHiddenAnchor;
+  scroller.scrollTop = Math.max(0, restored);
+  transcriptHiddenAnchor = null;
 }
 
 function navigate(route, push = true) {
@@ -3665,6 +3683,14 @@ let lastTranscriptSessionId = null;
 let newestRootEventRowId = 0;
 // Seat usage is cached because it is rendered from the always-visible header.
 // Fetching per render would loop: fetch, store, render, fetch.
+// Distance from the end of the transcript at the moment its panel was hidden.
+// Panels are toggled with display:none, and the browser DISCARDS the scroll
+// position of anything display:none, so leaving the transcript and coming back
+// always returned scrollTop to 0. No amount of correcting when the scroll is
+// written can fix that, because nothing in the app did the resetting. Captured
+// on the way out, reapplied on the way in.
+let transcriptHiddenAnchor = null;
+
 let seatUsageCache = null;
 let seatUsageInFlight = false;
 

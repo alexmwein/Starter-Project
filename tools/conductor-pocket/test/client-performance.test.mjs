@@ -473,3 +473,37 @@ test('account usage is reachable when nothing is wrong', async () => {
   assert.match(voiceBody, /fiveHourPercent/);
   assert.match(voiceBody, /Math\.max/);
 })
+
+test('leaving a chat and coming back keeps the reading position', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const css = await fs.readFile(
+    new URL('../public/app.css', import.meta.url),
+    'utf8',
+  );
+
+  // Panels are toggled with display:none, and the browser DISCARDS the scroll
+  // position of anything display:none. So going to Workspaces and back always
+  // returned the transcript to the top, and no amount of correcting WHEN the
+  // app writes scroll could fix it, because the app was not doing the
+  // resetting. This was the jump that survived every other fix.
+  assert.match(css, /\.panel \{[\s\S]*?display: none;/);
+  assert.match(js, /let transcriptHiddenAnchor = null;/);
+
+  const updateStart = js.indexOf('function updateRoutePanels()');
+  assert.ok(updateStart > 0, 'updateRoutePanels must exist');
+  const updateBody = js.slice(updateStart, js.indexOf('\n}\n', updateStart));
+
+  // Captured BEFORE the class flips, or the position is already gone.
+  const capture = updateBody.indexOf('transcriptHiddenAnchor =\n');
+  const flip = updateBody.indexOf("classList.toggle('is-active', view === 'transcript')");
+  assert.ok(capture > 0 && flip > 0 && capture < flip, 'anchor must be captured before the panel is hidden');
+
+  // Anchored to the end, so messages arriving while away do not move it.
+  assert.match(updateBody, /scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop/);
+  assert.match(updateBody, /scroller\.scrollTop = Math\.max\(0, restored\)/);
+  // Same-frame, like every other correction in this file.
+  assert.doesNotMatch(updateBody, /requestAnimationFrame\(/);
+})
