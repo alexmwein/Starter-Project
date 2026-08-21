@@ -2735,3 +2735,27 @@ button:active {
   color: var(--down);
   font-weight: 600;
 }
+
+/* The connection line under the title is the way into the Connection sheet,
+   which is where usage lives. It used to be a plain div, so that sheet could
+   only be reached from an offline banner: exactly when it was least useful. */
+button.connection-voice {
+  padding: 2px 0;
+  background: transparent;
+  text-align: left;
+}
+
+button.connection-voice:active {
+  transform: none;
+  opacity: 0.6;
+}
+
+.connection-usage {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.connection-usage.is-blocked {
+  color: var(--down);
+  font-weight: 600;
+}

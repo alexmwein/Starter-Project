@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-steady-view-20260820';
+} from './delivery-receipts.js?v=0.2.0-usage-visible-20260820';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-steady-view-20260820';
+} from './app-update.js?v=0.2.0-usage-visible-20260820';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-steady-view-20260820';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-steady-view-20260820';
-import { fetchJson } from './http.js?v=0.2.0-steady-view-20260820';
+} from './bootstrap-recovery.js?v=0.2.0-usage-visible-20260820';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-usage-visible-20260820';
+import { fetchJson } from './http.js?v=0.2.0-usage-visible-20260820';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-steady-view-20260820';
+} from './image-attachments.js?v=0.2.0-usage-visible-20260820';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-steady-view-20260820';
+} from './live-refresh.js?v=0.2.0-usage-visible-20260820';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-steady-view-20260820';
+} from './rich-text.js?v=0.2.0-usage-visible-20260820';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-steady-view-20260820';
+} from './read-state.js?v=0.2.0-usage-visible-20260820';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-steady-view-20260820';
+} from './transcript-focus.js?v=0.2.0-usage-visible-20260820';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-steady-view-20260820';
+} from './swipe-navigation.js?v=0.2.0-usage-visible-20260820';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-steady-view-20260820';
+const CLIENT_SHELL_REVISION = '0.2.0-usage-visible-20260820';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3181,19 +3181,45 @@ function connectionVoice() {
 }
 
 function renderConnectionVoice(container) {
+  if (!container) return;
   const voice = connectionVoice();
   container.replaceChildren();
   container.className = `connection-voice ${voice.className === 'down' ? 'is-down' : voice.className === 'wait' ? 'is-wait' : ''}`;
   if (voice.dot) container.append(node('span', { className: `status-dot ${voice.dot}` }));
   else container.append(icon(voice.iconName));
   container.append(document.createTextNode(voice.text));
+  // The higher of the two windows, because either one alone can stop a turn and
+  // a seat routinely sits near zero on one while the other is spent. Shown here
+  // so "am I out of usage" is answerable at a glance, not only after something
+  // has already failed.
+  const seat = activeSeat();
+  if (!seat) return;
+  const worst = Math.max(
+    Number.isFinite(seat.weeklyPercent) ? seat.weeklyPercent : -1,
+    Number.isFinite(seat.fiveHourPercent) ? seat.fiveHourPercent : -1,
+  );
+  if (worst < 0) return;
+  const blocked = seat.blocked || seat.weeklyBlocked || seat.fiveHourBlocked;
+  container.append(
+    node('span', {
+      className: `connection-usage${blocked ? ' is-blocked' : ''}`,
+      text: blocked ? `· ${seat.name} out` : `· ${seat.name} ${worst}%`,
+    }),
+  );
 }
 
 function renderWorkspacePanel() {
   if (!state.shell) return;
   const panel = state.shell.workspacePanel;
-  const connection = node('div', { className: 'connection-voice' });
+  const connection = node('button', {
+    className: 'connection-voice',
+    type: 'button',
+    'aria-label': 'Connection and account usage',
+    on: { click: () => openConnectionSheet() },
+  });
+  state.shell.connectionVoice = connection;
   renderConnectionVoice(connection);
+  void refreshSeatUsage();
   const header = node('header', { className: 'root-header' }, [
     node('div', {}, [node('h1', { className: 'root-title', text: 'Workspaces' }), connection]),
     node('div', { className: 'root-actions' }, [
@@ -3637,6 +3663,32 @@ let lastTranscriptSessionId = null;
 // moment, not a running state, so once anything newer exists its "do this now"
 // guidance is no longer true and must stop being shown as advice.
 let newestRootEventRowId = 0;
+// Seat usage is cached because it is rendered from the always-visible header.
+// Fetching per render would loop: fetch, store, render, fetch.
+let seatUsageCache = null;
+let seatUsageInFlight = false;
+
+async function refreshSeatUsage({ force = false } = {}) {
+  if (seatUsageInFlight) return seatUsageCache;
+  if (seatUsageCache && !force) return seatUsageCache;
+  seatUsageInFlight = true;
+  try {
+    seatUsageCache = await request('/api/usage');
+  } catch {
+    seatUsageCache = { available: false, reason: 'producer_unreachable' };
+  } finally {
+    seatUsageInFlight = false;
+  }
+  if (state.shell) renderConnectionVoice(state.shell.connectionVoice);
+  return seatUsageCache;
+}
+
+// The seat the agent is actually running on, which is the only one whose limit
+// can stop a turn.
+function activeSeat() {
+  if (!seatUsageCache?.available || !Array.isArray(seatUsageCache.seats)) return null;
+  return seatUsageCache.seats.find((seat) => seat.active) || null;
+}
 // Whether the operator has moved this transcript themselves since it opened.
 // A chat's messages arrive in two passes, a memory snapshot and then the
 // network refresh, and returning from the background re-runs that. The first
@@ -5924,17 +5976,12 @@ function openChatsSheet() {
 }
 
 
-async function appendSeatUsage(content) {
+async function appendSeatUsage(content, { force = false } = {}) {
   const section = node('div', { className: 'usage-section' }, [
     node('div', { className: 'usage-heading', text: 'Claude seats' }),
   ]);
   content.append(section);
-  let usage;
-  try {
-    usage = await request('/api/usage');
-  } catch {
-    usage = { available: false, reason: 'producer_unreachable' };
-  }
+  const usage = await refreshSeatUsage({ force });
   if (!usage?.available || !Array.isArray(usage.seats) || usage.seats.length === 0) {
     section.append(
       node('p', { className: 'sheet-note', text: 'Seat usage is not being reported right now.' }),
@@ -5993,7 +6040,7 @@ async function openConnectionSheet() {
     // going to the Mac, and it shows the two windows separately because a seat
     // can sit at 0% on the five hour window while the weekly one is spent,
     // which is precisely the state that reads as unexplained.
-    void appendSeatUsage(content);
+    void appendSeatUsage(content, { force: true });
     content.append(
       node('button', {
         className: 'text-button',

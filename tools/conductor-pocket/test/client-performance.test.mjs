@@ -441,3 +441,35 @@ test('no scroll correction is ever deferred a frame', async () => {
     );
   }
 })
+
+test('account usage is reachable when nothing is wrong', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // The Connection sheet holds the seat usage, and it used to be reachable ONLY
+  // from the offline banner and a button hidden unless the Mac was down. So the
+  // one question it answers, "am I actually out of usage", could not be asked
+  // while the app looked healthy, which is exactly when it gets asked.
+  assert.match(
+    js,
+    /const connection = node\('button', \{\s*\n\s*className: 'connection-voice'/,
+    'the always-visible connection line must be the way in',
+  );
+  assert.match(js, /'aria-label': 'Connection and account usage'/);
+
+  // Rendered from a cache with an in-flight guard, or reading it from the
+  // header would loop: fetch, store, render, fetch.
+  assert.match(js, /let seatUsageInFlight = false;/);
+  const refreshStart = js.indexOf('async function refreshSeatUsage(');
+  const refreshBody = js.slice(refreshStart, js.indexOf('\n}\n', refreshStart));
+  assert.match(refreshBody, /if \(seatUsageInFlight\) return seatUsageCache;/);
+
+  // Both windows feed the glanceable number, because either alone can stop a
+  // turn and a seat routinely sits near zero on one while the other is spent.
+  const voiceStart = js.indexOf('function renderConnectionVoice(container)');
+  const voiceBody = js.slice(voiceStart, js.indexOf('\n}\n', voiceStart));
+  assert.match(voiceBody, /weeklyPercent/);
+  assert.match(voiceBody, /fiveHourPercent/);
+  assert.match(voiceBody, /Math\.max/);
+})
