@@ -370,3 +370,40 @@ test('a superseded agent error stops giving advice, and seat usage is whiteliste
   // something else.
   assert.match(readerBody, /available: false, reason: 'producer_unreachable'/);
 })
+
+test('ordinary messages are never turned into error cards by their wording', () => {
+  // The regression that shipped 2026-08-20: the text classifier was moved ahead
+  // of the guard that decides whether an event failed at all, so any message
+  // mentioning this vocabulary became an error card. Discussing usage limits
+  // produced a banner claiming the session was out of usage, and mentioning
+  // signing in produced a sign-in demand. Both were reported from the phone
+  // within the hour. What kind of event this is must be decided BEFORE its
+  // words are read.
+  const innocuous = [
+    { type: 'assistant', content: 'You are nowhere near the usage limit right now.' },
+    { type: 'assistant', content: 'Check the rate limit and quota on that account.' },
+    { type: 'assistant', content: 'You may need to sign in again, or check credentials.' },
+    { type: 'assistant', content: 'That model is unavailable on the free plan.' },
+    { type: 'assistant', content: 'This is a policy question about billing credits.' },
+    { type: 'result', subtype: 'success', is_error: false, result: 'usage limit reached, per the docs' },
+    { type: 'user', content: 'am I out of usage or is it a rate limit' },
+  ];
+  for (const event of innocuous) {
+    assert.equal(
+      classifyAgentError(event),
+      null,
+      `a ${event.type} event must not be classified as an error: ${String(event.content || event.result).slice(0, 48)}`,
+    );
+  }
+
+  // Real failures carrying the same words must still classify, or the guard
+  // above would have been fixed by breaking the feature.
+  assert.deepEqual(
+    classifyAgentError({ type: 'error', content: 'Usage limit reached', willRetry: true }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+  assert.deepEqual(
+    classifyAgentError({ type: 'result', is_error: true, result: 'quota exhausted' }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+})

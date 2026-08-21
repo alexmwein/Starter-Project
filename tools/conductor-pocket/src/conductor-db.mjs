@@ -224,23 +224,30 @@ export function classifyAgentError(event) {
       ...AGENT_ERROR_BEHAVIOR.permission_required,
     };
   }
+  // WHAT KIND OF EVENT THIS IS COMES FIRST, ALWAYS. Text classification may only
+  // run on something that already failed. Reading the text before this guard
+  // turned any ordinary assistant message mentioning a usage limit, a rate
+  // limit, credits or signing in into an error card, so simply discussing them
+  // produced a banner claiming the session was out of usage.
+  const isProviderError =
+    event.type === 'error' || event.type === 'stream_error';
+  const isFailedResult = event.type === 'result' && event.is_error === true;
+  const isRetrySignal = systemSignal === 'api_retry';
+  if (!isProviderError && !isFailedResult && !isRetrySignal) return null;
+
   const definiteCode = definiteAgentErrorCode(agentErrorSearchText(event));
   if (definiteCode) {
     return { code: definiteCode, ...AGENT_ERROR_BEHAVIOR[definiteCode] };
   }
-  // api_retry is NOT such a signal: it says the client will try again, which is
-  // true of a usage limit too, and is exactly why one could masquerade as the
+  // api_retry is not a definite cause: it says the client will try again, which
+  // is true of a usage limit too, and is exactly why one could masquerade as the
   // other.
-  if (systemSignal === 'api_retry') {
+  if (isRetrySignal) {
     return {
       code: 'provider_reconnecting',
       ...AGENT_ERROR_BEHAVIOR.provider_reconnecting,
     };
   }
-  const isProviderError =
-    event.type === 'error' || event.type === 'stream_error';
-  const isFailedResult = event.type === 'result' && event.is_error === true;
-  if (!isProviderError && !isFailedResult) return null;
 
   let code = 'agent_failed';
   if (isProviderError && event.willRetry === true) {
