@@ -1,0 +1,80 @@
+name: Peptide Content AI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - biologix-strategy-board/content-intel/videos-data.js
+      - tools/peptide-content-intel/generate_ai_briefs.mjs
+      - .github/workflows/peptide-content-ai.yml
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: peptide-content-ai
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: [self-hosted, ovo-studio]
+    timeout-minutes: 8
+    steps:
+      - name: Check out the bound repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate only when the Studio has headroom
+        id: generate
+        shell: bash
+        env:
+          OVO_AI_RUNTIME: studio-local
+          OVO_AI_MODEL: qwen3:1.7b
+        run: |
+          set +e
+          nice -n 10 node tools/peptide-content-intel/generate_ai_briefs.mjs | tee /tmp/peptide-content-ai-result.json
+          generation_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$generation_status" == "75" ]]; then
+            echo "Studio is protected by the load guard; the hourly run will retry."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$generation_status" != "0" ]]; then
+            exit "$generation_status"
+          fi
+          if [[ -n "$(git status --porcelain -- biologix-strategy-board/content-intel/ai-briefs.js)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the generated artifact through a pull request
+        if: steps.generate.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source_digest=$(node -e 'const fs=require("fs");const s=fs.readFileSync("biologix-strategy-board/content-intel/ai-briefs.js","utf8");const d=JSON.parse(s.slice(s.indexOf("{"),s.lastIndexOf("}")+1));process.stdout.write(d.source_digest.slice(0,12))')
+          ai_branch="automation/peptide-ai-${source_digest}"
+          if git ls-remote --exit-code --heads origin "$ai_branch" >/dev/null 2>&1; then
+            echo "Generation branch already exists: $ai_branch"
+            exit 0
+          fi
+          git switch -c "$ai_branch"
+          git config user.name "ovo-studio-ai[bot]"
+          git config user.email "ovo-studio-ai[bot]@users.noreply.github.com"
+          git add biologix-strategy-board/content-intel/ai-briefs.js
+          git commit -m "chore(intel): refresh background AI briefs"
+          git push -u origin "$ai_branch"
+          pr_url=$(gh pr create \
+            --base main \
+            --head "$ai_branch" \
+            --title "chore(intel): refresh background AI briefs" \
+            --body "Generated on the private ovo-studio runner by qwen3:1.7b. The model selected evidence and structural angles only; deterministic templates compiled the published briefs. No cloud inference or model-controlled publishing action was used.")
+          gh pr merge "$pr_url" --auto --squash --delete-branch
