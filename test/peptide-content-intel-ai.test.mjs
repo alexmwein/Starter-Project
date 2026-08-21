@@ -120,7 +120,9 @@ test('automation is Studio-only and the content page has no generation control',
   const workflow = fs.readFileSync(path.join(repository, '.github/workflows/peptide-content-ai.yml'), 'utf8');
   const contentPage = path.join(repository, 'biologix-strategy-board/content-intel/index.html');
   assert.match(workflow, /runs-on: \[self-hosted, ovo-studio\]/);
+  assert.match(workflow, /automation\/peptide-ai-output/);
   assert.doesNotMatch(workflow, /ubuntu-latest|macos-latest|windows-latest|setup-node|actions\/cache/);
+  assert.doesNotMatch(workflow, /gh pr (create|merge)|pull-requests: write/);
   if (fs.existsSync(contentPage)) {
     const html = fs.readFileSync(contentPage, 'utf8');
     assert.match(html, /Background creative briefs/);
