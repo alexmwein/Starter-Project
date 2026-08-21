@@ -1,0 +1,9 @@
+{
+  "name": "claude-sol-delegation",
+  "description": "Makes Claude the orchestrator and delegates multi-step non-visual work to GPT-5.6 Sol through the Codex CLI.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Alex Weinstein"
+  },
+  "repository": "https://github.com/alexmwein/Starter-Project"
+}

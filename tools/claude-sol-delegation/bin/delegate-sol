@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+bin_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+plugin_root=$(CDPATH= cd -- "$bin_dir/.." && pwd)
+state_base="${XDG_STATE_HOME:-${HOME}/.local/state}"
+state_dir="${CLAUDE_SOL_STATE_DIR:-$state_base/claude-sol-delegation}"
+jobs_dir="$state_dir/jobs"
+config_file="${CLAUDE_SOL_CONFIG:-$plugin_root/config.local}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  delegate-sol [run] [options] -- "task"
+  delegate-sol status [job-id]
+  delegate-sol active
+  delegate-sol tail <job-id>
+  delegate-sol wait <job-id> [--timeout seconds]
+  delegate-sol doctor
+
+Run options:
+  --foreground, --fg        Stream output and wait for completion
+  --effort TIER             low|medium|high|xhigh|max (default: medium)
+  --workdir DIR             Codex working root (default: current directory)
+  --sandbox MODE            read-only|workspace-write|danger-full-access
+  --runner RUNNER           codex|sol (default: codex)
+  --skip-git-repo-check     Allow a non-git working directory
+EOF
+}
+
+read_config_value() {
+  local key="$1"
+  [ -f "$config_file" ] || return 0
+  sed -n "s/^${key}=//p" "$config_file" | tail -1
+}
+
+valid_job_id() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
+job_status() {
+  local job_id="$1"
+  valid_job_id "$job_id" || { echo "delegate-sol: invalid job id" >&2; return 2; }
+  local job_dir="$jobs_dir/$job_id"
+  [ -d "$job_dir" ] || { echo "delegate-sol: unknown job $job_id" >&2; return 2; }
+
+  if [ -f "$job_dir/exit" ]; then
+    local exit_code
+    exit_code=$(<"$job_dir/exit")
+    echo "job=$job_id state=finished exit=$exit_code log=$job_dir/output.log result=$job_dir/result.txt"
+    [ "$exit_code" = "0" ]
+    return
+  fi
+
+  [ -f "$job_dir/pid" ] || {
+    echo "job=$job_id state=unknown log=$job_dir/output.log result=$job_dir/result.txt"
+    return 1
+  }
+  local pid
+  pid=$(<"$job_dir/pid")
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "job=$job_id state=running pid=$pid log=$job_dir/output.log result=$job_dir/result.txt"
+    return 0
+  fi
+
+  echo "job=$job_id state=unknown pid=$pid log=$job_dir/output.log result=$job_dir/result.txt"
+  return 1
+}
+
+command_name="run"
+if [ $# -gt 0 ]; then
+  case "$1" in
+    run|status|active|tail|wait|doctor|help|-h|--help)
+      command_name="$1"
+      shift
+      ;;
+  esac
+fi
+
+case "$command_name" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+  doctor)
+    runner_default="${CLAUDE_SOL_RUNNER:-$(read_config_value runner)}"
+    sandbox_default="${CLAUDE_SOL_SANDBOX:-$(read_config_value sandbox)}"
+    runner_default="${runner_default:-codex}"
+    sandbox_default="${sandbox_default:-workspace-write}"
+    echo "model=gpt-5.6-sol"
+    echo "runner=$runner_default"
+    echo "sandbox=$sandbox_default"
+    echo "state_dir=$state_dir"
+    if command -v "$runner_default" >/dev/null 2>&1; then
+      echo "runner_status=found path=$(command -v "$runner_default")"
+    else
+      echo "runner_status=missing command=$runner_default"
+      exit 1
+    fi
+    if command -v codex >/dev/null 2>&1; then
+      codex --version
+    fi
+    exit 0
+    ;;
+  status)
+    mkdir -p "$jobs_dir"
+    if [ $# -gt 0 ]; then
+      job_status "$1"
+      exit $?
+    fi
+    found=0
+    while IFS= read -r job_path; do
+      found=1
+      job_status "$(basename "$job_path")" || true
+    done < <(find "$jobs_dir" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort -r | head -20)
+    [ "$found" = "1" ] || echo "delegate-sol: no jobs"
+    exit 0
+    ;;
+  active)
+    mkdir -p "$jobs_dir"
+    while IFS= read -r job_path; do
+      [ -f "$job_path/exit" ] && continue
+      [ -f "$job_path/pid" ] || continue
+      active_pid=$(<"$job_path/pid")
+      kill -0 "$active_pid" 2>/dev/null || continue
+      active_job=$(basename "$job_path")
+      echo "job=$active_job state=running pid=$active_pid log=$job_path/output.log result=$job_path/result.txt"
+    done < <(find "$jobs_dir" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort -r | head -20)
+    exit 0
+    ;;
+  tail)
+    [ $# -eq 1 ] || { usage >&2; exit 2; }
+    valid_job_id "$1" || { echo "delegate-sol: invalid job id" >&2; exit 2; }
+    log_file="$jobs_dir/$1/output.log"
+    [ -f "$log_file" ] || { echo "delegate-sol: no log for job $1" >&2; exit 2; }
+    tail -100 "$log_file"
+    exit 0
+    ;;
+  wait)
+    [ $# -ge 1 ] || { usage >&2; exit 2; }
+    wait_job="$1"
+    valid_job_id "$wait_job" || { echo "delegate-sol: invalid job id" >&2; exit 2; }
+    shift
+    wait_timeout=300
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --timeout)
+          wait_timeout="${2:-}"
+          shift 2
+          ;;
+        *)
+          echo "delegate-sol: unknown wait option $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+    [[ "$wait_timeout" =~ ^[0-9]+$ ]] || { echo "delegate-sol: timeout must be an integer" >&2; exit 2; }
+    started_at=$(date +%s)
+    while true; do
+      if [ -f "$jobs_dir/$wait_job/exit" ]; then
+        job_status "$wait_job"
+        exit $?
+      fi
+      now=$(date +%s)
+      if [ $((now - started_at)) -ge "$wait_timeout" ]; then
+        echo "delegate-sol: timeout waiting for $wait_job" >&2
+        exit 124
+      fi
+      sleep 1
+    done
+    ;;
+esac
+
+foreground=0
+effort="${CLAUDE_SOL_EFFORT:-$(read_config_value effort)}"
+effort="${effort:-medium}"
+workdir="$PWD"
+sandbox="${CLAUDE_SOL_SANDBOX:-$(read_config_value sandbox)}"
+sandbox="${sandbox:-workspace-write}"
+runner="${CLAUDE_SOL_RUNNER:-$(read_config_value runner)}"
+runner="${runner:-codex}"
+skip_git_check=0
+task_parts=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --foreground|--fg)
+      foreground=1
+      shift
+      ;;
+    --effort)
+      effort="${2:-}"
+      shift 2
+      ;;
+    --workdir)
+      workdir="${2:-}"
+      shift 2
+      ;;
+    --sandbox)
+      sandbox="${2:-}"
+      shift 2
+      ;;
+    --runner)
+      runner="${2:-}"
+      shift 2
+      ;;
+    --skip-git-repo-check)
+      skip_git_check=1
+      shift
+      ;;
+    --)
+      shift
+      task_parts=("$@")
+      break
+      ;;
+    -* )
+      echo "delegate-sol: unknown option $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      task_parts+=("$1")
+      shift
+      ;;
+  esac
+done
+
+case "$effort" in
+  low|medium|high|xhigh|max) ;;
+  ultra)
+    echo "delegate-sol: ultra is disabled; use max" >&2
+    exit 2
+    ;;
+  *)
+    echo "delegate-sol: invalid effort $effort" >&2
+    exit 2
+    ;;
+esac
+
+case "$sandbox" in
+  read-only|workspace-write|danger-full-access) ;;
+  *)
+    echo "delegate-sol: invalid sandbox $sandbox" >&2
+    exit 2
+    ;;
+esac
+
+case "$runner" in
+  codex|sol) ;;
+  *)
+    echo "delegate-sol: invalid runner $runner" >&2
+    exit 2
+    ;;
+esac
+
+[ -d "$workdir" ] || { echo "delegate-sol: workdir does not exist: $workdir" >&2; exit 2; }
+workdir=$(CDPATH= cd -- "$workdir" && pwd)
+
+if [ ${#task_parts[@]} -gt 0 ]; then
+  task="${task_parts[*]}"
+elif [ ! -t 0 ]; then
+  task=$(cat)
+else
+  echo "delegate-sol: no task provided" >&2
+  usage >&2
+  exit 2
+fi
+
+[ -n "$task" ] || { echo "delegate-sol: task is empty" >&2; exit 2; }
+command -v "$runner" >/dev/null 2>&1 || { echo "delegate-sol: runner not found: $runner" >&2; exit 1; }
+
+mkdir -p "$jobs_dir"
+job_id="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+job_dir="$jobs_dir/$job_id"
+mkdir -p "$job_dir"
+log_file="$job_dir/output.log"
+result_file="$job_dir/result.txt"
+exit_file="$job_dir/exit"
+
+printf '%s\n' "$task" >"$job_dir/task.txt"
+printf '%s\n' "$effort" >"$job_dir/effort"
+printf '%s\n' "$runner" >"$job_dir/runner"
+printf '%s\n' "$workdir" >"$job_dir/workdir"
+
+if [ "$runner" = "sol" ]; then
+  [ "$sandbox" = "danger-full-access" ] || {
+    echo "delegate-sol: the external sol runner controls its own sandbox; select --sandbox danger-full-access explicitly" >&2
+    exit 2
+  }
+  ln -s "output.log" "$result_file"
+  run_command=(sol --fg "$effort" "$task")
+else
+  run_command=(codex exec -m gpt-5.6-sol -c "model_reasoning_effort=\"$effort\"" --sandbox "$sandbox" -C "$workdir" -o "$result_file")
+  [ "$skip_git_check" = "1" ] && run_command+=(--skip-git-repo-check)
+  run_command+=("$task")
+fi
+
+cd "$workdir"
+
+if [ "$foreground" = "1" ]; then
+  set +e
+  "${run_command[@]}" 2>&1 | tee "$log_file"
+  exit_code=${PIPESTATUS[0]}
+  set -e
+  printf '%s\n' "$exit_code" >"$exit_file"
+  printf 'DELEGATION_COMPLETE job=%s model=gpt-5.6-sol effort=%s runner=%s exit=%s\n' \
+    "$job_id" "$effort" "$runner" "$exit_code"
+  printf 'log=%s\nresult=%s\n' "$log_file" "$result_file"
+  exit "$exit_code"
+fi
+
+nohup "$plugin_root/scripts/run-job.sh" "$exit_file" "$log_file" "${run_command[@]}" >/dev/null 2>&1 &
+job_pid=$!
+printf '%s\n' "$job_pid" >"$job_dir/pid"
+
+printf 'DELEGATION_STARTED job=%s model=gpt-5.6-sol effort=%s runner=%s pid=%s\n' \
+  "$job_id" "$effort" "$runner" "$job_pid"
+printf 'log=%s\nresult=%s\n' "$log_file" "$result_file"
