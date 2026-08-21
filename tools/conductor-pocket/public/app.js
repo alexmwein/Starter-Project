@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-seat-usage-20260820';
+} from './delivery-receipts.js?v=0.2.0-steady-view-20260820';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-seat-usage-20260820';
+} from './app-update.js?v=0.2.0-steady-view-20260820';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-seat-usage-20260820';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-seat-usage-20260820';
-import { fetchJson } from './http.js?v=0.2.0-seat-usage-20260820';
+} from './bootstrap-recovery.js?v=0.2.0-steady-view-20260820';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-steady-view-20260820';
+import { fetchJson } from './http.js?v=0.2.0-steady-view-20260820';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-seat-usage-20260820';
+} from './image-attachments.js?v=0.2.0-steady-view-20260820';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-seat-usage-20260820';
+} from './live-refresh.js?v=0.2.0-steady-view-20260820';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-seat-usage-20260820';
+} from './rich-text.js?v=0.2.0-steady-view-20260820';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-seat-usage-20260820';
+} from './read-state.js?v=0.2.0-steady-view-20260820';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-seat-usage-20260820';
+} from './transcript-focus.js?v=0.2.0-steady-view-20260820';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-seat-usage-20260820';
+} from './swipe-navigation.js?v=0.2.0-steady-view-20260820';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-seat-usage-20260820';
+const CLIENT_SHELL_REVISION = '0.2.0-steady-view-20260820';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3850,13 +3850,16 @@ function renderTranscript() {
   }
   messageList.replaceChildren(fragment);
   renderAgentStatus(statusRow, session, messages);
-  requestAnimationFrame(() => {
-    if (!state.shell) return;
+  // Corrected in the SAME frame as the content change, never a frame later.
+  // Reading scrollHeight forces the layout this needs, so the corrected
+  // position is the first thing painted. Deferring it into a rAF meant every
+  // render painted the old position and then snapped, which during streaming is
+  // a jump on every update. It also made two renders in one tick fight: the
+  // second measured against the first's grown content but its uncorrected
+  // scrollTop, so a reader at the bottom could read as un-pinned.
+  if (state.shell) {
     if (pinned) {
-      transcriptScroll.scrollTo({
-        top: transcriptScroll.scrollHeight,
-        behavior: 'auto',
-      });
+      transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
     } else {
       // The whole list is rebuilt on every render, so scroll anchoring is lost
       // and the view lands wherever the new content puts it: that is the
@@ -3872,10 +3875,18 @@ function renderTranscript() {
       if (Math.abs(restored - transcriptScroll.scrollTop) > 1) {
         transcriptScroll.scrollTop = Math.max(0, restored);
       }
-      state.shell.latestButton.hidden = false;
     }
+    // Same threshold the scroll handler uses. It was an unconditional reveal
+    // against a 48px pin threshold while the handler hides below 120px, so any
+    // render with the reader between the two flashed the button on and the next
+    // scroll event flashed it back off.
+    state.shell.latestButton.hidden =
+      transcriptScroll.scrollHeight -
+        transcriptScroll.clientHeight -
+        transcriptScroll.scrollTop <
+      120;
     scheduleReadEvaluation();
-  });
+  }
   renderComposerState();
   appUpdateCoordinator?.stateChanged();
 }

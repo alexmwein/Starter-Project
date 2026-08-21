@@ -411,3 +411,33 @@ test('the composer growing corrects scroll in the same frame it paints', async (
   // moved.
   assert.match(body, /!wasPinned\) return;/);
 })
+
+test('no scroll correction is ever deferred a frame', async () => {
+  // The house rule, because this class of bug came back four separate times:
+  // a corrective scroll must be written in the SAME frame as the mutation that
+  // caused it. Deferring one into a requestAnimationFrame paints the old
+  // position first and then snaps, which is the jumping and flickering seen
+  // while typing and while messages stream in. Reading scrollHeight forces the
+  // layout the correction needs, so there is nothing to wait for.
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const offsets = [];
+  let index = js.indexOf('requestAnimationFrame(');
+  while (index !== -1) {
+    offsets.push(index);
+    index = js.indexOf('requestAnimationFrame(', index + 1);
+  }
+  assert.ok(offsets.length > 0, 'the file should still use rAF for non-layout work');
+  for (const offset of offsets) {
+    // The callback body, bounded generously: any scroll write near an rAF is
+    // worth failing on and re-checking by hand.
+    const body = js.slice(offset, offset + 600);
+    assert.doesNotMatch(
+      body,
+      /scrollTop\s*=|scrollTo\(|scrollIntoView\(/,
+      `a scroll correction is deferred inside a requestAnimationFrame near offset ${offset}`,
+    );
+  }
+})
