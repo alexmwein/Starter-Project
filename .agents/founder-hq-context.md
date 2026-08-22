@@ -1,6 +1,6 @@
 # Founder HQ, Location, and Team-Culture Context
 
-*Last updated: August 16, 2026*
+*Last updated: August 22, 2026*
 
 ## Status
 
@@ -35,6 +35,22 @@ The deeper objective is not merely an attractive office. Alex believes he perfor
 - Do not turn Alex's home into a permanent 10–15-person office. Residential use, parking, insurance, privacy, neighbor impact, recruiting optics, and work-life separation all argue for a nearby dedicated headquarters.
 
 This recommendation is based on founder-environment fit, not on San Diego being the cheapest city. Miami generally remains superior on a pure state-tax spreadsheet. San Diego is favored because Alex already knows and likes the lifestyle, values PB's social and recruiting ecosystem, and expects to operate better with a local in-person team.
+
+## August 22 lived-environment update: the SDSU return signal
+
+On August 22, 2026, Alex returned to SDSU for a family move-in. Seeing the campus again after maturing and traveling extensively produced a much stronger reaction than he remembers having as a student. The concentration of young-adult energy, natural West Coast beauty, social openness, and attractive adult women made him feel mentally good, socially confident, and immediately more motivated to work, build, improve, and connect.
+
+This is a real founder-environment variable. Alex experiences libido and romantic possibility as productive energy when he directs them well. He sees that drive as something ancient in men: it can become distraction, but it can also become the urge to build companies, compete, progress, and take on difficult goals. Future advice should neither sanitize nor pathologize that motivation; it should help him convert it into disciplined execution and genuine adult social connection.
+
+The visit also sharpened the Miami contrast. Despite Miami's reputation, Alex personally found its more cosmetically enhanced and status-oriented dating aesthetic much less attractive and much less energizing than the more natural look and atmosphere he experienced around SDSU. That is a subjective founder-fit judgment, not a universal ranking, but subjective fit is exactly what matters when choosing the environment in which Alex will live and perform.
+
+Decision implications:
+
+- This materially strengthens the San Diego/PB home-base thesis and further weakens Miami as a cultural fit, even though Miami remains the tax benchmark.
+- PB should not be assumed to reproduce a college campus. Test whether ordinary life in North PB, Crown Point, and the surrounding adult social ecosystem creates the same sustained energy after novelty wears off.
+- Westside Los Angeles remains the useful comparison because Alex wants to know whether it can combine a natural California aesthetic, an active adult dating field, and higher creator/operator density without LA's friction overwhelming the benefit.
+- Do not outsource this decision to generic city beauty rankings. Compare lived motivation, useful output, time out of the house, approach confidence, quality of adult relationships, recovery, and day-to-day friction.
+- Keep the categories separate: attraction and dating are legitimate inputs to Alex's personal location choice; they are not employee-selection criteria and do not change the hiring guardrails below.
 
 ## Market and talent thesis
 
@@ -268,7 +284,7 @@ Sources:
 
 ## Guidance for future chats
 
-Treat **San Diego home base + PB recruiting/lifestyle + an aesthetic-first regional headquarters search + LA as a feeder market** as the current default thesis. Current search order is North Park, historic East Village, Barrio Logan adaptive reuse, North Little Italy/Kettner, then rare suitable Liberty Station inventory. Midway/Morena is not the default unless a genuinely exceptional conversion appears.
+Treat **San Diego home base + PB recruiting/lifestyle + an aesthetic-first regional headquarters search + LA as a feeder market** as the current default thesis. The August 22 SDSU return visit is additional lived evidence for that choice: Alex's preferred adult social and dating environment is not peripheral to his performance; it is one of the inputs that makes him want to leave the house, connect, and build. Current search order is North Park, historic East Village, Barrio Logan adaptive reuse, North Little Italy/Kettner, then rare suitable Liberty Station inventory. Midway/Morena is not the default unless a genuinely exceptional conversion appears.
 
 Do not restart the generic LA-versus-Miami-versus-San-Diego debate unless Alex asks or materially new evidence appears. Help convert the thesis into verified next decisions: financial capacity, compensation design, initial roles, hiring tests, broker brief, site tours, lease diligence, and a phased launch plan.
 
