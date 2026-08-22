@@ -1,37 +1,27 @@
-# OVO Operating System
+# Quickstart Workspace Repository
 
-OVO's operating contract and browser-local command center for focus, ownership, pipeline control, evidence-backed metrics, and weekly review.
+This shared repository supports multiple isolated Conductor workspaces. Its root is not a canonical production application, and a workspace's current directory or most recent deployment must not be used to infer the product Alex means.
 
-## Surfaces
+## How Conductor Uses This Project
 
-- [Command center](./index.html) — focus, organization, scorecard, pipelines, role boundaries, and the weekly operating review.
-- [Operating flow](./operating-flow.html) — interactive map of acquisition, creator supply, delivery, InnerDM, and the shared control plane.
-- [Canonical system contract](./docs/ovo-operating-system/SYSTEM.md) — the source of truth whenever another artifact disagrees.
-- [Implementation architecture](./docs/ovo-operating-system/ARCHITECTURE.md) — production boundary, state model, route plan, security controls, and build sequence.
-- [Installation plan](./docs/ovo-operating-system/implementation-plan.md) — the four-week path from documented rules to operating adoption.
+Conductor creates each workspace as its own git worktree and branch. The checked-in `.conductor/settings.toml` provides setup, archive, repository-status, and agent guidance shared by those workspaces.
 
-## Truth boundary
+There is intentionally no default app-launch command. Resolve and verify the requested repository, host, and route before opening a browser or deploying anything.
 
-The HTML app is a planning prototype, not a live CRM or finance ledger. Scorecard values are stored only in the current browser. A value is valid only when it has a named source and current as-of date; missing and expired evidence fails closed as `Unknown` or `Stale`.
+## Retired Surface
 
-## Run locally
+- The “OVO Command Center” / “OVO Operating System” static prototype and the Starter-Project GitHub Pages root are retired. Do not open, render, screenshot, test, deploy, restore, or treat them as current.
+- “Finance page” or “Finances page” means `https://crm.ovotalent.com/finance` in `alexmwein/ovo-crm-fable`.
 
-No install or build step is required. Open `index.html` directly, use Conductor's Run action, or serve the repository with any static HTTP server:
+## Local Development
 
-```sh
-python3 -m http.server 8000
-```
+Use the task-specific project instructions and development command for the verified target. Do not open the repository root `index.html` merely because it exists.
 
-Then open <http://127.0.0.1:8000/>.
+## Project Structure
 
-## Validate
+- `.conductor/settings.toml` contains the shared Conductor workspace scripts.
+- `.context/` is available in Conductor workspaces for gitignored notes and handoff files between agents.
 
-```sh
-node scripts/validate-ovo-operating-system.mjs
-```
+## Learn More
 
-The validator locks the 38-metric scorecard to the canonical specification, checks pipeline and operating invariants, exercises threshold boundaries, and guards the prototype's data-truth and accessibility contracts.
-
-## Live site
-
-The merged `main` revision is published at <https://alexmwein.github.io/Starter-Project/>.
+- [Conductor docs](https://conductor.build/docs)

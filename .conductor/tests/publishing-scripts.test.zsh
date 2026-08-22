@@ -821,4 +821,35 @@ if grep -Fq -- '{40}' "$tracked_archive_script"; then
   fail "archive guard hardcodes SHA-1-only landing refs"
 fi
 
+# This repository is a shared workspace substrate, not a default production
+# app. Keep the retired OVO Command Center from being restored by a later
+# branch or from becoming the one-click Conductor target again.
+for retired_path in \
+  "$repo_root/operating-flow.html" \
+  "$repo_root/scripts/validate-ovo-operating-system.mjs" \
+  "$repo_root/docs/ovo-operating-system/ARCHITECTURE.md" \
+  "$repo_root/docs/ovo-operating-system/SYSTEM.md"
+do
+  [[ ! -e "$retired_path" ]] ||
+    fail "retired OVO Command Center artifact returned: ${retired_path#$repo_root/}"
+done
+
+if grep -Eiq -- "OVO Command Center|data-product=[\"']ovo-operating-system[\"']" \
+  "$repo_root/index.html"
+then
+  fail "repository root index.html identifies itself as the retired OVO Command Center"
+fi
+
+if grep -Eiq -- "open[[:space:]]+index\\.html|command[[:space:]]*=[[:space:]]*[\"']open index\\.html[\"']|run[[:space:]]*=[[:space:]]*[\"']open index\\.html[\"']" \
+  "$repo_root/.conductor/settings.toml" "$repo_root/README.md"
+then
+  fail "a shared instruction or Conductor action can reopen the repository root index.html"
+fi
+
+grep -Fq -- 'Retired-surface and target-safety policy:' \
+  "$repo_root/.conductor/settings.toml" ||
+  fail "Conductor target-safety prompt is missing"
+grep -Fq -- 'https://crm.ovotalent.com/finance' "$repo_root/AGENTS.md" ||
+  fail "canonical CRM Finance routing guard is missing"
+
 print "PASS: Conductor publishing scripts"
