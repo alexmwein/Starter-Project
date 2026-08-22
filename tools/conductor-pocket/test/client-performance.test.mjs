@@ -562,25 +562,41 @@ test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn',
   assert.match(css, /max\(4px, env\(safe-area-inset-left\)\)/);
 })
 
-test('seat usage is reachable from inside a chat, not only from Workspaces', async () => {
-  const js = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+test('all-account usage is a visible phone control inside every chat', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
 
-  // Usage first landed only on the Workspaces header, which is two navigations
-  // away from a transcript. Someone who lives in a chat never saw it, and
-  // reported the button as missing. The Chats sheet is one tap from the chat
-  // header, so it carries the same section.
-  const chatsStart = js.indexOf('function openChatsSheet()');
-  assert.ok(chatsStart > 0, 'openChatsSheet must exist');
-  const chatsBody = js.slice(chatsStart, js.indexOf('\n}\n', chatsStart));
-  assert.match(chatsBody, /seatUsageSection\(\)/);
+  // Usage first landed behind the Chats sheet. A control that has to be
+  // explained is not visible, so the transcript header must name it directly.
+  const navStart = js.indexOf('function createPanelNav(');
+  assert.ok(navStart > 0, 'createPanelNav must exist');
+  const navBody = js.slice(navStart, js.indexOf('\n}\n', navStart));
+  assert.match(navBody, /onUsage/);
+  assert.match(navBody, /button\('Usage'/);
+  assert.match(navBody, /className: 'usage-nav-button'/);
+  assert.match(js, /onUsage: openUsageSheet/);
+  assert.match(css, /\.usage-nav-button[\s\S]*min-height: 44px/);
 
   // Mountable without awaiting, so placing it cannot block a sheet from
   // opening if the producer is slow or down.
-  assert.match(js, /function seatUsageSection\(\{ force = false \} = \{\}\)/);
-  const sectionStart = js.indexOf('function seatUsageSection(');
+  assert.match(js, /function accountUsageSection\(\{ force = false \} = \{\}\)/);
+  const sectionStart = js.indexOf('function accountUsageSection(');
   const sectionBody = js.slice(sectionStart, js.indexOf('\n}\n', sectionStart));
-  assert.match(sectionBody, /void fillSeatUsage\(section, \{ force \}\)/);
+  assert.match(sectionBody, /void fillAccountUsage\(section, \{ force \}\)/);
   assert.match(sectionBody, /return section;/);
+
+  // One sheet, grouped by provider. No provider failure can hide the other.
+  assert.match(js, /function openUsageSheet\(\)/);
+  assert.match(js, /usage\.providers/);
+  assert.match(js, /usage-provider-heading/);
+  assert.match(js, /provider\.available/);
+  assert.match(
+    js,
+    /if \(account\.stale && parts\.length > 0\) parts\.push\('cached'\)/,
+    'an account without usage must say No data yet, not only cached',
+  );
 
   // And the Workspaces header entry point stays.
   assert.match(js, /'aria-label': 'Connection and account usage'/);

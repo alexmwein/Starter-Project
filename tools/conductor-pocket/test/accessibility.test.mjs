@@ -1323,7 +1323,7 @@ test('Pocket makes code and primary replies directly copyable on iPhone', async 
   assert.match(application, /label: 'Copy code'/);
   assert.match(
     application,
-    /message\.importance !== 'progress'[\s\S]*Copy response[\s\S]*message\.text/,
+    /message\.importance !== 'progress'[\s\S]*Copy output[\s\S]*message\.text/,
   );
   assert.match(
     application,
@@ -1331,7 +1331,7 @@ test('Pocket makes code and primary replies directly copyable on iPhone', async 
   );
   assert.match(
     styles,
-    /\.message-copy-button[\s\S]*min-height: 44px/,
+    /\.message-copy-button[\s\S]*min-height: 44px[\s\S]*border: 1px solid var\(--hairline\)[\s\S]*background: var\(--raised\)/,
   );
   assert.match(
     styles,

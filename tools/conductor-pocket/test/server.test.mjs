@@ -27,7 +27,7 @@ function createWatcher() {
   };
 }
 
-function createServer(config, { database = {} } = {}) {
+function createServer(config, { database = {}, usageReader } = {}) {
   return createPocketServer({
     configStore: { value: config },
     security: {
@@ -49,8 +49,62 @@ function createServer(config, { database = {} } = {}) {
         return { ok: true, code: 'ready' };
       },
     },
+    usageReader,
   });
 }
+
+test('account usage endpoint returns the provider-neutral phone readout', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const expected = {
+    available: true,
+    fetchedAt: 1_787_376_000_000,
+    providers: [
+      {
+        id: 'claude',
+        label: 'Claude',
+        available: true,
+        accounts: [{
+          name: 'upperfloorpod',
+          label: 'upperfloorpod@gmail.com',
+          active: true,
+          fiveHourPercent: 29,
+          weeklyPercent: 96,
+        }],
+      },
+      {
+        id: 'gpt',
+        label: 'GPT',
+        available: true,
+        accounts: [{
+          name: 'seat4',
+          label: 'imalexgunnar@gmail.com',
+          active: true,
+          weeklyPercent: 33,
+          weeklyResetAt: 1_787_850_397_000,
+          stale: false,
+        }],
+      },
+    ],
+  };
+  let reads = 0;
+  const server = createServer(config, {
+    usageReader: async () => {
+      reads += 1;
+      return expected;
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await get(port, { pathname: '/api/usage' });
+
+  assert.equal(response.status, 200);
+  assert.equal(reads, 1);
+  assert.deepEqual(JSON.parse(response.body), expected);
+});
 
 test('large API responses use Brotli when the phone accepts it', async (context) => {
   const { config } = createConfig({

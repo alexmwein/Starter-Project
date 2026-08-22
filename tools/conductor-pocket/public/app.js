@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-usage-in-reach-20260821';
+} from './delivery-receipts.js?v=0.2.0-account-usage-copy-20260821';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-usage-in-reach-20260821';
+} from './app-update.js?v=0.2.0-account-usage-copy-20260821';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-usage-in-reach-20260821';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-usage-in-reach-20260821';
-import { fetchJson } from './http.js?v=0.2.0-usage-in-reach-20260821';
+} from './bootstrap-recovery.js?v=0.2.0-account-usage-copy-20260821';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-account-usage-copy-20260821';
+import { fetchJson } from './http.js?v=0.2.0-account-usage-copy-20260821';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-usage-in-reach-20260821';
+} from './image-attachments.js?v=0.2.0-account-usage-copy-20260821';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-usage-in-reach-20260821';
+} from './live-refresh.js?v=0.2.0-account-usage-copy-20260821';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-usage-in-reach-20260821';
+} from './rich-text.js?v=0.2.0-account-usage-copy-20260821';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-usage-in-reach-20260821';
+} from './read-state.js?v=0.2.0-account-usage-copy-20260821';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-usage-in-reach-20260821';
+} from './transcript-focus.js?v=0.2.0-account-usage-copy-20260821';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-usage-in-reach-20260821';
+} from './swipe-navigation.js?v=0.2.0-account-usage-copy-20260821';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-usage-in-reach-20260821';
+const CLIENT_SHELL_REVISION = '0.2.0-account-usage-copy-20260821';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -2548,6 +2548,7 @@ function ensureShell() {
     onSwitcher: openSwitcher,
     titleClick: openSwitcher,
     onChats: openChatsSheet,
+    onUsage: openUsageSheet,
   });
   const transcriptBanner = node('div');
   const transcriptScroll = node('div', { className: 'transcript-scroll' });
@@ -2841,7 +2842,7 @@ function installRecentChatsSwipe(element) {
   element.addEventListener('touchcancel', reset, { passive: true });
 }
 
-function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) {
+function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats, onUsage }) {
   const back = button(backLabel, {
     iconName: 'back',
     className: 'icon-button nav-back',
@@ -2860,12 +2861,18 @@ function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) 
     iconName: 'squares',
     onClick: onSwitcher,
   });
-  const actions = [switcher];
+  const actions = [];
+  if (onUsage) {
+    actions.push(
+      button('Usage', { className: 'usage-nav-button', onClick: onUsage }),
+    );
+  }
   if (onChats) {
-    actions.unshift(
+    actions.push(
       button('New chat or close chats', { iconName: 'plus', onClick: onChats }),
     );
   }
+  actions.push(switcher);
   const root = node('header', { className: 'panel-nav' }, [
     back,
     title,
@@ -3737,8 +3744,16 @@ async function refreshSeatUsage({ force = false } = {}) {
 // The seat the agent is actually running on, which is the only one whose limit
 // can stop a turn.
 function activeSeat() {
-  if (!seatUsageCache?.available || !Array.isArray(seatUsageCache.seats)) return null;
-  return seatUsageCache.seats.find((seat) => seat.active) || null;
+  if (!seatUsageCache?.available) return null;
+  const claudeProvider = Array.isArray(seatUsageCache.providers)
+    ? seatUsageCache.providers.find((provider) => provider.id === 'claude')
+    : null;
+  const accounts = Array.isArray(claudeProvider?.accounts)
+    ? claudeProvider.accounts
+    : Array.isArray(seatUsageCache.seats)
+      ? seatUsageCache.seats
+      : [];
+  return accounts.find((seat) => seat.active) || null;
 }
 // Whether the operator has moved this transcript themselves since it opened.
 // A chat's messages arrive in two passes, a memory snapshot and then the
@@ -4235,7 +4250,7 @@ function renderMessage(message, toolResults) {
     if (message.importance !== 'progress') {
       item.append(
         copyControl(message.text, {
-          label: 'Copy response',
+          label: 'Copy output',
           className: 'message-copy-button',
         }),
       );
@@ -6028,11 +6043,6 @@ function openChatsSheet() {
         className: 'sheet-note',
         text: 'Tap a chat to switch. Model is set on the Mac.',
       }),
-      // Also here, not only on the Workspaces header. This sheet is one tap
-      // from the chat you are already in, and the Workspaces screen is not:
-      // usage put only there was effectively invisible to someone who lives in
-      // a transcript.
-      seatUsageSection(),
     ]),
     { className: 'chats' },
   );
@@ -6041,46 +6051,113 @@ function openChatsSheet() {
 
 // Returns the section immediately and fills it in when the read lands, so a
 // caller can place it without awaiting.
-function seatUsageSection({ force = false } = {}) {
-  const section = node('div', { className: 'usage-section' }, [
-    node('div', { className: 'usage-heading', text: 'Claude seats' }),
-  ]);
-  void fillSeatUsage(section, { force });
+function accountUsageSection({ force = false } = {}) {
+  const section = node('div', { className: 'usage-section' });
+  void fillAccountUsage(section, { force });
   return section;
 }
 
-async function appendSeatUsage(content, { force = false } = {}) {
-  content.append(seatUsageSection({ force }));
+async function appendAccountUsage(content, { force = false } = {}) {
+  content.append(accountUsageSection({ force }));
 }
 
-async function fillSeatUsage(section, { force = false } = {}) {
+function usageResetLabel(value) {
+  if (!Number.isFinite(value) || value <= Date.now()) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+async function fillAccountUsage(section, { force = false } = {}) {
   const usage = await refreshSeatUsage({ force });
-  if (!usage?.available || !Array.isArray(usage.seats) || usage.seats.length === 0) {
+  const providers = Array.isArray(usage?.providers)
+    ? usage.providers
+    : Array.isArray(usage?.seats)
+      ? [{
+          id: 'claude',
+          label: 'Claude',
+          available: usage.available === true,
+          accounts: usage.seats,
+        }]
+      : [];
+  if (!usage?.available || providers.length === 0) {
     section.append(
-      node('p', { className: 'sheet-note', text: 'Seat usage is not being reported right now.' }),
+      node('p', { className: 'sheet-note', text: 'Account usage is not being reported right now.' }),
     );
     return;
   }
-  for (const seat of usage.seats) {
-    const parts = [];
-    if (seat.fiveHourPercent !== null) parts.push(`5h ${seat.fiveHourPercent}%`);
-    if (seat.weeklyPercent !== null) parts.push(`week ${seat.weeklyPercent}%`);
-    const blocked = seat.blocked || seat.fiveHourBlocked || seat.weeklyBlocked;
-    section.append(
-      node('div', { className: `usage-seat${blocked ? ' is-blocked' : ''}` }, [
-        node('span', { className: 'usage-seat-name', text: seat.label || seat.name }),
+  for (const provider of providers) {
+    const providerSection = node('section', { className: 'usage-provider' }, [
+      node('div', {
+        className: 'usage-provider-heading',
+        text: provider.label || provider.id,
+      }),
+    ]);
+    section.append(providerSection);
+    if (!provider.available) {
+      providerSection.append(
+        node('p', { className: 'sheet-note', text: 'Not available right now.' }),
+      );
+      continue;
+    }
+    const accounts = Array.isArray(provider.accounts) ? provider.accounts : [];
+    if (accounts.length === 0) {
+      providerSection.append(
+        node('p', { className: 'sheet-note', text: 'No saved accounts.' }),
+      );
+      continue;
+    }
+    for (const account of accounts) {
+      const parts = [];
+      if (account.fiveHourPercent !== null) parts.push(`5h ${account.fiveHourPercent}%`);
+      if (account.weeklyPercent !== null) parts.push(`week ${account.weeklyPercent}%`);
+      if (account.stale && parts.length > 0) parts.push('cached');
+      const blocked =
+        account.blocked || account.fiveHourBlocked || account.weeklyBlocked;
+      const resetParts = [];
+      const fiveHourReset = usageResetLabel(account.fiveHourResetAt);
+      const weeklyReset = usageResetLabel(account.weeklyResetAt);
+      if (fiveHourReset) resetParts.push(`5h ${fiveHourReset}`);
+      if (weeklyReset) resetParts.push(`week ${weeklyReset}`);
+      const name = node('span', { className: 'usage-seat-name' }, [
+        account.active
+          ? node('span', { className: 'usage-active', text: 'Active' })
+          : null,
+        document.createTextNode(account.label || account.name),
+      ]);
+      const row = node('div', {
+        className: `usage-seat${blocked ? ' is-blocked' : ''}`,
+      }, [
+        name,
         node('span', {
           className: 'usage-seat-value',
           // Naming which window is spent is the whole point: "out of usage"
           // with no window named is what sent the operator looking in the
           // wrong place.
           text: blocked
-            ? `${seat.weeklyBlocked ? 'Weekly spent' : 'Limit hit'} · ${parts.join(' · ')}`
-            : parts.join(' · ') || 'No data',
+            ? `${account.weeklyBlocked ? 'Weekly spent' : 'Limit hit'} · ${parts.join(' · ')}`
+            : parts.join(' · ') || 'No data yet',
         }),
-      ]),
-    );
+      ]);
+      if (resetParts.length > 0) {
+        row.append(
+          node('span', {
+            className: 'usage-seat-reset',
+            text: `Resets ${resetParts.join(' · ')}`,
+          }),
+        );
+      }
+      providerSection.append(row);
+    }
   }
+}
+
+function openUsageSheet() {
+  openSheet('Account usage', accountUsageSection({ force: true }), {
+    className: 'usage',
+  });
 }
 
 async function openConnectionSheet() {
@@ -6113,7 +6190,7 @@ async function openConnectionSheet() {
     // going to the Mac, and it shows the two windows separately because a seat
     // can sit at 0% on the five hour window while the weekly one is spent,
     // which is precisely the state that reads as unexplained.
-    void appendSeatUsage(content, { force: true });
+    void appendAccountUsage(content, { force: true });
     content.append(
       node('button', {
         className: 'text-button',

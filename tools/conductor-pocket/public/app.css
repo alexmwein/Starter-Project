@@ -901,10 +901,12 @@ button:active {
   align-items: center;
   gap: 5px;
   min-height: 44px;
-  margin: -2px 0 -10px -8px;
-  padding: 0 8px;
-  background: transparent;
-  color: var(--text-tertiary);
+  margin: 4px 0 -2px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--text-secondary);
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -2472,6 +2474,20 @@ button:active {
   justify-self: end;
 }
 
+.usage-nav-button {
+  min-width: 52px;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: 10px;
+  color: var(--copper);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.usage-nav-button:hover {
+  background: var(--raised);
+}
+
 /* Sheet actions are full width and thumb-sized on a phone, stacked rather than
    inline, so the destructive confirm can never sit flush against New chat. */
 .sheet-chats-action {
@@ -2723,12 +2739,13 @@ button:active {
    readout the operator checks when something already went wrong, so it needs to
    be scannable, not decorative. */
 .usage-section {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
 }
 
-.usage-heading {
+.usage-provider-heading {
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -2737,22 +2754,53 @@ button:active {
   margin-bottom: 8px;
 }
 
+.usage-provider + .usage-provider {
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+
 .usage-seat {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: space-between;
   gap: 12px;
-  padding: 5px 0;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
   font-size: 0.875rem;
 }
 
 .usage-seat-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
   overflow-wrap: anywhere;
+}
+
+.usage-active {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--copper-fill);
+  color: var(--on-copper);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1rem;
+  text-transform: uppercase;
 }
 
 .usage-seat-value {
   flex: 0 0 auto;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.usage-seat-reset {
+  grid-column: 1 / -1;
+  margin-top: -8px;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
 }
 

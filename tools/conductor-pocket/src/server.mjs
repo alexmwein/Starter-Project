@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -1273,6 +1274,15 @@ class ConnectionProbe {
 // to take down a screen the operator opened to diagnose something else.
 const SEAT_USAGE_URL = 'http://127.0.0.1:3333/api/profiles';
 const SEAT_USAGE_TIMEOUT_MS = 2_000;
+const GPT_ACCOUNT_STORE = path.join(os.homedir(), '.codex-accounts');
+const GPT_USAGE_CACHE = path.join(
+  os.homedir(),
+  'Library',
+  'Caches',
+  'SwiftBar',
+  'codex-usage.json',
+);
+const GPT_USAGE_STALE_MS = 5 * 60 * 1000;
 
 function seatPercent(value) {
   const number = Number(value);
@@ -1330,6 +1340,166 @@ export async function readSeatUsage(fetchImpl = fetch) {
   return { available: true, seats, fetchedAt: Date.now() };
 }
 
+function gptPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.min(100, Math.round(number));
+}
+
+function gptTimestamp(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number * 1000 : null;
+}
+
+async function readOptionalUsageText(filePath, readFileImpl) {
+  try {
+    return String(await readFileImpl(filePath, 'utf8')).trim();
+  } catch {
+    return '';
+  }
+}
+
+// Reads only SwiftBar's usage cache plus account filenames and labels. Pocket
+// never opens the account snapshot JSON files, which contain the credentials,
+// and never starts a paid API request. SwiftBar remains the single refresh
+// owner; this surface is only a fast, read-only view of what it already knows.
+export async function readGptUsage({
+  accountStore = GPT_ACCOUNT_STORE,
+  cachePath = GPT_USAGE_CACHE,
+  now = Date.now(),
+  readdirImpl = fs.readdir,
+  readFileImpl = fs.readFile,
+} = {}) {
+  let entries;
+  try {
+    entries = await readdirImpl(accountStore, { withFileTypes: true });
+  } catch {
+    return {
+      id: 'gpt',
+      label: 'GPT',
+      available: false,
+      reason: 'account_store_unreachable',
+      accounts: [],
+    };
+  }
+
+  const [active, cacheText] = await Promise.all([
+    readOptionalUsageText(path.join(accountStore, '.active'), readFileImpl),
+    readOptionalUsageText(cachePath, readFileImpl),
+  ]);
+  let cache = {};
+  try {
+    const parsed = JSON.parse(cacheText);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cache = parsed;
+  } catch {
+    cache = {};
+  }
+  const samples =
+    cache.samples && typeof cache.samples === 'object' && !Array.isArray(cache.samples)
+      ? cache.samples
+      : {};
+  const snapshotNames = entries
+    .filter(
+      (entry) =>
+        entry?.isFile?.() &&
+        !entry.name.startsWith('.') &&
+        entry.name.endsWith('.json'),
+    )
+    .map((entry) => entry.name.slice(0, -'.json'.length))
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+  const accounts = await Promise.all(
+    snapshotNames.map(async (name) => {
+      const label =
+        (await readOptionalUsageText(
+          path.join(accountStore, `${name}.label`),
+          readFileImpl,
+        )) || name;
+      const sample =
+        samples[name] && typeof samples[name] === 'object' && !Array.isArray(samples[name])
+          ? samples[name]
+          : null;
+      const fetchedAt = gptTimestamp(sample?.fetched_at);
+      const weeklyPercent = gptPercent(sample?.used_percent);
+      return {
+        name: name.slice(0, 64),
+        label: label.slice(0, 120),
+        active: name === active,
+        fiveHourPercent: null,
+        fiveHourBlocked: false,
+        fiveHourResetAt: null,
+        weeklyPercent,
+        weeklyBlocked: weeklyPercent === 100,
+        weeklyResetAt: gptTimestamp(sample?.resets_at),
+        blocked: weeklyPercent === 100,
+        stale:
+          fetchedAt === null ||
+          now < fetchedAt ||
+          now - fetchedAt > GPT_USAGE_STALE_MS,
+        fetchedAt,
+      };
+    }),
+  );
+  return {
+    id: 'gpt',
+    label: 'GPT',
+    available: accounts.length > 0,
+    reason:
+      accounts.length > 0
+        ? null
+        : cacheText
+          ? 'no_accounts'
+          : 'usage_cache_unavailable',
+    accounts,
+  };
+}
+
+export async function readAccountUsage({
+  readClaude = readSeatUsage,
+  readGpt = readGptUsage,
+  now = Date.now(),
+} = {}) {
+  const [claudeResult, gptResult] = await Promise.allSettled([
+    readClaude(),
+    readGpt(),
+  ]);
+  const claude =
+    claudeResult.status === 'fulfilled'
+      ? claudeResult.value
+      : { available: false, reason: 'producer_unreachable', seats: [] };
+  const gpt =
+    gptResult.status === 'fulfilled'
+      ? gptResult.value
+      : {
+          id: 'gpt',
+          label: 'GPT',
+          available: false,
+          reason: 'producer_unreachable',
+          accounts: [],
+        };
+  const providers = [
+    {
+      id: 'claude',
+      label: 'Claude',
+      available: claude?.available === true,
+      reason: typeof claude?.reason === 'string' ? claude.reason : null,
+      accounts: Array.isArray(claude?.seats) ? claude.seats : [],
+    },
+    {
+      id: 'gpt',
+      label: 'GPT',
+      available: gpt?.available === true,
+      reason: typeof gpt?.reason === 'string' ? gpt.reason : null,
+      accounts: Array.isArray(gpt?.accounts) ? gpt.accounts : [],
+    },
+  ];
+  return {
+    available: providers.some((provider) => provider.available),
+    providers,
+    fetchedAt: now,
+  };
+}
+
 export function createPocketServer({
   configStore,
   security,
@@ -1339,6 +1509,7 @@ export function createPocketServer({
   audit = () => {},
   attachmentManager = new AttachmentManager(),
   deliveryLedgerPath = null,
+  usageReader = readAccountUsage,
 }) {
   const idempotency = new IdempotencyStore({
     ledgerPath: deliveryLedgerPath,
@@ -2472,7 +2643,7 @@ export function createPocketServer({
       // number, so "am I actually out?" is answerable from the phone.
       if (request.method === 'GET' && requestUrl.pathname === '/api/usage') {
         security.session(request, { requireUnlocked: true });
-        return sendJson(response, 200, await readSeatUsage(), config);
+        return sendJson(response, 200, await usageReader(), config);
       }
 
       const revokeDevice = pathMatch(
