@@ -27,7 +27,7 @@ function createWatcher() {
   };
 }
 
-function createServer(config, { database = {} } = {}) {
+function createServer(config, { database = {}, usageReader } = {}) {
   return createPocketServer({
     configStore: { value: config },
     security: {
@@ -49,8 +49,62 @@ function createServer(config, { database = {} } = {}) {
         return { ok: true, code: 'ready' };
       },
     },
+    usageReader,
   });
 }
+
+test('account usage endpoint returns the provider-neutral phone readout', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const expected = {
+    available: true,
+    fetchedAt: 1_787_376_000_000,
+    providers: [
+      {
+        id: 'claude',
+        label: 'Claude',
+        available: true,
+        accounts: [{
+          name: 'upperfloorpod',
+          label: 'upperfloorpod@gmail.com',
+          active: true,
+          fiveHourPercent: 29,
+          weeklyPercent: 96,
+        }],
+      },
+      {
+        id: 'gpt',
+        label: 'GPT',
+        available: true,
+        accounts: [{
+          name: 'seat4',
+          label: 'imalexgunnar@gmail.com',
+          active: true,
+          weeklyPercent: 33,
+          weeklyResetAt: 1_787_850_397_000,
+          stale: false,
+        }],
+      },
+    ],
+  };
+  let reads = 0;
+  const server = createServer(config, {
+    usageReader: async () => {
+      reads += 1;
+      return expected;
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await get(port, { pathname: '/api/usage' });
+
+  assert.equal(response.status, 200);
+  assert.equal(reads, 1);
+  assert.deepEqual(JSON.parse(response.body), expected);
+});
 
 test('large API responses use Brotli when the phone accepts it', async (context) => {
   const { config } = createConfig({
@@ -2157,11 +2211,18 @@ test('an ambiguous UI result is confirmed by the exact new Conductor row', async
     idempotencyKey: 'database_confirmed_key',
     deviceId: 'other-device',
   });
+  // A caller outside the owning scope gets the same answer it would get for a
+  // key that never existed, because the ledger key is device scoped: absence is
+  // absence within the caller's own namespace and reveals nothing about another
+  // device's or session's deliveries. Split from 'unknown' so the owning device
+  // can tell "never recorded" (retryable, the request never arrived) apart from
+  // "recorded but uninterpretable" (genuinely ambiguous).
   assert.deepEqual(JSON.parse(wrongSession.body).delivery, {
     state: 'unknown',
   });
   assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
-    state: 'unknown',
+    state: 'absent',
+    ledgerTtlMs: 7 * 24 * 60 * 60 * 1000,
   });
 });
 
@@ -2319,11 +2380,18 @@ test('delivery status recovers a late exact row without resending or exposing co
     idempotencyKey: 'late_database_confirmation_key',
     deviceId: 'other-device',
   });
+  // A caller outside the owning scope gets the same answer it would get for a
+  // key that never existed, because the ledger key is device scoped: absence is
+  // absence within the caller's own namespace and reveals nothing about another
+  // device's or session's deliveries. Split from 'unknown' so the owning device
+  // can tell "never recorded" (retryable, the request never arrived) apart from
+  // "recorded but uninterpretable" (genuinely ambiguous).
   assert.deepEqual(JSON.parse(wrongSession.body).delivery, {
     state: 'unknown',
   });
   assert.deepEqual(JSON.parse(wrongDevice.body).delivery, {
-    state: 'unknown',
+    state: 'absent',
+    ledgerTtlMs: 7 * 24 * 60 * 60 * 1000,
   });
   assert.equal(databaseReads, readsBeforeWrongScope);
 
@@ -4005,4 +4073,164 @@ test('pending sends persist before draft clearing and recover for the full send 
     startApplicationBlock,
     /Promise\.all\(\[[\s\S]*refreshWorkspaces\(\)[\s\S]*loadRecentSessions\(\)[\s\S]*\]\)/,
   );
+});
+
+// Creating a chat from the phone used to return only "a tab was created", so
+// the phone refreshed the list and left the operator where they were, with the
+// new chat arriving as "Untitled" among the others. On a phone that reads as
+// nothing having happened, and the obvious response is to tap again, which
+// creates a second chat. Measured on 2026-08-16: by the time the Mac proves the
+// tab exists, Conductor has already written the row (+0ms), so the created chat
+// can be named rather than guessed.
+function createTabServer(config, { database, transport }) {
+  return createPocketServer({
+    configStore: { value: config },
+    security: {
+      bootstrap() {
+        return { authenticated: true, unlocked: false };
+      },
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database,
+    watcher: createWatcher(),
+    transport,
+  });
+}
+
+function tabDatabase(sessionListsInOrder) {
+  let call = 0;
+  return {
+    getSessionRoute() {
+      return {
+        id: 'session-a',
+        workspaceId: 'workspace-1',
+        workspaceName: 'daemon',
+        title: 'Existing chat',
+        titleOrdinal: 1,
+      };
+    },
+    listSessions() {
+      const list =
+        sessionListsInOrder[Math.min(call, sessionListsInOrder.length - 1)];
+      call += 1;
+      return list;
+    },
+  };
+}
+
+test('creating a chat names the chat it created', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  assert.equal(response.status, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.createdSessionId, 'session-new');
+  assert.equal(payload.createdSessionTitle, 'Untitled');
+  assert.equal(payload.workspaceId, 'workspace-1');
+});
+
+test('creating a chat stays silent when the new chat is ambiguous', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  // Two chats appeared, because the operator made one on the Mac at the same
+  // moment. Opening either could open the wrong one, so the phone is told
+  // nothing and simply refreshes. Taking the newest row would guess.
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+        { id: 'session-other', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  assert.equal(response.status, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.createdSessionId, undefined);
+});
+
+test('a failed creation never reports a created chat', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  // An unrelated chat appearing between the two reads must not be mistaken for
+  // one we created, so the identity lookup only runs on a successful create.
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-unrelated', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: false, code: 'tab_not_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  assert.equal(response.status, 409);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.createdSessionId, undefined);
 });

@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-never-blank-20260815';
+} from './delivery-receipts.js?v=0.2.0-phone-polish-20260821';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-never-blank-20260815';
+} from './app-update.js?v=0.2.0-phone-polish-20260821';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-never-blank-20260815';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-never-blank-20260815';
-import { fetchJson } from './http.js?v=0.2.0-never-blank-20260815';
+} from './bootstrap-recovery.js?v=0.2.0-phone-polish-20260821';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-phone-polish-20260821';
+import { fetchJson } from './http.js?v=0.2.0-phone-polish-20260821';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-never-blank-20260815';
+} from './image-attachments.js?v=0.2.0-phone-polish-20260821';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-never-blank-20260815';
+} from './live-refresh.js?v=0.2.0-phone-polish-20260821';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-never-blank-20260815';
+} from './rich-text.js?v=0.2.0-phone-polish-20260821';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-never-blank-20260815';
+} from './read-state.js?v=0.2.0-phone-polish-20260821';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-never-blank-20260815';
+} from './transcript-focus.js?v=0.2.0-phone-polish-20260821';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-never-blank-20260815';
+} from './swipe-navigation.js?v=0.2.0-phone-polish-20260821';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-never-blank-20260815';
+const CLIENT_SHELL_REVISION = '0.2.0-phone-polish-20260821';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -227,7 +227,8 @@ const SEND_FAILURE_REASONS = Object.freeze({
   session_locked: 'The Mac is locked.',
   accessibility_disabled: 'Automation permission is off on the Mac.',
   conductor_not_running: 'Conductor is not running on the Mac.',
-  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  conductor_window_unavailable:
+    'Conductor has no window on the Mac. Quit and reopen it there.',
   composer_unavailable: 'The message box was not found in Conductor.',
   workspace_list_unavailable: 'The workspace list was not found in Conductor.',
   workspace_not_visible: 'This workspace is not visible in Conductor.',
@@ -252,8 +253,11 @@ const AGENT_ERROR_PRESENTATIONS = Object.freeze({
     guidance: 'Try again in a moment. Your chat is still safe.',
   },
   usage_limit: {
-    title: 'Account limit reached',
-    guidance: 'Open Conductor on the Mac to switch accounts or review limits.',
+    title: 'Out of usage for this session',
+    // Names the wait, because the previous copy read as an account problem and
+    // the one before that said "Reconnecting", which sent the operator looking
+    // at a connection that was never broken.
+    guidance: 'This resets on a timer. Switch accounts in Conductor on the Mac, or wait it out.',
   },
   model_unavailable: {
     title: 'Model unavailable',
@@ -328,7 +332,8 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   composer_changed_pre_send: 'The Conductor composer changed before sending.',
   composer_unavailable: 'The message box is not ready on your Mac.',
   conductor_not_running: 'Conductor is not open on your Mac.',
-  conductor_window_unavailable: 'Conductor has no open window on your Mac.',
+  conductor_window_unavailable:
+    'Conductor has no window on your Mac. Quit and reopen it there.',
   delivery_confirmation_timeout: 'Pocket could not verify delivery in time.',
   delivery_unknown: 'Pocket could not verify whether Conductor accepted it.',
   draft_conflict: 'The Conductor composer already has unsent text.',
@@ -433,11 +438,34 @@ function button(label, { iconName, className = 'icon-button', onClick } = {}) {
   return control;
 }
 
+const toastElement = document.querySelector('#toast');
+let toastTimer = null;
+
+// Announcements were screen-reader only, so on a phone a successful action and
+// a failed one looked identical: nothing moved. That is why a slow operation
+// read as broken and got tapped again. The visible half is deliberately plain,
+// no motion beyond a fade, because a status pill that animates is the thing
+// this app was asked not to do.
 function announce(message) {
   announcer.textContent = '';
   requestAnimationFrame(() => {
     announcer.textContent = message;
   });
+  if (!toastElement) return;
+  toastElement.textContent = message;
+  toastElement.hidden = false;
+  // Reflow between hidden=false and the class so the fade runs on a re-shown
+  // toast rather than being collapsed away by the style recalculation.
+  void toastElement.offsetHeight;
+  toastElement.classList.add('is-visible');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastElement.classList.remove('is-visible');
+    toastTimer = setTimeout(() => {
+      toastElement.hidden = true;
+      toastTimer = null;
+    }, 200);
+  }, 3200);
 }
 
 function legacyCopyText(text) {
@@ -2065,7 +2093,9 @@ async function claimTerminalDeliveryActionRequired(message, action) {
         candidate?.delivery === 'failed' &&
         candidate.deliveryAttempt === message.deliveryAttempt &&
         candidate.activeDeliveryKey === message.activeDeliveryKey &&
-        (action === 'delete' || candidate.definitelyUnsent === true) &&
+        (action === 'delete' ||
+          action === 'edit' ||
+          candidate.definitelyUnsent === true) &&
         (action !== 'retry' || candidate.retrySafe === true);
       if (!matches) return;
       if (action === 'edit' || action === 'delete') {
@@ -2192,14 +2222,16 @@ function applyAuthoritativePendingDelivery(message, authoritative) {
 }
 
 async function editFailedMessage(message) {
-  if (
-    message?.kind !== 'optimistic' ||
-    message.delivery !== 'failed' ||
-    message.definitelyUnsent !== true
-  ) {
+  // definitelyUnsent is deliberately NOT required. This returns the text to the
+  // composer and sends nothing, so it is safe whatever happened to the original,
+  // and requiring proof was what left an ambiguous failure with no way to
+  // recover what was typed. Retry keeps its proof requirement, because it
+  // resends.
+  if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  if (!(await verifyTerminalDeliveryAction(message))) {
+    announce('Could not recover this text yet. Try again.');
     return;
   }
-  if (!await verifyTerminalDeliveryAction(message)) return;
   let claimed;
   try {
     claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
@@ -2516,6 +2548,7 @@ function ensureShell() {
     onSwitcher: openSwitcher,
     titleClick: openSwitcher,
     onChats: openChatsSheet,
+    onUsage: openUsageSheet,
   });
   const transcriptBanner = node('div');
   const transcriptScroll = node('div', { className: 'transcript-scroll' });
@@ -2628,6 +2661,10 @@ function invalidateUnreadHeadEvidence({ render = true } = {}) {
 
 function noteReadGesture() {
   readGestureSequence += 1;
+  // A real touch, wheel or arrow key in the transcript, never a programmatic
+  // scroll. Until this happens the view follows the newest message, so content
+  // arriving after the first paint cannot strand the reader up the page.
+  transcriptMovedByHand = true;
   scheduleReadEvaluation();
 }
 
@@ -2805,7 +2842,7 @@ function installRecentChatsSwipe(element) {
   element.addEventListener('touchcancel', reset, { passive: true });
 }
 
-function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) {
+function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats, onUsage }) {
   const back = button(backLabel, {
     iconName: 'back',
     className: 'icon-button nav-back',
@@ -2824,12 +2861,18 @@ function createPanelNav({ backLabel, onBack, onSwitcher, titleClick, onChats }) 
     iconName: 'squares',
     onClick: onSwitcher,
   });
-  const actions = [switcher];
+  const actions = [];
+  if (onUsage) {
+    actions.push(
+      button('Usage', { className: 'usage-nav-button', onClick: onUsage }),
+    );
+  }
   if (onChats) {
-    actions.unshift(
+    actions.push(
       button('New chat or close chats', { iconName: 'plus', onClick: onChats }),
     );
   }
+  actions.push(switcher);
   const root = node('header', { className: 'panel-nav' }, [
     back,
     title,
@@ -2893,22 +2936,68 @@ function createComposer() {
     tray,
     inner,
   ]);
+  let lastComposerHeight = 0;
   const observer = new ResizeObserver((entries) => {
     const entry = entries[0];
     const borderBox = Array.isArray(entry?.borderBoxSize)
       ? entry.borderBoxSize[0]
       : entry?.borderBoxSize;
     const height = Math.ceil(borderBox?.blockSize || root.getBoundingClientRect().height);
-    if (height > 0) {
-      document.documentElement.style.setProperty(
-        '--composer-height',
-        `${height}px`,
-      );
-    }
+    if (height <= 0 || height === lastComposerHeight) return;
+    const delta = lastComposerHeight === 0 ? 0 : height - lastComposerHeight;
+    lastComposerHeight = height;
+    // The dock is position: absolute (app.css .composer-dock), so it is out of
+    // flow and growing it does NOT shrink the scroller. --composer-height feeds
+    // only the transcript's padding-bottom, which grows scrollHeight while
+    // clientHeight, scrollTop and every rendered pixel stay exactly where they
+    // were. So a reader who is not at the bottom needs no correction at all:
+    // an earlier version of this handler assumed the viewport shrank and moved
+    // scrollTop to compensate, which yanked a transcript that was sitting
+    // still. Doing nothing is the correct behaviour there.
+    //
+    // A reader who IS at the bottom does need one: the extra padding is what
+    // keeps the last message clear of the dock, so without re-pinning, the
+    // message just sent slides behind a taller composer.
+    const scroller = state.shell?.transcriptScroll;
+    const wasPinned = scroller
+      ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 48
+      : false;
+    document.documentElement.style.setProperty(
+      '--composer-height',
+      `${height}px`,
+    );
+    if (delta <= 0 || !scroller || !wasPinned) return;
+    // Synchronous, NOT in a requestAnimationFrame. A ResizeObserver callback
+    // runs after layout but before paint, so writing here lands in the same
+    // frame as the taller composer. Deferring it by a frame meant the browser
+    // first painted the grown dock over the last message and only then snapped
+    // the scroll, which is a visible flicker on every single line wrap.
+    // Reading scrollHeight forces one synchronous layout, and this whole block
+    // only runs when the dock height actually changed, never per keystroke.
+    scroller.scrollTop = scroller.scrollHeight;
   });
   observer.observe(root);
   const resize = () => {
-    field.rows = Math.max(1, Math.min(6, field.value.split('\n').length));
+    // Counting newlines ignored soft wrapping, so a single long wrapped line
+    // still reported one row. Where field-sizing: content is unsupported that
+    // left the box too short and the textarea scrolled its own content under
+    // the caret. Collapsing to one row first makes scrollHeight report the true
+    // content height, including wraps, and it also lets the box shrink again
+    // when text is deleted. Both writes happen in one synchronous block, so no
+    // intermediate state is ever painted.
+    // Where field-sizing: content is supported the box already tracks its own
+    // content, wraps included, and rows cannot change its height. Measuring
+    // anyway forced two style recalcs and a synchronous layout on every
+    // keystroke to compute a value with no effect, on exactly the browsers this
+    // runs on. The measurement is kept only as the fallback it always was.
+    if (supportsFieldSizing) return;
+    const style = getComputedStyle(field);
+    const lineHeight = parseFloat(style.lineHeight) || 24;
+    const padding =
+      (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    field.rows = 1;
+    const wrapped = Math.round((field.scrollHeight - padding) / lineHeight);
+    field.rows = Math.max(1, Math.min(6, wrapped || 1));
   };
   field.addEventListener('input', () => {
     saveDraft(state.route.sessionId, field.value);
@@ -2950,9 +3039,27 @@ function createComposer() {
 function updateRoutePanels() {
   if (!state.shell) return;
   const { view } = state.route;
+  const scroller = state.shell.transcriptScroll;
+  const wasShowingTranscript =
+    state.shell.transcriptPanel.classList.contains('is-active');
+  // Measured BEFORE the class flips, because after it the position is already
+  // gone. Anchored to the end rather than to scrollTop so it survives messages
+  // arriving while the transcript was hidden.
+  if (wasShowingTranscript && view !== 'transcript' && scroller?.clientHeight > 0) {
+    transcriptHiddenAnchor =
+      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+  }
   state.shell.workspacePanel.classList.toggle('is-active', view === 'workspaces');
   state.shell.sessionPanel.classList.toggle('is-active', view === 'sessions');
   state.shell.transcriptPanel.classList.toggle('is-active', view === 'transcript');
+  if (view !== 'transcript' || transcriptHiddenAnchor === null || !scroller) return;
+  // Reading scrollHeight forces the layout the panel just gained, so this lands
+  // in the same frame the panel becomes visible and nothing renders at the top
+  // first. renderTranscript measures afterwards and sees the restored position.
+  const restored =
+    scroller.scrollHeight - scroller.clientHeight - transcriptHiddenAnchor;
+  scroller.scrollTop = Math.max(0, restored);
+  transcriptHiddenAnchor = null;
 }
 
 function navigate(route, push = true) {
@@ -3099,19 +3206,45 @@ function connectionVoice() {
 }
 
 function renderConnectionVoice(container) {
+  if (!container) return;
   const voice = connectionVoice();
   container.replaceChildren();
   container.className = `connection-voice ${voice.className === 'down' ? 'is-down' : voice.className === 'wait' ? 'is-wait' : ''}`;
   if (voice.dot) container.append(node('span', { className: `status-dot ${voice.dot}` }));
   else container.append(icon(voice.iconName));
   container.append(document.createTextNode(voice.text));
+  // The higher of the two windows, because either one alone can stop a turn and
+  // a seat routinely sits near zero on one while the other is spent. Shown here
+  // so "am I out of usage" is answerable at a glance, not only after something
+  // has already failed.
+  const seat = activeSeat();
+  if (!seat) return;
+  const worst = Math.max(
+    Number.isFinite(seat.weeklyPercent) ? seat.weeklyPercent : -1,
+    Number.isFinite(seat.fiveHourPercent) ? seat.fiveHourPercent : -1,
+  );
+  if (worst < 0) return;
+  const blocked = seat.blocked || seat.weeklyBlocked || seat.fiveHourBlocked;
+  container.append(
+    node('span', {
+      className: `connection-usage${blocked ? ' is-blocked' : ''}`,
+      text: blocked ? `· ${seat.name} out` : `· ${seat.name} ${worst}%`,
+    }),
+  );
 }
 
 function renderWorkspacePanel() {
   if (!state.shell) return;
   const panel = state.shell.workspacePanel;
-  const connection = node('div', { className: 'connection-voice' });
+  const connection = node('button', {
+    className: 'connection-voice',
+    type: 'button',
+    'aria-label': 'Connection and account usage',
+    on: { click: () => openConnectionSheet() },
+  });
+  state.shell.connectionVoice = connection;
   renderConnectionVoice(connection);
+  void refreshSeatUsage();
   const header = node('header', { className: 'root-header' }, [
     node('div', {}, [node('h1', { className: 'root-title', text: 'Workspaces' }), connection]),
     node('div', { className: 'root-actions' }, [
@@ -3170,7 +3303,32 @@ function renderWorkspacePanel() {
     appendWorkspaceSection(content, 'Recent', recent);
     appendWorkspaceSection(content, 'All', remainder);
   }
+  // This swaps the SCROLL CONTAINER itself, and it runs on every workspaces
+  // response: an 8s backstop poll plus every stream event, whether or not
+  // anything changed. A fresh element always starts at scrollTop 0, so the list
+  // snapped back to the top on its own every few seconds, and the search input
+  // lives in the same replaced subtree, so it was destroyed mid-word and the
+  // keyboard closed. Rebuilding is left alone here; what carries across is the
+  // state a rebuild has no business discarding.
+  const previousContent = panel.querySelector('.panel-content');
+  const previousScrollTop = previousContent ? previousContent.scrollTop : 0;
+  const previousSearch = panel.querySelector('.search-input');
+  const searchWasFocused = previousSearch && document.activeElement === previousSearch;
+  const selectionStart = searchWasFocused ? previousSearch.selectionStart : null;
+  const selectionEnd = searchWasFocused ? previousSearch.selectionEnd : null;
   panel.replaceChildren(content);
+  const restoredContent = panel.querySelector('.panel-content');
+  // Same frame as the swap, so the top of the list is never painted first.
+  if (restoredContent && previousScrollTop > 0) {
+    restoredContent.scrollTop = previousScrollTop;
+  }
+  if (!searchWasFocused) return;
+  const restoredSearch = panel.querySelector('.search-input');
+  if (!restoredSearch) return;
+  restoredSearch.focus({ preventScroll: true });
+  if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+    restoredSearch.setSelectionRange(selectionStart, selectionEnd);
+  }
 }
 
 function renderSearchResults(content) {
@@ -3538,7 +3696,75 @@ const STRIP_STATUS = {
   error: { className: 'is-error', dot: 'is-error', label: 'error' },
 };
 
+// field-sizing: content makes the textarea track its own content, wraps
+// included, so the manual row measurement below is only needed where it is
+// unsupported. Probed once rather than per keystroke.
+const supportsFieldSizing =
+  typeof CSS !== 'undefined' &&
+  typeof CSS.supports === 'function' &&
+  CSS.supports('field-sizing', 'content');
+
 let lastCentredSessionId = null;
+// Which chat the transcript scroller currently holds. The scroll position is
+// measured before the list is replaced, so without this the reading position
+// from one chat is applied to the next one opened.
+let lastTranscriptSessionId = null;
+// Row id of the newest root event on screen. An agent error is a record of a
+// moment, not a running state, so once anything newer exists its "do this now"
+// guidance is no longer true and must stop being shown as advice.
+let newestRootEventRowId = 0;
+// Seat usage is cached because it is rendered from the always-visible header.
+// Fetching per render would loop: fetch, store, render, fetch.
+// Distance from the end of the transcript at the moment its panel was hidden.
+// Panels are toggled with display:none, and the browser DISCARDS the scroll
+// position of anything display:none, so leaving the transcript and coming back
+// always returned scrollTop to 0. No amount of correcting when the scroll is
+// written can fix that, because nothing in the app did the resetting. Captured
+// on the way out, reapplied on the way in.
+let transcriptHiddenAnchor = null;
+
+let seatUsageCache = null;
+let seatUsageInFlight = false;
+
+async function refreshSeatUsage({ force = false } = {}) {
+  if (seatUsageInFlight) return seatUsageCache;
+  if (seatUsageCache && !force) return seatUsageCache;
+  seatUsageInFlight = true;
+  try {
+    seatUsageCache = await request('/api/usage');
+  } catch {
+    seatUsageCache = { available: false, reason: 'producer_unreachable' };
+  } finally {
+    seatUsageInFlight = false;
+  }
+  if (state.shell) renderConnectionVoice(state.shell.connectionVoice);
+  return seatUsageCache;
+}
+
+// The seat the agent is actually running on, which is the only one whose limit
+// can stop a turn.
+function activeSeat() {
+  if (!seatUsageCache?.available) return null;
+  const claudeProvider = Array.isArray(seatUsageCache.providers)
+    ? seatUsageCache.providers.find((provider) => provider.id === 'claude')
+    : null;
+  const accounts = Array.isArray(claudeProvider?.accounts)
+    ? claudeProvider.accounts
+    : Array.isArray(seatUsageCache.seats)
+      ? seatUsageCache.seats
+      : [];
+  return accounts.find((seat) => seat.active) || null;
+}
+// Whether the operator has moved this transcript themselves since it opened.
+// A chat's messages arrive in two passes, a memory snapshot and then the
+// network refresh, and returning from the background re-runs that. The first
+// paint can therefore hold a fraction of the messages, and every message that
+// lands afterwards is inserted ABOVE the reader, pushing them further from the
+// end. The old logic measured distance-from-bottom on that partial paint and
+// then faithfully preserved it, which is why coming back to the app left the
+// view stranded far up the page. Following the newest message until a real
+// gesture says otherwise is what makes that impossible.
+let transcriptMovedByHand = false;
 
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
@@ -3588,16 +3814,11 @@ function renderChatStrip() {
       className: 'chat-chip is-new',
       type: 'button',
       text: '+',
-      'aria-label': 'New chat',
-      on: {
-        click: async () => {
-          const done = await runTabAction('new');
-          if (done) {
-            announce('New chat created on the Mac.');
-            void loadSessions(workspaceId);
-          }
-        },
-      },
+      // Names the destination, because the strip shows chats and not the
+      // workspace they live in, and a new chat always lands in the workspace
+      // of the chat that is currently open.
+      'aria-label': `New chat in ${currentWorkspaceName() || 'this workspace'}`,
+      on: { click: (event) => void createChat({ control: event.currentTarget }) },
     }),
   );
   strip.replaceChildren(...chips);
@@ -3656,15 +3877,45 @@ function renderTranscript() {
   }
   renderBanner(transcriptBanner);
 
+  // Measured against the content still on screen, which is the PREVIOUS chat's
+  // when a different one is being opened. Two ways that lands the reader high
+  // up on a transcript instead of on the newest message:
+  //
+  //   1. Opening a chat while scrolled up in the last one. That distance from
+  //      the end gets restored against the new chat's content, so the newest
+  //      message is off screen and nothing ever asked to go there: opening a
+  //      chat has no scroll-to-bottom of its own, it relies on this pinning.
+  //   2. Measuring with no layout. A hidden or backgrounded scroller reports
+  //      clientHeight 0, which inflates the distance by exactly one viewport,
+  //      and restoring it later scrolls a full screen too high.
+  //
+  // Both mean the measurement is not about the content being rendered, so the
+  // newest message wins instead.
+  const transcriptSessionChanged =
+    lastTranscriptSessionId !== state.route.sessionId;
+  lastTranscriptSessionId = state.route.sessionId;
+  if (transcriptSessionChanged) transcriptMovedByHand = false;
+  const measurable = transcriptScroll.clientHeight > 0;
   const distanceBefore =
     transcriptScroll.scrollHeight -
     transcriptScroll.clientHeight -
     transcriptScroll.scrollTop;
-  const pinned = distanceBefore < 48;
+  const pinned =
+    transcriptSessionChanged ||
+    !measurable ||
+    !transcriptMovedByHand ||
+    distanceBefore < 48;
   const messages = chronologicalTranscriptMessages([
     ...(state.messagesBySession.get(state.route.sessionId) || []),
     ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
   ]);
+  newestRootEventRowId = messages.reduce((newest, message) => {
+    if (!['user', 'assistant', 'agent-error', 'turn-result'].includes(message.kind)) {
+      return newest;
+    }
+    const rowId = Number(message.rowId);
+    return Number.isFinite(rowId) && rowId > newest ? rowId : newest;
+  }, 0);
   const { entries, toolResults } = buildFocusedTranscript(messages, {
     sessionStatus: session?.status || 'unknown',
   });
@@ -3717,13 +3968,16 @@ function renderTranscript() {
   }
   messageList.replaceChildren(fragment);
   renderAgentStatus(statusRow, session, messages);
-  requestAnimationFrame(() => {
-    if (!state.shell) return;
+  // Corrected in the SAME frame as the content change, never a frame later.
+  // Reading scrollHeight forces the layout this needs, so the corrected
+  // position is the first thing painted. Deferring it into a rAF meant every
+  // render painted the old position and then snapped, which during streaming is
+  // a jump on every update. It also made two renders in one tick fight: the
+  // second measured against the first's grown content but its uncorrected
+  // scrollTop, so a reader at the bottom could read as un-pinned.
+  if (state.shell) {
     if (pinned) {
-      transcriptScroll.scrollTo({
-        top: transcriptScroll.scrollHeight,
-        behavior: 'auto',
-      });
+      transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
     } else {
       // The whole list is rebuilt on every render, so scroll anchoring is lost
       // and the view lands wherever the new content puts it: that is the
@@ -3739,10 +3993,18 @@ function renderTranscript() {
       if (Math.abs(restored - transcriptScroll.scrollTop) > 1) {
         transcriptScroll.scrollTop = Math.max(0, restored);
       }
-      state.shell.latestButton.hidden = false;
     }
+    // Same threshold the scroll handler uses. It was an unconditional reveal
+    // against a 48px pin threshold while the handler hides below 120px, so any
+    // render with the reader between the two flashed the button on and the next
+    // scroll event flashed it back off.
+    state.shell.latestButton.hidden =
+      transcriptScroll.scrollHeight -
+        transcriptScroll.clientHeight -
+        transcriptScroll.scrollTop <
+      120;
     scheduleReadEvaluation();
-  });
+  }
   renderComposerState();
   appUpdateCoordinator?.stateChanged();
 }
@@ -3988,7 +4250,7 @@ function renderMessage(message, toolResults) {
     if (message.importance !== 'progress') {
       item.append(
         copyControl(message.text, {
-          label: 'Copy response',
+          label: 'Copy output',
           className: 'message-copy-button',
         }),
       );
@@ -4060,6 +4322,18 @@ function renderMessage(message, toolResults) {
             on: {
               click: () => checkDelivery(message, { force: true }),
             },
+          }),
+          // Also offered when delivery is UNKNOWN. Editing returns the text to
+          // the composer and sends nothing, so it needs no proof the message
+          // failed, and withholding it was what stranded the typed text with no
+          // way to get it back. Retry stays gated on proof, because that one
+          // does resend.
+          node('button', {
+            className: 'message-retry',
+            type: 'button',
+            text: 'Edit',
+            'aria-label': 'Move this message back to the editor',
+            on: { click: () => editFailedMessage(message) },
           }),
         );
       }
@@ -4179,7 +4453,14 @@ function renderMessage(message, toolResults) {
           text: 'Pocket grouped these repeated failures. They do not by themselves stop the main turn; open it on your Mac only if you need the private action details.',
         })
       : renderAgentErrorGuidance(presentation);
-    return node('li', {
+    // Superseded means the agent has produced something since, so whatever this
+    // said about the current state is over. "Out of usage for this session"
+    // sitting under a finished reply reads as a live state, and sent the
+    // operator chasing a limit that had already reset.
+    const rowId = Number(message.rowId);
+    const superseded =
+      Number.isFinite(rowId) && newestRootEventRowId > 0 && rowId < newestRootEventRowId;
+    const card = node('li', {
       className: 'message agent-error',
       role: 'alert',
     }, [
@@ -4187,14 +4468,16 @@ function renderMessage(message, toolResults) {
         icon('warn'),
         node('div', { className: 'agent-error-copy' }, [
           node('strong', { className: 'agent-error-title', text: title }),
-          guidance,
+          superseded ? null : guidance,
           node('code', {
             className: 'agent-error-code',
             text: presentation.code,
           }),
-        ]),
+        ].filter(Boolean)),
       ]),
     ]);
+    if (superseded) card.classList.add('is-past');
+    return card;
   }
   return null;
 }
@@ -4812,6 +5095,15 @@ async function settleTerminalDeliveryStatus(message, delivery) {
     await refreshMessages(message.sessionId, { full: true });
     return true;
   }
+  // An 'absent' ledger entry is deliberately NOT treated as proof the message
+  // was never sent. It looks like proof and is not: the ledger evicts on
+  // CAPACITY as well as age (#makeRoomFor, 2048 entries, sorted by expiry and
+  // ignoring how old an entry is), so a delivered receipt can be dropped early,
+  // and an age check cannot see that. Acting on it would resend a message that
+  // already went out, which is worse than the problem it was meant to solve.
+  // Recovering the typed text is handled by making Edit available for ambiguous
+  // failures instead, which returns the text to the composer without sending
+  // anything and leaves the decision to a human who can see the transcript.
   if (delivery.state === 'failed') {
     if (!deliveryStatusIsTerminal(delivery)) return false;
     message.errorCode = delivery.code || 'delivery_unknown';
@@ -5017,9 +5309,23 @@ function recheckAmbiguousDeliveries(sessionId = null) {
 }
 
 async function retryMessage(message) {
-  if (!deliveryCanRetry(message)) return;
-  if (!await verifyTerminalDeliveryAction(message)) return;
-  if (!deliveryCanRetry(message)) return;
+  // These three gates used to return silently, so tapping Retry could do
+  // literally nothing with no explanation: the button was there, the finger
+  // landed on it, and the app said nothing at all. Every exit now reports.
+  if (!deliveryCanRetry(message)) {
+    announce(
+      message?.definitelyUnsent === true
+        ? 'This one cannot be retried automatically. Edit it and send again.'
+        : 'Not retried, because it is not certain this message failed to send.',
+    );
+    return;
+  }
+  if (!(await verifyTerminalDeliveryAction(message))) return;
+  if (!deliveryCanRetry(message)) {
+    announce('This delivery changed. Check the chat before sending again.');
+    return;
+  }
+  announce('Retrying...');
   let claimed;
   try {
     claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
@@ -5292,8 +5598,15 @@ function startEvents() {
   state.heartbeatTimer = setInterval(() => {
     if (Date.now() - state.lastHeartbeat > 10_000) {
       if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
-      state.connection = state.lastHeartbeat ? 'offline' : 'connecting';
-      renderConnectionState();
+      const nextConnection = state.lastHeartbeat ? 'offline' : 'connecting';
+      // Only on an actual change. renderConnectionState fans out to all three
+      // panel renderers, each of which rebuilds its DOM, so calling it every
+      // tick rebuilt the whole app once a second for as long as the Mac was
+      // unreachable. The offline banner's Details button became a different
+      // node under the finger every second, which is why it often did nothing.
+      const connectionChanged = state.connection !== nextConnection;
+      state.connection = nextConnection;
+      if (connectionChanged) renderConnectionState();
       // Losing the stream used to be reported and then left alone: EventSource
       // does not reliably reopen one that iOS tore down, and startEvents is
       // otherwise only reached from revealApplication. That is why a stale app
@@ -5534,6 +5847,73 @@ async function runTabAction(action, { confirm = false, sessionId: explicitId } =
   return payload;
 }
 
+function currentWorkspaceName() {
+  const workspace = state.workspaces.find(
+    (item) => item.id === state.route.workspaceId,
+  );
+  return workspace?.name || null;
+}
+
+// One helper behind both entry points (the + on the chat strip and the Chats
+// sheet), so creating a chat behaves identically wherever it is started.
+//
+// Creating a chat used to only refresh the list and leave the operator in the
+// chat they were already in, with the new one arriving as "Untitled" among the
+// others. On a phone that reads as nothing having happened, and the obvious
+// response is to tap again, which creates a second chat. The server now names
+// the chat it created, so we open it.
+let chatCreationInFlight = false;
+
+async function createChat({ onCreated, control } = {}) {
+  // The Mac round trip runs several seconds. A second tap during it posts a
+  // second shortcut and creates a second chat, so the whole operation is
+  // single-flight and the control says it is working.
+  if (chatCreationInFlight) return null;
+  chatCreationInFlight = true;
+  if (control) {
+    control.setAttribute('aria-busy', 'true');
+    control.disabled = true;
+  }
+  announce('Creating a chat on the Mac...');
+  try {
+    return await runCreateChat({ onCreated });
+  } finally {
+    chatCreationInFlight = false;
+    if (control) {
+      control.removeAttribute('aria-busy');
+      control.disabled = false;
+    }
+  }
+}
+
+async function runCreateChat({ onCreated } = {}) {
+  const workspaceId = state.route.workspaceId;
+  const done = await runTabAction('new');
+  if (!done) return null;
+  onCreated?.();
+  // The server reports the workspace it actually acted on. Local route state
+  // can disagree with it, because the Mac-side route proof presses the
+  // workspace link and can land somewhere else.
+  const where = done.workspaceName || currentWorkspaceName();
+  if (done.createdSessionId) {
+    announce(where ? `New chat in ${where}.` : 'New chat created.');
+    // Refresh first so the chat exists in state before routing to it,
+    // otherwise the transcript opens against a session the list does not know.
+    await loadSessions(workspaceId);
+    await openSession(done.createdSessionId, { workspaceId });
+    return done.createdSessionId;
+  }
+  // The Mac made a chat but it could not be uniquely identified, so say so
+  // plainly rather than opening something that might be the wrong chat.
+  announce(
+    where
+      ? `New chat created in ${where}. Pick it from the list.`
+      : 'New chat created on the Mac. Pick it from the list.',
+  );
+  void loadSessions(workspaceId);
+  return null;
+}
+
 const TAB_ACTION_MESSAGES = {
   close_not_confirmed: 'Not closed. Confirm first.',
   tab_close_unverified: 'Could not confirm the chat closed. Nothing assumed.',
@@ -5542,7 +5922,8 @@ const TAB_ACTION_MESSAGES = {
   session_not_visible: 'That chat is not open on the Mac.',
   user_input_active: 'Someone is using the Mac. Try again in a moment.',
   session_locked: 'The Mac is locked.',
-  conductor_window_unavailable: 'Conductor has no window open on the Mac.',
+  conductor_window_unavailable:
+    'Conductor has no window on the Mac. Quit and reopen it there.',
 };
 
 function confirmCloseChat(session, { onClosed } = {}) {
@@ -5644,16 +6025,17 @@ function openChatsSheet() {
       node('button', {
         className: 'primary-button sheet-chats-action',
         type: 'button',
-        text: 'New chat',
+        // The destination is in the label, so the answer to "where does this
+        // land" is visible at the moment of the tap rather than after it.
+        text: currentWorkspaceName()
+          ? `New chat in ${currentWorkspaceName()}`
+          : 'New chat',
         on: {
-          click: async () => {
-            const done = await runTabAction('new');
-            if (done) {
-              announce('New chat created on the Mac.');
-              closeOverlay();
-              void loadSessions(workspaceId);
-            }
-          },
+          click: (event) =>
+            void createChat({
+              control: event.currentTarget,
+              onCreated: closeOverlay,
+            }),
         },
       }),
       list,
@@ -5664,6 +6046,118 @@ function openChatsSheet() {
     ]),
     { className: 'chats' },
   );
+}
+
+
+// Returns the section immediately and fills it in when the read lands, so a
+// caller can place it without awaiting.
+function accountUsageSection({ force = false } = {}) {
+  const section = node('div', { className: 'usage-section' });
+  void fillAccountUsage(section, { force });
+  return section;
+}
+
+async function appendAccountUsage(content, { force = false } = {}) {
+  content.append(accountUsageSection({ force }));
+}
+
+function usageResetLabel(value) {
+  if (!Number.isFinite(value) || value <= Date.now()) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+async function fillAccountUsage(section, { force = false } = {}) {
+  const usage = await refreshSeatUsage({ force });
+  const providers = Array.isArray(usage?.providers)
+    ? usage.providers
+    : Array.isArray(usage?.seats)
+      ? [{
+          id: 'claude',
+          label: 'Claude',
+          available: usage.available === true,
+          accounts: usage.seats,
+        }]
+      : [];
+  if (!usage?.available || providers.length === 0) {
+    section.append(
+      node('p', { className: 'sheet-note', text: 'Account usage is not being reported right now.' }),
+    );
+    return;
+  }
+  for (const provider of providers) {
+    const providerSection = node('section', { className: 'usage-provider' }, [
+      node('div', {
+        className: 'usage-provider-heading',
+        text: provider.label || provider.id,
+      }),
+    ]);
+    section.append(providerSection);
+    if (!provider.available) {
+      providerSection.append(
+        node('p', { className: 'sheet-note', text: 'Not available right now.' }),
+      );
+      continue;
+    }
+    const accounts = Array.isArray(provider.accounts) ? provider.accounts : [];
+    if (accounts.length === 0) {
+      providerSection.append(
+        node('p', { className: 'sheet-note', text: 'No saved accounts.' }),
+      );
+      continue;
+    }
+    for (const account of accounts) {
+      const parts = [];
+      if (account.fiveHourPercent !== null) parts.push(`5h ${account.fiveHourPercent}%`);
+      if (account.weeklyPercent !== null) parts.push(`week ${account.weeklyPercent}%`);
+      if (account.stale && parts.length > 0) parts.push('cached');
+      const blocked =
+        account.blocked || account.fiveHourBlocked || account.weeklyBlocked;
+      const resetParts = [];
+      const fiveHourReset = usageResetLabel(account.fiveHourResetAt);
+      const weeklyReset = usageResetLabel(account.weeklyResetAt);
+      if (fiveHourReset) resetParts.push(`5h ${fiveHourReset}`);
+      if (weeklyReset) resetParts.push(`week ${weeklyReset}`);
+      const name = node('span', { className: 'usage-seat-name' }, [
+        account.active
+          ? node('span', { className: 'usage-active', text: 'Active' })
+          : null,
+        document.createTextNode(account.label || account.name),
+      ]);
+      const row = node('div', {
+        className: `usage-seat${blocked ? ' is-blocked' : ''}`,
+      }, [
+        name,
+        node('span', {
+          className: 'usage-seat-value',
+          // Naming which window is spent is the whole point: "out of usage"
+          // with no window named is what sent the operator looking in the
+          // wrong place.
+          text: blocked
+            ? `${account.weeklyBlocked ? 'Weekly spent' : 'Limit hit'} · ${parts.join(' · ')}`
+            : parts.join(' · ') || 'No data yet',
+        }),
+      ]);
+      if (resetParts.length > 0) {
+        row.append(
+          node('span', {
+            className: 'usage-seat-reset',
+            text: `Resets ${resetParts.join(' · ')}`,
+          }),
+        );
+      }
+      providerSection.append(row);
+    }
+  }
+}
+
+function openUsageSheet() {
+  openSheet('Account usage', accountUsageSection({ force: true }), {
+    className: 'usage',
+  });
 }
 
 async function openConnectionSheet() {
@@ -5690,6 +6184,13 @@ async function openConnectionSheet() {
         ]),
       );
     });
+    // Seat usage, live from the local producer. The agent only reports a limit
+    // at the moment it hits one, so an exhausted seat and a long-since-reset
+    // one look identical afterwards. This answers "am I actually out" without
+    // going to the Mac, and it shows the two windows separately because a seat
+    // can sit at 0% on the five hour window while the weekly one is spent,
+    // which is precisely the state that reads as unexplained.
+    void appendAccountUsage(content, { force: true });
     content.append(
       node('button', {
         className: 'text-button',
@@ -5935,6 +6436,11 @@ function confirmRevoke(device) {
                 },
               );
               if (result.currentDevice) {
+                // The gate only replaces the children of #app, and
+                // #overlay-root is a sibling, so without this the confirmation
+                // sheet stayed on top of the signed-out screen with its Sign
+                // out button still live. Same order the lock path uses.
+                closeOverlay();
                 renderSignedOut();
               } else {
                 openSecurity();
@@ -6114,6 +6620,47 @@ function reloadForShellRevision(revision) {
   );
   location.replace(`${target.pathname}${target.search}${target.hash}`);
 }
+
+// THE KEYBOARD SHIFT, which is what "randomly jumps" has been all along.
+//
+// index.html asks for interactive-widget=resizes-content, and WebKit does not
+// implement that key. iOS therefore uses the default: the LAYOUT viewport keeps
+// full screen height and only the VISUAL viewport shrinks for the keyboard.
+// Every height in this shell is 100% of the unshrunk layout viewport, and the
+// composer is position:absolute bottom:0 inside it, so bottom:0 stays pinned to
+// the bottom of the whole screen, behind the keyboard. WebKit's only recourse
+// is to translate the visual viewport to reveal the caret, which drags the
+// entire app, header included, and does not reliably translate back.
+//
+// So the app is told how much of the screen the keyboard is covering and gives
+// that space up itself. Then the caret is already visible, WebKit has no reason
+// to translate anything, and nothing slides.
+function syncKeyboardInset() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+  const covered = Math.max(
+    0,
+    Math.round(window.innerHeight - viewport.height - viewport.offsetTop),
+  );
+  // Sub-pixel noise arrives constantly while scrolling; only real changes are
+  // written, or this would thrash layout on every scroll event.
+  const previous = Number(
+    document.documentElement.style.getPropertyValue('--keyboard-inset').replace('px', ''),
+  );
+  if (Number.isFinite(previous) && Math.abs(previous - covered) < 2) return;
+  document.documentElement.style.setProperty('--keyboard-inset', `${covered}px`);
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncKeyboardInset);
+  window.visualViewport.addEventListener('scroll', syncKeyboardInset);
+  syncKeyboardInset();
+}
+// Belt for the case the shift already happened: dismissing the keyboard must
+// always put the inset back, even if a resize event is missed.
+window.addEventListener('focusout', () => {
+  setTimeout(syncKeyboardInset, 50);
+});
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {

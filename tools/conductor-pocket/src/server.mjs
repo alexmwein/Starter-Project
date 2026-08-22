@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -738,13 +739,28 @@ class IdempotencyStore {
   async status(key, sessionId, database) {
     if (this.#prune()) await this.#persist();
     const entry = this.#entries.get(this.#keyProof(key));
+    if (!entry) {
+      // No entry at all is different from an entry we cannot interpret, and
+      // conflating them stranded the operator. Every send that never reached
+      // this relay (Mac asleep, relay restarting, phone off network) landed
+      // here, the phone read "unknown", and it offered neither Retry nor Edit,
+      // so the typed text could not be recovered at all.
+      //
+      // The ledger is durable across relay restarts and only drops entries
+      // after its TTL, so within that window an absent key proves the send was
+      // never recorded, which means it never ran. The TTL is reported so the
+      // caller can check its own message is younger than it rather than
+      // trusting absence forever.
+      return { state: 'absent', ledgerTtlMs: DELIVERY_LEDGER_TTL_MS };
+    }
     if (
-      !entry ||
       !deliveryLedgerProofMatches(
         entry.sessionProof,
         this.#sessionProof(sessionId),
       )
     ) {
+      // The key exists but belongs to another session. Nothing can be proven
+      // about this one, so it stays ambiguous.
       return { state: 'unknown' };
     }
     if (entry.state === 'pending') {
@@ -1248,6 +1264,242 @@ class ConnectionProbe {
   }
 }
 
+// Reads the local VDM seat producer. Everything is whitelisted into a small
+// fixed shape: the raw payload carries fingerprints, refresh state and full
+// history, none of which the phone needs, and none of which should cross the
+// wire just because it happened to be in the response.
+//
+// Loopback only, short timeout, and every failure degrades to available:false
+// rather than throwing. Usage is a convenience readout; it must never be able
+// to take down a screen the operator opened to diagnose something else.
+const SEAT_USAGE_URL = 'http://127.0.0.1:3333/api/profiles';
+const SEAT_USAGE_TIMEOUT_MS = 2_000;
+const GPT_ACCOUNT_STORE = path.join(os.homedir(), '.codex-accounts');
+const GPT_USAGE_CACHE = path.join(
+  os.homedir(),
+  'Library',
+  'Caches',
+  'SwiftBar',
+  'codex-usage.json',
+);
+const GPT_USAGE_STALE_MS = 5 * 60 * 1000;
+
+function seatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  // VDM reports utilization as a 0..1 fraction.
+  return Math.min(100, Math.round(number * 100));
+}
+
+function seatResetAt(value) {
+  const number = Number(value);
+  // Seconds since epoch in the producer, milliseconds everywhere here.
+  return Number.isSafeInteger(number) && number > 0 ? number * 1000 : null;
+}
+
+export async function readSeatUsage(fetchImpl = fetch) {
+  let payload;
+  try {
+    const response = await fetchImpl(SEAT_USAGE_URL, {
+      signal: AbortSignal.timeout(SEAT_USAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) return { available: false, reason: 'producer_error' };
+    payload = await response.json();
+  } catch {
+    return { available: false, reason: 'producer_unreachable' };
+  }
+  if (!payload || !Array.isArray(payload.profiles)) {
+    return { available: false, reason: 'producer_unreadable' };
+  }
+  const seats = payload.profiles
+    .filter((profile) => profile && typeof profile === 'object')
+    .map((profile) => {
+      const limits = profile.rateLimits || {};
+      const fiveHour = limits.fiveH || {};
+      const sevenDay = limits.sevenD || {};
+      return {
+        name: typeof profile.name === 'string' ? profile.name.slice(0, 64) : '',
+        label:
+          typeof profile.label === 'string' ? profile.label.slice(0, 120) : '',
+        active: profile.isActive === true,
+        // A seat can be fine on the 5 hour window and exhausted on the weekly
+        // one, which is exactly the state that reads as "out of usage" with no
+        // explanation, so both are reported rather than one summary number.
+        fiveHourPercent: seatPercent(fiveHour.utilization),
+        fiveHourBlocked: fiveHour.status === 'rejected',
+        fiveHourResetAt: seatResetAt(fiveHour.reset),
+        weeklyPercent: seatPercent(sevenDay.utilization),
+        weeklyBlocked: sevenDay.status === 'rejected',
+        weeklyResetAt: seatResetAt(sevenDay.reset),
+        blocked: limits.status === 'rejected',
+        dormant: profile.dormant === true,
+        expired: profile.expired === true,
+      };
+    })
+    .filter((seat) => seat.name !== '');
+  return { available: true, seats, fetchedAt: Date.now() };
+}
+
+function gptPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.min(100, Math.round(number));
+}
+
+function gptTimestamp(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number * 1000 : null;
+}
+
+async function readOptionalUsageText(filePath, readFileImpl) {
+  try {
+    return String(await readFileImpl(filePath, 'utf8')).trim();
+  } catch {
+    return '';
+  }
+}
+
+// Reads only SwiftBar's usage cache plus account filenames and labels. Pocket
+// never opens the account snapshot JSON files, which contain the credentials,
+// and never starts a paid API request. SwiftBar remains the single refresh
+// owner; this surface is only a fast, read-only view of what it already knows.
+export async function readGptUsage({
+  accountStore = GPT_ACCOUNT_STORE,
+  cachePath = GPT_USAGE_CACHE,
+  now = Date.now(),
+  readdirImpl = fs.readdir,
+  readFileImpl = fs.readFile,
+} = {}) {
+  let entries;
+  try {
+    entries = await readdirImpl(accountStore, { withFileTypes: true });
+  } catch {
+    return {
+      id: 'gpt',
+      label: 'GPT',
+      available: false,
+      reason: 'account_store_unreachable',
+      accounts: [],
+    };
+  }
+
+  const [active, cacheText] = await Promise.all([
+    readOptionalUsageText(path.join(accountStore, '.active'), readFileImpl),
+    readOptionalUsageText(cachePath, readFileImpl),
+  ]);
+  let cache = {};
+  try {
+    const parsed = JSON.parse(cacheText);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cache = parsed;
+  } catch {
+    cache = {};
+  }
+  const samples =
+    cache.samples && typeof cache.samples === 'object' && !Array.isArray(cache.samples)
+      ? cache.samples
+      : {};
+  const snapshotNames = entries
+    .filter(
+      (entry) =>
+        entry?.isFile?.() &&
+        !entry.name.startsWith('.') &&
+        entry.name.endsWith('.json'),
+    )
+    .map((entry) => entry.name.slice(0, -'.json'.length))
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+  const accounts = await Promise.all(
+    snapshotNames.map(async (name) => {
+      const label =
+        (await readOptionalUsageText(
+          path.join(accountStore, `${name}.label`),
+          readFileImpl,
+        )) || name;
+      const sample =
+        samples[name] && typeof samples[name] === 'object' && !Array.isArray(samples[name])
+          ? samples[name]
+          : null;
+      const fetchedAt = gptTimestamp(sample?.fetched_at);
+      const weeklyPercent = gptPercent(sample?.used_percent);
+      return {
+        name: name.slice(0, 64),
+        label: label.slice(0, 120),
+        active: name === active,
+        fiveHourPercent: null,
+        fiveHourBlocked: false,
+        fiveHourResetAt: null,
+        weeklyPercent,
+        weeklyBlocked: weeklyPercent === 100,
+        weeklyResetAt: gptTimestamp(sample?.resets_at),
+        blocked: weeklyPercent === 100,
+        stale:
+          fetchedAt === null ||
+          now < fetchedAt ||
+          now - fetchedAt > GPT_USAGE_STALE_MS,
+        fetchedAt,
+      };
+    }),
+  );
+  return {
+    id: 'gpt',
+    label: 'GPT',
+    available: accounts.length > 0,
+    reason:
+      accounts.length > 0
+        ? null
+        : cacheText
+          ? 'no_accounts'
+          : 'usage_cache_unavailable',
+    accounts,
+  };
+}
+
+export async function readAccountUsage({
+  readClaude = readSeatUsage,
+  readGpt = readGptUsage,
+  now = Date.now(),
+} = {}) {
+  const [claudeResult, gptResult] = await Promise.allSettled([
+    readClaude(),
+    readGpt(),
+  ]);
+  const claude =
+    claudeResult.status === 'fulfilled'
+      ? claudeResult.value
+      : { available: false, reason: 'producer_unreachable', seats: [] };
+  const gpt =
+    gptResult.status === 'fulfilled'
+      ? gptResult.value
+      : {
+          id: 'gpt',
+          label: 'GPT',
+          available: false,
+          reason: 'producer_unreachable',
+          accounts: [],
+        };
+  const providers = [
+    {
+      id: 'claude',
+      label: 'Claude',
+      available: claude?.available === true,
+      reason: typeof claude?.reason === 'string' ? claude.reason : null,
+      accounts: Array.isArray(claude?.seats) ? claude.seats : [],
+    },
+    {
+      id: 'gpt',
+      label: 'GPT',
+      available: gpt?.available === true,
+      reason: typeof gpt?.reason === 'string' ? gpt.reason : null,
+      accounts: Array.isArray(gpt?.accounts) ? gpt.accounts : [],
+    },
+  ];
+  return {
+    available: providers.some((provider) => provider.available),
+    providers,
+    fetchedAt: now,
+  };
+}
+
 export function createPocketServer({
   configStore,
   security,
@@ -1257,6 +1509,7 @@ export function createPocketServer({
   audit = () => {},
   attachmentManager = new AttachmentManager(),
   deliveryLedgerPath = null,
+  usageReader = readAccountUsage,
 }) {
   const idempotency = new IdempotencyStore({
     ledgerPath: deliveryLedgerPath,
@@ -1693,7 +1946,34 @@ export function createPocketServer({
         };
         let result;
         if (action === 'new') {
+          // Snapshot before acting so the created chat can be named rather
+          // than guessed. Measured on 2026-08-16: by the time the Mac proves
+          // the tab exists, Conductor has already written the row, so the
+          // lookup below resolves on its first read. Taking the newest row
+          // instead would be wrong, since the operator can create a chat on
+          // the Mac at the same moment.
+          const before = new Set(
+            database.listSessions(route.workspaceId).map((row) => row.id),
+          );
           result = await transport.newTab(target);
+          if (result.ok === true) {
+            const appeared = database
+              .listSessions(route.workspaceId)
+              .filter((row) => !before.has(row.id));
+            // Exactly one, or the phone is told nothing and simply refreshes.
+            // Navigating to a chat we cannot uniquely identify is worse than
+            // leaving the operator where they are.
+            result =
+              appeared.length === 1
+                ? {
+                    ...result,
+                    createdSessionId: appeared[0].id,
+                    createdSessionTitle: appeared[0].title,
+                    workspaceId: route.workspaceId,
+                    workspaceName: route.workspaceName,
+                  }
+                : { ...result, workspaceId: route.workspaceId };
+          }
         } else if (action === 'close') {
           result = await transport.closeTab(target, {
             confirmClose: body?.confirm === true,
@@ -2355,6 +2635,15 @@ export function createPocketServer({
       if (request.method === 'GET' && requestUrl.pathname === '/api/devices') {
         const devices = security.listDevices(request);
         return sendJson(response, 200, { devices }, config);
+      }
+
+      // Seat usage, read from the local VDM producer on 3333. Without it the
+      // phone can only report what the agent said at the moment it failed, and
+      // a limit that has since reset still reads as current. This is the live
+      // number, so "am I actually out?" is answerable from the phone.
+      if (request.method === 'GET' && requestUrl.pathname === '/api/usage') {
+        security.session(request, { requireUnlocked: true });
+        return sendJson(response, 200, await usageReader(), config);
       }
 
       const revokeDevice = pathMatch(
