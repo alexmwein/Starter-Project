@@ -1,11 +1,5 @@
 # OVO Brand Outbound ICP
 
-Status: channel playbook under [SYSTEM.md](./SYSTEM.md)
-
-Version: 1.0
-
-Operating rule: this document selects and works accounts; `SYSTEM.md` and `lifecycle-and-routing.md` control objects, owners, stages, gates, and handoffs.
-
 ## Objective
 
 Build a repeatable outbound engine for brands that:
@@ -625,7 +619,7 @@ Preferred economics:
 
 1. RevOps verifies identity, contactability, scores, source, and suppression.
 2. Brand SDR owns first contact and qualification until a real opportunity exists.
-3. The assigned Brand AE owns discovery, proposal, negotiation, and close.
+3. The assigned Closing AE owns discovery, proposal, negotiation, and close.
 4. Jaci or the campaign-operations owner validates creator capacity and deliverability before proposal.
 5. Patricia accepts the post-close brand relationship and account plan.
 6. Yellow compliance accounts require a named specialist approval path before proposal.
