@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-phone-polish-20260821';
+} from './delivery-receipts.js?v=0.2.0-calm-motion-20260822';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-phone-polish-20260821';
+} from './app-update.js?v=0.2.0-calm-motion-20260822';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-phone-polish-20260821';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-phone-polish-20260821';
-import { fetchJson } from './http.js?v=0.2.0-phone-polish-20260821';
+} from './bootstrap-recovery.js?v=0.2.0-calm-motion-20260822';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-calm-motion-20260822';
+import { fetchJson } from './http.js?v=0.2.0-calm-motion-20260822';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-phone-polish-20260821';
+} from './image-attachments.js?v=0.2.0-calm-motion-20260822';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-phone-polish-20260821';
+} from './live-refresh.js?v=0.2.0-calm-motion-20260822';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-phone-polish-20260821';
+} from './rich-text.js?v=0.2.0-calm-motion-20260822';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,19 +44,20 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-phone-polish-20260821';
+} from './read-state.js?v=0.2.0-calm-motion-20260822';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-phone-polish-20260821';
+} from './transcript-focus.js?v=0.2.0-calm-motion-20260822';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-phone-polish-20260821';
+} from './swipe-navigation.js?v=0.2.0-calm-motion-20260822';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
 const announcer = document.querySelector('#announcer');
+const PHONE_LAYOUT = window.matchMedia('(max-width: 599px)');
 const AWAY_LOCK_MS = 5 * 60 * 1000;
 const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
 const RESUME_REQUEST_MS = 6 * 1000;
@@ -92,9 +93,14 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-phone-polish-20260821';
+const CLIENT_SHELL_REVISION = '0.2.0-calm-motion-20260822';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
+const MOTION_MS = Object.freeze({
+  quick: 100,
+  content: 140,
+  overlayExit: 160,
+});
 
 const state = {
   auth: null,
@@ -770,6 +776,7 @@ function gateView({
   secondary,
   connectionAnchor = false,
 }) {
+  void closeOverlay({ immediate: true });
   state.shell?.composer.observer?.disconnect();
   state.shell?.readObserver?.disconnect();
   cancelReadTracking();
@@ -2565,12 +2572,13 @@ function ensureShell() {
     {
       className: 'latest-button',
       type: 'button',
-      hidden: true,
+      'aria-hidden': 'true',
+      tabindex: '-1',
       on: {
         click: () => {
           noteReadGesture();
           transcriptScroll.scrollTo({ top: transcriptScroll.scrollHeight, behavior: 'smooth' });
-          latestButton.hidden = true;
+          setLatestButtonVisible(latestButton, false);
         },
       },
     },
@@ -2598,7 +2606,7 @@ function ensureShell() {
       transcriptScroll.scrollHeight -
       transcriptScroll.clientHeight -
       transcriptScroll.scrollTop;
-    latestButton.hidden = distance < 120;
+    setLatestButtonVisible(latestButton, distance >= 120);
     transcriptNav.root.classList.toggle('is-scrolled', transcriptScroll.scrollTop > 1);
     scheduleReadEvaluation();
   });
@@ -2632,6 +2640,7 @@ function ensureShell() {
     chatStrip,
     transcriptBanner,
     transcriptScroll,
+    transcriptColumn,
     messageList,
     statusRow,
     latestButton,
@@ -2647,6 +2656,13 @@ function cancelReadTracking() {
   if (readEvaluationTimer !== null) clearTimeout(readEvaluationTimer);
   readEvaluationTimer = null;
   readProgress = emptyReadProgress();
+}
+
+function setLatestButtonVisible(button, visible) {
+  if (!button) return;
+  button.classList.toggle('is-visible', visible);
+  button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  button.tabIndex = visible ? 0 : -1;
 }
 
 function invalidateUnreadHeadEvidence({ render = true } = {}) {
@@ -3036,6 +3052,22 @@ function createComposer() {
   };
 }
 
+function syncPanelExposure() {
+  if (!state.shell) return;
+  const panels = [
+    state.shell.workspacePanel,
+    state.shell.sessionPanel,
+    state.shell.transcriptPanel,
+  ];
+  for (const panel of panels) {
+    const active = PHONE_LAYOUT.matches
+      ? panel.classList.contains('is-active')
+      : panel !== state.shell.workspacePanel;
+    panel.toggleAttribute('inert', !active);
+    panel.setAttribute('aria-hidden', active ? 'false' : 'true');
+  }
+}
+
 function updateRoutePanels() {
   if (!state.shell) return;
   const { view } = state.route;
@@ -3052,6 +3084,7 @@ function updateRoutePanels() {
   state.shell.workspacePanel.classList.toggle('is-active', view === 'workspaces');
   state.shell.sessionPanel.classList.toggle('is-active', view === 'sessions');
   state.shell.transcriptPanel.classList.toggle('is-active', view === 'transcript');
+  syncPanelExposure();
   if (view !== 'transcript' || transcriptHiddenAnchor === null || !scroller) return;
   // Reading scrollHeight forces the layout the panel just gained, so this lands
   // in the same frame the panel becomes visible and nothing renders at the top
@@ -3064,13 +3097,24 @@ function updateRoutePanels() {
 
 function navigate(route, push = true) {
   cancelReadTracking();
+  if (route.view === 'transcript' && route.sessionId) {
+    return openSession(route.sessionId, {
+      workspaceId: route.workspaceId,
+      push,
+    });
+  }
+  state.sessionOpenController?.abort();
+  state.shell?.transcriptColumn.classList.remove(
+    'is-switching-in',
+    'is-switching-out',
+  );
+  state.shell?.transcriptPanel.removeAttribute('aria-busy');
   state.route = route;
   persistRoute();
   if (push) history.pushState({ pocketRoute: route }, '', '/');
   updateRoutePanels();
   renderWorkspacePanel();
   renderSessionsPanel();
-  if (route.view === 'transcript' && route.sessionId) openSession(route.sessionId, { push: false });
 }
 
 async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
@@ -3500,6 +3544,14 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
   state.sessionOpenController?.abort();
   const controller = new AbortController();
   state.sessionOpenController = controller;
+  const switchingSession =
+    state.route.view === 'transcript' &&
+    Boolean(state.route.sessionId) &&
+    state.route.sessionId !== sessionId;
+  if (switchingSession) {
+    await transitionTranscriptOut(controller.signal);
+    if (controller.signal.aborted) return;
+  }
   const isCurrent = () =>
     !controller.signal.aborted &&
     state.route.sessionId === sessionId &&
@@ -3766,11 +3818,58 @@ function activeSeat() {
 // gesture says otherwise is what makes that impossible.
 let transcriptMovedByHand = false;
 
+async function transitionTranscriptOut(signal) {
+  const column = state.shell?.transcriptColumn;
+  if (!column) return;
+  column.classList.remove('is-switching-in');
+  column.classList.add('is-switching-out');
+  state.shell.transcriptPanel.setAttribute('aria-busy', 'true');
+  await waitForVisualMotion(column, {
+    durationMs: MOTION_MS.quick,
+    signal,
+  });
+}
+
+function transitionTranscriptIn() {
+  const column = state.shell?.transcriptColumn;
+  if (!column) return;
+  column.classList.remove('is-switching-out');
+  column.classList.add('is-switching-in');
+  state.shell.transcriptPanel.removeAttribute('aria-busy');
+  void waitForVisualMotion(column, {
+    durationMs: MOTION_MS.content,
+  }).then(() => column.classList.remove('is-switching-in'));
+}
+
+function renderTranscriptPlaceholder({ loading }) {
+  return node('li', {
+    className: `transcript-placeholder${loading ? ' is-loading' : ''}`,
+    role: 'status',
+  }, [
+    loading
+      ? node('span', { className: 'status-dot working', 'aria-hidden': 'true' })
+      : icon('terminal'),
+    node('h2', { text: loading ? 'Opening chat…' : 'No messages yet' }),
+    node('p', {
+      text: loading
+        ? 'Keeping this screen steady while Pocket loads it.'
+        : 'Send the first message from Pocket or your Mac.',
+    }),
+  ]);
+}
+
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
   if (!strip) return;
   const workspaceId = state.route.workspaceId;
   const sessions = sessionsFor(workspaceId) || [];
+  const renderKey = JSON.stringify([
+    workspaceId,
+    state.route.sessionId,
+    sessions.map((session) => [session.id, session.title, session.status]),
+  ]);
+  if (strip.dataset.renderKey === renderKey) return;
+  strip.dataset.renderKey = renderKey;
   if (sessions.length === 0) {
     strip.replaceChildren();
     strip.hidden = true;
@@ -3937,7 +4036,7 @@ function renderTranscript() {
       if (!rendered) continue;
       rendered.dataset.messageId = messageId;
       rendered.__pocketRenderKey = renderKey;
-      if (!state.seenMessageIds.has(messageId)) {
+      if (!state.seenMessageIds.has(messageId) && !transcriptSessionChanged) {
         rendered.classList.add('is-new');
         rendered.addEventListener(
           'animationend',
@@ -3965,6 +4064,15 @@ function renderTranscript() {
     state.seenMessageIds.add(messageId);
     fragment.append(rendered);
     previousVisibleMessage = message;
+  }
+  if (fragment.childElementCount === 0) {
+    fragment.append(
+      renderTranscriptPlaceholder({
+        loading:
+          !state.messagesBySession.has(state.route.sessionId) &&
+          !state.messageBaselinesBySession.has(state.route.sessionId),
+      }),
+    );
   }
   messageList.replaceChildren(fragment);
   renderAgentStatus(statusRow, session, messages);
@@ -3998,13 +4106,16 @@ function renderTranscript() {
     // against a 48px pin threshold while the handler hides below 120px, so any
     // render with the reader between the two flashed the button on and the next
     // scroll event flashed it back off.
-    state.shell.latestButton.hidden =
+    setLatestButtonVisible(
+      state.shell.latestButton,
       transcriptScroll.scrollHeight -
         transcriptScroll.clientHeight -
-        transcriptScroll.scrollTop <
-      120;
+        transcriptScroll.scrollTop >=
+        120,
+    );
     scheduleReadEvaluation();
   }
+  if (transcriptSessionChanged) transitionTranscriptIn();
   renderComposerState();
   appUpdateCoordinator?.stateChanged();
 }
@@ -5690,12 +5801,51 @@ function handleRuntimeError(error) {
   }
 }
 
-function openSheet(title, content, { className = '', onClose } = {}) {
+let activeOverlay = null;
+let overlayRequestGeneration = 0;
+
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+function waitForVisualMotion(element, { durationMs, signal } = {}) {
+  if (!element || prefersReducedMotion() || signal?.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      element.removeEventListener('animationend', onAnimationEnd);
+      signal?.removeEventListener('abort', finish);
+      if (timer !== null) clearTimeout(timer);
+      resolve();
+    };
+    const onAnimationEnd = (event) => {
+      if (event.target === element) finish();
+    };
+    element.addEventListener('animationend', onAnimationEnd);
+    signal?.addEventListener('abort', finish, { once: true });
+    timer = setTimeout(finish, Math.max(0, durationMs || 0) + 80);
+  });
+}
+
+function finishOverlayClose(options) {
+  return closeOverlay({ ...options, preservePendingOpen: true });
+}
+
+async function openSheet(title, content, { className = '', onClose } = {}) {
+  const requestGeneration = overlayRequestGeneration + 1;
+  overlayRequestGeneration = requestGeneration;
   cancelReadTracking();
-  closeOverlay();
+  await finishOverlayClose();
+  if (requestGeneration !== overlayRequestGeneration) return;
+  const previousFocus = document.activeElement;
   const close = button('Close', {
     iconName: 'close',
-    onClick: () => closeOverlay(onClose),
+    onClick: () => closeOverlay(),
   });
   const sheet = node('section', {
     className: `sheet ${className}`,
@@ -5714,25 +5864,55 @@ function openSheet(title, content, { className = '', onClose } = {}) {
     className: `overlay${className ? ` ${className}-overlay` : ''}`,
     on: {
       pointerdown: (event) => {
-        if (event.target === overlay) closeOverlay(onClose);
+        if (event.target === overlay) closeOverlay();
       },
     },
   }, sheet);
   overlayRoot.replaceChildren(overlay);
+  activeOverlay = {
+    overlay,
+    sheet,
+    onClose,
+    previousFocus,
+    closingPromise: null,
+  };
   document.addEventListener('keydown', sheetEscape);
-  close.focus();
+  close.focus({ preventScroll: true });
+  appUpdateCoordinator?.stateChanged();
 }
 
 function sheetEscape(event) {
   if (event.key === 'Escape') closeOverlay();
 }
 
-function closeOverlay(onClose) {
+async function closeOverlay({ immediate = false, preservePendingOpen = false } = {}) {
+  if (!preservePendingOpen) overlayRequestGeneration += 1;
   document.removeEventListener('keydown', sheetEscape);
-  overlayRoot.replaceChildren();
-  onClose?.();
-  appUpdateCoordinator?.stateChanged();
-  scheduleReadEvaluation();
+  const lifecycle = activeOverlay;
+  if (!lifecycle) return;
+
+  const finish = () => {
+    if (activeOverlay !== lifecycle) return;
+    activeOverlay = null;
+    lifecycle.overlay.remove();
+    lifecycle.onClose?.();
+    if (!activeOverlay && lifecycle.previousFocus?.isConnected) {
+      lifecycle.previousFocus.focus({ preventScroll: true });
+    }
+    appUpdateCoordinator?.stateChanged();
+    scheduleReadEvaluation();
+  };
+
+  if (immediate || prefersReducedMotion()) {
+    finish();
+    return;
+  }
+  if (lifecycle.closingPromise) return lifecycle.closingPromise;
+  lifecycle.overlay.classList.add('is-closing');
+  lifecycle.closingPromise = waitForVisualMotion(lifecycle.sheet, {
+    durationMs: MOTION_MS.overlayExit,
+  }).then(finish);
+  return lifecycle.closingPromise;
 }
 
 async function openSwitcher() {
@@ -6053,6 +6233,7 @@ function openChatsSheet() {
 // caller can place it without awaiting.
 function accountUsageSection({ force = false } = {}) {
   const section = node('div', { className: 'usage-section' });
+  section.append(skeletonRows(6));
   void fillAccountUsage(section, { force });
   return section;
 }
@@ -6072,6 +6253,7 @@ function usageResetLabel(value) {
 
 async function fillAccountUsage(section, { force = false } = {}) {
   const usage = await refreshSeatUsage({ force });
+  section.replaceChildren();
   const providers = Array.isArray(usage?.providers)
     ? usage.providers
     : Array.isArray(usage?.seats)
@@ -6292,7 +6474,7 @@ async function openSecurity() {
         onAction: isStandalone()
           ? null
           : () => {
-              closeOverlay();
+              closeOverlay({ immediate: true });
               renderInstallGuidance();
             },
       }),
@@ -6316,7 +6498,7 @@ async function lockPocketNow() {
       csrf: true,
     });
     if (result.locked) {
-      closeOverlay();
+      closeOverlay({ immediate: true });
       renderLock();
     }
   } catch (error) {
@@ -6379,11 +6561,11 @@ function confirmClearCache() {
             try {
               await clearTranscriptCache();
               resetSessionMessageState();
-              closeOverlay();
+              await closeOverlay();
               await startApplication();
             } catch (error) {
               if (isLocalPurgeFailure(error)) {
-                closeOverlay();
+                closeOverlay({ immediate: true });
                 renderLocalPurgeFailure(() => confirmClearCache());
               } else {
                 handleRuntimeError(error);
@@ -6440,7 +6622,7 @@ function confirmRevoke(device) {
                 // #overlay-root is a sibling, so without this the confirmation
                 // sheet stayed on top of the signed-out screen with its Sign
                 // out button still live. Same order the lock path uses.
-                closeOverlay();
+                closeOverlay({ immediate: true });
                 renderSignedOut();
               } else {
                 openSecurity();
@@ -6450,7 +6632,7 @@ function confirmRevoke(device) {
                 device.id === state.auth?.device?.id &&
                 isLocalPurgeFailure(error)
               ) {
-                closeOverlay();
+                closeOverlay({ immediate: true });
                 renderLocalPurgeFailure(() => confirmRevoke(device));
               } else {
                 handleRuntimeError(error);
@@ -6471,14 +6653,11 @@ function confirmRevoke(device) {
 
 window.addEventListener('popstate', (event) => {
   if (event.state?.pocketRoute) {
-    state.route = event.state.pocketRoute;
-    persistRoute();
-    updateRoutePanels();
-    renderWorkspacePanel();
-    renderSessionsPanel();
-    if (state.route.sessionId) openSession(state.route.sessionId, { push: false });
+    navigate(event.state.pocketRoute, false);
   }
 });
+
+PHONE_LAYOUT.addEventListener('change', syncPanelExposure);
 
 function shieldApplication() {
   invalidateUnreadHeadEvidence({ render: false });
