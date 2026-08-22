@@ -248,25 +248,47 @@ function attributeStructuredFailure(result, markerContext) {
 export class AccessibilityTransport {
   #queue = Promise.resolve();
   #busy = 0;
-  #currentChild = null;
+  // A SET, not one slot. doctor() deliberately runs off the queue, so two runs
+  // can overlap; with a single slot the fast doctor run nulled the field while
+  // a 45s send was still typing, and killCurrentAutomation then found nothing
+  // and returned false. Shutdown's forced-exit path therefore orphaned exactly
+  // the child the mechanism exists to kill.
+  #currentChildren = new Set();
 
   doctor() {
     return this.#run({ operation: 'doctor' });
   }
 
+  // Serializes an operation behind everything already queued. This used to be
+  // done only inside send(), while every control operation called #run
+  // directly, so the comment claiming they could not interleave with a send
+  // was false: a tab action arriving mid-send started a SECOND osascript
+  // driving the same Conductor window, and the route proof presses the
+  // workspace link and session tab, so it could move the window out from under
+  // an in-flight send. It also meant a double tap on the phone ran two Cmd+T
+  // concurrently and created two chats.
+  //
+  // doctor() stays off the queue deliberately: it takes no route, presses
+  // nothing, and answers the connection endpoint, which must not block behind
+  // a 45s send.
+  #enqueue(args) {
+    const task = () => this.#run(args);
+    this.#queue = this.#queue.then(task, task);
+    return this.#queue;
+  }
+
   // Control operations reuse the send path's navigation, so each one acts on
-  // exactly the workspace and session named, and they run through the same
-  // serialized queue so one can never interleave with a send.
+  // exactly the workspace and session named.
   listControls(route) {
-    return this.#run({ ...route, operation: 'list-controls' });
+    return this.#enqueue({ ...route, operation: 'list-controls' });
   }
 
   openControlMenu(route, controlLabel) {
-    return this.#run({ ...route, operation: 'menu-open', controlLabel });
+    return this.#enqueue({ ...route, operation: 'menu-open', controlLabel });
   }
 
   chooseControlMenuItem(route, controlLabel, menuItem) {
-    return this.#run({
+    return this.#enqueue({
       ...route,
       operation: 'menu-choose',
       controlLabel,
@@ -275,12 +297,12 @@ export class AccessibilityTransport {
   }
 
   newTab(route) {
-    return this.#run({ ...route, operation: 'tab-new' });
+    return this.#enqueue({ ...route, operation: 'tab-new' });
   }
 
   // Irreversible. confirmClose must be explicitly true or the script refuses.
   closeTab(route, { confirmClose = false } = {}) {
-    return this.#run({ ...route, operation: 'tab-close', confirmClose });
+    return this.#enqueue({ ...route, operation: 'tab-close', confirmClose });
   }
 
   // True while an osascript run is in flight. Shutdown uses this pair to
@@ -291,35 +313,54 @@ export class AccessibilityTransport {
     return this.#busy > 0;
   }
 
-  // Wait for the in-flight operation (the queue is serialized, so there is at
-  // most one) to settle, up to budgetMs. Resolves true when the transport is
-  // idle, false when the budget expired first.
+  // Wait until nothing is running, up to budgetMs. Resolves true only when the
+  // transport is actually idle.
+  //
+  // This used to attach to the queue tail and resolve TRUE unconditionally when
+  // that tail settled, which reported idle while an osascript was still typing
+  // in two ways: doctor() runs off the queue entirely, and the tail is captured
+  // at call time, so any operation enqueued afterwards reassigns it and drain
+  // settles on the older one. Its only consumer is shutdown, which skips the
+  // kill when drain says idle, so both cases could leave the relay exiting with
+  // a child still driving Conductor. Polling #busy cannot miss either, because
+  // #busy counts every run including the off-queue ones.
   drain(budgetMs) {
     if (this.#busy === 0) return Promise.resolve(true);
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(this.#busy === 0), budgetMs);
-      timer.unref?.();
-      const settle = () => {
-        clearTimeout(timer);
-        resolve(true);
+      const deadline = Date.now() + budgetMs;
+      const check = () => {
+        if (this.#busy === 0) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        const timer = setTimeout(check, 25);
+        timer.unref?.();
       };
-      this.#queue.then(settle, settle);
+      check();
     });
   }
 
   // Last resort for a forced exit: without this, the orphaned child survives
   // the parent and finishes the send with nobody left to observe it.
   killCurrentAutomation() {
-    const child = this.#currentChild;
-    if (!child || child.exitCode !== null || child.signalCode !== null) {
-      return false;
+    let killed = false;
+    for (const child of this.#currentChildren) {
+      if (!child || child.exitCode !== null || child.signalCode !== null) {
+        continue;
+      }
+      try {
+        child.kill('SIGKILL');
+        killed = true;
+      } catch {
+        // Already gone, or not ours to signal. Keep going: leaving another
+        // live child running is the outcome this exists to prevent.
+      }
     }
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      return false;
-    }
-    return true;
+    return killed;
   }
 
   send({
@@ -389,20 +430,17 @@ export class AccessibilityTransport {
         code: 'automation_invalid_response',
       });
     }
-    const task = () =>
-      this.#run({
-        operation: 'send',
-        workspaceName,
-        sessionTitle,
-        sessionOrdinal,
-        message: normalized,
-        replaceDraft,
-        expectedMacDraft: normalizedExpectedDraft || '',
-        expectedInputCounters: expectedInputCounters || '',
-        timeoutMs,
-      });
-    this.#queue = this.#queue.then(task, task);
-    return this.#queue;
+    return this.#enqueue({
+      operation: 'send',
+      workspaceName,
+      sessionTitle,
+      sessionOrdinal,
+      message: normalized,
+      replaceDraft,
+      expectedMacDraft: normalizedExpectedDraft || '',
+      expectedInputCounters: expectedInputCounters || '',
+      timeoutMs,
+    });
   }
 
   async #run({
@@ -440,6 +478,11 @@ export class AccessibilityTransport {
     }
     const attemptStartedAt = Date.now();
     this.#busy += 1;
+    // Hoisted so the finally below can untrack exactly THIS run's child. It
+    // cannot read a const scoped inside the try, and getting that wrong threw
+    // on every send while the suite stayed green, because the test guarding
+    // this reads the file as text instead of running it.
+    let runChild = null;
     try {
     try {
       const pending = execFileAsync('/usr/bin/osascript', [scriptPath], {
@@ -494,7 +537,8 @@ export class AccessibilityTransport {
           POCKET_EXPECTED_INPUT_COUNTERS: expectedInputCounters,
         },
       });
-      this.#currentChild = pending.child;
+      runChild = pending.child;
+      this.#currentChildren.add(runChild);
       const { stdout } = await pending;
       const result = parseResult(stdout);
       if (!pressMarkerPath) return result;
@@ -511,7 +555,7 @@ export class AccessibilityTransport {
       );
     } finally {
       this.#busy -= 1;
-      this.#currentChild = null;
+      if (runChild) this.#currentChildren.delete(runChild);
     }
     } finally {
       if (pressMarkerDirectory) {

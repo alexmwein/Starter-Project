@@ -19,7 +19,10 @@ test('a detectably dead stream is rebuilt from the heartbeat watchdog', () => {
   assert.match(source, /const STREAM_REVIVE_MS = 15 \* 1000/);
   const heartbeat = source.indexOf('state.heartbeatTimer = setInterval');
   assert.ok(heartbeat >= 0);
-  const block = source.slice(heartbeat, heartbeat + 1600);
+  // Window sized to the whole watchdog body, not a guess. It was 1600 and the
+  // block grew, so the last assertion fell off the end and failed while the
+  // code it guards was untouched.
+  const block = source.slice(heartbeat, heartbeat + 2600);
   // Gated on a heartbeat having arrived at least once (a first load that has
   // not connected is left to its original attempt), on being on screen, on a
   // signed-in shell, and on a revive throttle so a dead relay is not hammered.

@@ -404,6 +404,57 @@ test('the workspace matcher accepts owner-prefixed sidebar titles', async () => 
   assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
 });
 
+test('workspace matching routes every diff-badge label Conductor renders', async () => {
+  // Executes the real handler text rather than asserting it contains a
+  // string. Labels observed live in the sidebar on 2026-08-16: "the plan",
+  // "Finance +8", "daemon +3.7k -165". A deletions-only workspace renders
+  // "name -165" with no plus, and matching only the plus form made that
+  // workspace unroutable, a total send outage no retry can clear.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const handlers = source.slice(
+    source.indexOf('on hasDiffBadge'),
+    source.indexOf('end workspaceMatches') + 'end workspaceMatches'.length,
+  );
+  const cases = [
+    ['daemon', 'daemon', true],
+    ['daemon', 'daemon +3.7k -165', true],
+    ['Finance', 'Finance +8', true],
+    ['daemon', 'daemon -165', true],
+    ['daemon', 'Owner/daemon', true],
+    ['daemon', 'Owner/daemon +8', true],
+    ['daemon', 'Owner/daemon -165', true],
+    // Still anchored: a prefix must not cross-match a different workspace.
+    ['daemon', 'daemon two', false],
+    ['daemon', 'daemonics +8', false],
+    ['plan', 'the plan', false],
+  ];
+  const probes = cases
+    .map(
+      ([base, candidate]) =>
+        `(my workspaceMatches(${JSON.stringify(base)}, ` +
+        `${JSON.stringify(candidate)}) as text)`,
+    )
+    .join(' & "," & ');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { stdout } = await promisify(execFile)(
+    '/usr/bin/osascript',
+    ['-e', `${handlers}\nreturn ${probes}`],
+    { timeout: 20_000 },
+  );
+  const actual = stdout.trim().split(',');
+  cases.forEach(([base, candidate, expected], index) => {
+    assert.equal(
+      actual[index],
+      String(expected),
+      `workspaceMatches(${base}, ${candidate}) should be ${expected}`,
+    );
+  });
+});
+
 test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
   const mapped = mapAutomationError({
     stderr:
@@ -484,9 +535,12 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     inputHelper,
     /QUEUED_EDIT_PLACEHOLDER = 'Edit queued message'/,
   );
+  // Deliberately not 1. At 1 the budget exactly equalled what Conductor 0.81
+  // renders, so one added control failed every send before any text was typed.
+  // Behavior is covered in accessibility-layout.regression-2.test.mjs.
   assert.match(
     inputHelper,
-    /const MAX_PRE_TRANSCRIPT_CONTROLS = 1/,
+    /const MAX_PRE_TRANSCRIPT_CONTROLS = (?![01];)\d+;/,
   );
   assert.match(
     inputHelper,
@@ -502,7 +556,10 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function composerSendContext[\s\S]*tabGroupCount !== 1[\s\S]*mainRoles\[index\] === 'AXGroup'[\s\S]*transcriptBoundaryIndex = index[\s\S]*mainRoles\[index\] !== 'AXPopUpButton'[\s\S]*candidateChildren\.length !== 0[\s\S]*pressActionCount !== 1[\s\S]*transcriptBoundaryIndex < 0[\s\S]*MAX_PRE_TRANSCRIPT_CONTROLS[\s\S]*mainElements\.slice\(\s*transcriptBoundaryIndex \+ 1,\s*composerIndex \+ 1[\s\S]*contextElements\.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS \+ 1[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN/,
+    // The chrome band no longer pins role, child count or action set. What
+    // stays: one tab group, the transcript boundary found by role, a bounded
+    // band, and the queued-edit scan region taken from that boundary.
+    /function composerSendContext[\s\S]*tabGroupCount !== 1[\s\S]*mainRoles\[index\] === 'AXGroup'[\s\S]*transcriptBoundaryIndex = index[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN[\s\S]*transcriptBoundaryIndex < 0[\s\S]*MAX_PRE_TRANSCRIPT_CONTROLS[\s\S]*mainElements\.slice\(\s*transcriptBoundaryIndex \+ 1,\s*composerIndex \+ 1[\s\S]*contextElements\.length > MAX_QUEUED_EDIT_CONTEXT_SIBLINGS \+ 1[\s\S]*candidateChildren\.length > MAX_QUEUED_EDIT_CONTEXT_CHILDREN/,
   );
   assert.match(
     inputHelper,
@@ -1081,17 +1138,31 @@ globalThis.__routeLeaseTest = {
   state.webArea = makeGuardTree({ transcriptThrows: true }).webArea;
   assert.doesNotThrow(() => composerSendContext(process));
 
+  // These three shapes used to fail closed, pinning the chrome band to the
+  // exact role, child count and action set Conductor 0.81 happened to render.
+  // That is not a safety property: the composer is proven by its own
+  // AXDescription, and the queued-edit scan reads the band after the
+  // transcript boundary, which is still found by role. Pinning it did cause a
+  // real outage, on 2026-08-16 a single added control failed every send before
+  // any text was typed, identically across three retries of one message. So
+  // unknown chrome is now tolerated here.
   for (const options of [
     { popupRole: 'AXButton' },
     { popupChildCount: 1 },
     { popupActionNames: [] },
   ]) {
     state.webArea = makeGuardTree(options).webArea;
-    assert.throws(
-      () => composerSendContext(process),
-      (error) => error?.pocketCode === 'send_unavailable',
-    );
+    assert.doesNotThrow(() => composerSendContext(process));
   }
+
+  // What remains load bearing: a container in the band would mean the element
+  // taken as the transcript is not the transcript, which would move the
+  // queued-edit scan off its region. That still fails closed.
+  state.webArea = makeGuardTree({ popupChildCount: 9 }).webArea;
+  assert.throws(
+    () => composerSendContext(process),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
 
   for (const directMarker of ['name', 'value', 'unreadable-value']) {
     state.webArea = makeGuardTree({ directMarker }).webArea;
@@ -1252,7 +1323,7 @@ test('Pocket makes code and primary replies directly copyable on iPhone', async 
   assert.match(application, /label: 'Copy code'/);
   assert.match(
     application,
-    /message\.importance !== 'progress'[\s\S]*Copy response[\s\S]*message\.text/,
+    /message\.importance !== 'progress'[\s\S]*Copy output[\s\S]*message\.text/,
   );
   assert.match(
     application,
@@ -1260,7 +1331,7 @@ test('Pocket makes code and primary replies directly copyable on iPhone', async 
   );
   assert.match(
     styles,
-    /\.message-copy-button[\s\S]*min-height: 44px/,
+    /\.message-copy-button[\s\S]*min-height: 44px[\s\S]*border: 1px solid var\(--hairline\)[\s\S]*background: var\(--raised\)/,
   );
   assert.match(
     styles,
@@ -1464,4 +1535,60 @@ test('the send path does not re-derive work it already has', async () => {
     queuedBody.indexOf('composerSendContext(process)') <
       queuedBody.indexOf('if (queuedEditProven)'),
   );
+});
+
+test('a missing Conductor window is recovered before the send gives up', async () => {
+  // conductor_window_unavailable is classified retry-safe, so the phone offered
+  // Retry, and the retry asked the same absent window again and failed again in
+  // under a second. Observed 2026-08-17: four such failures, each under 1.2s,
+  // each clearing only once a window came back on its own. The window is also
+  // absent for a moment while the Mac wakes and while Conductor relaunches,
+  // which is exactly when a phone send arrives.
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /on restoreConductorWindow\(\)/);
+  assert.match(source, /tell application "Conductor" to activate/);
+  // The send path must attempt recovery, not report the failure immediately.
+  assert.match(
+    source,
+    /if not \(exists front window\) then\s*\n\s*if my restoreConductorWindow\(\) is false then return "\{\\"ok\\":false,\\"code\\":\\"conductor_window_unavailable\\"\}"/,
+  );
+  // Bounded: recovery must not be able to eat the whole automation budget.
+  const handler = source.slice(
+    source.indexOf('on restoreConductorWindow()'),
+    source.indexOf('end restoreConductorWindow'),
+  );
+  const repeatMatch = handler.match(/repeat with waitIndex from 1 to (\d+)/);
+  const delayMatch = handler.match(/delay ([\d.]+)/);
+  assert.ok(repeatMatch && delayMatch, 'recovery must be a bounded poll');
+  const budgetSeconds = Number(repeatMatch[1]) * Number(delayMatch[1]);
+  assert.ok(
+    budgetSeconds > 2 && budgetSeconds <= 10,
+    `recovery budget ${budgetSeconds}s must outlast a wake but stay well inside the 45s automation timeout`,
+  );
+});
+
+test('a windowless Conductor tells the operator the only thing that works', async () => {
+  // Verified live on 2026-08-19 against a real windowless Conductor (0 windows
+  // after 3 days uptime): `tell application "Conductor" to activate`,
+  // `open -a Conductor`, and clicking the Dock tile ALL leave it at zero
+  // windows, and no menu in the app creates one (File offers only Close Window
+  // and Close All). Only relaunching works. The recovery handler is still worth
+  // attempting for a wake or a relaunch in progress, but the copy must not tell
+  // the operator to do something that provably does not work.
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const copies = js.match(/conductor_window_unavailable:\s*\n?\s*'[^']+'/g) || [];
+  assert.ok(copies.length >= 2, 'the code must carry operator-facing copy');
+  for (const copy of copies) {
+    assert.match(
+      copy,
+      /reopen/i,
+      'windowless Conductor copy must name the action that actually works',
+    );
+  }
 });

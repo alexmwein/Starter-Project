@@ -146,7 +146,11 @@ button:active {
 .app-shell,
 .gate {
   width: 100%;
-  height: 100%;
+  /* Gives up exactly the space the on-screen keyboard covers. Without this the
+     shell stays full screen height, the composer's bottom:0 sits behind the
+     keyboard, and WebKit drags the whole app up to reveal the caret. See
+     syncKeyboardInset in app.js. */
+  height: calc(100% - var(--keyboard-inset, 0px));
 }
 
 .privacy-shield {
@@ -187,7 +191,15 @@ button:active {
   grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
   min-height: calc(var(--nav-height) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 4px 0;
+  /* Horizontal insets matter in landscape, where the notch takes 47 to 59px off
+     one side. Every iPhone is past the 600px two-column breakpoint when
+     rotated, so the left column sat under the notch and its back chevron and
+     title were cut in half. The insets were wired into the composer and the
+     Latest pill and nowhere else. */
+  padding: env(safe-area-inset-top)
+    max(4px, env(safe-area-inset-right))
+    0
+    max(4px, env(safe-area-inset-left));
   border-bottom: 1px solid transparent;
   background: var(--canvas);
 }
@@ -278,7 +290,8 @@ button:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px var(--screen-gutter) 8px;
+  padding: 20px max(var(--screen-gutter), env(safe-area-inset-right)) 8px
+    max(var(--screen-gutter), env(safe-area-inset-left));
 }
 
 .root-title {
@@ -332,7 +345,8 @@ button:active {
 
 .search-wrap {
   position: relative;
-  margin: 4px var(--screen-gutter) 16px;
+  margin: 4px max(var(--screen-gutter), env(safe-area-inset-right)) 16px
+    max(var(--screen-gutter), env(safe-area-inset-left));
 }
 
 .search-wrap .icon {
@@ -887,10 +901,12 @@ button:active {
   align-items: center;
   gap: 5px;
   min-height: 44px;
-  margin: -2px 0 -10px -8px;
-  padding: 0 8px;
-  background: transparent;
-  color: var(--text-tertiary);
+  margin: 4px 0 -2px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--text-secondary);
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -1741,7 +1757,7 @@ button:active {
   right: calc(12px + env(safe-area-inset-right));
   bottom: calc(var(--composer-height) + 12px + env(safe-area-inset-bottom));
   display: inline-flex;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   gap: 4px;
   padding: 0 12px;
@@ -2006,6 +2022,14 @@ button:active {
 
 .sheet {
   position: relative;
+  /* A flex column so .sheet-scroll can bound itself against an indefinite
+     height. .sheet sets max-height but never height, and a percentage
+     max-height against an indefinite parent resolves to none, so the scroller
+     never activated and overflow:hidden silently clipped instead. Long lists,
+     the Chats sheet past about six chats, and the lower draft-conflict buttons
+     were simply unreachable. */
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-height: calc(100% - env(safe-area-inset-top) - 20px);
   overflow: hidden;
@@ -2048,7 +2072,10 @@ button:active {
 }
 
 .sheet-scroll {
-  max-height: calc(100% - 56px);
+  /* min-height:0 is what lets a flex child actually shrink and scroll. The old
+     percentage max-height could not work against an indefinite-height parent. */
+  min-height: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2447,6 +2474,20 @@ button:active {
   justify-self: end;
 }
 
+.usage-nav-button {
+  min-width: 52px;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: 10px;
+  color: var(--copper);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.usage-nav-button:hover {
+  background: var(--raised);
+}
+
 /* Sheet actions are full width and thumb-sized on a phone, stacked rather than
    inline, so the destructive confirm can never sit flush against New chat. */
 .sheet-chats-action {
@@ -2561,7 +2602,7 @@ button:active {
 .chat-chip {
   flex: 0 0 auto;
   max-width: 46vw;
-  min-height: 34px;
+  min-height: 44px;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
@@ -2583,7 +2624,7 @@ button:active {
 /* The new-chat affordance sits at the end of the strip and stays square so it
    never reads as a chat name. */
 .chat-chip.is-new {
-  min-width: 34px;
+  min-width: 44px;
   padding: 6px 10px;
   font-size: 1rem;
   font-weight: 600;
@@ -2649,4 +2690,164 @@ button:active {
 .nav-subtitle .chip-dot {
   margin-right: 5px;
   vertical-align: baseline;
+}
+
+/* Visible counterpart to the screen-reader announcer. Bottom anchored so it
+   sits above the composer and clear of the notch, and it never blocks a tap:
+   a status message must not intercept the button the operator is reaching for. */
+#toast {
+  position: fixed;
+  left: 50%;
+  /* Tracks the real dock height rather than a fixed 84px. The composer grows to
+     144px of field plus padding, so a hardcoded offset put the toast on top of
+     the text being typed for its whole 3.4s life. */
+  bottom: calc(var(--composer-height) + 12px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(92vw, 30rem);
+  padding: 0.65rem 0.95rem;
+  border-radius: 0.75rem;
+  background: rgba(20, 20, 22, 0.94);
+  color: #f5f5f7;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+#toast.is-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #toast {
+    transition: none;
+  }
+}
+
+/* Creating a chat is a Mac round trip of several seconds. Without a busy state
+   the control sat inert and invited a second tap, which created a second chat. */
+.chat-chip.is-new[aria-busy='true'],
+.sheet-chats-action[aria-busy='true'] {
+  opacity: 0.55;
+}
+
+/* Seat usage in the Connection sheet. Deliberately plain rows: this is a
+   readout the operator checks when something already went wrong, so it needs to
+   be scannable, not decorative. */
+.usage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.usage-provider-heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+
+.usage-provider + .usage-provider {
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+
+.usage-seat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+  font-size: 0.875rem;
+}
+
+.usage-seat-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.usage-active {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--copper-fill);
+  color: var(--on-copper);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1rem;
+  text-transform: uppercase;
+}
+
+.usage-seat-value {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.usage-seat-reset {
+  grid-column: 1 / -1;
+  margin-top: -8px;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-seat.is-blocked .usage-seat-value {
+  color: var(--down);
+  font-weight: 600;
+}
+
+/* Phone widths do not have room for an email and a quota summary to fight for
+   the same line. Stack the reading order before either value starts wrapping. */
+@media (max-width: 430px) {
+  .usage-seat {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+    padding: 10px 0;
+  }
+
+  .usage-seat-value {
+    text-align: left;
+  }
+
+  .usage-seat-reset {
+    grid-column: 1;
+    margin-top: 0;
+  }
+}
+
+/* The connection line under the title is the way into the Connection sheet,
+   which is where usage lives. It used to be a plain div, so that sheet could
+   only be reached from an offline banner: exactly when it was least useful. */
+button.connection-voice {
+  padding: 2px 0;
+  background: transparent;
+  text-align: left;
+}
+
+button.connection-voice:active {
+  transform: none;
+  opacity: 0.6;
+}
+
+.connection-usage {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.connection-usage.is-blocked {
+  color: var(--down);
+  font-weight: 600;
 }

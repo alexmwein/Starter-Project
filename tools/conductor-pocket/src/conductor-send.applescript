@@ -17,15 +17,65 @@ on clearWorkspaceRouteCache()
 	set my cachedWorkspaceRoute to missing value
 end clearWorkspaceRouteCache
 
+-- Conductor appends a live diff badge to a workspace label: "name +8",
+-- "name +3.7k -165", and, for a workspace whose changes are only deletions,
+-- "name -165" with no plus at all. Matching only the plus form left that last
+-- shape unroutable, which is a total send outage for that workspace that no
+-- retry can clear. Both signs are anchored on a leading space, so the
+-- boundary stays tight and "name" still cannot match "name two".
+on hasDiffBadge(baseName, candidateName)
+	if candidateName starts with (baseName & " +") then return true
+	if candidateName starts with (baseName & " -") then return true
+	return false
+end hasDiffBadge
+
+-- "front window" is false whenever Conductor is hidden, minimized, or has had
+-- its last window closed. All three are ordinary states the operator leaves the
+-- Mac in, and all three are recoverable, but the send used to fail immediately
+-- with conductor_window_unavailable. That failure is classified retry-safe, so
+-- the phone offered Retry, and the retry asked the same hidden window again and
+-- failed again in under a second. Observed 2026-08-17: four such failures, each
+-- under 1.2s, each clearing only once a window happened to come back.
+--
+-- Electron recreates its main window on activate when none is open, so
+-- activating is usually enough. Returns true when a usable window exists.
+on restoreConductorWindow()
+	try
+		tell application "Conductor" to activate
+	end try
+	-- Six seconds, not one. The window is also missing for a moment while the
+	-- Mac is waking and while Conductor is relaunching, which is exactly when a
+	-- phone send arrives: the operator wakes the Mac and sends. Failing in under
+	-- a second there is what made this look like a broken Retry. Six seconds is
+	-- well inside the 45s automation budget.
+	repeat with waitIndex from 1 to 30
+		delay 0.2
+		tell application "System Events"
+			tell process "Conductor"
+				if exists window 1 then
+					try
+						if (value of attribute "AXMinimized" of window 1) is true then
+							set value of attribute "AXMinimized" of window 1 to false
+						end if
+					end try
+					if exists front window then return true
+				end if
+			end tell
+		end tell
+	end repeat
+	return false
+end restoreConductorWindow
+
 on workspaceMatches(workspaceName, candidateName)
 	if candidateName is workspaceName then return true
-	if candidateName starts with (workspaceName & " +") then return true
+	if my hasDiffBadge(workspaceName, candidateName) then return true
 	-- Conductor titles some workspaces with the branch owner prefixed, e.g.
 	-- "Owner/name" for a workspace whose relay-side name is just "name". The
 	-- slash-anchored comparison keeps this tight: only a full path segment
 	-- match counts, so "name" can never match some other "other name".
 	if candidateName ends with ("/" & workspaceName) then return true
 	if candidateName contains ("/" & workspaceName & " +") then return true
+	if candidateName contains ("/" & workspaceName & " -") then return true
 	return false
 end workspaceMatches
 
@@ -576,7 +626,9 @@ tell application "System Events"
 	if UI elements enabled is false then return "{\"ok\":false,\"code\":\"accessibility_disabled\"}"
 	if not (exists process "Conductor") then return "{\"ok\":false,\"code\":\"conductor_not_running\"}"
 	tell process "Conductor"
-		if not (exists front window) then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+		if not (exists front window) then
+			if my restoreConductorWindow() is false then return "{\"ok\":false,\"code\":\"conductor_window_unavailable\"}"
+		end if
 		set conductorPid to unix id
 	end tell
 end tell
@@ -833,24 +885,40 @@ if operationMode is "tab-new" then
 	-- nothing when pressed, and every icon-only control in this app is
 	-- unlabelled and has moved between releases, which is the exact pattern
 	-- that broke sending twice. A shortcut has no CSS classes to rot.
+	-- getSessionTabs returns an empty list when the main group cannot be
+	-- resolved, which a re-render blip can cause. Taken as a baseline that
+	-- reads as zero, and the very next successful read then looks like a tab
+	-- appeared, so a false tab_created was reported and no chat existed. The
+	-- route proof above already selected a session, so at least one tab must
+	-- exist: a zero baseline is a failed read, not an empty window.
 	set beforeTabs to count of my getSessionTabs()
+	if beforeTabs is 0 then return "{\"ok\":false,\"code\":\"tab_not_created\"}"
 	tell application "System Events"
 		tell process "Conductor" to set frontmost to true
 	end tell
 	delay 0.2
+	set pressError to ""
 	try
 		do shell script "/usr/bin/env POCKET_OPERATION=tab-new /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error errorText
-		if errorText contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
-		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
-		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+		set pressError to errorText
 	end try
+	-- Observe before classifying, even when the helper reported an error. The
+	-- shortcut is posted before the final lease and unlock assertions, so a
+	-- throw after delivery used to return control_press_failed, which is
+	-- retry-safe, and the retry created a SECOND chat. What decides the
+	-- outcome is whether a tab actually appeared, not whether the helper threw.
 	repeat with waitIndex from 1 to 30
 		delay 0.1
 		if (count of my getSessionTabs()) > beforeTabs then
 			return "{\"ok\":true,\"code\":\"tab_created\"}"
 		end if
 	end repeat
+	if pressError is not "" then
+		if pressError contains "user_input_active" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+		if pressError contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
+		return "{\"ok\":false,\"code\":\"control_press_failed\"}"
+	end if
 	return "{\"ok\":false,\"code\":\"tab_not_created\"}"
 end if
 

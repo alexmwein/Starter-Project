@@ -246,3 +246,386 @@ test('the app can never be left blank, and reading position survives a render', 
   // restored to the same distance from the end.
   assert.match(js, /transcriptScroll\.scrollHeight -\s*\n\s*transcriptScroll\.clientHeight -\s*\n\s*distanceBefore/);
 });
+
+test('feedback reaches a sighted user, and retry never fails silently', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const html = await fs.readFile(
+    new URL('../public/index.html', import.meta.url),
+    'utf8',
+  );
+
+  // Everything the app says went only to an sr-only aria-live region, so a
+  // success and a failure looked identical on a phone: nothing moved. That is
+  // why a slow operation read as broken and got tapped again.
+  assert.match(html, /id="toast"/);
+  const announceStart = js.indexOf('function announce(message)');
+  assert.ok(announceStart > 0, 'announce must exist');
+  const announceBody = js.slice(announceStart, js.indexOf('\n}\n', announceStart));
+  assert.match(announceBody, /announcer\.textContent/);
+  assert.match(announceBody, /toastElement/);
+
+  // Tapping Retry used to be able to do nothing at all: three separate gates
+  // returned with no message. Every early exit must say something.
+  const retryStart = js.indexOf('async function retryMessage(message)');
+  assert.ok(retryStart > 0, 'retryMessage must exist');
+  const retryBody = js.slice(retryStart, js.indexOf('\n}\n', retryStart));
+  assert.doesNotMatch(
+    retryBody,
+    /if \(!deliveryCanRetry\(message\)\) return;/,
+    'a retry gate must not return without telling the operator why',
+  );
+
+  // Creating a chat is a multi-second Mac round trip. Without a single-flight
+  // guard a second tap posts a second shortcut and creates a second chat.
+  assert.match(js, /chatCreationInFlight/);
+  const createStart = js.indexOf('async function createChat(');
+  const createBody = js.slice(createStart, js.indexOf('\n}\n', createStart));
+  assert.match(createBody, /if \(chatCreationInFlight\) return null;/);
+  assert.match(createBody, /aria-busy/);
+})
+
+test('the composer growing a line does not move the transcript under the reader', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // The textarea was sized by newline count, so a long line that soft-wrapped
+  // still reported one row. Pressing Enter grew it correctly and wrapping did
+  // not, which is exactly why the jump happened sometimes and not others.
+  assert.doesNotMatch(
+    js,
+    /field\.rows = Math\.max\(1, Math\.min\(6, field\.value\.split\('\\n'\)\.length\)\)/,
+    'composer rows must account for soft wrapping, not just newlines',
+  );
+  const resizeStart = js.indexOf('const resize = () => {');
+  assert.ok(resizeStart > 0, 'composer resize must exist');
+  const resizeBody = js.slice(resizeStart, js.indexOf('\n  };', resizeStart));
+  assert.match(resizeBody, /scrollHeight/);
+  assert.match(resizeBody, /lineHeight/);
+
+  // The transcript is sized off --composer-height, so a taller composer shrinks
+  // it. Without compensation the text under the reader's eye shifts by exactly
+  // one line every time the composer grows.
+  const observerStart = js.indexOf('let lastComposerHeight = 0;');
+  assert.ok(observerStart > 0, 'composer height must be tracked across resizes');
+  const observerBody = js.slice(observerStart, js.indexOf('observer.observe(root);', observerStart));
+  assert.match(observerBody, /transcriptScroll/);
+  assert.match(observerBody, /wasPinned/);
+  // Position must be read BEFORE the variable is written, or it measures the
+  // layout it is trying to correct for.
+  assert.ok(
+    observerBody.indexOf('wasPinned') <
+      observerBody.indexOf("setProperty(\n      '--composer-height'"),
+    'scroll position must be measured before --composer-height changes',
+  );
+});
+
+test('opening a chat lands on the newest message, not the last chat position', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // Opening a chat has no scroll-to-bottom of its own; it relies entirely on
+  // the pinned check. That check is measured BEFORE the list is replaced, so it
+  // reads the previous chat's content and scroll position. Scrolled up in one
+  // chat, open another, and that distance from the end is restored against the
+  // new chat, leaving the newest message off screen.
+  assert.match(js, /let lastTranscriptSessionId = null;/);
+  assert.match(js, /const transcriptSessionChanged =\s*\n?\s*lastTranscriptSessionId !== state\.route\.sessionId;/);
+
+  // A hidden or backgrounded scroller reports clientHeight 0, which inflates
+  // the measured distance by exactly one viewport and scrolls a screen too high
+  // when restored.
+  assert.match(js, /const measurable = transcriptScroll\.clientHeight > 0;/);
+
+  const pinnedMatch = js.match(/const pinned =\s*\n?\s*([^;]+);/);
+  assert.ok(pinnedMatch, 'pinned must be derived');
+  const pinnedExpression = pinnedMatch[1];
+  assert.match(pinnedExpression, /transcriptSessionChanged/);
+  assert.match(pinnedExpression, /!measurable/);
+  assert.match(pinnedExpression, /distanceBefore < 48/);
+});
+
+test('returning to the app follows the newest message until moved by hand', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // A chat's messages arrive in two passes, a memory snapshot then the network
+  // refresh, and coming back to the app re-runs that. The first paint can hold
+  // a fraction of the messages, so every message landing afterwards is inserted
+  // ABOVE the reader. Measuring distance-from-bottom on that partial paint and
+  // then preserving it is what left the view stranded far up the page.
+  assert.match(js, /let transcriptMovedByHand = false;/);
+
+  // The signal must be a real gesture, never a programmatic scroll, or the
+  // app's own scroll writes would immediately clear it.
+  const gestureStart = js.indexOf('function noteReadGesture()');
+  assert.ok(gestureStart > 0, 'noteReadGesture must exist');
+  const gestureBody = js.slice(gestureStart, js.indexOf('\n}\n', gestureStart));
+  assert.match(gestureBody, /transcriptMovedByHand = true;/);
+
+  // Opening a different chat starts untouched again, so one chat's reading
+  // position can never be applied to another.
+  assert.match(js, /if \(transcriptSessionChanged\) transcriptMovedByHand = false;/);
+
+  const pinnedMatch = js.match(/const pinned =\s*\n?\s*([^;]+);/);
+  assert.ok(pinnedMatch, 'pinned must be derived');
+  assert.match(pinnedMatch[1], /!transcriptMovedByHand/);
+  // The deliberate preservation case survives: a reader who HAS scrolled keeps
+  // their distance from the end while messages stream in.
+  assert.match(pinnedMatch[1], /distanceBefore < 48/);
+})
+
+test('the composer growing corrects scroll in the same frame it paints', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // A ResizeObserver callback runs after layout but BEFORE paint, so a scroll
+  // written there lands in the same frame as the taller composer. Deferring it
+  // into a requestAnimationFrame meant the browser first painted the grown dock
+  // over the last message and only then snapped the scroll: a visible flicker
+  // on every line wrap, which is the thing this handler exists to prevent.
+  const start = js.indexOf('let lastComposerHeight = 0;');
+  assert.ok(start > 0, 'composer height tracking must exist');
+  const body = js.slice(start, js.indexOf('observer.observe(root);', start));
+  assert.match(body, /scroller\.scrollTop = scroller\.scrollHeight;/);
+  // The CALL form, so the word may still appear in the comment explaining why
+  // it must not be used here.
+  assert.doesNotMatch(
+    body,
+    /requestAnimationFrame\(/,
+    'the correction must not be deferred a frame, that is the flicker',
+  );
+
+  // And it must stay conditional: a reader who is not at the bottom needs no
+  // correction at all, because the dock is out of flow and nothing they can see
+  // moved.
+  assert.match(body, /!wasPinned\) return;/);
+})
+
+test('no scroll correction is ever deferred a frame', async () => {
+  // The house rule, because this class of bug came back four separate times:
+  // a corrective scroll must be written in the SAME frame as the mutation that
+  // caused it. Deferring one into a requestAnimationFrame paints the old
+  // position first and then snaps, which is the jumping and flickering seen
+  // while typing and while messages stream in. Reading scrollHeight forces the
+  // layout the correction needs, so there is nothing to wait for.
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const offsets = [];
+  let index = js.indexOf('requestAnimationFrame(');
+  while (index !== -1) {
+    offsets.push(index);
+    index = js.indexOf('requestAnimationFrame(', index + 1);
+  }
+  assert.ok(offsets.length > 0, 'the file should still use rAF for non-layout work');
+  for (const offset of offsets) {
+    // The callback body, bounded generously: any scroll write near an rAF is
+    // worth failing on and re-checking by hand.
+    const body = js.slice(offset, offset + 600);
+    assert.doesNotMatch(
+      body,
+      /scrollTop\s*=|scrollTo\(|scrollIntoView\(/,
+      `a scroll correction is deferred inside a requestAnimationFrame near offset ${offset}`,
+    );
+  }
+})
+
+test('account usage is reachable when nothing is wrong', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // The Connection sheet holds the seat usage, and it used to be reachable ONLY
+  // from the offline banner and a button hidden unless the Mac was down. So the
+  // one question it answers, "am I actually out of usage", could not be asked
+  // while the app looked healthy, which is exactly when it gets asked.
+  assert.match(
+    js,
+    /const connection = node\('button', \{\s*\n\s*className: 'connection-voice'/,
+    'the always-visible connection line must be the way in',
+  );
+  assert.match(js, /'aria-label': 'Connection and account usage'/);
+
+  // Rendered from a cache with an in-flight guard, or reading it from the
+  // header would loop: fetch, store, render, fetch.
+  assert.match(js, /let seatUsageInFlight = false;/);
+  const refreshStart = js.indexOf('async function refreshSeatUsage(');
+  const refreshBody = js.slice(refreshStart, js.indexOf('\n}\n', refreshStart));
+  assert.match(refreshBody, /if \(seatUsageInFlight\) return seatUsageCache;/);
+
+  // Both windows feed the glanceable number, because either alone can stop a
+  // turn and a seat routinely sits near zero on one while the other is spent.
+  const voiceStart = js.indexOf('function renderConnectionVoice(container)');
+  const voiceBody = js.slice(voiceStart, js.indexOf('\n}\n', voiceStart));
+  assert.match(voiceBody, /weeklyPercent/);
+  assert.match(voiceBody, /fiveHourPercent/);
+  assert.match(voiceBody, /Math\.max/);
+})
+
+test('leaving a chat and coming back keeps the reading position', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const css = await fs.readFile(
+    new URL('../public/app.css', import.meta.url),
+    'utf8',
+  );
+
+  // Panels are toggled with display:none, and the browser DISCARDS the scroll
+  // position of anything display:none. So going to Workspaces and back always
+  // returned the transcript to the top, and no amount of correcting WHEN the
+  // app writes scroll could fix it, because the app was not doing the
+  // resetting. This was the jump that survived every other fix.
+  assert.match(css, /\.panel \{[\s\S]*?display: none;/);
+  assert.match(js, /let transcriptHiddenAnchor = null;/);
+
+  const updateStart = js.indexOf('function updateRoutePanels()');
+  assert.ok(updateStart > 0, 'updateRoutePanels must exist');
+  const updateBody = js.slice(updateStart, js.indexOf('\n}\n', updateStart));
+
+  // Captured BEFORE the class flips, or the position is already gone.
+  const capture = updateBody.indexOf('transcriptHiddenAnchor =\n');
+  const flip = updateBody.indexOf("classList.toggle('is-active', view === 'transcript')");
+  assert.ok(capture > 0 && flip > 0 && capture < flip, 'anchor must be captured before the panel is hidden');
+
+  // Anchored to the end, so messages arriving while away do not move it.
+  assert.match(updateBody, /scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop/);
+  assert.match(updateBody, /scroller\.scrollTop = Math\.max\(0, restored\)/);
+  // Same-frame, like every other correction in this file.
+  assert.doesNotMatch(updateBody, /requestAnimationFrame\(/);
+})
+
+test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn', async () => {
+  const js = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const css = await fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8');
+  const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  // THE KEYBOARD SHIFT. index.html asks for interactive-widget=resizes-content
+  // and WebKit does not implement it, so iOS shrinks only the VISUAL viewport.
+  // The shell stays full screen height, the composer's bottom:0 sits behind the
+  // keyboard, and WebKit drags the whole app up to reveal the caret. The app
+  // must give up that space itself.
+  assert.match(html, /interactive-widget=resizes-content/);
+  assert.match(js, /function syncKeyboardInset\(\)/);
+  assert.match(js, /window\.visualViewport\.addEventListener\('resize', syncKeyboardInset\)/);
+  assert.match(js, /window\.visualViewport\.addEventListener\('scroll', syncKeyboardInset\)/);
+  // Dismissing must always restore it, even if a resize event is missed.
+  assert.match(js, /addEventListener\('focusout'/);
+  assert.match(css, /height: calc\(100% - var\(--keyboard-inset, 0px\)\)/);
+
+  // The workspaces rebuild swaps the scroll container itself, on an 8s poll and
+  // every stream event, so the list snapped to the top by itself and the search
+  // input was destroyed mid-word.
+  const wsStart = js.indexOf('const previousContent = panel.querySelector');
+  assert.ok(wsStart > 0, 'workspace rebuild must preserve scroll and caret');
+  const wsBody = js.slice(wsStart, wsStart + 1200);
+  assert.match(wsBody, /restoredContent\.scrollTop = previousScrollTop/);
+  assert.match(wsBody, /restoredSearch\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(wsBody, /setSelectionRange\(selectionStart, selectionEnd\)/);
+
+  // Sheets: .sheet sets max-height but no height, so a percentage max-height on
+  // the scroller resolved to none and overflow:hidden clipped instead. Long
+  // lists were unreachable. A flex column with min-height:0 works either way.
+  const sheetRule = css.slice(css.indexOf('.sheet {'), css.indexOf('.sheet-grabber'));
+  assert.match(sheetRule, /display: flex;/);
+  assert.match(sheetRule, /flex-direction: column;/);
+  const scrollRule = css.slice(css.indexOf('.sheet-scroll {'), css.indexOf('.sheet-scroll {') + 220);
+  assert.match(scrollRule, /min-height: 0;/);
+  assert.match(scrollRule, /flex: 1 1 auto;/);
+  assert.doesNotMatch(scrollRule, /max-height: calc\(100% - 56px\)/);
+
+  // Offline churn: renderConnectionState rebuilds all three panels, and it ran
+  // every second while the Mac was unreachable, so the banner's Details button
+  // was a new node under the finger each tick.
+  assert.match(js, /const connectionChanged = state\.connection !== nextConnection;/);
+  assert.match(js, /if \(connectionChanged\) renderConnectionState\(\);/);
+
+  // Signing out must not leave its confirmation sheet on top of the gate.
+  const signOut = js.slice(js.indexOf('closeOverlay();\n                renderSignedOut();') - 40);
+  assert.match(signOut.slice(0, 200), /closeOverlay\(\);\s*\n\s*renderSignedOut\(\);/);
+
+  // Landscape: every iPhone is past the two-column breakpoint when rotated, so
+  // the left column sat under the notch.
+  assert.match(css, /max\(4px, env\(safe-area-inset-left\)\)/);
+})
+
+test('all-account usage is a visible phone control inside every chat', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+
+  // Usage first landed behind the Chats sheet. A control that has to be
+  // explained is not visible, so the transcript header must name it directly.
+  const navStart = js.indexOf('function createPanelNav(');
+  assert.ok(navStart > 0, 'createPanelNav must exist');
+  const navBody = js.slice(navStart, js.indexOf('\n}\n', navStart));
+  assert.match(navBody, /onUsage/);
+  assert.match(navBody, /button\('Usage'/);
+  assert.match(navBody, /className: 'usage-nav-button'/);
+  assert.match(js, /onUsage: openUsageSheet/);
+  assert.match(css, /\.usage-nav-button[\s\S]*min-height: 44px/);
+
+  // Mountable without awaiting, so placing it cannot block a sheet from
+  // opening if the producer is slow or down.
+  assert.match(js, /function accountUsageSection\(\{ force = false \} = \{\}\)/);
+  const sectionStart = js.indexOf('function accountUsageSection(');
+  const sectionBody = js.slice(sectionStart, js.indexOf('\n}\n', sectionStart));
+  assert.match(sectionBody, /void fillAccountUsage\(section, \{ force \}\)/);
+  assert.match(sectionBody, /return section;/);
+
+  // One sheet, grouped by provider. No provider failure can hide the other.
+  assert.match(js, /function openUsageSheet\(\)/);
+  assert.match(js, /usage\.providers/);
+  assert.match(js, /usage-provider-heading/);
+  assert.match(js, /provider\.available/);
+  assert.match(
+    js,
+    /if \(account\.stale && parts\.length > 0\) parts\.push\('cached'\)/,
+    'an account without usage must say No data yet, not only cached',
+  );
+
+  // And the Workspaces header entry point stays.
+  assert.match(js, /'aria-label': 'Connection and account usage'/);
+})
+
+test('phone controls keep full touch targets and usage rows stack before they collide', async () => {
+  const css = await fs.readFile(
+    new URL('../public/app.css', import.meta.url),
+    'utf8',
+  );
+
+  const latestRule = css.slice(
+    css.indexOf('.latest-button {'),
+    css.indexOf('.latest-button[hidden]'),
+  );
+  const chatChipRule = css.slice(
+    css.indexOf('.chat-chip {'),
+    css.indexOf('.chat-chip.is-active'),
+  );
+  const newChatRule = css.slice(
+    css.indexOf('.chat-chip.is-new {'),
+    css.indexOf('.chip-dot'),
+  );
+
+  assert.match(latestRule, /min-height: 44px;/);
+  assert.match(chatChipRule, /min-height: 44px;/);
+  assert.match(newChatRule, /min-width: 44px;/);
+  assert.match(
+    css,
+    /@media \(max-width: 430px\) \{[\s\S]*?\.usage-seat \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?\.usage-seat-value \{[\s\S]*?text-align: left;[\s\S]*?\.usage-seat-reset \{[\s\S]*?margin-top: 0;/,
+  );
+});

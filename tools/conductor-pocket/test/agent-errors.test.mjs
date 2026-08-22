@@ -274,3 +274,136 @@ test('the browser renders only allowlisted error copy and a real cyber recovery 
   assert.match(stylesheet, /\.agent-error-copy a[\s\S]*text-decoration: underline/);
   assert.match(stylesheet, /\.agent-error-copy a:focus-visible/);
 });
+
+test('a usage limit is named as one even while the client keeps retrying', () => {
+  // Claude Code retries a usage limit, so the event carries willRetry:true or
+  // arrives as an api_retry. Both used to short-circuit to provider_reconnecting
+  // BEFORE the text was ever read, so the operator was told the agent was
+  // reconnecting when it had simply run out of session usage. A limit resets on
+  // a clock, not when a connection comes back, so nothing they do to the
+  // network helps and the wrong message sends them looking in the wrong place.
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'error',
+      content: 'Usage limit reached for this session',
+      willRetry: true,
+    }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'system',
+      subtype: 'api_retry',
+      content: 'rate limit reached, retrying',
+    }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+
+  // A genuine connection retry, with nothing in the text naming a definite
+  // cause, must still read as reconnecting.
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'system',
+      subtype: 'api_retry',
+      content: 'connection reset, retrying',
+    }),
+    { code: 'provider_reconnecting', severity: 'warning', retrying: true },
+  );
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'error',
+      content: 'socket hang up',
+      willRetry: true,
+    }),
+    { code: 'provider_reconnecting', severity: 'warning', retrying: true },
+  );
+
+  // An explicit permission signal outranks text inference, so a permission
+  // prompt mentioning authentication is not re-read as an auth failure.
+  assert.deepEqual(
+    classifyAgentError({
+      type: 'system',
+      subtype: 'permission_denied',
+      content: 'needs authentication to approve this tool',
+    }),
+    { code: 'permission_required', severity: 'error', retrying: false },
+  );
+})
+
+test('a superseded agent error stops giving advice, and seat usage is whitelisted', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  // An agent error records a moment, not a running state. Once the agent has
+  // produced anything newer, "Out of usage for this session. This resets on a
+  // timer..." is no longer true, and leaving that advice on screen sent the
+  // operator chasing a limit that had already reset.
+  assert.match(js, /let newestRootEventRowId = 0;/);
+  assert.match(js, /superseded \? null : guidance/);
+  assert.match(js, /card\.classList\.add\('is-past'\)/);
+
+  // The raw producer payload carries fingerprints, refresh state and full
+  // history. None of it should cross the wire just because it was in the
+  // response, so the shape is a fixed whitelist.
+  const server = await fs.readFile(
+    new URL('../src/server.mjs', import.meta.url),
+    'utf8',
+  );
+  const readerStart = server.indexOf('export async function readSeatUsage');
+  assert.ok(readerStart > 0, 'readSeatUsage must exist');
+  const readerBody = server.slice(readerStart, server.indexOf('\n}\n', readerStart));
+  for (const leaked of ['fingerprint', 'refreshFailed', 'utilizationHistory', 'weeklyHistory']) {
+    assert.doesNotMatch(
+      readerBody,
+      new RegExp(leaked),
+      `${leaked} must not be forwarded to the phone`,
+    );
+  }
+  // Both windows are reported separately: a seat can sit at 0% on the five hour
+  // window while the weekly one is spent, which is the state that reads as
+  // unexplained. Observed live 2026-08-20: 5h 0%, weekly 100%, blocked.
+  assert.match(readerBody, /fiveHourPercent/);
+  assert.match(readerBody, /weeklyPercent/);
+  assert.match(readerBody, /weeklyBlocked/);
+  // A convenience readout must never take down the screen opened to diagnose
+  // something else.
+  assert.match(readerBody, /available: false, reason: 'producer_unreachable'/);
+})
+
+test('ordinary messages are never turned into error cards by their wording', () => {
+  // The regression that shipped 2026-08-20: the text classifier was moved ahead
+  // of the guard that decides whether an event failed at all, so any message
+  // mentioning this vocabulary became an error card. Discussing usage limits
+  // produced a banner claiming the session was out of usage, and mentioning
+  // signing in produced a sign-in demand. Both were reported from the phone
+  // within the hour. What kind of event this is must be decided BEFORE its
+  // words are read.
+  const innocuous = [
+    { type: 'assistant', content: 'You are nowhere near the usage limit right now.' },
+    { type: 'assistant', content: 'Check the rate limit and quota on that account.' },
+    { type: 'assistant', content: 'You may need to sign in again, or check credentials.' },
+    { type: 'assistant', content: 'That model is unavailable on the free plan.' },
+    { type: 'assistant', content: 'This is a policy question about billing credits.' },
+    { type: 'result', subtype: 'success', is_error: false, result: 'usage limit reached, per the docs' },
+    { type: 'user', content: 'am I out of usage or is it a rate limit' },
+  ];
+  for (const event of innocuous) {
+    assert.equal(
+      classifyAgentError(event),
+      null,
+      `a ${event.type} event must not be classified as an error: ${String(event.content || event.result).slice(0, 48)}`,
+    );
+  }
+
+  // Real failures carrying the same words must still classify, or the guard
+  // above would have been fixed by breaking the feature.
+  assert.deepEqual(
+    classifyAgentError({ type: 'error', content: 'Usage limit reached', willRetry: true }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+  assert.deepEqual(
+    classifyAgentError({ type: 'result', is_error: true, result: 'quota exhausted' }),
+    { code: 'usage_limit', severity: 'error', retrying: false },
+  );
+})

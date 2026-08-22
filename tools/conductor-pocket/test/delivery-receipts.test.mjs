@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import {
   deliveryNeedsAutomaticRecovery,
@@ -259,3 +260,48 @@ test('failed and definitely-unsent messages survive receipt reconciliation', () 
   assert.deepEqual(result.reconciled, [delivered]);
   assert.deepEqual(result.remaining, [unknown, definitelyUnsent]);
 });
+
+test('recovering typed text never requires proof, resending always does', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  // An absent ledger entry looks like proof a message was never sent and is
+  // not: the ledger evicts on CAPACITY as well as age, so a delivered receipt
+  // can be dropped early and no age check can see that. Acting on it resends a
+  // message that already went out. An earlier version of this file did exactly
+  // that, so the invariant is pinned rather than left to memory.
+  const settleStart = js.indexOf('async function settleTerminalDeliveryStatus');
+  assert.ok(settleStart > 0, 'settleTerminalDeliveryStatus must exist');
+  const settleBody = js.slice(settleStart, js.indexOf('\n}\n', settleStart));
+  assert.doesNotMatch(
+    settleBody,
+    /delivery\.state === 'absent'[\s\S]*definitelyUnsent = true/,
+    'an absent ledger entry must never be treated as proof a message was unsent',
+  );
+
+  // Editing returns the text to the composer and sends nothing, so it is safe
+  // whatever happened to the original. Requiring proof left an ambiguous
+  // failure with no way to recover what was typed.
+  const editStart = js.indexOf('async function editFailedMessage(message)');
+  assert.ok(editStart > 0, 'editFailedMessage must exist');
+  const editBody = js.slice(editStart, js.indexOf('\n}\n', editStart));
+  assert.doesNotMatch(
+    editBody,
+    /message\.definitelyUnsent !== true/,
+    'recovering typed text must not require proof the send failed',
+  );
+
+  // The claim gate must treat edit like delete, not like retry.
+  assert.match(
+    js,
+    /\(action === 'delete' \|\|\s*\n?\s*action === 'edit' \|\|/,
+  );
+
+  // Retry keeps its proof requirement, because it is the one that resends.
+  const canRetryStart = js.indexOf('function deliveryCanRetry(message) {');
+  const canRetryBody = js.slice(canRetryStart, js.indexOf('\n}\n', canRetryStart));
+  assert.match(canRetryBody, /message\.retrySafe === true/);
+  assert.match(canRetryBody, /message\.definitelyUnsent === true/);
+})
