@@ -1757,7 +1757,7 @@ button:active {
   right: calc(12px + env(safe-area-inset-right));
   bottom: calc(var(--composer-height) + 12px + env(safe-area-inset-bottom));
   display: inline-flex;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   gap: 4px;
   padding: 0 12px;
@@ -2602,7 +2602,7 @@ button:active {
 .chat-chip {
   flex: 0 0 auto;
   max-width: 46vw;
-  min-height: 34px;
+  min-height: 44px;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
@@ -2624,7 +2624,7 @@ button:active {
 /* The new-chat affordance sits at the end of the strip and stays square so it
    never reads as a chat name. */
 .chat-chip.is-new {
-  min-width: 34px;
+  min-width: 44px;
   padding: 6px 10px;
   font-size: 1rem;
   font-weight: 600;
@@ -2807,6 +2807,25 @@ button:active {
 .usage-seat.is-blocked .usage-seat-value {
   color: var(--down);
   font-weight: 600;
+}
+
+/* Phone widths do not have room for an email and a quota summary to fight for
+   the same line. Stack the reading order before either value starts wrapping. */
+@media (max-width: 430px) {
+  .usage-seat {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+    padding: 10px 0;
+  }
+
+  .usage-seat-value {
+    text-align: left;
+  }
+
+  .usage-seat-reset {
+    grid-column: 1;
+    margin-top: 0;
+  }
 }
 
 /* The connection line under the title is the way into the Connection sheet,

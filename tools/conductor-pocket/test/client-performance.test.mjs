@@ -601,3 +601,31 @@ test('all-account usage is a visible phone control inside every chat', async () 
   // And the Workspaces header entry point stays.
   assert.match(js, /'aria-label': 'Connection and account usage'/);
 })
+
+test('phone controls keep full touch targets and usage rows stack before they collide', async () => {
+  const css = await fs.readFile(
+    new URL('../public/app.css', import.meta.url),
+    'utf8',
+  );
+
+  const latestRule = css.slice(
+    css.indexOf('.latest-button {'),
+    css.indexOf('.latest-button[hidden]'),
+  );
+  const chatChipRule = css.slice(
+    css.indexOf('.chat-chip {'),
+    css.indexOf('.chat-chip.is-active'),
+  );
+  const newChatRule = css.slice(
+    css.indexOf('.chat-chip.is-new {'),
+    css.indexOf('.chip-dot'),
+  );
+
+  assert.match(latestRule, /min-height: 44px;/);
+  assert.match(chatChipRule, /min-height: 44px;/);
+  assert.match(newChatRule, /min-width: 44px;/);
+  assert.match(
+    css,
+    /@media \(max-width: 430px\) \{[\s\S]*?\.usage-seat \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?\.usage-seat-value \{[\s\S]*?text-align: left;[\s\S]*?\.usage-seat-reset \{[\s\S]*?margin-top: 0;/,
+  );
+});
