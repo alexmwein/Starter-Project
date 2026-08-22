@@ -507,3 +507,57 @@ test('leaving a chat and coming back keeps the reading position', async () => {
   // Same-frame, like every other correction in this file.
   assert.doesNotMatch(updateBody, /requestAnimationFrame\(/);
 })
+
+test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn', async () => {
+  const js = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const css = await fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8');
+  const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  // THE KEYBOARD SHIFT. index.html asks for interactive-widget=resizes-content
+  // and WebKit does not implement it, so iOS shrinks only the VISUAL viewport.
+  // The shell stays full screen height, the composer's bottom:0 sits behind the
+  // keyboard, and WebKit drags the whole app up to reveal the caret. The app
+  // must give up that space itself.
+  assert.match(html, /interactive-widget=resizes-content/);
+  assert.match(js, /function syncKeyboardInset\(\)/);
+  assert.match(js, /window\.visualViewport\.addEventListener\('resize', syncKeyboardInset\)/);
+  assert.match(js, /window\.visualViewport\.addEventListener\('scroll', syncKeyboardInset\)/);
+  // Dismissing must always restore it, even if a resize event is missed.
+  assert.match(js, /addEventListener\('focusout'/);
+  assert.match(css, /height: calc\(100% - var\(--keyboard-inset, 0px\)\)/);
+
+  // The workspaces rebuild swaps the scroll container itself, on an 8s poll and
+  // every stream event, so the list snapped to the top by itself and the search
+  // input was destroyed mid-word.
+  const wsStart = js.indexOf('const previousContent = panel.querySelector');
+  assert.ok(wsStart > 0, 'workspace rebuild must preserve scroll and caret');
+  const wsBody = js.slice(wsStart, wsStart + 1200);
+  assert.match(wsBody, /restoredContent\.scrollTop = previousScrollTop/);
+  assert.match(wsBody, /restoredSearch\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(wsBody, /setSelectionRange\(selectionStart, selectionEnd\)/);
+
+  // Sheets: .sheet sets max-height but no height, so a percentage max-height on
+  // the scroller resolved to none and overflow:hidden clipped instead. Long
+  // lists were unreachable. A flex column with min-height:0 works either way.
+  const sheetRule = css.slice(css.indexOf('.sheet {'), css.indexOf('.sheet-grabber'));
+  assert.match(sheetRule, /display: flex;/);
+  assert.match(sheetRule, /flex-direction: column;/);
+  const scrollRule = css.slice(css.indexOf('.sheet-scroll {'), css.indexOf('.sheet-scroll {') + 220);
+  assert.match(scrollRule, /min-height: 0;/);
+  assert.match(scrollRule, /flex: 1 1 auto;/);
+  assert.doesNotMatch(scrollRule, /max-height: calc\(100% - 56px\)/);
+
+  // Offline churn: renderConnectionState rebuilds all three panels, and it ran
+  // every second while the Mac was unreachable, so the banner's Details button
+  // was a new node under the finger each tick.
+  assert.match(js, /const connectionChanged = state\.connection !== nextConnection;/);
+  assert.match(js, /if \(connectionChanged\) renderConnectionState\(\);/);
+
+  // Signing out must not leave its confirmation sheet on top of the gate.
+  const signOut = js.slice(js.indexOf('closeOverlay();\n                renderSignedOut();') - 40);
+  assert.match(signOut.slice(0, 200), /closeOverlay\(\);\s*\n\s*renderSignedOut\(\);/);
+
+  // Landscape: every iPhone is past the two-column breakpoint when rotated, so
+  // the left column sat under the notch.
+  assert.match(css, /max\(4px, env\(safe-area-inset-left\)\)/);
+})

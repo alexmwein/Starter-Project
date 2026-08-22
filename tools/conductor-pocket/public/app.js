@@ -4,18 +4,18 @@ import {
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-keeps-place-20260821';
+} from './delivery-receipts.js?v=0.2.0-holds-still-20260821';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-keeps-place-20260821';
+} from './app-update.js?v=0.2.0-holds-still-20260821';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-keeps-place-20260821';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-keeps-place-20260821';
-import { fetchJson } from './http.js?v=0.2.0-keeps-place-20260821';
+} from './bootstrap-recovery.js?v=0.2.0-holds-still-20260821';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-holds-still-20260821';
+import { fetchJson } from './http.js?v=0.2.0-holds-still-20260821';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +25,15 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-keeps-place-20260821';
+} from './image-attachments.js?v=0.2.0-holds-still-20260821';
 import {
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-keeps-place-20260821';
+} from './live-refresh.js?v=0.2.0-holds-still-20260821';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-keeps-place-20260821';
+} from './rich-text.js?v=0.2.0-holds-still-20260821';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,15 +44,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-keeps-place-20260821';
+} from './read-state.js?v=0.2.0-holds-still-20260821';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-keeps-place-20260821';
+} from './transcript-focus.js?v=0.2.0-holds-still-20260821';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-keeps-place-20260821';
+} from './swipe-navigation.js?v=0.2.0-holds-still-20260821';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -92,7 +92,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-keeps-place-20260821';
+const CLIENT_SHELL_REVISION = '0.2.0-holds-still-20260821';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -3296,7 +3296,32 @@ function renderWorkspacePanel() {
     appendWorkspaceSection(content, 'Recent', recent);
     appendWorkspaceSection(content, 'All', remainder);
   }
+  // This swaps the SCROLL CONTAINER itself, and it runs on every workspaces
+  // response: an 8s backstop poll plus every stream event, whether or not
+  // anything changed. A fresh element always starts at scrollTop 0, so the list
+  // snapped back to the top on its own every few seconds, and the search input
+  // lives in the same replaced subtree, so it was destroyed mid-word and the
+  // keyboard closed. Rebuilding is left alone here; what carries across is the
+  // state a rebuild has no business discarding.
+  const previousContent = panel.querySelector('.panel-content');
+  const previousScrollTop = previousContent ? previousContent.scrollTop : 0;
+  const previousSearch = panel.querySelector('.search-input');
+  const searchWasFocused = previousSearch && document.activeElement === previousSearch;
+  const selectionStart = searchWasFocused ? previousSearch.selectionStart : null;
+  const selectionEnd = searchWasFocused ? previousSearch.selectionEnd : null;
   panel.replaceChildren(content);
+  const restoredContent = panel.querySelector('.panel-content');
+  // Same frame as the swap, so the top of the list is never painted first.
+  if (restoredContent && previousScrollTop > 0) {
+    restoredContent.scrollTop = previousScrollTop;
+  }
+  if (!searchWasFocused) return;
+  const restoredSearch = panel.querySelector('.search-input');
+  if (!restoredSearch) return;
+  restoredSearch.focus({ preventScroll: true });
+  if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+    restoredSearch.setSelectionRange(selectionStart, selectionEnd);
+  }
 }
 
 function renderSearchResults(content) {
@@ -5558,8 +5583,15 @@ function startEvents() {
   state.heartbeatTimer = setInterval(() => {
     if (Date.now() - state.lastHeartbeat > 10_000) {
       if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
-      state.connection = state.lastHeartbeat ? 'offline' : 'connecting';
-      renderConnectionState();
+      const nextConnection = state.lastHeartbeat ? 'offline' : 'connecting';
+      // Only on an actual change. renderConnectionState fans out to all three
+      // panel renderers, each of which rebuilds its DOM, so calling it every
+      // tick rebuilt the whole app once a second for as long as the Mac was
+      // unreachable. The offline banner's Details button became a different
+      // node under the finger every second, which is why it often did nothing.
+      const connectionChanged = state.connection !== nextConnection;
+      state.connection = nextConnection;
+      if (connectionChanged) renderConnectionState();
       // Losing the stream used to be reported and then left alone: EventSource
       // does not reliably reopen one that iOS tore down, and startEvents is
       // otherwise only reached from revealApplication. That is why a stale app
@@ -6312,6 +6344,11 @@ function confirmRevoke(device) {
                 },
               );
               if (result.currentDevice) {
+                // The gate only replaces the children of #app, and
+                // #overlay-root is a sibling, so without this the confirmation
+                // sheet stayed on top of the signed-out screen with its Sign
+                // out button still live. Same order the lock path uses.
+                closeOverlay();
                 renderSignedOut();
               } else {
                 openSecurity();
@@ -6491,6 +6528,47 @@ function reloadForShellRevision(revision) {
   );
   location.replace(`${target.pathname}${target.search}${target.hash}`);
 }
+
+// THE KEYBOARD SHIFT, which is what "randomly jumps" has been all along.
+//
+// index.html asks for interactive-widget=resizes-content, and WebKit does not
+// implement that key. iOS therefore uses the default: the LAYOUT viewport keeps
+// full screen height and only the VISUAL viewport shrinks for the keyboard.
+// Every height in this shell is 100% of the unshrunk layout viewport, and the
+// composer is position:absolute bottom:0 inside it, so bottom:0 stays pinned to
+// the bottom of the whole screen, behind the keyboard. WebKit's only recourse
+// is to translate the visual viewport to reveal the caret, which drags the
+// entire app, header included, and does not reliably translate back.
+//
+// So the app is told how much of the screen the keyboard is covering and gives
+// that space up itself. Then the caret is already visible, WebKit has no reason
+// to translate anything, and nothing slides.
+function syncKeyboardInset() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+  const covered = Math.max(
+    0,
+    Math.round(window.innerHeight - viewport.height - viewport.offsetTop),
+  );
+  // Sub-pixel noise arrives constantly while scrolling; only real changes are
+  // written, or this would thrash layout on every scroll event.
+  const previous = Number(
+    document.documentElement.style.getPropertyValue('--keyboard-inset').replace('px', ''),
+  );
+  if (Number.isFinite(previous) && Math.abs(previous - covered) < 2) return;
+  document.documentElement.style.setProperty('--keyboard-inset', `${covered}px`);
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncKeyboardInset);
+  window.visualViewport.addEventListener('scroll', syncKeyboardInset);
+  syncKeyboardInset();
+}
+// Belt for the case the shift already happened: dismissing the keyboard must
+// always put the inset back, even if a resize event is missed.
+window.addEventListener('focusout', () => {
+  setTimeout(syncKeyboardInset, 50);
+});
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {

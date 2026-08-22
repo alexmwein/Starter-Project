@@ -146,7 +146,11 @@ button:active {
 .app-shell,
 .gate {
   width: 100%;
-  height: 100%;
+  /* Gives up exactly the space the on-screen keyboard covers. Without this the
+     shell stays full screen height, the composer's bottom:0 sits behind the
+     keyboard, and WebKit drags the whole app up to reveal the caret. See
+     syncKeyboardInset in app.js. */
+  height: calc(100% - var(--keyboard-inset, 0px));
 }
 
 .privacy-shield {
@@ -187,7 +191,15 @@ button:active {
   grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
   min-height: calc(var(--nav-height) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 4px 0;
+  /* Horizontal insets matter in landscape, where the notch takes 47 to 59px off
+     one side. Every iPhone is past the 600px two-column breakpoint when
+     rotated, so the left column sat under the notch and its back chevron and
+     title were cut in half. The insets were wired into the composer and the
+     Latest pill and nowhere else. */
+  padding: env(safe-area-inset-top)
+    max(4px, env(safe-area-inset-right))
+    0
+    max(4px, env(safe-area-inset-left));
   border-bottom: 1px solid transparent;
   background: var(--canvas);
 }
@@ -278,7 +290,8 @@ button:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px var(--screen-gutter) 8px;
+  padding: 20px max(var(--screen-gutter), env(safe-area-inset-right)) 8px
+    max(var(--screen-gutter), env(safe-area-inset-left));
 }
 
 .root-title {
@@ -332,7 +345,8 @@ button:active {
 
 .search-wrap {
   position: relative;
-  margin: 4px var(--screen-gutter) 16px;
+  margin: 4px max(var(--screen-gutter), env(safe-area-inset-right)) 16px
+    max(var(--screen-gutter), env(safe-area-inset-left));
 }
 
 .search-wrap .icon {
@@ -2006,6 +2020,14 @@ button:active {
 
 .sheet {
   position: relative;
+  /* A flex column so .sheet-scroll can bound itself against an indefinite
+     height. .sheet sets max-height but never height, and a percentage
+     max-height against an indefinite parent resolves to none, so the scroller
+     never activated and overflow:hidden silently clipped instead. Long lists,
+     the Chats sheet past about six chats, and the lower draft-conflict buttons
+     were simply unreachable. */
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-height: calc(100% - env(safe-area-inset-top) - 20px);
   overflow: hidden;
@@ -2048,7 +2070,10 @@ button:active {
 }
 
 .sheet-scroll {
-  max-height: calc(100% - 56px);
+  /* min-height:0 is what lets a flex child actually shrink and scroll. The old
+     percentage max-height could not work against an indefinite-height parent. */
+  min-height: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
