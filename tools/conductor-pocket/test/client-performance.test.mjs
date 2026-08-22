@@ -561,3 +561,27 @@ test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn',
   // the left column sat under the notch.
   assert.match(css, /max\(4px, env\(safe-area-inset-left\)\)/);
 })
+
+test('seat usage is reachable from inside a chat, not only from Workspaces', async () => {
+  const js = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+  // Usage first landed only on the Workspaces header, which is two navigations
+  // away from a transcript. Someone who lives in a chat never saw it, and
+  // reported the button as missing. The Chats sheet is one tap from the chat
+  // header, so it carries the same section.
+  const chatsStart = js.indexOf('function openChatsSheet()');
+  assert.ok(chatsStart > 0, 'openChatsSheet must exist');
+  const chatsBody = js.slice(chatsStart, js.indexOf('\n}\n', chatsStart));
+  assert.match(chatsBody, /seatUsageSection\(\)/);
+
+  // Mountable without awaiting, so placing it cannot block a sheet from
+  // opening if the producer is slow or down.
+  assert.match(js, /function seatUsageSection\(\{ force = false \} = \{\}\)/);
+  const sectionStart = js.indexOf('function seatUsageSection(');
+  const sectionBody = js.slice(sectionStart, js.indexOf('\n}\n', sectionStart));
+  assert.match(sectionBody, /void fillSeatUsage\(section, \{ force \}\)/);
+  assert.match(sectionBody, /return section;/);
+
+  // And the Workspaces header entry point stays.
+  assert.match(js, /'aria-label': 'Connection and account usage'/);
+})
