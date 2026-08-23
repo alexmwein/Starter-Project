@@ -29,6 +29,7 @@ import {
   prepareImageForUpload,
 } from './image-attachments.js?v=0.2.0-calm-motion-20260822';
 import {
+  applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
 } from './live-refresh.js?v=0.2.0-calm-motion-20260822';
@@ -5756,8 +5757,6 @@ function startEvents() {
       // The periodic health check remains the update fallback.
     }
     void appUpdateCoordinator?.checkForUpdate({ force: true });
-    transcriptRefresh.schedule();
-    metadataRefresh.schedule();
     void transcriptRefresh.flush();
     void metadataRefresh.flush();
     recheckAmbiguousDeliveries();
@@ -5767,8 +5766,6 @@ function startEvents() {
     live();
     if (!wasLive) {
       invalidateUnreadHeadEvidence();
-      transcriptRefresh.schedule();
-      metadataRefresh.schedule();
       void transcriptRefresh.flush();
       void metadataRefresh.flush();
       recheckAmbiguousDeliveries();
@@ -5889,6 +5886,31 @@ function stopEvents() {
   state.heartbeatTimer = null;
   state.activityTimer = null;
   state.backstopTimer = null;
+}
+
+function applyAppConnectionAvailability(status, { now = Date.now() } = {}) {
+  const appReady = Boolean(state.auth && state.shell);
+  applyConnectionAvailability({
+    state,
+    status,
+    now,
+    render: renderConnectionState,
+    restartEvents: () => {
+      if (appReady) startEvents();
+    },
+    refresh: () => {
+      if (!appReady) return;
+      invalidateUnreadHeadEvidence();
+      void transcriptRefresh.flush();
+      void metadataRefresh.flush();
+    },
+    recheckDeliveries: () => {
+      if (appReady) recheckAmbiguousDeliveries();
+    },
+    recoverDeliveries: () => {
+      if (appReady) void recoverPendingDeliveries();
+    },
+  });
 }
 
 function renderConnectionState() {
@@ -6448,16 +6470,19 @@ function openUsageSheet() {
   });
 }
 
-async function openConnectionSheet() {
+async function runConnectionCheck(content) {
+  if (content.dataset.connectionCheckBusy === 'true') return;
+  content.dataset.connectionCheckBusy = 'true';
+  content.setAttribute('aria-busy', 'true');
   const startedAt = performance.now();
-  const content = node('div', {}, skeletonRows(4));
-  openSheet('Connection', content);
+  content.replaceChildren(skeletonRows(4));
   try {
     const probe = await request('/api/connection?force=1');
     state.connectionProbe = probe;
+    applyAppConnectionAvailability('live');
     const latency = Math.round(performance.now() - startedAt);
     const rows = [
-      ['Private round trip', state.connection === 'live', `${latency} ms`],
+      ['Private round trip', true, `${latency} ms`],
       ['Relay on your Mac', true, probe.relayVersion],
       ['Conductor app', probe.conductor, probe.conductor ? 'Ready' : 'Not ready'],
       ['Accessibility send path', probe.sendPath, probe.sendPath ? 'Verified' : probe.reason],
@@ -6479,16 +6504,9 @@ async function openConnectionSheet() {
     // can sit at 0% on the five hour window while the weekly one is spent,
     // which is precisely the state that reads as unexplained.
     void appendAccountUsage(content, { force: true });
-    content.append(
-      node('button', {
-        className: 'text-button',
-        type: 'button',
-        text: 'Run check again',
-        on: { click: () => openConnectionSheet() },
-      }),
-    );
     renderComposerState();
   } catch (error) {
+    applyAppConnectionAvailability('offline');
     content.replaceChildren(
       node('div', { className: 'empty-state' }, [
         icon('warn'),
@@ -6497,6 +6515,28 @@ async function openConnectionSheet() {
       ]),
     );
   }
+  const rerunButton = node('button', {
+    className: 'text-button',
+    type: 'button',
+    text: 'Run check again',
+    on: {
+      click: async () => {
+        rerunButton.disabled = true;
+        rerunButton.setAttribute('aria-busy', 'true');
+        rerunButton.textContent = 'Checking…';
+        await runConnectionCheck(content);
+      },
+    },
+  });
+  content.append(rerunButton);
+  content.dataset.connectionCheckBusy = 'false';
+  content.removeAttribute('aria-busy');
+}
+
+function openConnectionSheet() {
+  const content = node('div', {}, skeletonRows(4));
+  openSheet('Connection', content);
+  void runConnectionCheck(content);
 }
 
 async function openSecurity() {
@@ -6969,13 +7009,12 @@ document.addEventListener('visibilitychange', () => {
   void recoverPendingDeliveries();
 });
 
-window.addEventListener('online', () => {
-  void recoverPendingDeliveries();
-});
-
 window.addEventListener('pagehide', shieldApplication);
 window.addEventListener('online', () => {
-  recheckAmbiguousDeliveries();
+  applyAppConnectionAvailability('connecting');
+});
+window.addEventListener('offline', () => {
+  applyAppConnectionAvailability('offline');
 });
 window.addEventListener('pageshow', () => {
   appUpdateCoordinator?.foreground();
