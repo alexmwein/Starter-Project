@@ -1,0 +1,99 @@
+name: Peptide Content AI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - biologix-strategy-board/content-intel/videos-data.js
+      - tools/peptide-content-intel/generate_ai_briefs.mjs
+      - .github/workflows/peptide-content-ai.yml
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ARTIFACT_BRANCH: automation/peptide-ai-output
+
+concurrency:
+  group: peptide-content-ai
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: [self-hosted, ovo-studio]
+    timeout-minutes: 8
+    steps:
+      - name: Check out the bound repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore the last generated digest
+        shell: bash
+        run: |
+          if git fetch origin "refs/heads/$ARTIFACT_BRANCH:refs/remotes/origin/$ARTIFACT_BRANCH"; then
+            if git cat-file -e "origin/$ARTIFACT_BRANCH:biologix-strategy-board/content-intel/ai-briefs.js"; then
+              git show "origin/$ARTIFACT_BRANCH:biologix-strategy-board/content-intel/ai-briefs.js" \
+                > biologix-strategy-board/content-intel/ai-briefs.js
+            fi
+          else
+            echo "No prior artifact branch exists; the first safe run will create it."
+          fi
+
+      - name: Generate only when the Studio has headroom
+        id: generate
+        shell: bash
+        env:
+          OVO_AI_RUNTIME: studio-local
+          OVO_AI_MODEL: qwen3:1.7b
+        run: |
+          set +e
+          nice -n 10 node tools/peptide-content-intel/generate_ai_briefs.mjs | tee /tmp/peptide-content-ai-result.json
+          generation_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$generation_status" == "75" ]]; then
+            echo "Studio is protected by the load guard; the hourly run will retry."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$generation_status" != "0" ]]; then
+            exit "$generation_status"
+          fi
+          generation_state=$(node -e 'const fs=require("fs");const lines=fs.readFileSync("/tmp/peptide-content-ai-result.json","utf8").trim().split(/\n/);process.stdout.write(JSON.parse(lines.at(-1)).state)')
+          echo "state=$generation_state" >> "$GITHUB_OUTPUT"
+          if [[ "$generation_state" == "generated" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update the dedicated artifact branch
+        if: steps.generate.outputs.changed == 'true'
+        shell: bash
+        run: |
+          artifact_file=biologix-strategy-board/content-intel/ai-briefs.js
+          task_tmp=$(mktemp -d)
+          trap 'rm -rf "$task_tmp"' EXIT
+          cp "$artifact_file" "$task_tmp/ai-briefs.js"
+          git restore --source=HEAD --worktree -- "$artifact_file"
+
+          if git show-ref --verify --quiet "refs/remotes/origin/$ARTIFACT_BRANCH"; then
+            git switch -C "$ARTIFACT_BRANCH" "origin/$ARTIFACT_BRANCH"
+          else
+            git switch -c "$ARTIFACT_BRANCH"
+          fi
+
+          mkdir -p "$(dirname "$artifact_file")"
+          cp "$task_tmp/ai-briefs.js" "$artifact_file"
+          git config user.name "ovo-studio-ai[bot]"
+          git config user.email "ovo-studio-ai[bot]@users.noreply.github.com"
+          git add "$artifact_file"
+          if git diff --cached --quiet; then
+            echo "The artifact branch already contains this digest."
+            exit 0
+          fi
+          git commit -m "chore(intel): refresh background AI briefs"
+          git push -u origin "$ARTIFACT_BRANCH"

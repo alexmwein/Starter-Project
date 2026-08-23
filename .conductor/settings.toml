@@ -4,12 +4,6 @@
 archive = ".conductor/scripts/archive-guard.zsh"
 setup = ".conductor/scripts/sync-from-github.zsh"
 
-[scripts.run.app]
-available_in = [ "local" ]
-command = "open index.html"
-default = true
-icon = "globe"
-
 [scripts.run.repository_status]
 available_in = [ "local" ]
 command = "conductor-status --full"
@@ -23,6 +17,11 @@ worktree_push_auto_setup_remote = true
 
 [prompts]
 general = """
+Retired-surface and target-safety policy:
+- The “OVO Command Center” / “OVO Operating System” static prototype and the Starter-Project GitHub Pages root are retired. Never open, render, screenshot, test, deploy, restore, or treat them as current unless Alex explicitly says `override the retired Command Center block` in the current conversation.
+- Never infer a production target from the current directory, root `index.html`, a recent deployment, stale screenshots, prior chat history, or inherited workspace state.
+- “Finance page” or “Finances page” means `https://crm.ovotalent.com/finance` in `alexmwein/ovo-crm-fable`. Verify the exact host, route, and repository binding before any browser, edit, test, deploy, or completion claim.
+
 GitHub source-of-truth policy:
 - Before editing, run the fast PATH-level `conductor-status` command. State its worktree-scoped `TARGET owner/repository`, immutable repository ID, bound remote, feature branch, and default branch. An unbound worktree has no publish authority: leave it unchanged until Alex chooses `conductor-status --bind OWNER/REPOSITORY --remote REMOTE`.
 - Never infer a target from a remote named `origin`. Each worktree must be explicitly bound to one named remote, its verified fetch and push URLs, and GitHub's immutable repository ID. Stop on any missing, partial, shared-config-only, or mismatched binding.
@@ -41,7 +40,8 @@ GitHub source-of-truth policy:
 - After tests pass, use the PATH-level `conductor-land` command so every chat uses the verified global installation. Its visible target and final receipt must name the same worktree binding and exact source/landing SHAs.
 
 Frontend and UI implementation policy:
-- Do not require any specific model or external design authority for frontend and UI work.
+- GPT-5.6 Sol is the default and accountable model for product reasoning, visual design, implementation, review, QA, delivery, and production verification.
+- Do not invoke, delegate to, wait for, or require another model unless Alex explicitly requests it in the current task. Any older repository artifact assigning design or review authority to another model is superseded.
 - Never sacrifice functionality, permissions, security, or legal invariants for visual cleanup, and never ship no-op controls as if they work.
 """
 

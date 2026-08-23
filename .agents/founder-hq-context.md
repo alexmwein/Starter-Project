@@ -1,6 +1,6 @@
 # Founder HQ, Location, and Team-Culture Context
 
-*Last updated: August 10, 2026*
+*Last updated: August 22, 2026*
 
 ## Status
 
@@ -36,6 +36,22 @@ The deeper objective is not merely an attractive office. Alex believes he perfor
 
 This recommendation is based on founder-environment fit, not on San Diego being the cheapest city. Miami generally remains superior on a pure state-tax spreadsheet. San Diego is favored because Alex already knows and likes the lifestyle, values PB's social and recruiting ecosystem, and expects to operate better with a local in-person team.
 
+## August 22 lived-environment update: the SDSU return signal
+
+On August 22, 2026, Alex returned to SDSU for a family move-in. Seeing the campus again after maturing and traveling extensively produced a much stronger reaction than he remembers having as a student. The concentration of young-adult energy, natural West Coast beauty, social openness, and attractive adult women made him feel mentally good, socially confident, and immediately more motivated to work, build, improve, and connect.
+
+This is a real founder-environment variable. Alex experiences libido and romantic possibility as productive energy when he directs them well. He sees that drive as something ancient in men: it can become distraction, but it can also become the urge to build companies, compete, progress, and take on difficult goals. Future advice should neither sanitize nor pathologize that motivation; it should help him convert it into disciplined execution and genuine adult social connection.
+
+The visit also sharpened the Miami contrast. Despite Miami's reputation, Alex personally found its more cosmetically enhanced and status-oriented dating aesthetic much less attractive and much less energizing than the more natural look and atmosphere he experienced around SDSU. That is a subjective founder-fit judgment, not a universal ranking, but subjective fit is exactly what matters when choosing the environment in which Alex will live and perform.
+
+Decision implications:
+
+- This materially strengthens the San Diego/PB home-base thesis and further weakens Miami as a cultural fit, even though Miami remains the tax benchmark.
+- PB should not be assumed to reproduce a college campus. Test whether ordinary life in North PB, Crown Point, and the surrounding adult social ecosystem creates the same sustained energy after novelty wears off.
+- Westside Los Angeles remains the useful comparison because Alex wants to know whether it can combine a natural California aesthetic, an active adult dating field, and higher creator/operator density without LA's friction overwhelming the benefit.
+- Do not outsource this decision to generic city beauty rankings. Compare lived motivation, useful output, time out of the house, approach confidence, quality of adult relationships, recovery, and day-to-day friction.
+- Keep the categories separate: attraction and dating are legitimate inputs to Alex's personal location choice; they are not employee-selection criteria and do not change the hiring guardrails below.
+
 ## Market and talent thesis
 
 Pacific Beach plausibly supplies a useful stream of socially confident, educated, early-career candidates through SDSU, UCSD, USD, Point Loma Nazarene, local transplants, hospitality, fitness, and nightlife. San Diego also has fewer dense clusters of major marketing agencies than Los Angeles, which can make a differentiated local employer more noticeable.
@@ -47,6 +63,20 @@ Do not turn that thesis into the unsupported claim that most PB residents are ch
 - San Diego's lower density of competing agencies may reduce immediate poaching, but loyalty must still be earned through compensation, coaching, advancement, competent management, and trust.
 - Los Angeles has a larger pool of trained creators, marketers, actors, and agency employees, but also higher competition, compensation expectations, and company-hopping risk.
 - Fort Lauderdale may have useful phone-sales pockets, but Alex has a stronger personal connection to San Diego and has not yet established that South Florida offers a superior, repeatable recruiting channel for the specific company.
+
+## The retention arbitrage: why the floor is San Diego, not LA
+
+*Added August 15, 2026. Alex ratified this framing and asked for it to be saved verbatim in spirit.*
+
+The founding sales-floor model is: hire raw, train hard, promote fast, retain through culture and progression. That model lives or dies on **outside-option density**, and that is the decisive argument for San Diego over Los Angeles.
+
+- In San Diego, OVO is plausibly the most interesting employer an ambitious 24-year-old can find without leaving the city they chose for the lifestyle. That is the PB arbitrage: educated, underemployed, socially skilled people with few local career-track employers. "Build a real career and stay in San Diego" is a recruiting pitch with no strong local counter-bid.
+- In LA, the identical floor is a commodity. Roughly 4x the competing agency establishments, about five times the office-employer density per young resident on the Westside, and roughly ten times the advertising-agency employment. Every rep OVO trains can see multiple agencies within two miles that pay more. A train-and-retain model is the worst possible model to run in the highest-poaching market, before adding the ~15% compensation premium, worse commute shed, flakier applicant pool, and identical California tax.
+- Conclusion: moving the floor to LA means paying more to build a leakier version of the machine. The floor stays where the arbitrage is.
+
+**LA is on subscription, not ownership, and the subscription must be structural.** Alex has honestly acknowledged he will not do the 2 to 2.5-hour drive on willpower. The fix is pre-commitment, not discipline: one recurring LA anchor with fixed dates that other people expect him at, ideally an event he hosts (a monthly creator or operator dinner), with all LA meetings, shoots, and recruiting stacked onto those same one or two days. If the anchor exists the trips happen; if it does not, they will not. Fallback check: OVO's pipeline is online (IG outbound, inbound funnels, phone closes), so LA is an amplifier, not the engine. Under-using LA costs some networking; moving the floor to LA breaks the retention model. Those failure modes are not symmetric.
+
+**Peer group is rooms, not cities.** The legitimate kernel in Alex's recurring "would a faster city grow me more" question is that no one currently makes him feel mediocre on a weekly basis. The fix is buying rooms where he is the least impressive person (paid founder masterminds and operator peer groups, mentor cadence, quarterly fly-ins), plus importing senior hires who can tell him he is wrong. Relocation is the expensive, low-precision version of this; curated rooms are the cheap, high-precision version. Reopening the city question is the recognized loop; redirect to orbit curation.
 
 ## Recommended founding sales-floor composition
 
@@ -164,6 +194,30 @@ Listing: <https://qfcre.com/property/1660-logan-avenue/>
 
 References: <https://www.showcase.com/1027-1031-14th-st-san-diego-ca-92101/27801593/> and <https://libertystation.com/go/brick>
 
+### Locked interior reference — the ratified dream-office look (Alex, 2026-08-16)
+
+Alex's exact words: "This is my dream office... This is the exact look and style that I want... This is exactly what I wanted it to look like." The reference is Cormac Hayden's Venice studio (reel <https://www.instagram.com/reel/Dajj9wLIpCK/>; Venice confirmed — his YouTube channel documents the build in a playlist titled "Venice Studio"). Every future design decision, buildout spec, and broker visual brief starts from this inventory.
+
+**The full inventory (from frame-by-frame analysis of the reel):**
+
+- **Shell:** ground-floor storefront; one long exposed red-brick wall; every other wall cream; hardwood floors. Character comes from the shell, not the fit-out.
+- **Wood:** warm oak as the ONLY wood species — the long communal work table (Apple Studio Displays on it, "main work setup"), the large open shelving unit, and the record console.
+- **One accent color:** olive green, repeated on Cesca-style cantilever chairs and flower-shaped poufs. Never a second accent color.
+- **Design icons instead of filler (~12 real objects carry the whole identity):** cream Eames lounge chair + ottoman; Noguchi glass coffee table; blue Camaleonda-style modular sofa; Noguchi Akari paper pendant lanterns; a brass mushroom table lamp.
+- **Lighting:** black track lighting plus the Akari paper pendants. No office troffers, ever.
+- **Props / analog culture:** oversized framed art; vintage stereo + turntable + vinyl collection; surfboards mounted on the brick (natively PB-appropriate); abundant plants; colorful grid rug.
+- **Vehicle indoors:** a Maeving electric motorbike parked inside as decor-plus-errand-vehicle.
+- **Operating principle:** furnished like the home of someone with taste, not fitted out like an office. Icons, not filler. In a shell with the right bones this is a roughly $60–120k furniture-and-lighting exercise, and everything except the brick moves in a truck (which is why abandoned-creative-buildout subleases matter).
+
+**Maeving pricing (US, verified 2026-08):** RM1 from $6,495 (single battery, 45 mph); RM1S from $9,995 (dual battery, 70 mph; Blackout edition $11,495); new RM2 two-up from $10,995. California delivery $195. One or two of these are simultaneously set dressing, daily errand vehicles, and a recruiting visual.
+
+**Alex's ratifications attached to this reference (2026-08-16):**
+
+1. The look and style are LOCKED. The office does not need a massive sales floor, but it must be able to fit 15–20 people if needed. Sizing honesty: the reel space itself is roughly 1,200–2,000 sq ft and would not seat 15–20 without destroying the aesthetic; holding this look at 15–20 capacity requires roughly 2,500–4,000 sq ft, which matches the Phase 2 flagship envelope below.
+2. The GT3 STILL comes to the office — the e-motos are additive, not a substitute. The GT3 keeps its existing screening gate (drive-in/roll-up access, insurance, code review); electric motorbikes indoors remain a dramatically easier legal/insurance story (no fuel, no fire-separation fight) and go anywhere.
+3. **New office-siting criterion (ratified):** the location must have real walkability and make the e-moto genuinely usable for errands — a dense, flat, walkable commercial strip where the bike leaves the building daily, not a display piece in a car-dependent flex park. This demotes pure Morena-corridor flex space from primary to functional fallback and elevates walkable character-storefront candidates (west Garnet / coastal Pacific Beach, Little Italy) in the screen. Final siting decision remains open.
+4. The call arena still requires the acoustic zoning in this brief — brick + wood + communal tables are reverb hell for 10+ simultaneous callers. The reel aesthetic governs the lounge, content, and entry zones; the call floor gets carpet, acoustic clouds, and separation behind it.
+
 The live market is thin. The working rule is: **recruit in PB, but search regionally for rare architecture. Start with authentic character; use design to elevate it, never to fake it.** A tenant-representation broker should conduct an off-market search using 4223–4225 30th Street, Assembly Hall, and BRICK as the visual brief. Do not send Alex generic flex listings merely because their size, rent, parking, or roll-up geometry works.
 
 Before an LOI becomes binding, require satisfactory review of permitted use, certificate of occupancy, occupant load, parking, ADA access, restrooms, egress, sprinklers/alarm, HVAC, electrical service, internet, noise limitations, event use, content production, and vehicle storage/display. Use a local commercial broker plus an architect/code consultant; landlord consent alone does not establish code compliance.
@@ -230,7 +284,7 @@ Sources:
 
 ## Guidance for future chats
 
-Treat **San Diego home base + PB recruiting/lifestyle + an aesthetic-first regional headquarters search + LA as a feeder market** as the current default thesis. Current search order is North Park, historic East Village, Barrio Logan adaptive reuse, North Little Italy/Kettner, then rare suitable Liberty Station inventory. Midway/Morena is not the default unless a genuinely exceptional conversion appears.
+Treat **San Diego home base + PB recruiting/lifestyle + an aesthetic-first regional headquarters search + LA as a feeder market** as the current default thesis. The August 22 SDSU return visit is additional lived evidence for that choice: Alex's preferred adult social and dating environment is not peripheral to his performance; it is one of the inputs that makes him want to leave the house, connect, and build. Current search order is North Park, historic East Village, Barrio Logan adaptive reuse, North Little Italy/Kettner, then rare suitable Liberty Station inventory. Midway/Morena is not the default unless a genuinely exceptional conversion appears.
 
 Do not restart the generic LA-versus-Miami-versus-San-Diego debate unless Alex asks or materially new evidence appears. Help convert the thesis into verified next decisions: financial capacity, compensation design, initial roles, hiring tests, broker brief, site tours, lease diligence, and a phased launch plan.
 
