@@ -409,10 +409,17 @@ test('failed terminal verification reaches one visible action path', async () =>
   );
   const verify = js.slice(verifyStart, verifyEnd);
   assert.match(verify, /terminalDeliveryActionDisposition\(delivery\)/);
-  assert.match(
-    verify,
-    /disposition === 'actionable'[\s\S]*settleTerminalDeliveryStatus\(message, delivery\)[\s\S]*return message/,
+  const actionableStart = verify.indexOf("if (disposition === 'actionable')");
+  const actionableEnd = verify.indexOf(
+    "if (disposition === 'pending')",
+    actionableStart,
   );
+  const actionable = verify.slice(actionableStart, actionableEnd);
+  assert.match(
+    actionable,
+    /settleTerminalDeliveryStatus\(message, delivery\)[\s\S]*return message/,
+  );
+  assert.doesNotMatch(actionable, /return null/);
   assert.match(
     verify,
     /disposition === 'resolved'[\s\S]*settleTerminalDeliveryStatus\(message, delivery\)[\s\S]*return null/,
