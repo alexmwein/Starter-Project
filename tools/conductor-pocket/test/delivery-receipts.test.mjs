@@ -371,6 +371,16 @@ test('recovering typed text never requires proof, resending always does', async 
     /message\.definitelyUnsent !== true/,
     'recovering typed text must not require proof the send failed',
   );
+  assert.doesNotMatch(
+    editBody,
+    /verifyTerminalDeliveryAction\(message\)/,
+    'recovering typed text must not depend on a reachable status endpoint',
+  );
+  assert.match(
+    editBody,
+    /claimTerminalDeliveryActionRequired\(message, 'edit'\)/,
+    'the atomic local claim remains the cross-window edit gate',
+  );
 
   // The claim gate must treat edit like delete, not like retry.
   assert.match(
@@ -427,4 +437,44 @@ test('failed terminal verification reaches one visible action path', async () =>
   );
   assert.match(js, /activeAction === 'retry' \? 'Checking…' : 'Retry'/);
   assert.match(js, /click: \(\) => void checkDeliveryNow\(message\)/);
+});
+
+test('manual delivery actions cancel stale automatic recovery work', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const recoveryStart = js.indexOf('function checkDelivery(message');
+  const recoveryEnd = js.indexOf('async function recoverPendingDeliveries');
+  const recovery = js.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /function cancelDeliveryRecovery\(message\)/);
+  assert.match(recovery, /cancelled: false/);
+  assert.match(recovery, /deliveryRecoveryEntryIsCurrent\(entry\)/);
+  assert.match(
+    recovery,
+    /deliveryNeedsAutomaticRecovery\(message\)[\s\S]*message\.delivery = 'confirming'/,
+    'a queued recovery must recheck eligibility before changing visible state',
+  );
+  assert.match(
+    recovery,
+    /requestDeliveryStatus\(message\)[\s\S]*deliveryRecoveryEntryIsCurrent\(entry\)/,
+    'an active recovery must stop after a manual action cancels it',
+  );
+
+  for (const functionName of [
+    'discardFailedMessage',
+    'editFailedMessage',
+    'checkDeliveryNow',
+    'retryMessage',
+    'claimConflictAction',
+  ]) {
+    const start = js.indexOf(`function ${functionName}`);
+    assert.ok(start > 0, `${functionName} must exist`);
+    const body = js.slice(start, js.indexOf('\n}\n', start));
+    assert.match(
+      body,
+      /cancelDeliveryRecovery\(message\)/,
+      `${functionName} must cancel background recovery first`,
+    );
+  }
 });

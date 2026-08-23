@@ -4,7 +4,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const ORIGIN = 'https://pocket.test';
-const CURRENT_CACHE = 'conductor-pocket-shell-v24';
+const PREVIOUS_CACHE = 'conductor-pocket-shell-v24';
+const CURRENT_CACHE = 'conductor-pocket-shell-v25';
 
 function requestKey(request) {
   const value = typeof request === 'string' ? request : request.url;
@@ -115,7 +116,7 @@ test('an old worker serves its own document while a newer cache exists', async (
       headers: { 'Content-Type': 'text/html' },
     }),
   );
-  const newer = await worker.caches.open('conductor-pocket-shell-v25');
+  const newer = await worker.caches.open('conductor-pocket-shell-v26');
   await newer.put(
     '/index.html',
     new Response('<p>other-generation</p>', {
@@ -212,6 +213,38 @@ test('a partial shell installation is deleted and never activates', async () => 
 
   await assert.rejects(installPromise, /partial_install/);
   assert.equal(worker.caches.stores.has(CURRENT_CACHE), false);
+  assert.equal(worker.skipWaitingCalls(), 0);
+});
+
+test('a failed new worker install preserves the active prior shell', async () => {
+  const worker = await loadWorker({
+    failInstall: true,
+    fetchImpl: async () =>
+      new Response('<!doctype html><p>new shell</p>', {
+        headers: { 'Content-Type': 'text/html' },
+      }),
+  });
+  const previous = await worker.caches.open(PREVIOUS_CACHE);
+  await previous.put(
+    '/index.html',
+    new Response('<p>active prior shell</p>', {
+      headers: { 'Content-Type': 'text/html' },
+    }),
+  );
+  let installPromise;
+  worker.listeners.get('install')({
+    waitUntil(value) {
+      installPromise = Promise.resolve(value);
+    },
+  });
+
+  await assert.rejects(installPromise, /partial_install/);
+  assert.equal(worker.caches.stores.has(CURRENT_CACHE), false);
+  assert.equal(worker.caches.stores.has(PREVIOUS_CACHE), true);
+  assert.equal(
+    await (await previous.match('/index.html')).text(),
+    '<p>active prior shell</p>',
+  );
   assert.equal(worker.skipWaitingCalls(), 0);
 });
 

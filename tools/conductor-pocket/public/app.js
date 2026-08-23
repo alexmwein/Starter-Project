@@ -2142,6 +2142,7 @@ async function claimTerminalDeliveryActionRequired(message, action) {
 
 async function discardFailedMessage(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  cancelDeliveryRecovery(message);
   const result = await deliveryActionCoordinator.run(
     message.id,
     'delete',
@@ -2261,14 +2262,11 @@ async function editFailedMessage(message) {
   // recover what was typed. Retry keeps its proof requirement, because it
   // resends.
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
+  cancelDeliveryRecovery(message);
   const result = await deliveryActionCoordinator.run(
     message.id,
     'edit',
     async () => {
-      if (!(await verifyTerminalDeliveryAction(message))) {
-        announce('Could not recover this text yet. Try again.');
-        return false;
-      }
       let claimed;
       try {
         claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
@@ -5312,6 +5310,7 @@ async function checkDeliveryNow(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') {
     return false;
   }
+  cancelDeliveryRecovery(message);
   const result = await deliveryActionCoordinator.run(
     message.id,
     'check',
@@ -5369,6 +5368,7 @@ function checkDelivery(message, { force = false } = {}) {
     key,
     message,
     force,
+    cancelled: false,
     operation,
     resolve: resolveOperation,
     reject: rejectOperation,
@@ -5380,6 +5380,21 @@ function checkDelivery(message, { force = false } = {}) {
   return operation;
 }
 
+function cancelDeliveryRecovery(message) {
+  const key = message?.id;
+  if (typeof key !== 'string') return;
+  const entry = deliveryRecoveryInFlight.get(key);
+  if (entry) entry.cancelled = true;
+}
+
+function deliveryRecoveryEntryIsCurrent(entry) {
+  return (
+    entry?.cancelled !== true &&
+    deliveryRecoveryInFlight.get(entry?.key) === entry &&
+    state.optimistic.includes(entry?.message)
+  );
+}
+
 function drainDeliveryRecoveryQueue() {
   while (
     activeDeliveryRecoveryCount < MAX_CONCURRENT_DELIVERY_RECOVERIES &&
@@ -5387,7 +5402,7 @@ function drainDeliveryRecoveryQueue() {
   ) {
     const entry = deliveryRecoveryQueue.shift();
     activeDeliveryRecoveryCount += 1;
-    void checkDeliveryOnce(entry.message, { force: entry.force })
+    void checkDeliveryOnce(entry)
       .then(entry.resolve, entry.reject)
       .finally(() => {
         if (deliveryRecoveryInFlight.get(entry.key) === entry) {
@@ -5399,8 +5414,12 @@ function drainDeliveryRecoveryQueue() {
   }
 }
 
-async function checkDeliveryOnce(message, { force = false } = {}) {
-  if (!state.optimistic.includes(message)) return true;
+async function checkDeliveryOnce(entry) {
+  const message = entry.message;
+  if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
+  if (!deliveryNeedsAutomaticRecovery(message)) {
+    return message.delivery === 'delivered';
+  }
   message.delivery = 'confirming';
   message.deliveryPhase = 'confirming';
   message.retrySafe = false;
@@ -5408,6 +5427,7 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
   message.deliveryRecoveryExhausted = false;
   message.errorCode = null;
   await persistPendingDeliveries({ upserts: [message] });
+  if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   renderTranscript();
   const deadline = Date.now() + DELIVERY_RECOVERY_MS;
   let lastErrorCode = null;
@@ -5415,9 +5435,11 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
   let inconclusiveChecks = 0;
   let firstCheck = true;
   while (firstCheck || Date.now() < deadline) {
+    if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
     firstCheck = false;
     try {
       const delivery = await requestDeliveryStatus(message);
+      if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
       lastErrorCode = null;
       if (await settleTerminalDeliveryStatus(message, delivery)) {
         return delivery.state === 'delivered';
@@ -5437,6 +5459,7 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
         lastDeliveryCode = delivery.code || 'delivery_unknown';
       }
     } catch (error) {
+      if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
       if (error.status === 401 || error.status === 423) {
         message.delivery = 'failed';
         message.errorCode = error.code;
@@ -5469,6 +5492,7 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
       );
     }
   }
+  if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   // The full recovery window elapsed without authoritative proof. Keep this
   // delivery eligible for visibility/online rechecks instead of turning a
   // temporary receipt outage into a permanent failure.
@@ -5523,6 +5547,7 @@ async function retryMessage(message) {
     );
     return false;
   }
+  cancelDeliveryRecovery(message);
   const result = await deliveryActionCoordinator.run(
     message.id,
     'retry',
@@ -5563,6 +5588,7 @@ async function retryMessage(message) {
 // and Edit paths: two Pocket windows can show the same sheet, and the claim
 // is what keeps them from both acting on it.
 async function claimConflictAction(message, action) {
+  cancelDeliveryRecovery(message);
   const result = await deliveryActionCoordinator.run(
     message.id,
     action,

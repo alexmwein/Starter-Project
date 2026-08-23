@@ -659,8 +659,16 @@ on sessionIsSelected(sessionTitle, sessionOrdinal)
 			set candidateTabNames to name of every item of sessionTabs
 			set candidateTabValues to value of every item of sessionTabs
 			if (count of candidateTabNames) is tabCount and (count of candidateTabValues) is tabCount then
-				set tabNames to candidateTabNames
-				set tabValues to candidateTabValues
+				set normalizedTabNames to {}
+				set normalizedTabValues to {}
+				repeat with tabIndex from 1 to tabCount
+					set normalizedTabName to item tabIndex of candidateTabNames as text
+					set normalizedTabValue to item tabIndex of candidateTabValues as boolean
+					set end of normalizedTabNames to normalizedTabName
+					set end of normalizedTabValues to normalizedTabValue
+				end repeat
+				set tabNames to normalizedTabNames
+				set tabValues to normalizedTabValues
 			end if
 		end try
 		if tabNames is not missing value then

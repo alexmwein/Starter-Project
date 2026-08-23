@@ -1573,6 +1573,15 @@ test('the send path does not re-derive work it already has', async () => {
   );
   assert.match(selectedSession, /name of every item of sessionTabs/);
   assert.match(selectedSession, /value of every item of sessionTabs/);
+  assert.match(selectedSession, /set normalizedTabNames to \{\}/);
+  assert.match(selectedSession, /set normalizedTabValues to \{\}/);
+  assert.match(selectedSession, /item tabIndex of candidateTabNames as text/);
+  assert.match(selectedSession, /item tabIndex of candidateTabValues as boolean/);
+  assert.ok(
+    selectedSession.indexOf('item tabIndex of candidateTabValues as boolean') <
+      selectedSession.indexOf('set tabValues to normalizedTabValues'),
+    'batched values must be validated before the fallback is bypassed',
+  );
   assert.match(selectedSession, /name of candidate as text/);
 
   // Send timing rows identify phases without recording message content.

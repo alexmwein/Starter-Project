@@ -1,5 +1,5 @@
 const SHELL_REVISION = '0.2.0-fast-recovery-20260823';
-const CACHE = 'conductor-pocket-shell-v24';
+const CACHE = 'conductor-pocket-shell-v25';
 const SHELL = [
   '/',
   '/index.html',

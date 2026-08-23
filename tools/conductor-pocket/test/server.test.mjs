@@ -4049,10 +4049,17 @@ test('pending sends persist before draft clearing and recover for the full send 
     source,
     /async function retryMessage\(message\)[\s\S]*verifyTerminalDeliveryAction\(message\)/,
   );
-  assert.match(
-    source,
-    /async function editFailedMessage\(message\)[\s\S]*verifyTerminalDeliveryAction\(message\)/,
+  const editStart = source.indexOf('async function editFailedMessage(message)');
+  const editEnd = source.indexOf(
+    'async function persistPendingDeliveries',
+    editStart,
   );
+  const editBlock = source.slice(editStart, editEnd);
+  assert.match(
+    editBlock,
+    /claimTerminalDeliveryActionRequired\(message, 'edit'\)/,
+  );
+  assert.doesNotMatch(editBlock, /verifyTerminalDeliveryAction\(message\)/);
   assert.match(
     source,
     /const messages = chronologicalTranscriptMessages\(\[/,
