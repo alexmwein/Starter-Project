@@ -1229,6 +1229,10 @@ button:active {
   font-weight: 600;
 }
 
+.message-retry:disabled {
+  opacity: 0.55;
+}
+
 @media (max-width: 420px) {
   .message.user:has(.message-meta.terminal) {
     max-width: 92%;

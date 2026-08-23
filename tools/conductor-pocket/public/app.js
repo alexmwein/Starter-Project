@@ -1,9 +1,11 @@
 import {
+  createDeliveryActionCoordinator,
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
+  terminalDeliveryActionDisposition,
 } from './delivery-receipts.js?v=0.2.0-calm-motion-20260822';
 import {
   appUpdateReloadIsSafe,
@@ -154,6 +156,11 @@ const deliveryRecoveryInFlight = new Map();
 const deliveryRecoveryQueue = [];
 let activeDeliveryRecoveryCount = 0;
 let bootstrapCoordinator = null;
+const deliveryActionCoordinator = createDeliveryActionCoordinator({
+  onChange() {
+    if (state.shell) renderTranscript();
+  },
+});
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
 
@@ -2134,32 +2141,40 @@ async function claimTerminalDeliveryActionRequired(message, action) {
 
 async function discardFailedMessage(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, 'delete');
-  } catch {
-    announce('Could not safely delete this notice yet. Try again.');
-    return;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    renderTranscript();
-    return;
-  }
-  for (const attachment of message.attachments || []) {
-    releaseAttachmentPreview(attachment);
-    if (safeAttachmentId(attachment.id)) {
-      void deleteUploadedAttachment(message.sessionId, attachment.id);
-    }
-  }
-  for (const item of message.draftAttachmentItems || []) {
-    releaseAttachmentResources(item);
-    releaseAttachmentPreview(item);
-  }
-  message.draftAttachmentItems = null;
-  state.optimistic = state.optimistic.filter((item) => item !== message);
-  renderTranscript();
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'delete',
+    async () => {
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, 'delete');
+      } catch {
+        announce('Could not safely delete this notice yet. Try again.');
+        return false;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      for (const attachment of message.attachments || []) {
+        releaseAttachmentPreview(attachment);
+        if (safeAttachmentId(attachment.id)) {
+          void deleteUploadedAttachment(message.sessionId, attachment.id);
+        }
+      }
+      for (const item of message.draftAttachmentItems || []) {
+        releaseAttachmentResources(item);
+        releaseAttachmentPreview(item);
+      }
+      message.draftAttachmentItems = null;
+      state.optimistic = state.optimistic.filter((item) => item !== message);
+      renderTranscript();
+      return true;
+    },
+  );
+  return result.value;
 }
 
 async function verifyTerminalDeliveryAction(message) {
@@ -2194,8 +2209,16 @@ async function verifyTerminalDeliveryAction(message) {
   }
   try {
     const delivery = await requestDeliveryStatus(message);
-    if (await settleTerminalDeliveryStatus(message, delivery)) return null;
-    if (delivery.state === 'pending') {
+    const disposition = terminalDeliveryActionDisposition(delivery);
+    if (disposition === 'resolved') {
+      await settleTerminalDeliveryStatus(message, delivery);
+      return null;
+    }
+    if (disposition === 'actionable') {
+      await settleTerminalDeliveryStatus(message, delivery);
+      return message;
+    }
+    if (disposition === 'pending') {
       message.delivery = 'delivering';
       message.deliveryPhase = delivery.phase || 'queued';
       message.retrySafe = false;
@@ -2205,6 +2228,8 @@ async function verifyTerminalDeliveryAction(message) {
       announce('This message is already being sent from another Pocket window.');
       return null;
     }
+    announce('Could not verify this delivery yet. Try again.');
+    return null;
   } catch {
     announce('Could not verify this delivery yet. Try again.');
     return null;
@@ -2235,61 +2260,69 @@ async function editFailedMessage(message) {
   // recover what was typed. Retry keeps its proof requirement, because it
   // resends.
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
-  if (!(await verifyTerminalDeliveryAction(message))) {
-    announce('Could not recover this text yet. Try again.');
-    return;
-  }
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
-  } catch {
-    announce('Could not safely move this message yet. Try again.');
-    return;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    renderTranscript();
-    return;
-  }
-  applyAuthoritativePendingDelivery(message, claimed);
-  const sessionId = message.sessionId;
-  const restoredItems = restoredAttachmentItems(
-    message,
-    message.errorCode,
-  );
-  const currentItems = attachmentsFor(sessionId);
-  const seen = new Set();
-  const mergedItems = [...restoredItems, ...currentItems].filter((item) => {
-    const key = item.localId || item.id;
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  if (mergedItems.length > 0) {
-    state.attachmentsBySession.set(sessionId, mergedItems);
-  }
-  message.draftAttachmentItems = null;
-  state.optimistic = state.optimistic.filter((item) => item !== message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'edit',
+    async () => {
+      if (!(await verifyTerminalDeliveryAction(message))) {
+        announce('Could not recover this text yet. Try again.');
+        return false;
+      }
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
+      } catch {
+        announce('Could not safely move this message yet. Try again.');
+        return false;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      applyAuthoritativePendingDelivery(message, claimed);
+      const sessionId = message.sessionId;
+      const restoredItems = restoredAttachmentItems(
+        message,
+        message.errorCode,
+      );
+      const currentItems = attachmentsFor(sessionId);
+      const seen = new Set();
+      const mergedItems = [...restoredItems, ...currentItems].filter((item) => {
+        const key = item.localId || item.id;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (mergedItems.length > 0) {
+        state.attachmentsBySession.set(sessionId, mergedItems);
+      }
+      message.draftAttachmentItems = null;
+      state.optimistic = state.optimistic.filter((item) => item !== message);
 
-  const existingDraft = draftFor(sessionId);
-  const recoveredText = message.text || '';
-  const combinedDraft =
-    existingDraft && existingDraft !== recoveredText
-      ? `${recoveredText}${recoveredText ? '\n\n' : ''}${existingDraft}`
-      : recoveredText || existingDraft;
-  saveDraft(sessionId, combinedDraft);
-  if (state.route.sessionId === sessionId && state.shell?.composer.field) {
-    state.shell.composer.field.value = combinedDraft;
-    state.shell.composer.resize();
-    state.shell.composer.field.focus({ preventScroll: true });
-  }
-  persistAttachmentDrafts();
-  await persistPendingDeliveries({ removeIds: [message.id] });
-  renderComposerAttachments();
-  renderComposerState();
-  renderTranscript();
-  announce('Message moved back to the editor.');
+      const existingDraft = draftFor(sessionId);
+      const recoveredText = message.text || '';
+      const combinedDraft =
+        existingDraft && existingDraft !== recoveredText
+          ? `${recoveredText}${recoveredText ? '\n\n' : ''}${existingDraft}`
+          : recoveredText || existingDraft;
+      saveDraft(sessionId, combinedDraft);
+      if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+        state.shell.composer.field.value = combinedDraft;
+        state.shell.composer.resize();
+        state.shell.composer.field.focus({ preventScroll: true });
+      }
+      persistAttachmentDrafts();
+      await persistPendingDeliveries({ removeIds: [message.id] });
+      renderComposerAttachments();
+      renderComposerState();
+      renderTranscript();
+      announce('Message moved back to the editor.');
+      return true;
+    },
+  );
+  return result.value;
 }
 
 async function persistPendingDeliveries({
@@ -4389,6 +4422,8 @@ function renderMessage(message, toolResults) {
       meta.textContent = 'Checking delivery…';
     } else if (message.delivery === 'failed') {
       const definitelyUnsent = message.definitelyUnsent === true;
+      const activeAction = deliveryActionCoordinator.current(message.id);
+      const actionBusy = Boolean(activeAction);
       meta.classList.add(
         'terminal',
         definitelyUnsent ? 'failed' : 'unknown',
@@ -4407,9 +4442,11 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Retry',
+            text: activeAction === 'retry' ? 'Checking…' : 'Retry',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'retry' ? 'true' : null,
             'aria-label': 'Retry this message',
-            on: { click: () => retryMessage(message) },
+            on: { click: () => void retryMessage(message) },
           }),
         );
       }
@@ -4418,9 +4455,11 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Edit',
+            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'edit' ? 'true' : null,
             'aria-label': 'Move this message back to the editor',
-            on: { click: () => editFailedMessage(message) },
+            on: { click: () => void editFailedMessage(message) },
           }),
         );
       } else {
@@ -4428,10 +4467,12 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Check',
+            text: activeAction === 'check' ? 'Checking…' : 'Check',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'check' ? 'true' : null,
             'aria-label': 'Check this message’s delivery',
             on: {
-              click: () => checkDelivery(message, { force: true }),
+              click: () => void checkDeliveryNow(message),
             },
           }),
           // Also offered when delivery is UNKNOWN. Editing returns the text to
@@ -4442,9 +4483,11 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Edit',
+            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'edit' ? 'true' : null,
             'aria-label': 'Move this message back to the editor',
-            on: { click: () => editFailedMessage(message) },
+            on: { click: () => void editFailedMessage(message) },
           }),
         );
       }
@@ -4452,9 +4495,11 @@ function renderMessage(message, toolResults) {
         node('button', {
           className: 'message-retry',
           type: 'button',
-          text: 'Delete',
+          text: activeAction === 'delete' ? 'Deleting…' : 'Delete',
+          disabled: actionBusy,
+          'aria-busy': activeAction === 'delete' ? 'true' : null,
           'aria-label': 'Delete this delivery notice',
-          on: { click: () => discardFailedMessage(message) },
+          on: { click: () => void discardFailedMessage(message) },
         }),
       );
       meta.append(
@@ -5262,6 +5307,52 @@ async function watchDeliveryProgress(message, isActive, onTerminal) {
   }
 }
 
+async function checkDeliveryNow(message) {
+  if (message?.kind !== 'optimistic' || message.delivery !== 'failed') {
+    return false;
+  }
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'check',
+    async () => {
+      announce('Checking delivery...');
+      try {
+        const delivery = await requestDeliveryStatus(message);
+        const disposition = terminalDeliveryActionDisposition(delivery);
+        if (disposition === 'resolved') {
+          await settleTerminalDeliveryStatus(message, delivery);
+          return true;
+        }
+        if (disposition === 'actionable') {
+          await settleTerminalDeliveryStatus(message, delivery);
+          announce(
+            message.definitelyUnsent === true
+              ? `Message was not sent. ${deliveryErrorCopy(message.errorCode)}`
+              : 'Delivery is still unconfirmed. Edit the text if you need it.',
+          );
+          return false;
+        }
+        if (disposition === 'pending') {
+          message.delivery = 'delivering';
+          message.deliveryPhase = delivery.phase || 'queued';
+          message.retrySafe = false;
+          message.definitelyUnsent = false;
+          await persistPendingDeliveries({ upserts: [message] });
+          renderTranscript();
+          announce('This message is still sending on the Mac.');
+          return false;
+        }
+        announce('Still unconfirmed. Check again later or edit the text.');
+        return false;
+      } catch {
+        announce('Could not check delivery right now. Try again later.');
+        return false;
+      }
+    },
+  );
+  return result.value;
+}
+
 function checkDelivery(message, { force = false } = {}) {
   const key = message?.id;
   if (typeof key !== 'string') return Promise.resolve(false);
@@ -5429,33 +5520,41 @@ async function retryMessage(message) {
         ? 'This one cannot be retried automatically. Edit it and send again.'
         : 'Not retried, because it is not certain this message failed to send.',
     );
-    return;
+    return false;
   }
-  if (!(await verifyTerminalDeliveryAction(message))) return;
-  if (!deliveryCanRetry(message)) {
-    announce('This delivery changed. Check the chat before sending again.');
-    return;
-  }
-  announce('Retrying...');
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
-  } catch {
-    announce('Could not safely retry this message yet. Try again.');
-    return;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    renderTranscript();
-    return;
-  }
-  applyAuthoritativePendingDelivery(message, claimed);
-  renderTranscript();
-  deliverOptimistic(message, {
-    replaceDraft: message.replaceDraft === true,
-    deliveryIdentityPersisted: true,
-  });
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'retry',
+    async () => {
+      if (!(await verifyTerminalDeliveryAction(message))) return false;
+      if (!deliveryCanRetry(message)) {
+        announce('This delivery changed. Check the chat before sending again.');
+        return false;
+      }
+      announce('Retrying...');
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
+      } catch {
+        announce('Could not safely retry this message yet. Try again.');
+        return false;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      applyAuthoritativePendingDelivery(message, claimed);
+      renderTranscript();
+      void deliverOptimistic(message, {
+        replaceDraft: message.replaceDraft === true,
+        deliveryIdentityPersisted: true,
+      });
+      return true;
+    },
+  );
+  return result.value;
 }
 
 // Every conflict-sheet action first verifies this delivery is still the
@@ -5463,28 +5562,35 @@ async function retryMessage(message) {
 // and Edit paths: two Pocket windows can show the same sheet, and the claim
 // is what keeps them from both acting on it.
 async function claimConflictAction(message, action) {
-  if (!(await verifyTerminalDeliveryAction(message))) {
-    closeOverlay();
-    return null;
-  }
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, action);
-  } catch {
-    announce('Could not safely send this message yet. Try again.');
-    return null;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    closeOverlay();
-    renderTranscript();
-    return null;
-  }
-  applyAuthoritativePendingDelivery(message, claimed);
-  closeOverlay();
-  renderTranscript();
-  return claimed;
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    action,
+    async () => {
+      if (!(await verifyTerminalDeliveryAction(message))) {
+        closeOverlay();
+        return null;
+      }
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, action);
+      } catch {
+        announce('Could not safely send this message yet. Try again.');
+        return null;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        closeOverlay();
+        renderTranscript();
+        return null;
+      }
+      applyAuthoritativePendingDelivery(message, claimed);
+      closeOverlay();
+      renderTranscript();
+      return claimed;
+    },
+  );
+  return result.value;
 }
 
 const draftConflictFlow = createDraftConflictFlow({
