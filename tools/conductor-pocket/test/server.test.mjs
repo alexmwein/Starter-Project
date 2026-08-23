@@ -3812,7 +3812,7 @@ test('Pocket navigation paints cached routes before live refreshes finish', asyn
   );
   const switcherStart = source.indexOf('async function openSwitcher');
   const connectionSheetStart = source.indexOf(
-    'async function openConnectionSheet',
+    'async function runConnectionCheck',
   );
   const switcherBlock = source.slice(
     switcherStart,
@@ -3875,7 +3875,7 @@ test('the application wires bounded, cancellable live refreshes and wake request
   assert.match(source, /function discardFailedMessage\(message\)/);
   assert.match(
     source,
-    /text: 'Delete'[\s\S]*click: \(\) => discardFailedMessage\(message\)/,
+    /text: activeAction === 'delete' \? 'Deleting…' : 'Delete'[\s\S]*click: \(\) => void discardFailedMessage\(message\)/,
   );
 });
 
@@ -4065,8 +4065,14 @@ test('pending sends persist before draft clearing and recover for the full send 
     source,
     /definitelyUnsent \? 'failed' : 'unknown'/,
   );
-  assert.match(source, /text: 'Check'[\s\S]*checkDelivery\(message\)/);
-  assert.match(source, /text: 'Edit'[\s\S]*editFailedMessage\(message\)/);
+  assert.match(
+    source,
+    /text: activeAction === 'check' \? 'Checking…' : 'Check'[\s\S]*checkDeliveryNow\(message\)/,
+  );
+  assert.match(
+    source,
+    /text: activeAction === 'edit' \? 'Recovering…' : 'Edit'[\s\S]*editFailedMessage\(message\)/,
+  );
   assert.ok(startupRestore >= 0);
   assert.ok(startupRecovery > startupRestore);
   assert.match(
