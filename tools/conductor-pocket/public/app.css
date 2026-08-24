@@ -2814,10 +2814,11 @@ button:active {
 }
 
 .chat-chip {
+  position: relative;
   flex: 0 0 auto;
   max-width: 46vw;
   min-height: 44px;
-  padding: 6px 12px;
+  padding: 6px 38px 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--hairline, rgba(127, 127, 127, 0.28));
   color: var(--text-secondary);
@@ -2847,6 +2848,18 @@ button:active {
 /* Status on the chat strip. Working gets one slow opacity pulse driven by CSS.
    It adds no timer or request. Waiting, unread, and error stay still so the
    strip remains calm even when several chats need attention. */
+.chip-indicator {
+  position: absolute;
+  top: 0;
+  right: 6px;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  pointer-events: none;
+}
+
 .chip-dot {
   display: inline-block;
   width: 6px;
@@ -2856,6 +2869,10 @@ button:active {
   border-radius: 999px;
   background: currentColor;
   vertical-align: middle;
+}
+
+.chip-indicator .chip-dot {
+  margin-right: 0;
 }
 
 .chat-chip {
@@ -2930,6 +2947,10 @@ button:active {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+
+.chip-indicator .chip-unread {
+  margin-right: 0;
 }
 
 /* The active chip inverts to a filled background, so its dot must switch to the

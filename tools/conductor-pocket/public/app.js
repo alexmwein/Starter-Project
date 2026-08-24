@@ -13,18 +13,18 @@ import {
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
-} from './delivery-receipts.js?v=0.2.0-chat-status-20260824';
+} from './delivery-receipts.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-chat-status-20260824';
+} from './app-update.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-chat-status-20260824';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chat-status-20260824';
-import { fetchJson } from './http.js?v=0.2.0-chat-status-20260824';
+} from './bootstrap-recovery.js?v=0.2.0-chat-strip-stable-20260824';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chat-strip-stable-20260824';
+import { fetchJson } from './http.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -34,16 +34,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-chat-status-20260824';
+} from './image-attachments.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-chat-status-20260824';
+} from './live-refresh.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-chat-status-20260824';
+} from './rich-text.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -54,19 +54,19 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-chat-status-20260824';
+} from './read-state.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-chat-status-20260824';
+} from './transcript-focus.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-chat-status-20260824';
+} from './swipe-navigation.js?v=0.2.0-chat-strip-stable-20260824';
 import {
   activeGptUsage,
   createUsageReader,
-} from './usage-state.js?v=0.2.0-chat-status-20260824';
+} from './usage-state.js?v=0.2.0-chat-strip-stable-20260824';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -110,7 +110,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-chat-status-20260824';
+const CLIENT_SHELL_REVISION = '0.2.0-chat-strip-stable-20260824';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -4191,6 +4191,9 @@ const supportsFieldSizing =
   CSS.supports('field-sizing', 'content');
 
 let lastCentredSessionId = null;
+let chatStripOwner = null;
+let newChatStripChip = null;
+const chatStripChips = new Map();
 // Which chat the transcript scroller currently holds. The scroll position is
 // measured before the list is replaced, so without this the reading position
 // from one chat is applied to the next one opened.
@@ -4283,9 +4286,51 @@ function renderTranscriptPlaceholder({ loading, selected = true }) {
   ]);
 }
 
+function syncChatStripChip(chip, {
+  session,
+  active,
+  className,
+  ariaLabel,
+  markerFactory,
+  renderKey,
+}) {
+  if (chip.dataset.renderKey === renderKey) return;
+  chip.dataset.renderKey = renderKey;
+  chip.dataset.sessionId = session.id;
+  chip.dataset.workspaceId = session.workspaceId;
+  chip.className = className;
+  chip.setAttribute('aria-label', ariaLabel);
+  if (active) chip.setAttribute('aria-current', 'page');
+  else chip.removeAttribute('aria-current');
+  const marker = markerFactory();
+  chip.querySelector('.chip-indicator')
+    ?.replaceChildren(...(marker ? [marker] : []));
+  const label = chip.querySelector('.chip-label');
+  const workspace = chip.querySelector('.chip-workspace');
+  if (label) label.textContent = session.title;
+  if (workspace) workspace.textContent = session.workspaceName;
+}
+
+function reconcileChatStripChildren(strip, desiredChildren) {
+  for (let index = 0; index < desiredChildren.length; index += 1) {
+    const desired = desiredChildren[index];
+    const current = strip.children[index] || null;
+    if (current !== desired) strip.insertBefore(desired, current);
+  }
+  while (strip.children.length > desiredChildren.length) {
+    strip.lastElementChild?.remove();
+  }
+}
+
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
   if (!strip) return;
+  if (chatStripOwner !== strip) {
+    chatStripOwner = strip;
+    newChatStripChip = null;
+    chatStripChips.clear();
+    lastCentredSessionId = null;
+  }
   const sessions = recentSessionsNewestFirst();
   const chatStates = sessions.map((session) => ({
     session,
@@ -4305,42 +4350,79 @@ function renderChatStrip() {
   strip.dataset.renderKey = renderKey;
   if (sessions.length === 0) {
     strip.replaceChildren();
+    chatStripChips.clear();
+    newChatStripChip = null;
     strip.hidden = true;
     return;
   }
   strip.hidden = false;
+  const previousActive = strip.querySelector('.chat-chip.is-active');
+  const previousActiveSessionId = previousActive?.dataset.sessionId || null;
+  const previousActiveOffset = previousActive?.offsetLeft ?? null;
+  const previousScrollLeft = strip.scrollLeft;
+  const currentSessionIds = new Set(sessions.map((session) => session.id));
+  for (const sessionId of chatStripChips.keys()) {
+    if (!currentSessionIds.has(sessionId)) chatStripChips.delete(sessionId);
+  }
   let activeChip = null;
   const chips = chatStates.map(({ session, unreadCount }) => {
     const active = session.id === state.route.sessionId;
     // Status rides along on the session rows the app already loads, and
     // metadataRefresh reloads those on every live change event, so this costs
-    // no extra query, no polling and no accessibility work: it renders state
-    // already in memory. idle deliberately shows nothing, so the strip stays
-    // quiet and a dot always means something is happening.
+    // no extra query, no polling and no accessibility work. An unchanged chip
+    // keeps its exact DOM node, which preserves a finger scroll in progress.
     const state_ = STRIP_STATUS[session.status] || null;
     const unread = !state_ && unreadCount > 0;
-    const chip = node('button', {
-      className: `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}${unread ? ' is-unread' : ''}`,
-      type: 'button',
-      'aria-current': active ? 'page' : undefined,
-      // Screen readers get the meaning; sighted users get the dot or number.
+    const className = `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}${unread ? ' is-unread' : ''}`;
+    const accessibility = {
       'aria-label': state_
         ? `${session.title}, ${session.workspaceName}, ${state_.label}`
         : unread
           ? `${session.title}, ${session.workspaceName}, reply ready, ${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
           : `${session.title}, ${session.workspaceName}`,
-      on: {
-        click: () => {
-          if (active) return;
-          navigate({
-            view: 'transcript',
-            workspaceId: session.workspaceId,
-            sessionId: session.id,
-          });
+    };
+    const ariaLabel = accessibility['aria-label'];
+    const chipRenderKey = JSON.stringify([
+      className,
+      ariaLabel,
+      session.id,
+      session.workspaceId,
+      session.title,
+      session.workspaceName,
+    ]);
+    let chip = chatStripChips.get(session.id);
+    if (!chip) {
+      chip = node('button', {
+        className: 'chat-chip',
+        type: 'button',
+        on: {
+          click: () => {
+            if (session.id === state.route.sessionId) return;
+            navigate({
+              view: 'transcript',
+              workspaceId: session.workspaceId,
+              sessionId: session.id,
+            });
+          },
         },
-      },
-    }, [
-      state_
+      }, [
+        node('span', { className: 'chip-indicator', 'aria-hidden': 'true' }),
+        node('span', { className: 'chip-copy' }, [
+          node('span', { className: 'chip-label', text: session.title }),
+          node('span', {
+            className: 'chip-workspace',
+            text: session.workspaceName,
+          }),
+        ]),
+      ]);
+      chatStripChips.set(session.id, chip);
+    }
+    syncChatStripChip(chip, {
+      session,
+      active,
+      className,
+      ariaLabel,
+      markerFactory: () => state_
         ? node('span', { className: `chip-dot ${state_.dot}`, 'aria-hidden': 'true' })
         : unread
           ? node('span', {
@@ -4349,38 +4431,43 @@ function renderChatStrip() {
               'aria-hidden': 'true',
             })
           : null,
-      node('span', { className: 'chip-copy' }, [
-        node('span', { className: 'chip-label', text: session.title }),
-        node('span', {
-          className: 'chip-workspace',
-          text: session.workspaceName,
-        }),
-      ]),
-    ].filter(Boolean));
+      renderKey: chipRenderKey,
+    });
     if (active) activeChip = chip;
     return chip;
   });
-  chips.push(
-    node('button', {
+  if (!newChatStripChip) {
+    newChatStripChip = node('button', {
       className: 'chat-chip is-new',
       type: 'button',
       text: '+',
-      // Names the destination, because the strip shows chats and not the
-      // workspace they live in, and a new chat always lands in the workspace
-      // of the chat that is currently open.
-      'aria-label': `New chat in ${currentWorkspaceName() || 'this workspace'}`,
       on: { click: (event) => void createChat({ control: event.currentTarget }) },
-    }),
+    });
+  }
+  // Names the destination because a new chat lands in the workspace of the
+  // chat that is currently open.
+  newChatStripChip.setAttribute(
+    'aria-label',
+    `New chat in ${currentWorkspaceName() || 'this workspace'}`,
   );
-  strip.replaceChildren(...chips);
-  // scrollIntoView can scroll ANCESTORS, so calling it here scrolled the
-  // transcript itself, and this runs on every transcript render: that is the
-  // screen jumping to the top while reading. Drive the strip's own scrollLeft
-  // instead, which cannot touch anything outside the strip.
-  //
-  // Only recentre when the active chat actually changed, or every incoming
-  // message would yank the strip back and fight a manual scroll.
-  if (activeChip && lastCentredSessionId !== state.route.sessionId) {
+  reconcileChatStripChildren(strip, [...chips, newChatStripChip]);
+
+  // A newest activity refresh may move chips in the list. Keep the selected
+  // chip at the same screen position, including during a manual strip scroll.
+  if (
+    activeChip &&
+    previousActiveSessionId === state.route.sessionId &&
+    previousActiveOffset !== null
+  ) {
+    const anchored =
+      previousScrollLeft + activeChip.offsetLeft - previousActiveOffset;
+    const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
+    const nextScrollLeft = Math.max(0, Math.min(maximum, anchored));
+    if (Math.abs(strip.scrollLeft - nextScrollLeft) > 0.5) {
+      strip.scrollLeft = nextScrollLeft;
+    }
+    lastCentredSessionId = state.route.sessionId;
+  } else if (activeChip && lastCentredSessionId !== state.route.sessionId) {
     lastCentredSessionId = state.route.sessionId;
     const centred =
       activeChip.offsetLeft - (strip.clientWidth - activeChip.offsetWidth) / 2;
