@@ -34,6 +34,8 @@ Recent Chats becomes the default route and the back destination from a transcrip
 
 The transcript chat strip exposes four actionable states from data already held in memory. A gently pulsing copper dot means the agent is working. A still ring means the agent is waiting for operator input. A red marker means the chat failed. A static number means a finished response is unread. Working, waiting, and error take priority over unread state. The unread number disappears only after the existing read receipt flow confirms the response was read. The pulse is CSS opacity only, adds no timer or request, and is disabled by Reduced Motion.
 
+Status markers occupy a fixed position inside each chat chip and never change chip width. Status and unread refreshes update the existing chip in place instead of rebuilding the strip. If newest activity changes the chip order, Pocket preserves the selected chip at the same visual position. These rules keep finger scrolling, momentum, and the selected chat steady without freezing the newest first order.
+
 Workspaces, sessions, and recent chats use explicit loading, loaded, empty, and error states. A failed request shows a Retry action and keeps usable cached data on screen.
 
 The connection control receives a 44 point hit area without changing its visual weight. Panel changes use a short opacity and position transition that does not animate layout dimensions. Reduced motion disables the transition.
