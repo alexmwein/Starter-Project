@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import * as deliveryReceipts from '../public/delivery-receipts.js';
 import {
   createDeliveryActionCoordinator,
   deliveryNeedsAutomaticRecovery,
@@ -11,6 +12,616 @@ import {
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
 } from '../public/delivery-receipts.js';
+
+function persistedMessage(overrides = {}) {
+  return {
+    id: 'optimistic:message-123456789',
+    idempotencyKey: 'idempotency-key-123456789',
+    activeDeliveryKey: 'idempotency-key-123456789',
+    kind: 'optimistic',
+    sessionId: 'session-1',
+    text: 'Keep this text safe',
+    attachments: [],
+    delivery: 'failed',
+    retrySafe: true,
+    definitelyUnsent: true,
+    deliveryAttempt: 1,
+    createdAt: '2026-08-23T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+const acceptPersistedMessage = (value) =>
+  value?.kind === 'optimistic' ? structuredClone(value) : null;
+
+test('a terminal tombstone stops a stale Pocket window from resurrecting a deleted delivery', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const staleWindowMessage = persistedMessage();
+  const initial = [structuredClone(staleWindowMessage)];
+
+  const deleted = transition?.(
+    initial,
+    {
+      type: 'claim-terminal',
+      action: 'delete',
+      message: staleWindowMessage,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const staleRecovery = transition?.(
+    deleted?.snapshot,
+    { type: 'mutate', upserts: [staleWindowMessage] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.equal(deleted?.value?.id, staleWindowMessage.id);
+  assert.deepEqual(staleRecovery?.snapshot?.messages, []);
+  assert.equal(staleRecovery?.snapshot?.version, 2);
+  assert.equal(staleRecovery?.snapshot?.tombstones?.length, 1);
+});
+
+test('a failed draft write releases an edit claim and leaves the delivery recoverable', async () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const recover = deliveryReceipts.persistRecoveredDraftBeforeFinalizing;
+  const message = persistedMessage();
+  let sharedSnapshot = [structuredClone(message)];
+  const claimed = transition?.(
+    sharedSnapshot,
+    {
+      type: 'claim-terminal',
+      action: 'edit',
+      claimToken: 'edit-claim-token-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  sharedSnapshot = claimed?.snapshot;
+
+  const result = await recover?.({
+    persistDraft: () => false,
+    finalize: () => {
+      assert.fail('the pending delivery must not finalize before the draft is durable');
+    },
+    release: () => {
+      const released = transition(
+        sharedSnapshot,
+        {
+          type: 'release-edit',
+          claimToken: 'edit-claim-token-123456789',
+          message,
+        },
+        { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+      );
+      sharedSnapshot = released.snapshot;
+      return released.value;
+    },
+  });
+
+  assert.deepEqual(result, { status: 'draft-failed', value: null });
+  assert.equal(sharedSnapshot?.messages?.length, 1);
+  assert.equal(sharedSnapshot?.messages?.[0]?.text, message.text);
+  assert.equal(sharedSnapshot?.messages?.[0]?.terminalActionClaim, undefined);
+  assert.deepEqual(sharedSnapshot?.tombstones, []);
+});
+
+test('two Pocket windows get one atomic winner for the same visible draft revision', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const firstMessage = persistedMessage({
+    id: 'optimistic:first-message-123456789',
+    delivery: 'delivering',
+  });
+  const secondMessage = persistedMessage({
+    id: 'optimistic:second-message-123456789',
+    idempotencyKey: 'idempotency-key-987654321',
+    activeDeliveryKey: 'idempotency-key-987654321',
+    delivery: 'delivering',
+  });
+  const command = (message) => ({
+    type: 'claim-draft-send',
+    sessionId: 'session-1',
+    draftRevision: 'draft-revision-123456789',
+    message,
+  });
+
+  const firstWindow = transition?.(
+    [],
+    command(firstMessage),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const secondWindow = transition?.(
+    firstWindow?.snapshot,
+    command(secondMessage),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.equal(firstWindow?.value?.id, firstMessage.id);
+  assert.equal(secondWindow?.value, null);
+  assert.deepEqual(
+    secondWindow?.snapshot?.messages?.map((item) => item.id),
+    [firstMessage.id],
+  );
+  assert.equal(secondWindow?.snapshot?.draftClaims?.length, 1);
+});
+
+test('two Pocket windows cannot send one visible payload through divergent revisions', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const firstMessage = persistedMessage({
+    id: 'optimistic:first-payload-123456789',
+    delivery: 'delivering',
+  });
+  const duplicateMessage = persistedMessage({
+    id: 'optimistic:duplicate-payload-123456789',
+    idempotencyKey: 'idempotency-key-duplicate-123456789',
+    activeDeliveryKey: 'idempotency-key-duplicate-123456789',
+    delivery: 'delivering',
+  });
+  const changedMessage = persistedMessage({
+    id: 'optimistic:changed-payload-123456789',
+    idempotencyKey: 'idempotency-key-changed-123456789',
+    activeDeliveryKey: 'idempotency-key-changed-123456789',
+    text: 'This is a legitimately changed message',
+    delivery: 'delivering',
+  });
+  const claim = (message, draftRevision, payloadFingerprint) => ({
+    type: 'claim-draft-send',
+    sessionId: 'session-1',
+    draftRevision,
+    payloadFingerprint,
+    message,
+  });
+
+  const firstWindow = transition(
+    [],
+    claim(firstMessage, 'draft-revision-first-123456789', 'payload-same-123456789'),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const staleSecondWindow = transition(
+    firstWindow.snapshot,
+    claim(
+      duplicateMessage,
+      'draft-revision-second-123456789',
+      'payload-same-123456789',
+    ),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const changedSecondWindow = transition(
+    staleSecondWindow.snapshot,
+    claim(
+      changedMessage,
+      'draft-revision-first-123456789',
+      'payload-changed-123456789',
+    ),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+
+  assert.equal(firstWindow.value?.id, firstMessage.id);
+  assert.equal(staleSecondWindow.value, null);
+  assert.equal(changedSecondWindow.value?.id, changedMessage.id);
+  assert.deepEqual(
+    changedSecondWindow.snapshot.messages.map((item) => item.id),
+    [firstMessage.id, changedMessage.id],
+  );
+});
+
+test('a visible payload claim blocks divergent revisions for its full durable lifetime', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const firstMessage = persistedMessage({
+    id: 'optimistic:full-life-first-123456789',
+    delivery: 'delivering',
+  });
+  const delayedDuplicate = persistedMessage({
+    id: 'optimistic:full-life-delayed-123456789',
+    idempotencyKey: 'idempotency-full-life-delayed-123456789',
+    activeDeliveryKey: 'idempotency-full-life-delayed-123456789',
+    delivery: 'delivering',
+  });
+  const command = (message, revision) => ({
+    type: 'claim-draft-send',
+    sessionId: 'session-1',
+    draftRevision: revision,
+    payloadFingerprint: 'payload-full-life-123456789',
+    message,
+  });
+  const now = 1_777_777_777_000;
+  const first = transition(
+    [],
+    command(firstMessage, 'draft-full-life-first-123456789'),
+    { sanitize: acceptPersistedMessage, now },
+  );
+  const beforeExpiry = transition(
+    first.snapshot,
+    command(delayedDuplicate, 'draft-full-life-delayed-123456789'),
+    {
+      sanitize: acceptPersistedMessage,
+      now: now + 7 * 24 * 60 * 60 * 1000 - 1,
+    },
+  );
+  const afterExpiry = transition(
+    first.snapshot,
+    command(delayedDuplicate, 'draft-full-life-delayed-123456789'),
+    {
+      sanitize: acceptPersistedMessage,
+      now: now + 7 * 24 * 60 * 60 * 1000 + 1,
+    },
+  );
+
+  assert.equal(beforeExpiry.value, null);
+  assert.equal(afterExpiry.value?.id, delayedDuplicate.id);
+});
+
+test('draft send fingerprints follow visible text and ordered attachment identity', async () => {
+  const fingerprint = deliveryReceipts.draftSendPayloadFingerprint;
+  const first = await fingerprint?.({
+    text: '  hello from Pocket  ',
+    attachments: [{ id: 'photo_one' }],
+  });
+  const sameVisiblePayload = await fingerprint?.({
+    text: 'hello from Pocket',
+    attachments: [{ id: 'photo_one' }],
+  });
+  const changedAttachment = await fingerprint?.({
+    text: 'hello from Pocket',
+    attachments: [{ id: 'photo_two' }],
+  });
+
+  assert.equal(typeof first, 'string');
+  assert.equal(first, sameVisiblePayload);
+  assert.notEqual(first, changedAttachment);
+});
+
+test('a second Pocket window keeps newer text or photos when the first claim resolves', () => {
+  const canClear = deliveryReceipts.claimedDraftClearIsAuthorized;
+  const firstWindow = {
+    revision: 'draft-revision-first-123456789',
+    payloadFingerprint: 'payload-first-123456789',
+  };
+
+  assert.equal(
+    canClear?.({
+      claimedRevision: firstWindow.revision,
+      claimedPayloadFingerprint: firstWindow.payloadFingerprint,
+      currentRevision: firstWindow.revision,
+      currentPayloadFingerprint: firstWindow.payloadFingerprint,
+    }),
+    true,
+    'the unchanged draft may clear after its durable claim commits',
+  );
+  assert.equal(
+    canClear?.({
+      claimedRevision: firstWindow.revision,
+      claimedPayloadFingerprint: firstWindow.payloadFingerprint,
+      currentRevision: 'draft-revision-second-123456789',
+      currentPayloadFingerprint: 'payload-second-text-123456789',
+    }),
+    false,
+    'newer text from the second window must survive the first claim',
+  );
+  assert.equal(
+    canClear?.({
+      claimedRevision: firstWindow.revision,
+      claimedPayloadFingerprint: firstWindow.payloadFingerprint,
+      currentRevision: firstWindow.revision,
+      currentPayloadFingerprint: 'payload-second-photo-123456789',
+    }),
+    false,
+    'newer photos must survive even when the text revision did not change',
+  );
+});
+
+test('the browser rechecks shared draft authority after the awaited claim', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('async function sendCurrentMessage()');
+  const end = js.indexOf('function restoredAttachmentItems', start);
+  const send = js.slice(start, end);
+  const claim = send.indexOf(
+    'await claimDraftSendRequired(optimistic, draftRevision, payloadFingerprint)',
+  );
+  const authority = send.indexOf('claimedDraftClearIsAuthorized', claim);
+  const attachmentClear = send.indexOf('state.attachmentsBySession.delete(sessionId)', claim);
+  const textClear = send.indexOf("saveDraft(sessionId, ''", claim);
+
+  assert.ok(claim >= 0, 'the durable send claim must exist');
+  assert.ok(authority > claim, 'shared draft authority must be reread after the claim');
+  assert.ok(attachmentClear > authority, 'photos may clear only after authority matches');
+  assert.ok(textClear > authority, 'text may clear only after authority matches');
+  assert.match(
+    send.slice(authority, end),
+    /field\.dataset\.draftRevision === draftRevision[\s\S]*field\.value\.replace\(\/\\r\\n\?\/g, '\\n'\) === text/,
+    'the mounted composer must still display the claimed revision and payload before it clears',
+  );
+});
+
+test('same attempt delivery keys change only through an exact authorized transition', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const original = persistedMessage({
+    activeDeliveryKey: 'delivery-key-original-123456789',
+    delivery: 'delivering',
+  });
+  const replacement = persistedMessage({
+    activeDeliveryKey: 'delivery-key-replacement-123456789',
+    delivery: 'confirming',
+  });
+  const staleOriginalWriter = persistedMessage({
+    activeDeliveryKey: 'delivery-key-original-123456789',
+    delivery: 'failed',
+  });
+  const initial = transition(
+    [],
+    { type: 'mutate', upserts: [original] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const incompleteAuthorization = transition(
+    initial.snapshot,
+    {
+      type: 'mutate',
+      upserts: [replacement],
+      deliveryKeyTransitions: [{
+        id: original.id,
+        from: original.activeDeliveryKey,
+        to: replacement.activeDeliveryKey,
+      }],
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_500 },
+  );
+  const authorized = transition(
+    initial.snapshot,
+    {
+      type: 'mutate',
+      upserts: [replacement],
+      deliveryKeyTransitions: [{
+        id: original.id,
+        deliveryAttempt: 1,
+        from: original.activeDeliveryKey,
+        to: replacement.activeDeliveryKey,
+      }],
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const staleRollback = transition(
+    authorized.snapshot,
+    { type: 'mutate', upserts: [staleOriginalWriter] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+
+  assert.equal(
+    incompleteAuthorization.snapshot.messages[0].activeDeliveryKey,
+    original.activeDeliveryKey,
+  );
+  assert.equal(
+    authorized.snapshot.messages[0].activeDeliveryKey,
+    replacement.activeDeliveryKey,
+  );
+  assert.equal(
+    staleRollback.snapshot.messages[0].activeDeliveryKey,
+    replacement.activeDeliveryKey,
+  );
+  assert.equal(staleRollback.snapshot.messages[0].delivery, 'confirming');
+});
+
+test('authoritative active state can replace failure only through an exact transition', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const failed = persistedMessage({
+    delivery: 'failed',
+    retrySafe: false,
+    definitelyUnsent: false,
+  });
+  const delivering = persistedMessage({
+    delivery: 'delivering',
+    deliveryPhase: 'queued',
+    retrySafe: false,
+    definitelyUnsent: false,
+  });
+  const initial = transition(
+    [],
+    { type: 'mutate', upserts: [failed] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const stale = transition(
+    initial.snapshot,
+    { type: 'mutate', upserts: [delivering] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const wrongAuthority = transition(
+    initial.snapshot,
+    {
+      type: 'mutate',
+      upserts: [delivering],
+      deliveryStateTransitions: [{
+        id: failed.id,
+        deliveryAttempt: failed.deliveryAttempt,
+        activeDeliveryKey: 'wrong-active-key-123456789',
+        from: 'failed',
+        to: 'delivering',
+      }],
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const authorized = transition(
+    initial.snapshot,
+    {
+      type: 'mutate',
+      upserts: [delivering],
+      deliveryStateTransitions: [{
+        id: failed.id,
+        deliveryAttempt: failed.deliveryAttempt,
+        activeDeliveryKey: failed.activeDeliveryKey,
+        from: 'failed',
+        to: 'delivering',
+      }],
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.equal(stale.snapshot.messages[0].delivery, 'failed');
+  assert.equal(wrongAuthority.snapshot.messages[0].delivery, 'failed');
+  assert.equal(authorized.snapshot.messages[0].delivery, 'delivering');
+  assert.equal(authorized.snapshot.messages[0].deliveryPhase, 'queued');
+});
+
+test('recovered draft retries do not duplicate text already restored', () => {
+  const merge = deliveryReceipts.mergeRecoveredDraftText;
+
+  assert.equal(merge?.('failed message', 'new typing'), 'failed message\n\nnew typing');
+  assert.equal(
+    merge?.('failed message', 'failed message\n\nnew typing'),
+    'failed message\n\nnew typing',
+  );
+  assert.equal(
+    merge?.('failed message', 'failed message\n\nnew typing\ncontinued typing'),
+    'failed message\n\nnew typing\ncontinued typing',
+  );
+});
+
+test('recovered attachment retries reuse one durable photo across restored local ids', () => {
+  const merge = deliveryReceipts.mergeRecoveredAttachmentItems;
+  const recovered = {
+    id: 'photo_durable_one',
+    localId: 'restored:photo_durable_one',
+    state: 'ready',
+  };
+  const current = {
+    id: 'photo_durable_one',
+    localId: 'upload-local-one',
+    state: 'ready',
+    previewUrl: 'blob:current-preview',
+  };
+  const newer = {
+    id: 'photo_durable_two',
+    localId: 'upload-local-two',
+    state: 'ready',
+  };
+
+  const merged = merge?.([recovered], [current, newer]);
+
+  assert.deepEqual(merged, [current, newer]);
+});
+
+test('a failed edit claim release returns a recoverable result without rejecting', async () => {
+  const result = await deliveryReceipts.persistRecoveredDraftBeforeFinalizing?.({
+    persistDraft: () => false,
+    finalize: () => assert.fail('finalize must not run'),
+    release: () => Promise.reject(new Error('indexed_db_unavailable')),
+  });
+
+  assert.deepEqual(result, { status: 'release-failed', value: null });
+});
+
+test('a missing edit claim release is treated as a recoverable release failure', async () => {
+  const result = await deliveryReceipts.persistRecoveredDraftBeforeFinalizing?.({
+    persistDraft: () => true,
+    finalize: () => null,
+    release: () => null,
+  });
+
+  assert.deepEqual(result, { status: 'release-failed', value: null });
+});
+
+test('the browser wires shared delivery authority before mutating visible state', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    js,
+    /pendingDeliverySnapshotTransition[\s\S]*pendingDeliveryMessages[\s\S]*persistRecoveredDraftBeforeFinalizing/,
+  );
+  assert.match(
+    js,
+    /function mutatePendingDeliveriesRequired[\s\S]*pendingDeliverySnapshotTransition\([\s\S]*store\.put\(transition\.snapshot, PENDING_DELIVERIES_KEY\)/,
+  );
+  assert.match(
+    js,
+    /function claimDraftSendRequired[\s\S]*type: 'claim-draft-send'[\s\S]*draftRevision[\s\S]*payloadFingerprint/,
+  );
+  const sendStart = js.indexOf('async function sendCurrentMessage()');
+  const sendEnd = js.indexOf('function restoredAttachmentItems', sendStart);
+  const send = js.slice(sendStart, sendEnd);
+  assert.match(send, /await draftSendPayloadFingerprint\(/);
+  assert.match(
+    send,
+    /await claimDraftSendRequired\(optimistic, draftRevision, payloadFingerprint\)/,
+  );
+  assert.ok(
+    send.indexOf(
+      'await claimDraftSendRequired(optimistic, draftRevision, payloadFingerprint)',
+    ) <
+      send.indexOf("field.value = ''"),
+    'the shared draft claim must commit before the visible draft clears',
+  );
+  assert.match(
+    send,
+    /const mountedComposerStillClaimed =[\s\S]*state\.route\.sessionId === sessionId[\s\S]*field\.dataset\.draftRevision === draftRevision[\s\S]*if \(\s*durableDraftCleared &&\s*mountedComposerStillClaimed\s*\) \{[\s\S]*field\.value = '';[\s\S]*field\.dataset\.draftRevision/,
+  );
+
+  const editStart = js.indexOf('async function editFailedMessage(message)');
+  const editEnd = js.indexOf('async function persistPendingDeliveries', editStart);
+  const edit = js.slice(editStart, editEnd);
+  assert.match(edit, /return recoverClaimedFailedMessage\(message\)/);
+  assert.doesNotMatch(edit, /persistPendingDeliveries\(\{ removeIds:/);
+
+  const recoveryStart = js.indexOf('async function recoverClaimedFailedMessage(message)');
+  const recoveryEnd = js.indexOf('async function editFailedMessage(message)', recoveryStart);
+  const recovery = js.slice(recoveryStart, recoveryEnd);
+  assert.match(
+    recovery,
+    /mergeRecoveredDraftText\(\s*recoveredText,\s*existingDraft,?\s*\)/,
+  );
+  assert.match(recovery, /persistRecoveredDraftBeforeFinalizing\(\{/);
+  assert.match(recovery, /const savedDraft = saveDraft\(sessionId, combinedDraft\)/);
+  assert.match(recovery, /persistAttachmentDrafts\(\{[\s\S]*sessionId,[\s\S]*items: mergedItems/);
+  assert.ok(
+    recovery.indexOf('persistAttachmentDrafts({') <
+      recovery.indexOf('finalizeTerminalDeliveryEditRequired(message)'),
+    'restored attachment metadata must be durable before terminal removal',
+  );
+  assert.doesNotMatch(
+    recovery.slice(recovery.indexOf("if (recovery.status !== 'recovered')")),
+    /field\.value = combinedDraft/,
+  );
+  assert.match(recovery, /recovery\.status === 'release-failed'/);
+
+  const deliveryStart = js.indexOf('async function deliverOptimistic(');
+  const deliveryEnd = js.indexOf('function applyDeliveryReceipt', deliveryStart);
+  const delivery = js.slice(deliveryStart, deliveryEnd);
+  assert.match(delivery, /deliveryKeyTransitions:/);
+  assert.match(js, /deliveryStateTransitions:/);
+
+  const restoreStart = js.indexOf('async function restorePendingDeliveries()');
+  const restoreEnd = js.indexOf('async function clearTranscriptCache', restoreStart);
+  const restore = js.slice(restoreStart, restoreEnd);
+  assert.match(restore, /cacheGetRequired\(PENDING_DELIVERIES_KEY\)/);
+  assert.match(restore, /catch[\s\S]{0,100}return false/);
+  assert.doesNotMatch(restore, /cacheGet\(PENDING_DELIVERIES_KEY\)/);
+
+  const conflictStart = js.indexOf("text: 'Keep the Mac draft'");
+  const conflictWiring = js.slice(conflictStart, conflictStart + 700);
+  assert.match(conflictWiring, /await recoverClaimedFailedMessage\(message\)/);
+  assert.doesNotMatch(conflictWiring, /draftConflictFlow\.keepMacDraft\(message\)/);
+
+  const manualStart = js.indexOf('async function checkDeliveryNow(message)');
+  const manualEnd = js.indexOf('function checkDelivery(message', manualStart);
+  const manual = js.slice(manualStart, manualEnd);
+  assert.match(manual, /readAuthoritativePendingDeliveryRequired\(message\)/);
+  assert.ok(
+    manual.indexOf('readAuthoritativePendingDeliveryRequired(message)') <
+      manual.indexOf('requestDeliveryStatus(message)'),
+    'manual checks must read shared authority before the network request',
+  );
+
+  const automaticStart = js.indexOf('async function checkDeliveryOnce(entry)');
+  const automaticEnd = js.indexOf('async function recoverPendingDeliveries', automaticStart);
+  const automatic = js.slice(automaticStart, automaticEnd);
+  assert.match(automatic, /refreshDeliveryRecoveryAuthority\(entry\)/);
+  assert.ok(
+    automatic.indexOf('refreshDeliveryRecoveryAuthority(entry)') <
+      automatic.indexOf("message.delivery = 'confirming'"),
+    'automatic recovery must read shared authority before changing status',
+  );
+});
 
 test('the client receipt parser preserves body aborts and rejects malformed success', async () => {
   const abort = new Error('timed out');
@@ -382,11 +993,22 @@ test('recovering typed text never requires proof, resending always does', async 
     'the atomic local claim remains the cross-window edit gate',
   );
 
-  // The claim gate must treat edit like delete, not like retry.
-  assert.match(
-    js,
-    /\(action === 'delete' \|\|\s*\n?\s*action === 'edit' \|\|/,
+  // The shared claim gate must treat edit like delete, not like retry.
+  const ambiguous = persistedMessage({
+    retrySafe: false,
+    definitelyUnsent: false,
+  });
+  const editClaim = deliveryReceipts.pendingDeliverySnapshotTransition(
+    [ambiguous],
+    {
+      type: 'claim-terminal',
+      action: 'edit',
+      claimToken: 'ambiguous-edit-claim-123456789',
+      message: ambiguous,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
   );
+  assert.equal(editClaim.value?.id, ambiguous.id);
 
   // Retry keeps its proof requirement, because it is the one that resends.
   const canRetryStart = js.indexOf('function deliveryCanRetry(message) {');

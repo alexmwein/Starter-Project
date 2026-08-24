@@ -208,7 +208,7 @@ test('chat strip status costs nothing extra and never animates', async () => {
   assert.doesNotMatch(dot.slice(0, dot.indexOf('}')), /animation/);
   assert.doesNotMatch(body, /status-dot/);
   // The meaning has to reach screen readers, not just sighted users.
-  assert.match(body, /aria-label.*state_\.label|state_ \? `\$\{session\.title\}, \$\{state_\.label\}`/);
+  assert.match(body, /aria-label[\s\S]*state_\.label/);
 });
 
 test('the header reports the current chat’s state, including waiting', async () => {
@@ -412,6 +412,41 @@ test('the composer growing corrects scroll in the same frame it paints', async (
   assert.match(body, /!wasPinned\) return;/);
 })
 
+test('the composer shrinking after send stays pinned in the same frame', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('let lastComposerHeight = 0;');
+  assert.ok(start > 0, 'composer height tracking must exist');
+  const body = js.slice(start, js.indexOf('observer.observe(root);', start));
+
+  assert.doesNotMatch(
+    body,
+    /delta\s*<=\s*0/,
+    'a send collapse must re-pin before the smaller dock is painted',
+  );
+  assert.match(body, /if \(!scroller \|\| !wasPinned\) return;/);
+  assert.match(body, /scroller\.scrollTop = scroller\.scrollHeight;/);
+})
+
+test('the next message can queue before the prior delivery finishes', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('async function sendCurrentMessage');
+  const end = js.indexOf('function restoredAttachmentItems', start);
+  const body = js.slice(start, end);
+  const release = body.lastIndexOf('state.sendInFlight.delete(sessionId);');
+  const delivery = body.indexOf(
+    'await deliverOptimistic(optimistic, { deliveryIdentityPersisted: true });',
+  );
+
+  assert.ok(release >= 0, 'the composer send gate must be released');
+  assert.ok(delivery > release, 'delivery must begin after the composer is released');
+})
+
 test('no scroll correction is ever deferred a frame', async () => {
   // The house rule, because this class of bug came back four separate times:
   // a corrective scroll must be written in the SAME frame as the mutation that
@@ -458,12 +493,14 @@ test('account usage is reachable when nothing is wrong', async () => {
   );
   assert.match(js, /'aria-label': 'Connection and account usage'/);
 
-  // Rendered from a cache with an in-flight guard, or reading it from the
-  // header would loop: fetch, store, render, fetch.
-  assert.match(js, /let seatUsageInFlight = false;/);
+  // One promise owns the cache, request coalescing, and freshness window. A
+  // force tap during the first read joins that request instead of claiming
+  // usage is unavailable.
+  assert.match(js, /const seatUsageReader = createUsageReader\(\{/);
   const refreshStart = js.indexOf('async function refreshSeatUsage(');
   const refreshBody = js.slice(refreshStart, js.indexOf('\n}\n', refreshStart));
-  assert.match(refreshBody, /if \(seatUsageInFlight\) return seatUsageCache;/);
+  assert.match(refreshBody, /seatUsageReader\.read\(\{ force \}\)/);
+  assert.match(js, /return activeGptUsage\(seatUsageCache\);/);
 
   // Both windows feed the glanceable number, because either alone can stop a
   // turn and a seat routinely sits near zero on one while the other is spent.

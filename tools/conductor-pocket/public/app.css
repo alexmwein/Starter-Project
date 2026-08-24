@@ -315,6 +315,11 @@ button:active {
   gap: 4px;
 }
 
+.root-mode-button {
+  padding-inline: 8px;
+  font-size: 0.8125rem;
+}
+
 .connection-voice {
   display: flex;
   align-items: center;
@@ -2481,6 +2486,23 @@ button:active {
   }
 }
 
+@media (max-width: 350px) {
+  .root-title {
+    font-size: 1.375rem;
+    line-height: 1.75rem;
+    white-space: nowrap;
+  }
+
+  .root-actions {
+    gap: 0;
+  }
+
+  .root-mode-button {
+    padding-inline: 4px;
+    font-size: 0.75rem;
+  }
+}
+
 @media (max-width: 399px) {
   :root {
     --screen-gutter: 12px;
@@ -2553,6 +2575,23 @@ button:active {
 
   .app-shell {
     grid-template-columns: 320px minmax(0, 1fr);
+  }
+
+  /* Recent Chats is a real root screen, including when a phone rotates into
+     the wider layout. It owns the full canvas instead of disappearing behind
+     the desktop sessions and transcript columns. */
+  .app-shell.is-root-route {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell.is-root-route .workspace-panel {
+    display: flex !important;
+    grid-column: 1 / -1;
+  }
+
+  .app-shell.is-root-route .sessions-panel,
+  .app-shell.is-root-route .transcript-panel {
+    display: none !important;
   }
 
   .workspace-panel {
@@ -2826,7 +2865,30 @@ button:active {
 }
 
 .chip-label {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.chip-workspace {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 0.65rem;
+  font-weight: 500;
+  line-height: 0.85rem;
+  opacity: 0.72;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3007,7 +3069,10 @@ button:active {
    which is where usage lives. It used to be a plain div, so that sheet could
    only be reached from an offline banner: exactly when it was least useful. */
 button.connection-voice {
-  padding: 2px 0;
+  min-width: 44px;
+  min-height: 44px;
+  margin-block: -11px;
+  padding: 11px 0;
   background: transparent;
   text-align: left;
 }
@@ -3015,6 +3080,27 @@ button.connection-voice {
 button.connection-voice:active {
   transform: none;
   opacity: 0.6;
+}
+
+@keyframes panel-content-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.panel.is-entering .panel-content {
+  animation: panel-content-enter 140ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel.is-entering .panel-content {
+    animation: none;
+  }
 }
 
 .connection-usage {

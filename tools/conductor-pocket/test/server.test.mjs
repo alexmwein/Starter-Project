@@ -3909,7 +3909,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   const optimisticPush = source.indexOf('state.optimistic.push(optimistic)');
   const requiredPersistence = source.indexOf(
-    'await persistPendingDeliveries({',
+    'await claimDraftSendRequired(optimistic, draftRevision, payloadFingerprint)',
     optimisticPush,
   );
   const draftClear = source.indexOf("field.value = ''", requiredPersistence);
@@ -4030,7 +4030,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.doesNotMatch(restoreBlock, /discardTerminalUnconfirmed/);
   assert.match(
     source,
-    /function mutatePendingDeliveriesRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*store\.get\(PENDING_DELIVERIES_KEY\)[\s\S]*store\.put\(snapshot, PENDING_DELIVERIES_KEY\)/,
+    /function mutatePendingDeliveriesRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*store\.get\(PENDING_DELIVERIES_KEY\)[\s\S]*pendingDeliverySnapshotTransition[\s\S]*store\.put\(transition\.snapshot, PENDING_DELIVERIES_KEY\)/,
   );
   assert.match(source, /async function markDefinitelyUnsent/);
   assert.match(
@@ -4043,7 +4043,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /async function claimTerminalDeliveryActionRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*candidate\.deliveryAttempt === message\.deliveryAttempt[\s\S]*deliveryAttempt: candidate\.deliveryAttempt \+ 1/,
+    /async function claimTerminalDeliveryActionRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*type: 'claim-terminal'[\s\S]*store\.put\(transition\.snapshot, PENDING_DELIVERIES_KEY\)/,
   );
   assert.match(
     source,

@@ -1,23 +1,30 @@
 import {
+  claimedDraftClearIsAuthorized,
   createDeliveryActionCoordinator,
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
+  draftSendPayloadFingerprint,
+  mergeRecoveredAttachmentItems,
+  mergeRecoveredDraftText,
+  pendingDeliverySnapshotTransition,
+  pendingDeliveryMessages,
+  persistRecoveredDraftBeforeFinalizing,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
-} from './delivery-receipts.js?v=0.2.0-fast-recovery-20260823';
+} from './delivery-receipts.js?v=0.2.0-pocket-final-20260823';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-fast-recovery-20260823';
+} from './app-update.js?v=0.2.0-pocket-final-20260823';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-fast-recovery-20260823';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-fast-recovery-20260823';
-import { fetchJson } from './http.js?v=0.2.0-fast-recovery-20260823';
+} from './bootstrap-recovery.js?v=0.2.0-pocket-final-20260823';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-pocket-final-20260823';
+import { fetchJson } from './http.js?v=0.2.0-pocket-final-20260823';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -27,16 +34,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-fast-recovery-20260823';
+} from './image-attachments.js?v=0.2.0-pocket-final-20260823';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-fast-recovery-20260823';
+} from './live-refresh.js?v=0.2.0-pocket-final-20260823';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-fast-recovery-20260823';
+} from './rich-text.js?v=0.2.0-pocket-final-20260823';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -47,15 +54,19 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-fast-recovery-20260823';
+} from './read-state.js?v=0.2.0-pocket-final-20260823';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-fast-recovery-20260823';
+} from './transcript-focus.js?v=0.2.0-pocket-final-20260823';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-fast-recovery-20260823';
+} from './swipe-navigation.js?v=0.2.0-pocket-final-20260823';
+import {
+  activeGptUsage,
+  createUsageReader,
+} from './usage-state.js?v=0.2.0-pocket-final-20260823';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -86,9 +97,12 @@ const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
 const CACHE_PURGE_CHANNEL = 'conductor-pocket-cache-purge-v1';
 const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
 const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
+const DRAFTS_KEY = 'cp:drafts:v1';
 const ATTACHMENT_DRAFTS_KEY = 'cp:attachment-drafts:v1';
 const READ_RECEIPTS_KEY = 'cp:read-receipts:v1';
 const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
+const ROUTE_KEY = 'cp:last-route:v2';
+const LEGACY_ROUTE_KEY = 'cp:last-route:v1';
 const DELIVERY_RECOVERY_MS = 120_000;
 const DELIVERY_STATUS_REQUEST_MS = 8_000;
 const DELIVERY_RECOVERY_POLL_MS = 1_000;
@@ -96,7 +110,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-fast-recovery-20260823';
+const CLIENT_SHELL_REVISION = '0.2.0-pocket-final-20260823';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -116,17 +130,19 @@ const state = {
   activityTimer: null,
   workspaces: [],
   workspacesLoaded: false,
+  workspacesError: null,
   recentSessions: [],
   recentSessionsLoad: 'idle',
   recentSessionsError: null,
   recentSessionsRequestGeneration: 0,
   sessionsByWorkspace: new Map(),
+  sessionErrorsByWorkspace: new Map(),
   messagesBySession: new Map(),
   cursorsBySession: new Map(),
   messageBaselinesBySession: new Set(),
   messageLiveEpochBySession: new Map(),
   sessionOpenController: null,
-  route: { view: 'workspaces', workspaceId: null, sessionId: null },
+  route: { view: 'recent', workspaceId: null, sessionId: null },
   optimistic: [],
   attachmentsBySession: loadAttachmentDrafts(),
   attachmentSendIntents: new Set(),
@@ -1174,45 +1190,127 @@ function renderInstallGuidance({ firstRun = false } = {}) {
 
 function loadRoute() {
   try {
-    const parsed = JSON.parse(localStorage.getItem('cp:last-route:v1'));
-    if (parsed && ['workspaces', 'sessions', 'transcript'].includes(parsed.view)) {
+    const current = JSON.parse(localStorage.getItem(ROUTE_KEY));
+    if (
+      current &&
+      ['recent', 'workspaces', 'sessions', 'transcript'].includes(current.view)
+    ) {
+      return current;
+    }
+    const parsed = JSON.parse(localStorage.getItem(LEGACY_ROUTE_KEY));
+    if (
+      parsed &&
+      ['recent', 'workspaces', 'sessions', 'transcript'].includes(parsed.view)
+    ) {
+      if (parsed.view === 'workspaces') {
+        return { view: 'recent', workspaceId: null, sessionId: null };
+      }
       return parsed;
     }
   } catch {
     // Ignore malformed local state.
   }
-  return { view: 'workspaces', workspaceId: null, sessionId: null };
+  return { view: 'recent', workspaceId: null, sessionId: null };
 }
 
 function persistRoute() {
-  localStorage.setItem('cp:last-route:v1', JSON.stringify(state.route));
+  localStorage.setItem(ROUTE_KEY, JSON.stringify(state.route));
 }
 
 function loadDrafts() {
   try {
-    return JSON.parse(localStorage.getItem('cp:drafts:v1')) || {};
+    return JSON.parse(localStorage.getItem(DRAFTS_KEY)) || {};
   } catch {
     return {};
   }
 }
 
-function draftFor(sessionId) {
-  if (!sessionId) return '';
-  return loadDrafts()[sessionId] || '';
+function stableDraftRevision(sessionId, text) {
+  let hash = 2166136261;
+  for (const character of `${sessionId}\u0000${text}`) {
+    hash ^= character.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `legacy-${(hash >>> 0).toString(36)}-${text.length}`;
 }
 
-function saveDraft(sessionId, value) {
-  if (!sessionId) return false;
+function normalizeDraftRecord(sessionId, value) {
+  if (typeof value === 'string') {
+    const text = value.slice(0, 16 * 1024);
+    return { text, revision: stableDraftRevision(sessionId, text) };
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    typeof value.text === 'string' &&
+    validPersistedKey(value.revision)
+  ) {
+    return {
+      text: value.text.slice(0, 16 * 1024),
+      revision: value.revision,
+    };
+  }
+  return { text: '', revision: stableDraftRevision(sessionId, '') };
+}
+
+function draftRecordFor(sessionId) {
+  if (!sessionId) return { text: '', revision: '' };
+  return normalizeDraftRecord(sessionId, loadDrafts()[sessionId]);
+}
+
+function draftFor(sessionId) {
+  return draftRecordFor(sessionId).text;
+}
+
+function saveDraft(sessionId, value, { expectedRevision = null } = {}) {
+  if (!sessionId) return null;
   try {
     const drafts = loadDrafts();
-    if (value) drafts[sessionId] = value.slice(0, 16 * 1024);
-    else delete drafts[sessionId];
-    localStorage.setItem('cp:drafts:v1', JSON.stringify(drafts));
-    return true;
+    if (
+      expectedRevision !== null &&
+      normalizeDraftRecord(sessionId, drafts[sessionId]).revision !== expectedRevision
+    ) {
+      return null;
+    }
+    const record = {
+      text: String(value || '').slice(0, 16 * 1024),
+      revision: randomIdempotencyKey(),
+    };
+    drafts[sessionId] = record;
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+    return record;
   } catch {
-    return false;
+    return null;
   }
 }
+
+window.addEventListener('storage', (event) => {
+  if (event.key !== DRAFTS_KEY) return;
+  const sessionId = state.route.sessionId;
+  const field = state.shell?.composer.field;
+  if (!sessionId || !field) return;
+  let previous = {};
+  try {
+    previous = JSON.parse(event.oldValue) || {};
+  } catch {
+    previous = {};
+  }
+  const previousRecord = normalizeDraftRecord(
+    sessionId,
+    previous[sessionId],
+  );
+  if (
+    field.dataset.draftRevision !== previousRecord.revision ||
+    field.value !== previousRecord.text
+  ) {
+    return;
+  }
+  const currentRecord = draftRecordFor(sessionId);
+  field.value = currentRecord.text;
+  field.dataset.draftRevision = currentRecord.revision;
+  state.shell.composer.resize();
+  renderComposerState();
+});
 
 function safeAttachmentId(value) {
   return (
@@ -1276,12 +1374,24 @@ function loadAttachmentDrafts() {
   return result;
 }
 
-function persistAttachmentDrafts() {
+function persistAttachmentDrafts({
+  sessionId: overrideSessionId = null,
+  items: overrideItems = null,
+} = {}) {
   try {
     const saved = {};
-    for (const [sessionId, values] of state.attachmentsBySession) {
+    const attachmentDrafts = new Map(state.attachmentsBySession);
+    if (overrideSessionId) {
+      attachmentDrafts.set(
+        overrideSessionId,
+        Array.isArray(overrideItems) ? overrideItems : [],
+      );
+    }
+    for (const [sessionId, values] of attachmentDrafts) {
       const ready = values
-        .filter((item) => item.state === 'ready')
+        .filter(
+          (item) => item.state === 'ready' || item.restored === true,
+        )
         .map(normalizeAttachmentMetadata)
         .filter(Boolean);
       if (ready.length > 0) saved[sessionId] = ready;
@@ -2023,62 +2133,47 @@ function sanitizePendingDelivery(value) {
       typeof value.macDraft === 'string'
         ? value.macDraft.slice(0, 16 * 1024)
         : null,
+    terminalActionClaim:
+      value.terminalActionClaim?.action === 'edit' &&
+      validPersistedKey(value.terminalActionClaim.token) &&
+      Number.isFinite(value.terminalActionClaim.at)
+        ? {
+            action: 'edit',
+            token: value.terminalActionClaim.token,
+            at: value.terminalActionClaim.at,
+          }
+        : null,
   };
-}
-
-function deliveryStateRank(message) {
-  return {
-    delivering: 0,
-    confirming: 1,
-    failed: 2,
-    delivered: 3,
-  }[message?.delivery] ?? 0;
-}
-
-function newerPendingDelivery(current, candidate) {
-  if (!current) return candidate;
-  if (candidate.deliveryAttempt !== current.deliveryAttempt) {
-    return candidate.deliveryAttempt > current.deliveryAttempt
-      ? candidate
-      : current;
-  }
-  if (candidate.activeDeliveryKey !== current.activeDeliveryKey) {
-    return candidate;
-  }
-  return deliveryStateRank(candidate) >= deliveryStateRank(current)
-    ? candidate
-    : current;
 }
 
 async function mutatePendingDeliveriesRequired({
   upserts = [],
   removeIds = [],
+  deliveryKeyTransitions = [],
+  deliveryStateTransitions = [],
 }) {
   const database = await cacheDatabase();
   return new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
-    let snapshot = null;
+    let transition = null;
     currentRequest.onsuccess = () => {
-      const current = Array.isArray(currentRequest.result)
-        ? currentRequest.result.map(sanitizePendingDelivery).filter(Boolean)
-        : [];
-      const merged = new Map(current.map((message) => [message.id, message]));
-      for (const id of removeIds) merged.delete(id);
-      for (const value of upserts) {
-        const candidate = sanitizePendingDelivery(value);
-        if (!candidate || removeIds.includes(candidate.id)) continue;
-        merged.set(
-          candidate.id,
-          newerPendingDelivery(merged.get(candidate.id), candidate),
-        );
-      }
-      snapshot = [...merged.values()];
-      store.put(snapshot, PENDING_DELIVERIES_KEY);
+      transition = pendingDeliverySnapshotTransition(
+        currentRequest.result,
+        {
+          type: 'mutate',
+          upserts,
+          removeIds,
+          deliveryKeyTransitions,
+          deliveryStateTransitions,
+        },
+        { sanitize: sanitizePendingDelivery },
+      );
+      store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(snapshot || []);
+    transaction.oncomplete = () => resolve(transition?.snapshot || null);
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
@@ -2097,39 +2192,18 @@ async function claimTerminalDeliveryActionRequired(message, action) {
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
     let claimed = null;
     currentRequest.onsuccess = () => {
-      const current = Array.isArray(currentRequest.result)
-        ? currentRequest.result.map(sanitizePendingDelivery).filter(Boolean)
-        : [];
-      const index = current.findIndex(
-        (candidate) => candidate.id === message.id,
+      const transition = pendingDeliverySnapshotTransition(
+        currentRequest.result,
+        {
+          type: 'claim-terminal',
+          action,
+          claimToken: action === 'edit' ? randomIdempotencyKey() : null,
+          message,
+        },
+        { sanitize: sanitizePendingDelivery },
       );
-      const candidate = index >= 0 ? current[index] : null;
-      const matches =
-        candidate?.delivery === 'failed' &&
-        candidate.deliveryAttempt === message.deliveryAttempt &&
-        candidate.activeDeliveryKey === message.activeDeliveryKey &&
-        (action === 'delete' ||
-          action === 'edit' ||
-          candidate.definitelyUnsent === true) &&
-        (action !== 'retry' || candidate.retrySafe === true);
-      if (!matches) return;
-      if (action === 'edit' || action === 'delete') {
-        claimed = candidate;
-        current.splice(index, 1);
-      } else {
-        claimed = {
-          ...candidate,
-          delivery: 'delivering',
-          deliveryPhase: null,
-          retrySafe: false,
-          definitelyUnsent: false,
-          deliveryRecoveryExhausted: false,
-          errorCode: null,
-          deliveryAttempt: candidate.deliveryAttempt + 1,
-        };
-        current[index] = claimed;
-      }
-      store.put(current, PENDING_DELIVERIES_KEY);
+      claimed = transition.value;
+      store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
     transaction.oncomplete = () => resolve(claimed);
@@ -2137,6 +2211,61 @@ async function claimTerminalDeliveryActionRequired(message, action) {
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
+  });
+}
+
+async function transitionPendingDeliveryRequired(command) {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('snapshots', 'readwrite');
+    const store = transaction.objectStore('snapshots');
+    const currentRequest = store.get(PENDING_DELIVERIES_KEY);
+    let value = null;
+    currentRequest.onsuccess = () => {
+      const transition = pendingDeliverySnapshotTransition(
+        currentRequest.result,
+        command,
+        { sanitize: sanitizePendingDelivery },
+      );
+      value = transition.value;
+      store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
+    };
+    currentRequest.onerror = () => transaction.abort();
+    transaction.oncomplete = () => resolve(value);
+    transaction.onerror = () =>
+      reject(transaction.error || new Error('cache_write_failed'));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('cache_write_aborted'));
+  });
+}
+
+function finalizeTerminalDeliveryEditRequired(message) {
+  return transitionPendingDeliveryRequired({
+    type: 'finalize-edit',
+    claimToken: message.terminalActionClaim?.token,
+    message,
+  });
+}
+
+function releaseTerminalDeliveryEditRequired(message) {
+  return transitionPendingDeliveryRequired({
+    type: 'release-edit',
+    claimToken: message.terminalActionClaim?.token,
+    message,
+  });
+}
+
+function claimDraftSendRequired(
+  message,
+  draftRevision,
+  payloadFingerprint,
+) {
+  return transitionPendingDeliveryRequired({
+    type: 'claim-draft-send',
+    sessionId: message.sessionId,
+    draftRevision,
+    payloadFingerprint,
+    message,
   });
 }
 
@@ -2180,19 +2309,13 @@ async function discardFailedMessage(message) {
 }
 
 async function verifyTerminalDeliveryAction(message) {
-  let cached;
+  let authoritative;
   try {
-    cached = await cacheGetRequired(PENDING_DELIVERIES_KEY);
+    authoritative = await readAuthoritativePendingDeliveryRequired(message);
   } catch {
     announce('Could not verify this delivery yet. Try again.');
     return null;
   }
-  const authoritative = Array.isArray(cached)
-    ? cached
-        .map(sanitizePendingDelivery)
-        .filter(Boolean)
-        .find((candidate) => candidate.id === message.id)
-    : null;
   if (!authoritative) {
     state.optimistic = state.optimistic.filter(
       (candidate) => candidate !== message,
@@ -2221,11 +2344,18 @@ async function verifyTerminalDeliveryAction(message) {
       return message;
     }
     if (disposition === 'pending') {
+      const previousDelivery = message.delivery;
       message.delivery = 'delivering';
       message.deliveryPhase = delivery.phase || 'queued';
       message.retrySafe = false;
       message.definitelyUnsent = false;
-      await persistPendingDeliveries({ upserts: [message] });
+      await persistPendingDeliveries({
+        upserts: [message],
+        deliveryStateTransitions: authorizedDeliveryStateTransition(
+          message,
+          previousDelivery,
+        ),
+      });
       renderTranscript();
       announce('This message is already being sent from another Pocket window.');
       return null;
@@ -2237,6 +2367,32 @@ async function verifyTerminalDeliveryAction(message) {
     return null;
   }
   return message;
+}
+
+async function readAuthoritativePendingDeliveryRequired(message) {
+  const cached = await cacheGetRequired(PENDING_DELIVERIES_KEY);
+  return pendingDeliveryMessages(cached, {
+    sanitize: sanitizePendingDelivery,
+  }).find((candidate) => candidate.id === message?.id) || null;
+}
+
+function samePendingDeliveryIdentity(left, right) {
+  return (
+    left?.id === right?.id &&
+    left?.deliveryAttempt === right?.deliveryAttempt &&
+    left?.activeDeliveryKey === right?.activeDeliveryKey
+  );
+}
+
+function authorizedDeliveryStateTransition(message, from) {
+  if (!message || from === message.delivery) return [];
+  return [{
+    id: message.id,
+    deliveryAttempt: message.deliveryAttempt,
+    activeDeliveryKey: message.activeDeliveryKey,
+    from,
+    to: message.delivery,
+  }];
 }
 
 function applyAuthoritativePendingDelivery(message, authoritative) {
@@ -2253,6 +2409,74 @@ function applyAuthoritativePendingDelivery(message, authoritative) {
     ...attachment,
     previewUrl: previewUrls.get(attachment.id) || null,
   }));
+}
+
+async function recoverClaimedFailedMessage(message) {
+  const sessionId = message.sessionId;
+  const restoredItems = restoredAttachmentItems(
+    message,
+    message.errorCode,
+  );
+  const currentItems = attachmentsFor(sessionId);
+  const mergedItems = mergeRecoveredAttachmentItems(
+    restoredItems,
+    currentItems,
+  );
+  const existingDraft = draftFor(sessionId);
+  const recoveredText = message.text || '';
+  const combinedDraft = mergeRecoveredDraftText(
+    recoveredText,
+    existingDraft,
+  );
+  const recovery = await persistRecoveredDraftBeforeFinalizing({
+    persistDraft: () => {
+      const savedDraft = saveDraft(sessionId, combinedDraft);
+      if (!savedDraft) return false;
+      if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+        state.shell.composer.field.value = combinedDraft;
+        state.shell.composer.field.dataset.draftRevision =
+          savedDraft.revision;
+        state.shell.composer.resize();
+      }
+      const attachmentsPersisted = persistAttachmentDrafts({
+        sessionId,
+        items: mergedItems,
+      });
+      if (!attachmentsPersisted) return false;
+      if (mergedItems.length > 0) {
+        state.attachmentsBySession.set(sessionId, mergedItems);
+      } else {
+        state.attachmentsBySession.delete(sessionId);
+      }
+      message.draftAttachmentItems = null;
+      renderComposerAttachments();
+      renderComposerState();
+      return true;
+    },
+    finalize: () => finalizeTerminalDeliveryEditRequired(message),
+    release: () => releaseTerminalDeliveryEditRequired(message),
+  });
+  if (recovery.status !== 'recovered') {
+    if (recovery.status !== 'release-failed') {
+      await restorePendingDeliveries();
+    }
+    renderTranscript();
+    announce(
+      recovery.status === 'draft-failed'
+        ? 'Could not save the recovered text and photos. The failed message is still here.'
+        : recovery.status === 'release-failed'
+          ? 'The failed message is still here, but its secure edit lock could not be released. Reload Pocket and try Edit again.'
+          : 'The recovered draft is saved, but the failed message could not be cleared. Try Edit again.',
+    );
+    return false;
+  }
+  state.optimistic = state.optimistic.filter((item) => item !== message);
+  if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+    state.shell.composer.field.focus({ preventScroll: true });
+  }
+  renderTranscript();
+  announce('Message moved back to the editor.');
+  return true;
 }
 
 async function editFailedMessage(message) {
@@ -2281,44 +2505,7 @@ async function editFailedMessage(message) {
         return false;
       }
       applyAuthoritativePendingDelivery(message, claimed);
-      const sessionId = message.sessionId;
-      const restoredItems = restoredAttachmentItems(
-        message,
-        message.errorCode,
-      );
-      const currentItems = attachmentsFor(sessionId);
-      const seen = new Set();
-      const mergedItems = [...restoredItems, ...currentItems].filter((item) => {
-        const key = item.localId || item.id;
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      if (mergedItems.length > 0) {
-        state.attachmentsBySession.set(sessionId, mergedItems);
-      }
-      message.draftAttachmentItems = null;
-      state.optimistic = state.optimistic.filter((item) => item !== message);
-
-      const existingDraft = draftFor(sessionId);
-      const recoveredText = message.text || '';
-      const combinedDraft =
-        existingDraft && existingDraft !== recoveredText
-          ? `${recoveredText}${recoveredText ? '\n\n' : ''}${existingDraft}`
-          : recoveredText || existingDraft;
-      saveDraft(sessionId, combinedDraft);
-      if (state.route.sessionId === sessionId && state.shell?.composer.field) {
-        state.shell.composer.field.value = combinedDraft;
-        state.shell.composer.resize();
-        state.shell.composer.field.focus({ preventScroll: true });
-      }
-      persistAttachmentDrafts();
-      await persistPendingDeliveries({ removeIds: [message.id] });
-      renderComposerAttachments();
-      renderComposerState();
-      renderTranscript();
-      announce('Message moved back to the editor.');
-      return true;
+      return recoverClaimedFailedMessage(message);
     },
   );
   return result.value;
@@ -2328,9 +2515,16 @@ async function persistPendingDeliveries({
   required = false,
   upserts = [],
   removeIds = [],
+  deliveryKeyTransitions = [],
+  deliveryStateTransitions = [],
 } = {}) {
   try {
-    return await mutatePendingDeliveriesRequired({ upserts, removeIds });
+    return await mutatePendingDeliveriesRequired({
+      upserts,
+      removeIds,
+      deliveryKeyTransitions,
+      deliveryStateTransitions,
+    });
   } catch (error) {
     if (required) throw error;
     return null;
@@ -2338,10 +2532,16 @@ async function persistPendingDeliveries({
 }
 
 async function restorePendingDeliveries() {
-  const cached = await cacheGet(PENDING_DELIVERIES_KEY);
-  state.optimistic = Array.isArray(cached)
-    ? cached.map(sanitizePendingDelivery).filter(Boolean)
-    : [];
+  let cached;
+  try {
+    cached = await cacheGetRequired(PENDING_DELIVERIES_KEY);
+  } catch {
+    return false;
+  }
+  state.optimistic = pendingDeliveryMessages(cached, {
+    sanitize: sanitizePendingDelivery,
+  });
+  return true;
 }
 
 async function clearTranscriptCache() {
@@ -2433,7 +2633,8 @@ async function purgeLocalData() {
   appUpdateCoordinator?.stop();
   cachePurgeChannel?.postMessage({ type: 'retire-origin' });
   await assertOnlyRetiringWindow();
-  localStorage.removeItem('cp:last-route:v1');
+  localStorage.removeItem(ROUTE_KEY);
+  localStorage.removeItem(LEGACY_ROUTE_KEY);
   localStorage.removeItem('cp:drafts:v1');
   localStorage.removeItem(ATTACHMENT_DRAFTS_KEY);
   localStorage.removeItem(HIDDEN_AT_KEY);
@@ -2523,13 +2724,20 @@ async function startApplication() {
 }
 
 async function restoreRoute() {
+  if (state.route.view === 'recent' || state.route.view === 'workspaces') {
+    navigate(
+      { view: state.route.view, workspaceId: null, sessionId: null },
+      false,
+    );
+    return;
+  }
   if (!state.route.workspaceId && state.route.sessionId) {
     const recent = state.recentSessions.find((session) => session.id === state.route.sessionId);
     state.route.workspaceId = recent?.workspaceId || null;
   }
   const workspace = state.workspaces.find((item) => item.id === state.route.workspaceId);
   if (!workspace) {
-    navigate({ view: 'workspaces', workspaceId: null, sessionId: null }, false);
+    navigate({ view: 'recent', workspaceId: null, sessionId: null }, false);
     return;
   }
   await loadSessions(workspace.id);
@@ -2551,7 +2759,7 @@ function ensureShell() {
   if (state.shell && app.contains(state.shell.root)) return;
   const workspacePanel = node('aside', {
     className: 'panel workspace-panel',
-    'aria-label': 'Workspaces',
+    'aria-label': 'Recent chats and workspaces',
   });
   const sessionPanel = node('aside', {
     className: 'panel sessions-panel',
@@ -2569,21 +2777,16 @@ function ensureShell() {
   app.replaceChildren(root);
 
   const sessionNav = createPanelNav({
-    backLabel: 'Workspaces',
-    onBack: () => navigate({ view: 'workspaces', workspaceId: null, sessionId: null }),
+    backLabel: 'Recent',
+    onBack: () => navigate({ view: 'recent', workspaceId: null, sessionId: null }),
     onSwitcher: openSwitcher,
   });
   const sessionContent = node('div', { className: 'panel-content' });
   sessionPanel.append(sessionNav.root, sessionContent);
 
   const transcriptNav = createPanelNav({
-    backLabel: 'Chats',
-    onBack: () =>
-      navigate({
-        view: 'sessions',
-        workspaceId: state.route.workspaceId,
-        sessionId: null,
-      }),
+    backLabel: 'Recent',
+    onBack: () => navigate({ view: 'recent', workspaceId: null, sessionId: null }),
     onSwitcher: openSwitcher,
     titleClick: openSwitcher,
     onChats: openChatsSheet,
@@ -2992,20 +3195,19 @@ function createComposer() {
       : entry?.borderBoxSize;
     const height = Math.ceil(borderBox?.blockSize || root.getBoundingClientRect().height);
     if (height <= 0 || height === lastComposerHeight) return;
-    const delta = lastComposerHeight === 0 ? 0 : height - lastComposerHeight;
     lastComposerHeight = height;
     // The dock is position: absolute (app.css .composer-dock), so it is out of
-    // flow and growing it does NOT shrink the scroller. --composer-height feeds
-    // only the transcript's padding-bottom, which grows scrollHeight while
-    // clientHeight, scrollTop and every rendered pixel stay exactly where they
-    // were. So a reader who is not at the bottom needs no correction at all:
+    // flow and changing it does not resize the scroller. The composer height
+    // variable feeds only the transcript's bottom padding, which changes
+    // scrollHeight while clientHeight and every rendered message stay in
+    // place. So a reader who is not at the bottom needs no correction at all:
     // an earlier version of this handler assumed the viewport shrank and moved
     // scrollTop to compensate, which yanked a transcript that was sitting
     // still. Doing nothing is the correct behaviour there.
     //
-    // A reader who IS at the bottom does need one: the extra padding is what
-    // keeps the last message clear of the dock, so without re-pinning, the
-    // message just sent slides behind a taller composer.
+    // A reader at the bottom does need one. Growth adds padding and shrinking
+    // after Send removes it. Re-pinning both directions keeps the last message
+    // stable while the dock changes height.
     const scroller = state.shell?.transcriptScroll;
     const wasPinned = scroller
       ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 48
@@ -3014,12 +3216,11 @@ function createComposer() {
       '--composer-height',
       `${height}px`,
     );
-    if (delta <= 0 || !scroller || !wasPinned) return;
+    if (!scroller || !wasPinned) return;
     // Synchronous, NOT in a requestAnimationFrame. A ResizeObserver callback
     // runs after layout but before paint, so writing here lands in the same
-    // frame as the taller composer. Deferring it by a frame meant the browser
-    // first painted the grown dock over the last message and only then snapped
-    // the scroll, which is a visible flicker on every single line wrap.
+    // frame as the changed composer. Deferring it by a frame meant the browser
+    // painted one dock height and then snapped the scroll on the next frame.
     // Reading scrollHeight forces one synchronous layout, and this whole block
     // only runs when the dock height actually changed, never per keystroke.
     scroller.scrollTop = scroller.scrollHeight;
@@ -3048,7 +3249,8 @@ function createComposer() {
     field.rows = Math.max(1, Math.min(6, wrapped || 1));
   };
   field.addEventListener('input', () => {
-    saveDraft(state.route.sessionId, field.value);
+    const savedDraft = saveDraft(state.route.sessionId, field.value);
+    if (savedDraft) field.dataset.draftRevision = savedDraft.revision;
     state.composerSendErrors.delete(state.route.sessionId);
     resize();
     renderComposerState();
@@ -3086,13 +3288,14 @@ function createComposer() {
 
 function syncPanelExposure() {
   if (!state.shell) return;
+  const rootRoute = state.shell.root.classList.contains('is-root-route');
   const panels = [
     state.shell.workspacePanel,
     state.shell.sessionPanel,
     state.shell.transcriptPanel,
   ];
   for (const panel of panels) {
-    const active = PHONE_LAYOUT.matches
+    const active = PHONE_LAYOUT.matches || rootRoute
       ? panel.classList.contains('is-active')
       : panel !== state.shell.workspacePanel;
     panel.toggleAttribute('inert', !active);
@@ -3103,6 +3306,8 @@ function syncPanelExposure() {
 function updateRoutePanels() {
   if (!state.shell) return;
   const { view } = state.route;
+  const rootRoute = view === 'recent' || view === 'workspaces';
+  const routeChanged = view !== lastPanelView;
   const scroller = state.shell.transcriptScroll;
   const wasShowingTranscript =
     state.shell.transcriptPanel.classList.contains('is-active');
@@ -3113,10 +3318,31 @@ function updateRoutePanels() {
     transcriptHiddenAnchor =
       scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
   }
-  state.shell.workspacePanel.classList.toggle('is-active', view === 'workspaces');
+  state.shell.workspacePanel.classList.toggle(
+    'is-active',
+    rootRoute,
+  );
   state.shell.sessionPanel.classList.toggle('is-active', view === 'sessions');
   state.shell.transcriptPanel.classList.toggle('is-active', view === 'transcript');
+  state.shell.root.classList.toggle('is-root-route', rootRoute);
   syncPanelExposure();
+  if (routeChanged && PHONE_LAYOUT.matches) {
+    const enteringPanel = [
+      state.shell.workspacePanel,
+      state.shell.sessionPanel,
+      state.shell.transcriptPanel,
+    ].find((panel) => panel.classList.contains('is-active'));
+    if (enteringPanel) {
+      enteringPanel.classList.remove('is-entering');
+      void enteringPanel.offsetWidth;
+      enteringPanel.classList.add('is-entering');
+      setTimeout(
+        () => enteringPanel.classList.remove('is-entering'),
+        MOTION_MS.content,
+      );
+    }
+  }
+  lastPanelView = view;
   if (view !== 'transcript' || transcriptHiddenAnchor === null || !scroller) return;
   // Reading scrollHeight forces the layout the panel just gained, so this lands
   // in the same frame the panel becomes visible and nothing renders at the top
@@ -3125,6 +3351,19 @@ function updateRoutePanels() {
     scroller.scrollHeight - scroller.clientHeight - transcriptHiddenAnchor;
   scroller.scrollTop = Math.max(0, restored);
   transcriptHiddenAnchor = null;
+}
+
+function clearRenderedSessionView() {
+  const composer = state.shell?.composer;
+  if (!composer) return;
+  // The draft belongs to its session and is already persisted on every input.
+  // Clear only the mounted controls before the wide layout reveals this column
+  // beside another workspace's chat list.
+  composer.field.value = '';
+  delete composer.field.dataset.draftRevision;
+  composer.resize();
+  renderComposerAttachments();
+  renderTranscript();
 }
 
 function navigate(route, push = true) {
@@ -3141,12 +3380,21 @@ function navigate(route, push = true) {
     'is-switching-out',
   );
   state.shell?.transcriptPanel.removeAttribute('aria-busy');
+  if (
+    state.route.view !== route.view &&
+    (route.view === 'recent' || route.view === 'workspaces')
+  ) {
+    state.searchQuery = '';
+  }
   state.route = route;
   persistRoute();
   if (push) history.pushState({ pocketRoute: route }, '', '/');
   updateRoutePanels();
   renderWorkspacePanel();
   renderSessionsPanel();
+  if (route.view === 'sessions' && !route.sessionId) {
+    clearRenderedSessionView();
+  }
 }
 
 async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
@@ -3162,6 +3410,7 @@ async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
       return;
     }
     state.workspaces = data.workspaces;
+    state.workspacesError = null;
     if (Array.isArray(data.unreadSessions)) {
       state.unreadHeads = normalizeUnreadHeads(data.unreadSessions);
       state.unreadHeadsLoaded = true;
@@ -3181,6 +3430,17 @@ async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
     scheduleReadEvaluation();
   } catch (error) {
     if (signal?.aborted || error?.name === 'AbortError') return;
+    if (
+      generation !== state.workspaceRequestGeneration ||
+      metadataEpoch !== state.unreadMetadataEpoch
+    ) {
+      return;
+    }
+    state.workspacesError =
+      state.workspaces.length > 0
+        ? 'Could not refresh workspaces. Showing saved workspaces.'
+        : 'Workspaces are unavailable. Check the Mac connection and try again.';
+    renderWorkspacePanel();
     handleRuntimeError(error);
   }
 }
@@ -3190,6 +3450,7 @@ async function loadRecentSessions({ signal, timeoutMs = 0 } = {}) {
   state.recentSessionsRequestGeneration = generation;
   state.recentSessionsLoad = 'loading';
   state.recentSessionsError = null;
+  if (state.route.view === 'recent') renderWorkspacePanel();
   try {
     const data = await request('/api/sessions/recent?limit=100', {
       signal,
@@ -3200,6 +3461,8 @@ async function loadRecentSessions({ signal, timeoutMs = 0 } = {}) {
     }
     state.recentSessions = data.sessions;
     state.recentSessionsLoad = 'ready';
+    if (state.route.view === 'recent') renderWorkspacePanel();
+    if (state.route.view === 'transcript') renderChatStrip();
     scheduleReadEvaluation();
     void cacheSet('recent-sessions', data.sessions);
     return { ok: true, cached: false };
@@ -3222,6 +3485,8 @@ async function loadRecentSessions({ signal, timeoutMs = 0 } = {}) {
       state.recentSessions.length > 0
         ? 'Couldn’t refresh recent chats. Showing saved chats.'
         : 'Recent chats are unavailable. Check the Mac connection and try again.';
+    if (state.route.view === 'recent') renderWorkspacePanel();
+    if (state.route.view === 'transcript') renderChatStrip();
     return {
       ok: false,
       cached: state.recentSessions.length > 0,
@@ -3233,6 +3498,7 @@ async function loadSessions(
   workspaceId,
   { signal, timeoutMs = 0 } = {},
 ) {
+  state.sessionErrorsByWorkspace.delete(workspaceId);
   if (state.sessionsByWorkspace.has(workspaceId)) {
     if (state.route.workspaceId === workspaceId) renderSessionsPanel();
   } else {
@@ -3255,6 +3521,7 @@ async function loadSessions(
       { signal, timeoutMs },
     );
     state.sessionsByWorkspace.set(workspaceId, data.sessions);
+    state.sessionErrorsByWorkspace.delete(workspaceId);
     if (state.route.workspaceId === workspaceId) renderSessionsPanel();
     void cacheSet(`sessions:${workspaceId}`, data.sessions);
     if (state.route.workspaceId === workspaceId) renderChatStrip();
@@ -3264,6 +3531,13 @@ async function loadSessions(
     if (signal?.aborted || error?.name === 'AbortError') {
       return sessionsFor(workspaceId);
     }
+    state.sessionErrorsByWorkspace.set(
+      workspaceId,
+      sessionsFor(workspaceId).length > 0
+        ? 'Could not refresh chats. Showing saved chats.'
+        : 'Chats are unavailable. Check the Mac connection and try again.',
+    );
+    if (state.route.workspaceId === workspaceId) renderSessionsPanel();
     handleRuntimeError(error);
     return sessionsFor(workspaceId);
   }
@@ -3271,6 +3545,23 @@ async function loadSessions(
 
 function sessionsFor(workspaceId) {
   return state.sessionsByWorkspace.get(workspaceId) || [];
+}
+
+function recentSessionsNewestFirst() {
+  const workspaceNames = new Map(
+    state.workspaces.map((workspace) => [workspace.id, workspace.name]),
+  );
+  return state.recentSessions
+    .map((session) => ({
+      ...session,
+      workspaceName:
+        session.workspaceName || workspaceNames.get(session.workspaceId) || 'Workspace',
+    }))
+    .sort((left, right) => {
+      const leftActivity = Date.parse(left.activityAt || '') || 0;
+      const rightActivity = Date.parse(right.activityAt || '') || 0;
+      return rightActivity - leftActivity || left.id.localeCompare(right.id);
+    });
 }
 
 function connectionVoice() {
@@ -3289,10 +3580,8 @@ function renderConnectionVoice(container) {
   if (voice.dot) container.append(node('span', { className: `status-dot ${voice.dot}` }));
   else container.append(icon(voice.iconName));
   container.append(document.createTextNode(voice.text));
-  // The higher of the two windows, because either one alone can stop a turn and
-  // a seat routinely sits near zero on one while the other is spent. Shown here
-  // so "am I out of usage" is answerable at a glance, not only after something
-  // has already failed.
+  // GPT is the active agent provider for Pocket. The higher window stays
+  // visible because either one can stop a turn.
   const seat = activeSeat();
   if (!seat) return;
   const worst = Math.max(
@@ -3304,7 +3593,9 @@ function renderConnectionVoice(container) {
   container.append(
     node('span', {
       className: `connection-usage${blocked ? ' is-blocked' : ''}`,
-      text: blocked ? `· ${seat.name} out` : `· ${seat.name} ${worst}%`,
+      text: blocked
+        ? `· GPT out${seat.stale ? ' cached' : ''}`
+        : `· GPT ${worst}%${seat.stale ? ' cached' : ''}`,
     }),
   );
 }
@@ -3312,6 +3603,7 @@ function renderConnectionVoice(container) {
 function renderWorkspacePanel() {
   if (!state.shell) return;
   const panel = state.shell.workspacePanel;
+  const recentHome = state.route.view === 'recent';
   const connection = node('button', {
     className: 'connection-voice',
     type: 'button',
@@ -3322,9 +3614,25 @@ function renderWorkspacePanel() {
   renderConnectionVoice(connection);
   void refreshSeatUsage();
   const header = node('header', { className: 'root-header' }, [
-    node('div', {}, [node('h1', { className: 'root-title', text: 'Workspaces' }), connection]),
+    node('div', {}, [
+      node('h1', {
+        className: 'root-title',
+        text: recentHome ? 'Recent Chats' : 'Workspaces',
+      }),
+      connection,
+    ]),
     node('div', { className: 'root-actions' }, [
-      button('Open chat switcher', { iconName: 'squares', onClick: openSwitcher }),
+      recentHome
+        ? button('Workspaces', {
+            className: 'text-button root-mode-button',
+            onClick: () =>
+              navigate({ view: 'workspaces', workspaceId: null, sessionId: null }),
+          })
+        : button('Recent', {
+            className: 'text-button root-mode-button',
+            onClick: () =>
+              navigate({ view: 'recent', workspaceId: null, sessionId: null }),
+          }),
       button('Security and devices', { iconName: 'gear', onClick: openSecurity }),
     ]),
   ]);
@@ -3332,8 +3640,8 @@ function renderWorkspacePanel() {
     className: 'search-input',
     type: 'search',
     value: state.searchQuery,
-    placeholder: 'Search workspaces and chats',
-    'aria-label': 'Search workspaces and chats',
+    placeholder: recentHome ? 'Search recent chats' : 'Search workspaces and chats',
+    'aria-label': recentHome ? 'Search recent chats' : 'Search workspaces and chats',
     on: {
       input: (event) => {
         state.searchQuery = event.currentTarget.value;
@@ -3355,29 +3663,101 @@ function renderWorkspacePanel() {
   ]);
   const content = node('div', { className: 'panel-content' }, [header, search]);
 
-  if (!state.workspacesLoaded && state.workspaces.length === 0) {
-    content.append(skeletonRows(6));
-  } else if (state.workspaces.length === 0) {
-    content.append(
-      node('div', { className: 'empty-state' }, [
-        icon('laptop'),
-        node('h2', { text: 'No workspaces yet' }),
-        node('p', {
-          text: "Open Conductor on your Mac and they'll appear here.",
-        }),
-      ]),
+  if (recentHome) {
+    if (state.recentSessionsError) {
+      content.append(
+        node('div', { className: 'switcher-notice is-error', role: 'alert' }, [
+          icon('warn'),
+          node('span', { text: state.recentSessionsError }),
+          node('button', {
+            className: 'text-button',
+            type: 'button',
+            text: 'Retry',
+            on: { click: () => void loadRecentSessions() },
+          }),
+        ]),
+      );
+    }
+    const query = state.searchQuery.trim().toLowerCase();
+    const sessions = state.recentSessions.filter((session) =>
+      `${session.title} ${session.workspaceName}`.toLowerCase().includes(query),
     );
-  } else if (state.searchQuery.trim()) {
-    renderSearchResults(content);
+    if (sessions.length > 0) {
+      const list = node('ul', { className: 'row-list' });
+      sessions.forEach((session) =>
+        list.append(sessionRow(session, { crossWorkspace: true })),
+      );
+      content.append(list);
+    } else if (
+      state.recentSessionsLoad === 'loading' &&
+      !state.recentSessionsError
+    ) {
+      content.append(skeletonRows(6));
+    } else if (!state.recentSessionsError) {
+      content.append(
+        node('div', { className: 'empty-state' }, [
+          icon(query ? 'search' : 'terminal'),
+          node('h2', {
+            text: query
+              ? `No matches for “${state.searchQuery.trim()}”`
+              : 'No recent chats yet',
+          }),
+          query
+            ? null
+            : node('p', { text: 'Open a chat from Workspaces to get started.' }),
+        ]),
+      );
+    }
   } else {
-    const active = state.workspaces.filter((workspace) => workspace.workingCount > 0);
-    const recent = state.workspaces.filter((workspace) => !active.includes(workspace)).slice(0, 5);
-    const remainder = state.workspaces
-      .filter((workspace) => !active.includes(workspace) && !recent.includes(workspace))
-      .sort((left, right) => left.name.localeCompare(right.name));
-    appendWorkspaceSection(content, 'Active', active);
-    appendWorkspaceSection(content, 'Recent', recent);
-    appendWorkspaceSection(content, 'All', remainder);
+    if (state.workspacesError) {
+      content.append(
+        node('div', { className: 'switcher-notice is-error', role: 'alert' }, [
+          icon('warn'),
+          node('span', { text: state.workspacesError }),
+          node('button', {
+            className: 'text-button',
+            type: 'button',
+            text: 'Retry',
+            on: { click: () => void refreshWorkspaces() },
+          }),
+        ]),
+      );
+    }
+    if (
+      !state.workspacesLoaded &&
+      state.workspaces.length === 0 &&
+      !state.workspacesError
+    ) {
+      content.append(skeletonRows(6));
+    } else if (state.workspaces.length === 0 && !state.workspacesError) {
+      content.append(
+        node('div', { className: 'empty-state' }, [
+          icon('laptop'),
+          node('h2', { text: 'No workspaces yet' }),
+          node('p', {
+            text: "Open Conductor on your Mac and they'll appear here.",
+          }),
+        ]),
+      );
+    } else if (state.searchQuery.trim()) {
+      renderSearchResults(content);
+    } else {
+      const active = state.workspaces.filter(
+        (workspace) => workspace.workingCount > 0,
+      );
+      const recent = state.workspaces
+        .filter((workspace) => !active.includes(workspace))
+        .slice(0, 5);
+      const remainder = state.workspaces
+        .filter(
+          (workspace) =>
+            !active.includes(workspace) && !recent.includes(workspace),
+        )
+        .sort((left, right) => left.name.localeCompare(right.name));
+      appendWorkspaceSection(content, 'Active', active);
+      appendWorkspaceSection(content, 'Recent', recent);
+      appendWorkspaceSection(content, 'All', remainder);
+    }
   }
   // This swaps the SCROLL CONTAINER itself, and it runs on every workspaces
   // response: an 8s backstop poll plus every stream event, whether or not
@@ -3495,11 +3875,27 @@ function renderSessionsPanel() {
     return;
   }
   const sessions = sessionsFor(workspace.id);
-  if (!state.sessionsByWorkspace.has(workspace.id)) {
+  const sessionError = state.sessionErrorsByWorkspace.get(workspace.id);
+  if (sessionError) {
+    sessionContent.append(
+      node('div', { className: 'switcher-notice is-error', role: 'alert' }, [
+        icon('warn'),
+        node('span', { text: sessionError }),
+        node('button', {
+          className: 'text-button',
+          type: 'button',
+          text: 'Retry',
+          on: { click: () => void loadSessions(workspace.id) },
+        }),
+      ]),
+    );
+  }
+  if (!state.sessionsByWorkspace.has(workspace.id) && !sessionError) {
     sessionContent.append(skeletonRows(6));
     return;
   }
   if (!sessions.length) {
+    if (sessionError) return;
     sessionContent.append(
       node('div', { className: 'empty-state' }, [
         icon('terminal'),
@@ -3596,7 +3992,9 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
   renderWorkspacePanel();
   renderSessionsPanel();
   const composer = state.shell.composer;
-  composer.field.value = draftFor(sessionId);
+  const draftRecord = draftRecordFor(sessionId);
+  composer.field.value = draftRecord.text;
+  composer.field.dataset.draftRevision = draftRecord.revision;
   composer.resize();
   renderComposerAttachments();
   renderComposerState();
@@ -3806,21 +4204,16 @@ let newestRootEventRowId = 0;
 // written can fix that, because nothing in the app did the resetting. Captured
 // on the way out, reapplied on the way in.
 let transcriptHiddenAnchor = null;
+let lastPanelView = null;
 
+const seatUsageReader = createUsageReader({
+  load: () => request('/api/usage'),
+  ttlMs: 60_000,
+});
 let seatUsageCache = null;
-let seatUsageInFlight = false;
 
 async function refreshSeatUsage({ force = false } = {}) {
-  if (seatUsageInFlight) return seatUsageCache;
-  if (seatUsageCache && !force) return seatUsageCache;
-  seatUsageInFlight = true;
-  try {
-    seatUsageCache = await request('/api/usage');
-  } catch {
-    seatUsageCache = { available: false, reason: 'producer_unreachable' };
-  } finally {
-    seatUsageInFlight = false;
-  }
+  seatUsageCache = await seatUsageReader.read({ force });
   if (state.shell) renderConnectionVoice(state.shell.connectionVoice);
   return seatUsageCache;
 }
@@ -3828,16 +4221,7 @@ async function refreshSeatUsage({ force = false } = {}) {
 // The seat the agent is actually running on, which is the only one whose limit
 // can stop a turn.
 function activeSeat() {
-  if (!seatUsageCache?.available) return null;
-  const claudeProvider = Array.isArray(seatUsageCache.providers)
-    ? seatUsageCache.providers.find((provider) => provider.id === 'claude')
-    : null;
-  const accounts = Array.isArray(claudeProvider?.accounts)
-    ? claudeProvider.accounts
-    : Array.isArray(seatUsageCache.seats)
-      ? seatUsageCache.seats
-      : [];
-  return accounts.find((seat) => seat.active) || null;
+  return activeGptUsage(seatUsageCache);
 }
 // Whether the operator has moved this transcript themselves since it opened.
 // A chat's messages arrive in two passes, a memory snapshot and then the
@@ -3873,19 +4257,24 @@ function transitionTranscriptIn() {
   }).then(() => column.classList.remove('is-switching-in'));
 }
 
-function renderTranscriptPlaceholder({ loading }) {
+function renderTranscriptPlaceholder({ loading, selected = true }) {
+  const opening = selected && loading;
   return node('li', {
-    className: `transcript-placeholder${loading ? ' is-loading' : ''}`,
+    className: `transcript-placeholder${opening ? ' is-loading' : ''}`,
     role: 'status',
   }, [
-    loading
+    opening
       ? node('span', { className: 'status-dot working', 'aria-hidden': 'true' })
       : icon('terminal'),
-    node('h2', { text: loading ? 'Opening chat…' : 'No messages yet' }),
+    node('h2', {
+      text: !selected ? 'Choose a chat' : opening ? 'Opening chat…' : 'No messages yet',
+    }),
     node('p', {
-      text: loading
-        ? 'Keeping this screen steady while Pocket loads it.'
-        : 'Send the first message from Pocket or your Mac.',
+      text: !selected
+        ? 'Select one from the list to open it here.'
+        : opening
+          ? 'Keeping this screen steady while Pocket loads it.'
+          : 'Send the first message from Pocket or your Mac.',
     }),
   ]);
 }
@@ -3893,12 +4282,15 @@ function renderTranscriptPlaceholder({ loading }) {
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
   if (!strip) return;
-  const workspaceId = state.route.workspaceId;
-  const sessions = sessionsFor(workspaceId) || [];
+  const sessions = recentSessionsNewestFirst();
   const renderKey = JSON.stringify([
-    workspaceId,
     state.route.sessionId,
-    sessions.map((session) => [session.id, session.title, session.status]),
+    sessions.map((session) => [
+      session.id,
+      session.title,
+      session.workspaceName,
+      session.status,
+    ]),
   ]);
   if (strip.dataset.renderKey === renderKey) return;
   strip.dataset.renderKey = renderKey;
@@ -3922,20 +4314,28 @@ function renderChatStrip() {
       type: 'button',
       'aria-current': active ? 'page' : undefined,
       // Screen readers get the meaning; sighted users get the dot.
-      'aria-label': state_ ? `${session.title}, ${state_.label}` : session.title,
+      'aria-label': state_
+        ? `${session.title}, ${session.workspaceName}, ${state_.label}`
+        : `${session.title}, ${session.workspaceName}`,
       on: {
         click: () => {
           if (active) return;
           navigate({
             view: 'transcript',
-            workspaceId,
+            workspaceId: session.workspaceId,
             sessionId: session.id,
           });
         },
       },
     }, [
       state_ ? node('span', { className: `chip-dot ${state_.dot}` }) : null,
-      node('span', { className: 'chip-label', text: session.title }),
+      node('span', { className: 'chip-copy' }, [
+        node('span', { className: 'chip-label', text: session.title }),
+        node('span', {
+          className: 'chip-workspace',
+          text: session.workspaceName,
+        }),
+      ]),
     ].filter(Boolean));
     if (active) activeChip = chip;
     return chip;
@@ -4100,7 +4500,9 @@ function renderTranscript() {
   if (fragment.childElementCount === 0) {
     fragment.append(
       renderTranscriptPlaceholder({
+        selected: Boolean(state.route.sessionId),
         loading:
+          Boolean(state.route.sessionId) &&
           !state.messagesBySession.has(state.route.sessionId) &&
           !state.messageBaselinesBySession.has(state.route.sessionId),
       }),
@@ -4742,7 +5144,7 @@ function renderComposerState() {
   );
   const sendQueued = state.attachmentSendIntents.has(sessionId);
   const sendError = state.composerSendErrors.get(sessionId) || '';
-  field.readOnly = sendQueued;
+  field.readOnly = !sessionId || sendQueued;
   const down = state.connection === 'offline';
   const draftSaved =
     !hasText || draftFor(state.route.sessionId) === field.value;
@@ -4766,6 +5168,7 @@ function renderComposerState() {
     reason.removeAttribute('aria-label');
   }
   send.disabled =
+    !sessionId ||
     sendQueued ||
     hasFailedAttachment ||
     (!hasText && !hasAttachments);
@@ -4912,6 +5315,18 @@ async function sendCurrentMessage() {
     );
     return;
   }
+  const durableDraft = draftRecordFor(sessionId);
+  const draftRevision = field.dataset.draftRevision || '';
+  if (
+    durableDraft.text !== text ||
+    durableDraft.revision !== draftRevision
+  ) {
+    showComposerSendError(
+      sessionId,
+      'Not sent: save the draft on this phone, then try again.',
+    );
+    return;
+  }
   // Synchronous re-entrancy gate for the window between here and the field
   // clearing after the durable persist below. A second tap or an
   // auto-repeating Enter landing in that window would otherwise re-read the
@@ -4921,6 +5336,45 @@ async function sendCurrentMessage() {
   // delivery, so composing the next message is not blocked.
   if (state.sendInFlight.has(sessionId)) return;
   state.sendInFlight.add(sessionId);
+  let payloadFingerprint;
+  try {
+    payloadFingerprint = await draftSendPayloadFingerprint({
+      text,
+      attachments: readyAttachments,
+    });
+  } catch {
+    state.sendInFlight.delete(sessionId);
+    showComposerSendError(
+      sessionId,
+      'Not sent: this phone could not secure the message against duplicates.',
+    );
+    return;
+  }
+  const currentDraft = draftRecordFor(sessionId);
+  const currentAttachmentPayload = attachmentsFor(sessionId)
+    .filter((item) => item.state === 'ready')
+    .map(normalizeAttachmentMetadata)
+    .filter(Boolean);
+  const claimedAttachmentPayload = readyAttachments
+    .map(normalizeAttachmentMetadata)
+    .filter(Boolean);
+  if (
+    state.route.sessionId !== sessionId ||
+    state.shell?.composer.field !== field ||
+    field.value.replace(/\r\n?/g, '\n') !== text ||
+    field.dataset.draftRevision !== draftRevision ||
+    currentDraft.text !== text ||
+    currentDraft.revision !== draftRevision ||
+    JSON.stringify(currentAttachmentPayload) !==
+      JSON.stringify(claimedAttachmentPayload)
+  ) {
+    state.sendInFlight.delete(sessionId);
+    showComposerSendError(
+      sessionId,
+      'Not sent: the draft changed while the send was starting. Try again.',
+    );
+    return;
+  }
   const idempotencyKey = randomIdempotencyKey();
   const optimistic = {
     id: `optimistic:${randomIdempotencyKey()}`,
@@ -4940,10 +5394,18 @@ async function sendCurrentMessage() {
   };
   state.optimistic.push(optimistic);
   try {
-    await persistPendingDeliveries({
-      required: true,
-      upserts: [optimistic],
-    });
+    const claimed = await claimDraftSendRequired(optimistic, draftRevision, payloadFingerprint);
+    if (!claimed) {
+      state.optimistic = state.optimistic.filter(
+        (item) => item !== optimistic,
+      );
+      state.sendInFlight.delete(sessionId);
+      showComposerSendError(
+        sessionId,
+        'Not sent again: this draft is already sending from another Pocket window.',
+      );
+      return;
+    }
   } catch {
     state.optimistic = state.optimistic.filter(
       (item) => item !== optimistic,
@@ -4955,11 +5417,66 @@ async function sendCurrentMessage() {
     );
     return;
   }
-  state.attachmentsBySession.delete(sessionId);
-  persistAttachmentDrafts();
-  if (state.route.sessionId === sessionId) field.value = '';
-  saveDraft(sessionId, '');
-  state.shell?.composer.resize();
+
+  // The IndexedDB claim is atomic, but the composer can change in another
+  // Pocket window while this window is awaiting that transaction. Re-read the
+  // shared text and photo metadata after the claim. The claimed message still
+  // sends, because the tap already won durable delivery authority, but a newer
+  // draft must remain in the composer for the next send.
+  let draftClearAuthorized = false;
+  try {
+    const currentDurableDraft = draftRecordFor(sessionId);
+    const currentDurableAttachments = loadAttachmentDrafts().get(sessionId) || [];
+    const currentPayloadFingerprint = await draftSendPayloadFingerprint({
+      text: currentDurableDraft.text,
+      attachments: currentDurableAttachments,
+    });
+    draftClearAuthorized = claimedDraftClearIsAuthorized({
+      claimedRevision: draftRevision,
+      claimedPayloadFingerprint: payloadFingerprint,
+      currentRevision: currentDurableDraft.revision,
+      currentPayloadFingerprint,
+    });
+  } catch {
+    // If shared draft authority cannot be reread, preserve it. The durable
+    // delivery claim still makes proceeding with the already-claimed send safe.
+  }
+
+  const mountedComposerStillClaimed =
+    state.route.sessionId === sessionId &&
+    state.shell?.composer.field === field &&
+    field.dataset.draftRevision === draftRevision &&
+    field.value.replace(/\r\n?/g, '\n') === text &&
+    JSON.stringify(
+      attachmentsFor(sessionId)
+        .filter((item) => item.state === 'ready')
+        .map(normalizeAttachmentMetadata)
+        .filter(Boolean),
+    ) === JSON.stringify(claimedAttachmentPayload);
+  let clearedDraft = null;
+  let durableDraftCleared = false;
+  if (draftClearAuthorized) {
+    clearedDraft = saveDraft(sessionId, '', {
+      expectedRevision: draftRevision,
+    });
+    if (clearedDraft) {
+      durableDraftCleared = persistAttachmentDrafts({
+        sessionId,
+        items: [],
+      });
+    }
+    if (durableDraftCleared) {
+      state.attachmentsBySession.delete(sessionId);
+    }
+  }
+  if (
+    durableDraftCleared &&
+    mountedComposerStillClaimed
+  ) {
+    field.value = '';
+    field.dataset.draftRevision = clearedDraft.revision;
+    state.shell.composer.resize();
+  }
   renderComposerAttachments();
   renderTranscript();
   state.sendInFlight.delete(sessionId);
@@ -5038,6 +5555,15 @@ async function deliverOptimistic(
       await persistPendingDeliveries({
         required: true,
         upserts: [optimistic],
+        deliveryKeyTransitions:
+          previousDeliveryKey !== deliveryKey
+            ? [{
+                id: optimistic.id,
+                deliveryAttempt: optimistic.deliveryAttempt,
+                from: previousDeliveryKey,
+                to: deliveryKey,
+              }]
+            : [],
       });
     } catch {
       optimistic.delivery = 'failed';
@@ -5317,7 +5843,36 @@ async function checkDeliveryNow(message) {
     async () => {
       announce('Checking delivery...');
       try {
+        const authoritative =
+          await readAuthoritativePendingDeliveryRequired(message);
+        if (!authoritative) {
+          state.optimistic = state.optimistic.filter(
+            (candidate) => candidate !== message,
+          );
+          renderTranscript();
+          announce('This delivery was already resolved in another Pocket window.');
+          return false;
+        }
+        applyAuthoritativePendingDelivery(message, authoritative);
+        if (message.delivery !== 'failed') {
+          renderTranscript();
+          announce('This delivery changed in another Pocket window.');
+          return false;
+        }
+        const checkedIdentity = { ...message };
         const delivery = await requestDeliveryStatus(message);
+        const current = await readAuthoritativePendingDeliveryRequired(message);
+        if (!samePendingDeliveryIdentity(current, checkedIdentity)) {
+          if (current) applyAuthoritativePendingDelivery(message, current);
+          else {
+            state.optimistic = state.optimistic.filter(
+              (candidate) => candidate !== message,
+            );
+          }
+          renderTranscript();
+          announce('This delivery changed in another Pocket window.');
+          return false;
+        }
         const disposition = terminalDeliveryActionDisposition(delivery);
         if (disposition === 'resolved') {
           await settleTerminalDeliveryStatus(message, delivery);
@@ -5333,11 +5888,18 @@ async function checkDeliveryNow(message) {
           return false;
         }
         if (disposition === 'pending') {
+          const previousDelivery = message.delivery;
           message.delivery = 'delivering';
           message.deliveryPhase = delivery.phase || 'queued';
           message.retrySafe = false;
           message.definitelyUnsent = false;
-          await persistPendingDeliveries({ upserts: [message] });
+          await persistPendingDeliveries({
+            upserts: [message],
+            deliveryStateTransitions: authorizedDeliveryStateTransition(
+              message,
+              previousDelivery,
+            ),
+          });
           renderTranscript();
           announce('This message is still sending on the Mac.');
           return false;
@@ -5395,6 +5957,33 @@ function deliveryRecoveryEntryIsCurrent(entry) {
   );
 }
 
+async function refreshDeliveryRecoveryAuthority(entry) {
+  let authoritative;
+  try {
+    authoritative = await readAuthoritativePendingDeliveryRequired(
+      entry.message,
+    );
+  } catch {
+    return false;
+  }
+  if (!authoritative) {
+    entry.cancelled = true;
+    state.optimistic = state.optimistic.filter(
+      (candidate) => candidate !== entry.message,
+    );
+    renderTranscript();
+    return false;
+  }
+  if (!samePendingDeliveryIdentity(authoritative, entry.message)) {
+    entry.cancelled = true;
+    applyAuthoritativePendingDelivery(entry.message, authoritative);
+    renderTranscript();
+    return false;
+  }
+  applyAuthoritativePendingDelivery(entry.message, authoritative);
+  return deliveryRecoveryEntryIsCurrent(entry);
+}
+
 function drainDeliveryRecoveryQueue() {
   while (
     activeDeliveryRecoveryCount < MAX_CONCURRENT_DELIVERY_RECOVERIES &&
@@ -5417,16 +6006,33 @@ function drainDeliveryRecoveryQueue() {
 async function checkDeliveryOnce(entry) {
   const message = entry.message;
   if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
+  if (!(await refreshDeliveryRecoveryAuthority(entry))) return false;
   if (!deliveryNeedsAutomaticRecovery(message)) {
     return message.delivery === 'delivered';
   }
+  const previousDelivery = message.delivery;
   message.delivery = 'confirming';
   message.deliveryPhase = 'confirming';
   message.retrySafe = false;
   message.definitelyUnsent = false;
   message.deliveryRecoveryExhausted = false;
   message.errorCode = null;
-  await persistPendingDeliveries({ upserts: [message] });
+  const persisted = await persistPendingDeliveries({
+    required: true,
+    upserts: [message],
+    deliveryStateTransitions: authorizedDeliveryStateTransition(
+      message,
+      previousDelivery,
+    ),
+  }).catch(() => null);
+  if (
+    !pendingDeliveryMessages(persisted, {
+      sanitize: sanitizePendingDelivery,
+    }).some((candidate) => samePendingDeliveryIdentity(candidate, message))
+  ) {
+    await restorePendingDeliveries();
+    return false;
+  }
   if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   renderTranscript();
   const deadline = Date.now() + DELIVERY_RECOVERY_MS;
@@ -5436,10 +6042,12 @@ async function checkDeliveryOnce(entry) {
   let firstCheck = true;
   while (firstCheck || Date.now() < deadline) {
     if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
+    if (!(await refreshDeliveryRecoveryAuthority(entry))) return false;
     firstCheck = false;
     try {
       const delivery = await requestDeliveryStatus(message);
       if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
+      if (!(await refreshDeliveryRecoveryAuthority(entry))) return false;
       lastErrorCode = null;
       if (await settleTerminalDeliveryStatus(message, delivery)) {
         return delivery.state === 'delivered';
@@ -5654,34 +6262,37 @@ const draftConflictFlow = createDraftConflictFlow({
       state.route.sessionId === sessionId && state.shell?.composer.field
         ? state.shell.composer.field.value
         : draftFor(sessionId);
-    const combined =
-      current && current !== text
-        ? `${text}${text ? '\n\n' : ''}${current}`
-        : text || current;
-    saveDraft(sessionId, combined);
+    const combined = mergeRecoveredDraftText(text, current);
+    const savedDraft = saveDraft(sessionId, combined);
+    if (!savedDraft) return false;
     if (state.route.sessionId === sessionId && state.shell?.composer.field) {
       state.shell.composer.field.value = combined;
+      state.shell.composer.field.dataset.draftRevision =
+        savedDraft.revision;
       state.shell.composer.resize();
     }
+    return true;
   },
   // Same merge restoreDefinitelyUnsentDraft uses: without it, photos on the
   // conflicted phone message silently vanish (and their server-side uploads
   // leak) whenever the resolution returns the message to the composer.
   restoreAttachments: (optimistic) => {
     const restoredItems = restoredAttachmentItems(optimistic, null);
-    if (restoredItems.length === 0) return;
+    if (restoredItems.length === 0) return true;
     const currentItems = attachmentsFor(optimistic.sessionId);
-    const seen = new Set();
-    const mergedItems = [...currentItems, ...restoredItems].filter((item) => {
-      const key = item.localId || item.id;
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
+    const mergedItems = mergeRecoveredAttachmentItems(
+      restoredItems,
+      currentItems,
+    );
+    const attachmentsPersisted = persistAttachmentDrafts({
+      sessionId: optimistic.sessionId,
+      items: mergedItems,
     });
+    if (!attachmentsPersisted) return false;
     state.attachmentsBySession.set(optimistic.sessionId, mergedItems);
     optimistic.draftAttachmentItems = null;
-    persistAttachmentDrafts();
     renderComposerAttachments();
+    return true;
   },
   persist: (options) => persistPendingDeliveries(options),
   render: () => renderTranscript(),
@@ -5753,7 +6364,7 @@ function openDraftConflict(message) {
       on: {
         click: async () => {
           if (!(await claimConflictAction(message, 'edit'))) return;
-          draftConflictFlow.keepMacDraft(message);
+          await recoverClaimedFailedMessage(message);
         },
       },
     }),
@@ -6233,7 +6844,7 @@ async function runCreateChat({ onCreated } = {}) {
     announce(where ? `New chat in ${where}.` : 'New chat created.');
     // Refresh first so the chat exists in state before routing to it,
     // otherwise the transcript opens against a session the list does not know.
-    await loadSessions(workspaceId);
+    await Promise.all([loadSessions(workspaceId), loadRecentSessions()]);
     await openSession(done.createdSessionId, { workspaceId });
     return done.createdSessionId;
   }
@@ -6308,7 +6919,7 @@ function confirmCloseChat(session, { onClosed } = {}) {
 
 function openChatsSheet() {
   const workspaceId = state.route.workspaceId;
-  const sessions = (sessionsFor(workspaceId) || []).slice();
+  const sessions = recentSessionsNewestFirst();
   const list = node('div', { className: 'chats-list' });
 
   const rows = sessions.map((session) => {
@@ -6316,7 +6927,7 @@ function openChatsSheet() {
     // The model comes from Conductor's own database, so it reflects what this
     // chat is actually running. It cannot be changed from the phone: Conductor
     // exposes nothing for its model and effort menus to accessibility.
-    const meta = [session.model, active ? 'open' : null]
+    const meta = [session.workspaceName, session.model, active ? 'open' : null]
       .filter(Boolean)
       .join(' \u00b7 ');
     return node('div', { className: `chats-sheet-row${active ? ' is-active' : ''}` }, [
@@ -6326,7 +6937,11 @@ function openChatsSheet() {
         on: {
           click: () => {
             closeOverlay();
-            navigate({ view: 'transcript', workspaceId, sessionId: session.id });
+            navigate({
+              view: 'transcript',
+              workspaceId: session.workspaceId,
+              sessionId: session.id,
+            });
           },
         },
       }, [
@@ -6341,7 +6956,11 @@ function openChatsSheet() {
         on: {
           click: () =>
             confirmCloseChat(session, {
-              onClosed: () => void loadSessions(workspaceId),
+              onClosed: () =>
+                void Promise.all([
+                  loadRecentSessions(),
+                  loadSessions(session.workspaceId),
+                ]),
             }),
         },
       }),
@@ -6350,11 +6969,11 @@ function openChatsSheet() {
   list.replaceChildren(
     ...(rows.length
       ? rows
-      : [node('p', { className: 'sheet-note', text: 'No chats in this workspace yet.' })]),
+      : [node('p', { className: 'sheet-note', text: 'No recent chats yet.' })]),
   );
 
   openSheet(
-    'Chats',
+    'Recent chats',
     node('div', {}, [
       node('button', {
         className: 'primary-button sheet-chats-action',

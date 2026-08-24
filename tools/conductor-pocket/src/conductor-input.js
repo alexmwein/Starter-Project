@@ -109,9 +109,10 @@ function recordDiagnostic(entry) {
   }
 }
 
-function fail(code, tag = null) {
+function fail(code, tag = null, { transientRead = false } = {}) {
   const error = new Error(code);
   error.pocketCode = code;
+  if (transientRead) error.pocketTransientRead = true;
   lastFailure = {
     code,
     tag,
@@ -156,12 +157,12 @@ const TRANSIENT_READ_DELAY_SECONDS = 0.05;
 // wrap read-only inspection with it. assertInputLease and assertSessionUnlocked
 // are deliberately excluded: those report real physical-input and lock state,
 // and retrying them would erase the signal they exist to carry.
-function withTransientReadRetry(readOnlyCheck) {
+function withTransientReadRetry(readOnlyCheck, shouldRetry = () => true) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return readOnlyCheck();
     } catch (error) {
-      if (attempt >= TRANSIENT_READ_ATTEMPTS) throw error;
+      if (!shouldRetry(error) || attempt >= TRANSIENT_READ_ATTEMPTS) throw error;
       delay(TRANSIENT_READ_DELAY_SECONDS);
     }
   }
@@ -847,7 +848,11 @@ function validateFocusedComposer(pid, expectedDraft = null) {
       .byName('AXDOMClassList')
       .value();
   } catch {
-    fail('composer_focus_changed');
+    // A focused AX node can be replaced between these two attribute reads while
+    // Conductor re-renders. Mark only that bridge failure as retryable. A real
+    // role, class, draft, lock, process or route mismatch remains unmarked and
+    // therefore still fails on its first readiness sample.
+    fail('composer_focus_changed', null, { transientRead: true });
   }
   if (
     focusedElement.role() !== 'AXTextArea' ||
@@ -1602,7 +1607,10 @@ function waitForExactDraft(pid, expectedDraft, routeLease) {
 function sendControlLikelyReady(pid, expectedDraft) {
   let process;
   try {
-    process = validateFocusedComposer(pid, expectedDraft);
+    process = withTransientReadRetry(
+      () => validateFocusedComposer(pid, expectedDraft),
+      (error) => error?.pocketTransientRead === true,
+    );
   } catch (error) {
     // Structured validation failures carry safety and recovery meaning. Do
     // not flatten draft, lock, route or target failures into 250 more polls.

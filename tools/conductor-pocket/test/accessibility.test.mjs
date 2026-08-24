@@ -1797,6 +1797,73 @@ globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
   );
 });
 
+test('send readiness retries a transient focused composer AX read', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __focusedReads: 0,
+    __retryDelays: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+const __activeClasses = [
+  'ml-1',
+  'bg-foreground',
+  'hover:bg-foreground/80',
+];
+const __sendChild = {
+  attributes: {
+    byName: () => ({ value: () => __activeClasses }),
+  },
+};
+const __composer = {
+  uiElements: () => [__sendChild],
+};
+const __focused = {
+  role: () => 'AXTextArea',
+  value: () => 'draft',
+  attributes: {
+    byName(name) {
+      if (name === 'AXDOMClassList') return { value: () => COMPOSER_CLASSES };
+      if (name === 'AXParent') return { value: () => __composer };
+      throw new Error('unexpected focused attribute');
+    },
+  },
+};
+const __process = {
+  attributes: {
+    byName(name) {
+      if (name !== 'AXFocusedUIElement') throw new Error('unexpected process attribute');
+      return {
+        value() {
+          globalThis.__focusedReads += 1;
+          if (globalThis.__focusedReads < 3) throw new Error('stale AX node');
+          return __focused;
+        },
+      };
+    },
+  },
+};
+delay = () => { globalThis.__retryDelays += 1; };
+validatedConductorProcess = () => __process;
+globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
+    sandbox,
+  );
+
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
+  assert.equal(sandbox.__focusedReads, 4);
+  assert.equal(sandbox.__retryDelays, 2);
+});
+
 test('a missing Conductor window is recovered before the send gives up', async () => {
   // conductor_window_unavailable is classified retry-safe, so the phone offered
   // Retry, and the retry asked the same absent window again and failed again in

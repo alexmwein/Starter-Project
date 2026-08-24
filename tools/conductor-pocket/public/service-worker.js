@@ -1,21 +1,22 @@
-const SHELL_REVISION = '0.2.0-fast-recovery-20260823';
-const CACHE = 'conductor-pocket-shell-v25';
+const SHELL_REVISION = '0.2.0-pocket-final-20260823';
+const CACHE = `conductor-pocket-shell-${SHELL_REVISION}`;
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-fast-recovery-20260823',
-  '/app.js?v=0.2.0-fast-recovery-20260823',
-  '/bootstrap-recovery.js?v=0.2.0-fast-recovery-20260823',
-  '/delivery-receipts.js?v=0.2.0-fast-recovery-20260823',
-  '/draft-conflict.js?v=0.2.0-fast-recovery-20260823',
-  '/app-update.js?v=0.2.0-fast-recovery-20260823',
-  '/http.js?v=0.2.0-fast-recovery-20260823',
-  '/image-attachments.js?v=0.2.0-fast-recovery-20260823',
-  '/live-refresh.js?v=0.2.0-fast-recovery-20260823',
-  '/read-state.js?v=0.2.0-fast-recovery-20260823',
-  '/rich-text.js?v=0.2.0-fast-recovery-20260823',
-  '/transcript-focus.js?v=0.2.0-fast-recovery-20260823',
-  '/swipe-navigation.js?v=0.2.0-fast-recovery-20260823',
+  '/app.css?v=0.2.0-pocket-final-20260823',
+  '/app.js?v=0.2.0-pocket-final-20260823',
+  '/bootstrap-recovery.js?v=0.2.0-pocket-final-20260823',
+  '/delivery-receipts.js?v=0.2.0-pocket-final-20260823',
+  '/draft-conflict.js?v=0.2.0-pocket-final-20260823',
+  '/usage-state.js?v=0.2.0-pocket-final-20260823',
+  '/app-update.js?v=0.2.0-pocket-final-20260823',
+  '/http.js?v=0.2.0-pocket-final-20260823',
+  '/image-attachments.js?v=0.2.0-pocket-final-20260823',
+  '/live-refresh.js?v=0.2.0-pocket-final-20260823',
+  '/read-state.js?v=0.2.0-pocket-final-20260823',
+  '/rich-text.js?v=0.2.0-pocket-final-20260823',
+  '/transcript-focus.js?v=0.2.0-pocket-final-20260823',
+  '/swipe-navigation.js?v=0.2.0-pocket-final-20260823',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -27,6 +28,7 @@ const SHELL_PATHS = new Set([
   '/bootstrap-recovery.js',
   '/delivery-receipts.js',
   '/draft-conflict.js',
+  '/usage-state.js',
   '/app-update.js',
   '/http.js',
   '/image-attachments.js',
@@ -44,6 +46,7 @@ const SHELL_ASSET_PATHS = new Set([
   '/bootstrap-recovery.js',
   '/delivery-receipts.js',
   '/draft-conflict.js',
+  '/usage-state.js',
   '/app-update.js',
   '/http.js',
   '/image-attachments.js',
@@ -156,7 +159,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      await Promise.all(
+      await Promise.allSettled(
         keys
           .filter(
             (key) =>
