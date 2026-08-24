@@ -1587,7 +1587,11 @@ test('the send path does not re-derive work it already has', async () => {
   // Send timing rows identify phases without recording message content.
   assert.match(
     inputHelper,
-    /outcome: 'pressed'[\s\S]*timings: \{[\s\S]*outerNavigationMs[\s\S]*sendReadyMs[\s\S]*finalProofMs[\s\S]*totalMs/,
+    /function sendPhaseTimings[\s\S]*outerNavigationMs[\s\S]*sendReadyMs[\s\S]*finalProofMs[\s\S]*totalMs/,
+  );
+  assert.match(
+    inputHelper,
+    /outcome: 'pressed'[\s\S]*timings: sendPhaseTimings\(/,
   );
 
   // The queued-edit scan is proven once per attempt, and only the scan: the
@@ -1604,6 +1608,143 @@ test('the send path does not re-derive work it already has', async () => {
     queuedBody.indexOf('composerSendContext(process)') <
       queuedBody.indexOf('if (queuedEditProven)'),
   );
+});
+
+test('failed send diagnostics include content-free phase timings', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = Object.assign(
+    () => ({
+      dataUsingEncoding() {
+        return { length: 7 };
+      },
+    }),
+    { NSUTF8StringEncoding: 4 },
+  );
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __diagnosticRows: [],
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+decodeBase64Environment = (name) => name === 'POCKET_MESSAGE_BASE64' ? 'private' : '';
+environmentValue = (name) => name === 'POCKET_ATTEMPT_STARTED_AT' ? String(Date.now() - 25) : null;
+prepareInput = () => ({ clearEvents: [], operations: [] });
+expectedInputCounters = () => null;
+acquireInputLease = () => fail('route_changed', 'fixture');
+recordDiagnostic = (entry) => globalThis.__diagnosticRows.push(entry);
+globalThis.__typeAndSendMessageForDiagnostics = typeAndSendMessage;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__typeAndSendMessageForDiagnostics(123),
+    (error) => error?.pocketCode === 'route_changed',
+  );
+  assert.equal(sandbox.__diagnosticRows.length, 1);
+  const [row] = sandbox.__diagnosticRows;
+  assert.deepEqual(
+    Object.keys(row.timings),
+    [
+      'outerNavigationMs',
+      'routeAcquireMs',
+      'draftReadyMs',
+      'sendReadyMs',
+      'finalProofMs',
+      'postPressChecksMs',
+      'totalMs',
+    ],
+  );
+  assert.equal(typeof row.timings.outerNavigationMs, 'number');
+  assert.equal(typeof row.timings.routeAcquireMs, 'number');
+  assert.equal(row.timings.draftReadyMs, null);
+  assert.equal(row.timings.sendReadyMs, null);
+  assert.equal(row.timings.finalProofMs, null);
+  assert.equal(row.timings.postPressChecksMs, null);
+  assert.equal(typeof row.timings.totalMs, 'number');
+  assert.equal('message' in row, false);
+  assert.equal(JSON.stringify(row).includes('private'), false);
+});
+
+test('send readiness falls back to cheap child class reads without authorizing an unreadable probe', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __probeProcess: null,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+validateFocusedComposer = () => globalThis.__probeProcess;
+globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
+    sandbox,
+  );
+
+  const activeClasses = [
+    'ml-1',
+    'bg-foreground',
+    'hover:bg-foreground/80',
+  ];
+  let childClassReads = 0;
+  const child = {
+    attributes: {
+      byName() {
+        return {
+          value() {
+            childClassReads += 1;
+            return activeClasses;
+          },
+        };
+      },
+    },
+  };
+  const composer = {
+    uiElements() {
+      return [child];
+    },
+  };
+  const focused = {
+    attributes: {
+      byName(name) {
+        assert.equal(name, 'AXParent');
+        return { value: () => composer };
+      },
+    },
+  };
+  sandbox.__probeProcess = {
+    attributes: {
+      byName(name) {
+        assert.equal(name, 'AXFocusedUIElement');
+        return { value: () => focused };
+      },
+    },
+  };
+
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
+  assert.equal(childClassReads, 1);
+
+  child.attributes.byName = () => ({
+    value() {
+      childClassReads += 1;
+      throw new Error('child class unreadable');
+    },
+  });
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
 });
 
 test('a missing Conductor window is recovered before the send gives up', async () => {

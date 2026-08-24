@@ -1606,10 +1606,26 @@ function sendControlLikelyReady(pid, expectedDraft) {
     const composer = focused.attributes.byName('AXParent').value();
     const children = childElements(composer);
     if (children.length === 0) return false;
-    const classGroups = tryBulk(composer, children.length, (group) =>
+    let classGroups = tryBulk(composer, children.length, (group) =>
       group.uiElements.attributes.byName('AXDOMClassList').value(),
     );
-    if (!classGroups) return true;
+    if (!classGroups) {
+      // Some Accessibility bridges cannot construct the bulk specifier even
+      // though the same attribute remains readable on each child. Keep that
+      // case cheap and local to the composer. An unreadable child contributes
+      // no match, so an incomplete probe can never authorize the expensive
+      // decision-point proof on every poll.
+      classGroups = children.map((child) => {
+        try {
+          const classes = child.attributes
+            .byName('AXDOMClassList')
+            .value();
+          return Array.isArray(classes) ? classes : null;
+        } catch {
+          return null;
+        }
+      });
+    }
     let matches = 0;
     for (const classes of classGroups) {
       if (!Array.isArray(classes)) continue;
@@ -1623,8 +1639,9 @@ function sendControlLikelyReady(pid, expectedDraft) {
     }
     return matches === 1;
   } catch {
-    // Unreadable is not evidence of absence; let the full check decide.
-    return true;
+    // A later poll can retry a transient read. Only a positive class match is
+    // allowed to spend the full resolver and advance to its decision proof.
+    return false;
   }
 }
 
@@ -1714,6 +1731,38 @@ function deliverWholeMessage(pid, message) {
     // The chunked path clears the composer itself.
   }
   return false;
+}
+
+function sendPhaseTimings({
+  attemptStartedAt,
+  helperStartedAt,
+  routeReadyAt,
+  draftReadyAt,
+  sendReadyAt,
+  pressInvokedAt,
+  completedAt,
+}) {
+  const elapsed = (startedAt, finishedAt) => {
+    if (!Number.isSafeInteger(startedAt) || startedAt <= 0) return null;
+    const phaseFinishedAt =
+      Number.isSafeInteger(finishedAt) && finishedAt > 0
+        ? finishedAt
+        : completedAt;
+    return Math.max(0, phaseFinishedAt - startedAt);
+  };
+  return {
+    outerNavigationMs: Math.max(0, helperStartedAt - attemptStartedAt),
+    routeAcquireMs: elapsed(helperStartedAt, routeReadyAt),
+    draftReadyMs:
+      routeReadyAt > 0 ? elapsed(routeReadyAt, draftReadyAt) : null,
+    sendReadyMs:
+      draftReadyAt > 0 ? elapsed(draftReadyAt, sendReadyAt) : null,
+    finalProofMs:
+      sendReadyAt > 0 ? elapsed(sendReadyAt, pressInvokedAt) : null,
+    postPressChecksMs:
+      pressInvokedAt > 0 ? elapsed(pressInvokedAt, completedAt) : null,
+    totalMs: Math.max(0, completedAt - attemptStartedAt),
+  };
 }
 
 function typeAndSendMessage(pid) {
@@ -1847,15 +1896,15 @@ function typeAndSendMessage(pid) {
       at: new Date().toISOString(),
       attemptStartedAt,
       outcome: 'pressed',
-      timings: {
-        outerNavigationMs: Math.max(0, helperStartedAt - attemptStartedAt),
-        routeAcquireMs: Math.max(0, routeReadyAt - helperStartedAt),
-        draftReadyMs: Math.max(0, draftReadyAt - routeReadyAt),
-        sendReadyMs: Math.max(0, sendReadyAt - draftReadyAt),
-        finalProofMs: Math.max(0, pressInvokedAt - sendReadyAt),
-        postPressChecksMs: Math.max(0, completedAt - pressInvokedAt),
-        totalMs: Math.max(0, completedAt - attemptStartedAt),
-      },
+      timings: sendPhaseTimings({
+        attemptStartedAt,
+        helperStartedAt,
+        routeReadyAt,
+        draftReadyAt,
+        sendReadyAt,
+        pressInvokedAt,
+        completedAt,
+      }),
     });
     return `pressed:${pressInvokedAt}`;
   } catch (error) {
@@ -1872,6 +1921,7 @@ function typeAndSendMessage(pid) {
     // attemptStartedAt joins this row to the relay's traceId in relay.out.log,
     // so a send_not_confirmed there can be resolved to the assertion that
     // actually broke rather than the phase that swallowed it.
+    const completedAt = Date.now();
     recordDiagnostic({
       at: new Date().toISOString(),
       attemptStartedAt,
@@ -1881,6 +1931,15 @@ function typeAndSendMessage(pid) {
       provenPrefixLength:
         typeof lastProvenPrefix === 'string' ? lastProvenPrefix.length : null,
       messageLength: message.length,
+      timings: sendPhaseTimings({
+        attemptStartedAt,
+        helperStartedAt,
+        routeReadyAt,
+        draftReadyAt,
+        sendReadyAt,
+        pressInvokedAt,
+        completedAt,
+      }),
     });
     let inputInterrupted = error?.pocketCode === 'user_input_active';
     if (!inputInterrupted && inputLease) {
