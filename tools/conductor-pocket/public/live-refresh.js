@@ -25,6 +25,12 @@ export function createLiveRefreshCoordinator({
     }, delayMs);
   }
 
+  function flush() {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    return drain();
+  }
+
   async function drain() {
     if (inFlight) return inFlight;
     queued = false;
@@ -68,8 +74,37 @@ export function createLiveRefreshCoordinator({
   return {
     schedule,
     stop,
-    flush: drain,
+    flush,
   };
+}
+
+export function applyConnectionAvailability({
+  state,
+  status,
+  now = Date.now(),
+  render,
+  restartEvents,
+  refresh,
+  recheckDeliveries,
+  recoverDeliveries,
+}) {
+  if (
+    !state ||
+    !['connecting', 'live', 'offline'].includes(status) ||
+    typeof render !== 'function'
+  ) {
+    throw new TypeError('invalid_connection_availability');
+  }
+
+  state.connection = status;
+  if (status === 'live') state.lastHeartbeat = now;
+  render();
+  if (status === 'offline') return;
+
+  restartEvents?.();
+  refresh?.();
+  recheckDeliveries?.();
+  recoverDeliveries?.();
 }
 
 export function createSessionMessageRequestCoordinator() {

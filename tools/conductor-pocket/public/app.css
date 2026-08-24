@@ -29,6 +29,13 @@
   --nav-height: 52px;
   --composer-height: 68px;
   --sheet-shadow: 0 -12px 48px rgba(0, 0, 0, 0.5);
+  --motion-quick: 100ms;
+  --motion-content: 140ms;
+  --motion-overlay-exit: 160ms;
+  --motion-overlay-enter: 220ms;
+  --ease-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-move: cubic-bezier(0.4, 0, 0.2, 1);
   font-family: var(--font-text);
   font-size: 16px;
   font-synthesis: none;
@@ -92,6 +99,7 @@ textarea {
 
 button {
   border: 0;
+  transition: transform var(--motion-quick) var(--ease-enter);
 }
 
 button,
@@ -660,6 +668,14 @@ button:active {
   margin: 0 auto;
 }
 
+.transcript-column.is-switching-out {
+  animation: chat-content-out var(--motion-quick) var(--ease-exit) both;
+}
+
+.transcript-column.is-switching-in {
+  animation: chat-content-in var(--motion-content) var(--ease-enter) both;
+}
+
 .message-list {
   display: flex;
   flex-direction: column;
@@ -667,6 +683,41 @@ button:active {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.transcript-placeholder {
+  display: flex;
+  min-height: min(52vh, 360px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.transcript-placeholder > .icon {
+  width: 32px;
+  height: 32px;
+}
+
+.transcript-placeholder > .status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.transcript-placeholder h2 {
+  margin: 14px 0 4px;
+  color: var(--text-primary);
+  font-size: 1.0625rem;
+  line-height: 1.375rem;
+}
+
+.transcript-placeholder p {
+  max-width: 32ch;
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
 }
 
 .message {
@@ -1176,6 +1227,10 @@ button:active {
   color: var(--copper);
   font-size: 0.8125rem;
   font-weight: 600;
+}
+
+.message-retry:disabled {
+  opacity: 0.55;
 }
 
 @media (max-width: 420px) {
@@ -1768,6 +1823,26 @@ button:active {
   font-size: 0.75rem;
   font-weight: 500;
   box-shadow: 0 1px 2px rgba(33, 29, 25, 0.06), 0 4px 16px rgba(33, 29, 25, 0.05);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity var(--motion-quick) var(--ease-move),
+    transform var(--motion-quick) var(--ease-move),
+    visibility 0s linear var(--motion-quick);
+}
+
+.latest-button.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.latest-button.is-visible:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .latest-button[hidden] {
@@ -2013,7 +2088,16 @@ button:active {
   align-items: flex-end;
   justify-content: center;
   padding: 0;
+  background: transparent;
+}
+
+.overlay::before {
+  position: absolute;
+  inset: 0;
   background: var(--scrim);
+  content: "";
+  pointer-events: none;
+  animation: scrim-in var(--motion-overlay-enter) var(--ease-enter) both;
 }
 
 .overlay[hidden] {
@@ -2022,6 +2106,7 @@ button:active {
 
 .sheet {
   position: relative;
+  z-index: 1;
   /* A flex column so .sheet-scroll can bound itself against an indefinite
      height. .sheet sets max-height but never height, and a percentage
      max-height against an indefinite parent resolves to none, so the scroller
@@ -2037,11 +2122,27 @@ button:active {
   border-radius: 16px 16px 0 0;
   background: var(--elevated);
   box-shadow: var(--sheet-shadow);
-  animation: sheet-in 380ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: sheet-in var(--motion-overlay-enter) var(--ease-enter) both;
 }
 
 .sheet.switcher {
   height: 65%;
+}
+
+.sheet.usage {
+  height: min(75%, 640px);
+}
+
+.overlay.is-closing {
+  pointer-events: none;
+}
+
+.overlay.is-closing::before {
+  animation: scrim-out var(--motion-overlay-exit) var(--ease-exit) both;
+}
+
+.overlay.is-closing .sheet {
+  animation: sheet-out var(--motion-overlay-exit) var(--ease-exit) both;
 }
 
 .sheet-grabber {
@@ -2290,12 +2391,61 @@ button:active {
   }
 }
 
+@keyframes chat-content-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes chat-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes sheet-in {
   from {
     transform: translateY(100%);
   }
   to {
     transform: translateY(0);
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scrim-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
 
@@ -2342,6 +2492,26 @@ button:active {
 }
 
 @media (max-width: 599px) {
+  .panel {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(6px);
+    transition:
+      transform var(--motion-content) var(--ease-move),
+      visibility 0s linear var(--motion-content);
+  }
+
+  .panel.is-active {
+    z-index: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(0);
+    transition-delay: 0s;
+  }
+
   .image-preview-overlay {
     align-items: stretch;
   }
@@ -2460,6 +2630,11 @@ button:active {
   }
 
   .boot-connecting {
+    opacity: 1;
+    animation: none !important;
+  }
+
+  .status-dot.working {
     opacity: 1;
     animation: none !important;
   }

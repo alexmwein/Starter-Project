@@ -554,8 +554,13 @@ test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn',
   assert.match(js, /if \(connectionChanged\) renderConnectionState\(\);/);
 
   // Signing out must not leave its confirmation sheet on top of the gate.
-  const signOut = js.slice(js.indexOf('closeOverlay();\n                renderSignedOut();') - 40);
-  assert.match(signOut.slice(0, 200), /closeOverlay\(\);\s*\n\s*renderSignedOut\(\);/);
+  const signOut = js.slice(
+    js.indexOf("closeOverlay({ immediate: true });\n                renderSignedOut();") - 40,
+  );
+  assert.match(
+    signOut.slice(0, 240),
+    /closeOverlay\(\{ immediate: true \}\);\s*\n\s*renderSignedOut\(\);/,
+  );
 
   // Landscape: every iPhone is past the two-column breakpoint when rotated, so
   // the left column sat under the notch.
@@ -628,4 +633,148 @@ test('phone controls keep full touch targets and usage rows stack before they co
     css,
     /@media \(max-width: 430px\) \{[\s\S]*?\.usage-seat \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?\.usage-seat-value \{[\s\S]*?text-align: left;[\s\S]*?\.usage-seat-reset \{[\s\S]*?margin-top: 0;/,
   );
+});
+
+test('sheets enter at final geometry and finish one bounded exit', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(css, /--motion-overlay-enter: 220ms;/);
+  assert.match(css, /--motion-overlay-exit: 160ms;/);
+  assert.match(css, /\.sheet\.usage \{[\s\S]*?height: min\(75%, 640px\);/);
+  assert.match(css, /\.overlay::before \{[\s\S]*?animation: scrim-in/);
+  assert.match(css, /\.overlay\.is-closing::before \{[\s\S]*?animation: scrim-out/);
+  assert.match(css, /\.overlay\.is-closing \.sheet \{[\s\S]*?animation: sheet-out/);
+
+  const openStart = js.indexOf('async function openSheet(');
+  const closeStart = js.indexOf('async function closeOverlay(');
+  assert.ok(openStart > 0 && closeStart > openStart);
+  const openBody = js.slice(openStart, closeStart);
+  const closeBody = js.slice(closeStart, js.indexOf('\nasync function openSwitcher', closeStart));
+  assert.match(openBody, /await finishOverlayClose\(\)/);
+  assert.match(openBody, /activeOverlay = \{/);
+  assert.match(closeBody, /classList\.add\('is-closing'\)/);
+  assert.match(closeBody, /waitForVisualMotion/);
+  assert.match(closeBody, /immediate \|\| prefersReducedMotion\(\)/);
+
+  const usageSection = functionSource(
+    js,
+    'function accountUsageSection',
+    'async function appendAccountUsage',
+  );
+  assert.match(usageSection, /skeletonRows\(6\)/);
+  const fillUsage = functionSource(
+    js,
+    'async function fillAccountUsage',
+    'function openUsageSheet',
+  );
+  assert.match(fillUsage, /section\.replaceChildren\(\)/);
+});
+
+test('privacy and account gates bypass any overlay motion', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+
+  const gateView = functionSource(js, 'function gateView', 'function skeletonRows');
+  assert.match(gateView, /void closeOverlay\(\{ immediate: true \}\);/);
+
+  const closeOverlay = functionSource(
+    js,
+    'async function closeOverlay',
+    'async function openSwitcher',
+  );
+  const immediateBranch = closeOverlay.indexOf('if (immediate || prefersReducedMotion())');
+  const pendingBranch = closeOverlay.indexOf('if (lifecycle.closingPromise)');
+  assert.ok(immediateBranch > 0, 'closeOverlay must support immediate removal');
+  assert.ok(
+    pendingBranch > immediateBranch,
+    'an immediate safety close must preempt an exit already in progress',
+  );
+});
+
+test('chat switching keeps the shell mounted and transitions only its content', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(js, /const transcriptColumn = node\('div', \{ className: 'transcript-column' \}\)/);
+  assert.match(js, /state\.shell = \{[\s\S]*?transcriptColumn,/);
+  const openSession = functionSource(
+    js,
+    'async function openSession',
+    'async function refreshMessages',
+  );
+  assert.match(openSession, /await transitionTranscriptOut\(controller\.signal\)/);
+
+  const transcript = functionSource(
+    js,
+    'function renderTranscript',
+    'function isMessageContinuation',
+  );
+  assert.match(transcript, /transitionTranscriptIn\(\)/);
+  assert.match(
+    js,
+    /function transitionTranscriptIn\(\)[\s\S]*?classList\.add\('is-switching-in'\)/,
+  );
+  assert.match(transcript, /renderTranscriptPlaceholder/);
+  assert.match(transcript, /!transcriptSessionChanged/);
+  assert.match(css, /@keyframes chat-content-out \{[\s\S]*?opacity:[\s\S]*?transform:/);
+  assert.match(css, /@keyframes chat-content-in \{[\s\S]*?opacity:[\s\S]*?transform:/);
+
+  const strip = functionSource(js, 'function renderChatStrip', 'function renderTranscript');
+  assert.match(strip, /const renderKey = JSON\.stringify/);
+  assert.match(strip, /strip\.dataset\.renderKey === renderKey/);
+  assert.match(strip, /strip\.dataset\.renderKey = renderKey/);
+
+  const navigate = functionSource(js, 'function navigate', 'async function refreshWorkspaces');
+  assert.match(navigate, /route\.view === 'transcript'[\s\S]*?return openSession\(/);
+});
+
+test('phone panels and transient controls move without animating layout', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(css, /--motion-quick: 100ms;/);
+  assert.match(css, /--motion-content: 140ms;/);
+  assert.match(
+    css,
+    /@media \(max-width: 599px\) \{[\s\S]*?\.panel \{[\s\S]*?visibility: hidden;[\s\S]*?transform:/,
+  );
+  const phonePanels = css.slice(
+    css.indexOf('@media (max-width: 599px)'),
+    css.indexOf('@media (min-width: 600px)'),
+  );
+  const phonePanelRule = phonePanels.slice(
+    phonePanels.indexOf('.panel {'),
+    phonePanels.indexOf('.panel.is-active'),
+  );
+  assert.doesNotMatch(phonePanelRule, /opacity/);
+  assert.match(css, /\.panel\.is-active \{[\s\S]*?visibility: visible;/);
+  assert.match(css, /\.latest-button\.is-visible \{[\s\S]*?opacity: 1;[\s\S]*?transform:/);
+  assert.match(js, /function setLatestButtonVisible\(/);
+  assert.match(js, /setLatestButtonVisible\(latestButton, false\)/);
+  const panelExposure = functionSource(
+    js,
+    'function syncPanelExposure',
+    'function updateRoutePanels',
+  );
+  assert.match(panelExposure, /panel\.toggleAttribute\('inert', !active\)/);
+  assert.match(panelExposure, /panel\.setAttribute\('aria-hidden', active \? 'false' : 'true'\)/);
+  assert.match(js, /PHONE_LAYOUT\.addEventListener\('change', syncPanelExposure\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.status-dot\.working \{[\s\S]*?animation: none !important;/);
+
+  const motionTransitions = [...css.matchAll(/transition:\s*([^;]+);/g)]
+    .map((match) => match[1])
+    .filter((value) => /motion-|\d+ms/.test(value));
+  assert.ok(motionTransitions.length > 0);
+  for (const transition of motionTransitions) {
+    assert.doesNotMatch(transition, /\b(?:height|width|top|right|bottom|left|margin|padding)\b/);
+  }
 });

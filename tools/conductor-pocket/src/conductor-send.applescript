@@ -48,7 +48,8 @@ on restoreConductorWindow()
 	-- phone send arrives: the operator wakes the Mac and sends. Failing in under
 	-- a second there is what made this look like a broken Retry. Six seconds is
 	-- well inside the 45s automation budget.
-	repeat with waitIndex from 1 to 30
+	set recoveryDeadline to (current date) + 6
+	repeat while (current date) < recoveryDeadline
 		delay 0.2
 		tell application "System Events"
 			tell process "Conductor"
@@ -431,6 +432,16 @@ on composerControls()
 	return {}
 end composerControls
 
+on inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
+	if candidateRole is not "AXLink" then return {0, missing value}
+	set selectedIncrement to 0
+	if candidateClasses contains "bg-sidebar-accent" then set selectedIncrement to 1
+	if my workspaceMatches(workspaceName, candidateName) is false then return {selectedIncrement, missing value}
+	set containerOffset to containerIndex - 1
+	set linkOffset to linkIndex - 1
+	return {selectedIncrement, {candidate, containerOffset, linkOffset, sidebarChildCount, containerChildCount}}
+end inspectWorkspaceCandidate
+
 on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
 	set cachedName to my cachedWorkspaceName
@@ -457,18 +468,49 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 			try
 				set workspaceElements to UI elements of workspaceContainer
 				set containerChildCount to count of workspaceElements
-				repeat with linkIndex from 1 to containerChildCount
-					set candidate to item linkIndex of workspaceElements
-					if (role of candidate as text) is "AXLink" then
-						set candidateClasses to value of attribute "AXDOMClassList" of candidate
-						if candidateClasses contains "bg-sidebar-accent" then set selectedWorkspaceCount to selectedWorkspaceCount + 1
-						set candidateName to name of candidate as text
-						if my workspaceMatches(workspaceName, candidateName) then
-							set containerOffset to containerIndex - 1
-							set linkOffset to linkIndex - 1
-							copy {candidate, containerOffset, linkOffset, sidebarChildCount, containerChildCount} to end of matchingRoutes
+				set containerRoutes to {}
+				set containerSelectedCount to 0
+				set bulkReady to false
+				try
+					set candidateRoles to role of UI elements of workspaceContainer
+					set candidateNames to name of UI elements of workspaceContainer
+					set candidateClassLists to value of attribute "AXDOMClassList" of UI elements of workspaceContainer
+					if (count of candidateRoles) is containerChildCount and (count of candidateNames) is containerChildCount and (count of candidateClassLists) is containerChildCount then set bulkReady to true
+				end try
+				if bulkReady then
+					repeat with linkIndex from 1 to containerChildCount
+						try
+							set candidate to item linkIndex of workspaceElements
+							set candidateRole to item linkIndex of candidateRoles as text
+							set candidateName to item linkIndex of candidateNames as text
+							set candidateClasses to item linkIndex of candidateClassLists
+							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
+							set containerSelectedCount to containerSelectedCount + (item 1 of candidateResult)
+							if item 2 of candidateResult is not missing value then copy item 2 of candidateResult to end of containerRoutes
+						on error
+							set bulkReady to false
+							exit repeat
+						end try
+					end repeat
+				end if
+				if bulkReady is false then
+					set containerRoutes to {}
+					set containerSelectedCount to 0
+					repeat with linkIndex from 1 to containerChildCount
+						set candidate to item linkIndex of workspaceElements
+						set candidateRole to role of candidate as text
+						if candidateRole is "AXLink" then
+							set candidateClasses to value of attribute "AXDOMClassList" of candidate
+							set candidateName to name of candidate as text
+							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
+							set containerSelectedCount to containerSelectedCount + (item 1 of candidateResult)
+							if item 2 of candidateResult is not missing value then copy item 2 of candidateResult to end of containerRoutes
 						end if
-					end if
+					end repeat
+				end if
+				set selectedWorkspaceCount to selectedWorkspaceCount + containerSelectedCount
+				repeat with containerRoute in containerRoutes
+					copy containerRoute to end of matchingRoutes
 				end repeat
 			on error
 				return missing value
@@ -485,29 +527,75 @@ on getSessionTabs()
 	tell application "System Events"
 		try
 			set mainElements to UI elements of mainGroup
-			repeat with candidate in mainElements
-				try
-					if (role of candidate as text) is "AXTabGroup" then
-						set tabGroupChildren to UI elements of candidate
-						set sessionTabs to {}
-						repeat with tabGroupChild in tabGroupChildren
-							try
-								if (role of tabGroupChild as text) is "AXRadioButton" then
-									copy tabGroupChild to end of sessionTabs
-								else
-									set tabGroupElements to UI elements of tabGroupChild
-									repeat with tabGroupElement in tabGroupElements
-										try
-											if (role of tabGroupElement as text) is "AXRadioButton" then copy tabGroupElement to end of sessionTabs
-										end try
-									end repeat
-								end if
-							end try
-						end repeat
-						return sessionTabs
-					end if
-				end try
+			set mainCount to count of mainElements
+			set mainRoles to missing value
+			try
+				set candidateMainRoles to role of UI elements of mainGroup
+				if (count of candidateMainRoles) is mainCount then set mainRoles to candidateMainRoles
+			end try
+			set tabGroup to missing value
+			repeat with mainIndex from 1 to mainCount
+				set candidate to item mainIndex of mainElements
+				if mainRoles is not missing value then
+					set candidateRole to item mainIndex of mainRoles as text
+				else
+					set candidateRole to ""
+					try
+						set candidateRole to role of candidate as text
+					end try
+				end if
+				if candidateRole is "AXTabGroup" then
+					set tabGroup to candidate
+					exit repeat
+				end if
 			end repeat
+			if tabGroup is missing value then return {}
+
+			set tabGroupChildren to UI elements of tabGroup
+			set childCount to count of tabGroupChildren
+			set childRoles to missing value
+			try
+				set candidateChildRoles to role of UI elements of tabGroup
+				if (count of candidateChildRoles) is childCount then set childRoles to candidateChildRoles
+			end try
+			set sessionTabs to {}
+			repeat with childIndex from 1 to childCount
+				set tabGroupChild to item childIndex of tabGroupChildren
+				if childRoles is not missing value then
+					set childRole to item childIndex of childRoles as text
+				else
+					set childRole to ""
+					try
+						set childRole to role of tabGroupChild as text
+					end try
+				end if
+				if childRole is "AXRadioButton" then
+					copy tabGroupChild to end of sessionTabs
+				else
+					try
+						set tabGroupElements to UI elements of tabGroupChild
+						set nestedCount to count of tabGroupElements
+						set nestedRoles to missing value
+						try
+							set candidateNestedRoles to role of UI elements of tabGroupChild
+							if (count of candidateNestedRoles) is nestedCount then set nestedRoles to candidateNestedRoles
+						end try
+						repeat with nestedIndex from 1 to nestedCount
+							set tabGroupElement to item nestedIndex of tabGroupElements
+							if nestedRoles is not missing value then
+								set nestedRole to item nestedIndex of nestedRoles as text
+							else
+								set nestedRole to ""
+								try
+									set nestedRole to role of tabGroupElement as text
+								end try
+							end if
+							if nestedRole is "AXRadioButton" then copy tabGroupElement to end of sessionTabs
+						end repeat
+					end try
+				end if
+			end repeat
+			return sessionTabs
 		end try
 	end tell
 	return {}
@@ -562,8 +650,37 @@ end workspaceLinkIsSelected
 
 on sessionIsSelected(sessionTitle, sessionOrdinal)
 	tell application "System Events"
+		set sessionTabs to my getSessionTabs()
+		set tabCount to count of sessionTabs
 		set matchedCount to 0
-		repeat with candidate in my getSessionTabs()
+		set tabNames to missing value
+		set tabValues to missing value
+		try
+			set candidateTabNames to name of every item of sessionTabs
+			set candidateTabValues to value of every item of sessionTabs
+			if (count of candidateTabNames) is tabCount and (count of candidateTabValues) is tabCount then
+				set normalizedTabNames to {}
+				set normalizedTabValues to {}
+				repeat with tabIndex from 1 to tabCount
+					set normalizedTabName to item tabIndex of candidateTabNames as text
+					set normalizedTabValue to item tabIndex of candidateTabValues as boolean
+					set end of normalizedTabNames to normalizedTabName
+					set end of normalizedTabValues to normalizedTabValue
+				end repeat
+				set tabNames to normalizedTabNames
+				set tabValues to normalizedTabValues
+			end if
+		end try
+		if tabNames is not missing value then
+			repeat with tabIndex from 1 to tabCount
+				if (item tabIndex of tabNames as text) is ("Close chat " & sessionTitle) then
+					set matchedCount to matchedCount + 1
+					if matchedCount is sessionOrdinal then return item tabIndex of tabValues as boolean
+				end if
+			end repeat
+			return false
+		end if
+		repeat with candidate in sessionTabs
 			try
 				if (name of candidate as text) is ("Close chat " & sessionTitle) then
 					set matchedCount to matchedCount + 1
@@ -745,17 +862,24 @@ if routeAlreadySelected is false then
 end if
 
 set stableRouteChecks to 0
-set my heldMainGroup to getMainGroup()
-repeat with waitIndex from 1 to 50
-	delay 0.1
-	if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
-		set stableRouteChecks to stableRouteChecks + 1
-		if stableRouteChecks is 3 then exit repeat
-	else
-		set stableRouteChecks to 0
-	end if
-end repeat
-set my heldMainGroup to missing value
+if routeAlreadySelected is true and operationMode is "send" then
+	(* This exact workspace and ordinal were selected on the first read. The
+	JXA helper still proves the pinned route twice immediately before press,
+	so three more full outer tree walks add latency without adding authority. *)
+	set stableRouteChecks to 3
+else
+	set my heldMainGroup to getMainGroup()
+	repeat with waitIndex from 1 to 50
+		delay 0.1
+		if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
+			set stableRouteChecks to stableRouteChecks + 1
+			if stableRouteChecks is 3 then exit repeat
+		else
+			set stableRouteChecks to 0
+		end if
+	end repeat
+	set my heldMainGroup to missing value
+end if
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 
 -- Control operations run HERE, after the route is proven and before any

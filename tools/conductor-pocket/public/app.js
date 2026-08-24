@@ -1,21 +1,23 @@
 import {
+  createDeliveryActionCoordinator,
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
-} from './delivery-receipts.js?v=0.2.0-phone-polish-20260821';
+  terminalDeliveryActionDisposition,
+} from './delivery-receipts.js?v=0.2.0-fast-recovery-20260823';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-phone-polish-20260821';
+} from './app-update.js?v=0.2.0-fast-recovery-20260823';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-phone-polish-20260821';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-phone-polish-20260821';
-import { fetchJson } from './http.js?v=0.2.0-phone-polish-20260821';
+} from './bootstrap-recovery.js?v=0.2.0-fast-recovery-20260823';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-fast-recovery-20260823';
+import { fetchJson } from './http.js?v=0.2.0-fast-recovery-20260823';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -25,15 +27,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-phone-polish-20260821';
+} from './image-attachments.js?v=0.2.0-fast-recovery-20260823';
 import {
+  applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-phone-polish-20260821';
+} from './live-refresh.js?v=0.2.0-fast-recovery-20260823';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-phone-polish-20260821';
+} from './rich-text.js?v=0.2.0-fast-recovery-20260823';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -44,19 +47,20 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-phone-polish-20260821';
+} from './read-state.js?v=0.2.0-fast-recovery-20260823';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-phone-polish-20260821';
+} from './transcript-focus.js?v=0.2.0-fast-recovery-20260823';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-phone-polish-20260821';
+} from './swipe-navigation.js?v=0.2.0-fast-recovery-20260823';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
 const announcer = document.querySelector('#announcer');
+const PHONE_LAYOUT = window.matchMedia('(max-width: 599px)');
 const AWAY_LOCK_MS = 5 * 60 * 1000;
 const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
 const RESUME_REQUEST_MS = 6 * 1000;
@@ -92,9 +96,14 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-phone-polish-20260821';
+const CLIENT_SHELL_REVISION = '0.2.0-fast-recovery-20260823';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
+const MOTION_MS = Object.freeze({
+  quick: 100,
+  content: 140,
+  overlayExit: 160,
+});
 
 const state = {
   auth: null,
@@ -148,6 +157,11 @@ const deliveryRecoveryInFlight = new Map();
 const deliveryRecoveryQueue = [];
 let activeDeliveryRecoveryCount = 0;
 let bootstrapCoordinator = null;
+const deliveryActionCoordinator = createDeliveryActionCoordinator({
+  onChange() {
+    if (state.shell) renderTranscript();
+  },
+});
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
 
@@ -770,6 +784,7 @@ function gateView({
   secondary,
   connectionAnchor = false,
 }) {
+  void closeOverlay({ immediate: true });
   state.shell?.composer.observer?.disconnect();
   state.shell?.readObserver?.disconnect();
   cancelReadTracking();
@@ -2127,32 +2142,41 @@ async function claimTerminalDeliveryActionRequired(message, action) {
 
 async function discardFailedMessage(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, 'delete');
-  } catch {
-    announce('Could not safely delete this notice yet. Try again.');
-    return;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    renderTranscript();
-    return;
-  }
-  for (const attachment of message.attachments || []) {
-    releaseAttachmentPreview(attachment);
-    if (safeAttachmentId(attachment.id)) {
-      void deleteUploadedAttachment(message.sessionId, attachment.id);
-    }
-  }
-  for (const item of message.draftAttachmentItems || []) {
-    releaseAttachmentResources(item);
-    releaseAttachmentPreview(item);
-  }
-  message.draftAttachmentItems = null;
-  state.optimistic = state.optimistic.filter((item) => item !== message);
-  renderTranscript();
+  cancelDeliveryRecovery(message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'delete',
+    async () => {
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, 'delete');
+      } catch {
+        announce('Could not safely delete this notice yet. Try again.');
+        return false;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      for (const attachment of message.attachments || []) {
+        releaseAttachmentPreview(attachment);
+        if (safeAttachmentId(attachment.id)) {
+          void deleteUploadedAttachment(message.sessionId, attachment.id);
+        }
+      }
+      for (const item of message.draftAttachmentItems || []) {
+        releaseAttachmentResources(item);
+        releaseAttachmentPreview(item);
+      }
+      message.draftAttachmentItems = null;
+      state.optimistic = state.optimistic.filter((item) => item !== message);
+      renderTranscript();
+      return true;
+    },
+  );
+  return result.value;
 }
 
 async function verifyTerminalDeliveryAction(message) {
@@ -2187,8 +2211,16 @@ async function verifyTerminalDeliveryAction(message) {
   }
   try {
     const delivery = await requestDeliveryStatus(message);
-    if (await settleTerminalDeliveryStatus(message, delivery)) return null;
-    if (delivery.state === 'pending') {
+    const disposition = terminalDeliveryActionDisposition(delivery);
+    if (disposition === 'resolved') {
+      await settleTerminalDeliveryStatus(message, delivery);
+      return null;
+    }
+    if (disposition === 'actionable') {
+      await settleTerminalDeliveryStatus(message, delivery);
+      return message;
+    }
+    if (disposition === 'pending') {
       message.delivery = 'delivering';
       message.deliveryPhase = delivery.phase || 'queued';
       message.retrySafe = false;
@@ -2198,6 +2230,8 @@ async function verifyTerminalDeliveryAction(message) {
       announce('This message is already being sent from another Pocket window.');
       return null;
     }
+    announce('Could not verify this delivery yet. Try again.');
+    return null;
   } catch {
     announce('Could not verify this delivery yet. Try again.');
     return null;
@@ -2228,61 +2262,66 @@ async function editFailedMessage(message) {
   // recover what was typed. Retry keeps its proof requirement, because it
   // resends.
   if (message?.kind !== 'optimistic' || message.delivery !== 'failed') return;
-  if (!(await verifyTerminalDeliveryAction(message))) {
-    announce('Could not recover this text yet. Try again.');
-    return;
-  }
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
-  } catch {
-    announce('Could not safely move this message yet. Try again.');
-    return;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    renderTranscript();
-    return;
-  }
-  applyAuthoritativePendingDelivery(message, claimed);
-  const sessionId = message.sessionId;
-  const restoredItems = restoredAttachmentItems(
-    message,
-    message.errorCode,
-  );
-  const currentItems = attachmentsFor(sessionId);
-  const seen = new Set();
-  const mergedItems = [...restoredItems, ...currentItems].filter((item) => {
-    const key = item.localId || item.id;
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  if (mergedItems.length > 0) {
-    state.attachmentsBySession.set(sessionId, mergedItems);
-  }
-  message.draftAttachmentItems = null;
-  state.optimistic = state.optimistic.filter((item) => item !== message);
+  cancelDeliveryRecovery(message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'edit',
+    async () => {
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, 'edit');
+      } catch {
+        announce('Could not safely move this message yet. Try again.');
+        return false;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      applyAuthoritativePendingDelivery(message, claimed);
+      const sessionId = message.sessionId;
+      const restoredItems = restoredAttachmentItems(
+        message,
+        message.errorCode,
+      );
+      const currentItems = attachmentsFor(sessionId);
+      const seen = new Set();
+      const mergedItems = [...restoredItems, ...currentItems].filter((item) => {
+        const key = item.localId || item.id;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (mergedItems.length > 0) {
+        state.attachmentsBySession.set(sessionId, mergedItems);
+      }
+      message.draftAttachmentItems = null;
+      state.optimistic = state.optimistic.filter((item) => item !== message);
 
-  const existingDraft = draftFor(sessionId);
-  const recoveredText = message.text || '';
-  const combinedDraft =
-    existingDraft && existingDraft !== recoveredText
-      ? `${recoveredText}${recoveredText ? '\n\n' : ''}${existingDraft}`
-      : recoveredText || existingDraft;
-  saveDraft(sessionId, combinedDraft);
-  if (state.route.sessionId === sessionId && state.shell?.composer.field) {
-    state.shell.composer.field.value = combinedDraft;
-    state.shell.composer.resize();
-    state.shell.composer.field.focus({ preventScroll: true });
-  }
-  persistAttachmentDrafts();
-  await persistPendingDeliveries({ removeIds: [message.id] });
-  renderComposerAttachments();
-  renderComposerState();
-  renderTranscript();
-  announce('Message moved back to the editor.');
+      const existingDraft = draftFor(sessionId);
+      const recoveredText = message.text || '';
+      const combinedDraft =
+        existingDraft && existingDraft !== recoveredText
+          ? `${recoveredText}${recoveredText ? '\n\n' : ''}${existingDraft}`
+          : recoveredText || existingDraft;
+      saveDraft(sessionId, combinedDraft);
+      if (state.route.sessionId === sessionId && state.shell?.composer.field) {
+        state.shell.composer.field.value = combinedDraft;
+        state.shell.composer.resize();
+        state.shell.composer.field.focus({ preventScroll: true });
+      }
+      persistAttachmentDrafts();
+      await persistPendingDeliveries({ removeIds: [message.id] });
+      renderComposerAttachments();
+      renderComposerState();
+      renderTranscript();
+      announce('Message moved back to the editor.');
+      return true;
+    },
+  );
+  return result.value;
 }
 
 async function persistPendingDeliveries({
@@ -2565,12 +2604,13 @@ function ensureShell() {
     {
       className: 'latest-button',
       type: 'button',
-      hidden: true,
+      'aria-hidden': 'true',
+      tabindex: '-1',
       on: {
         click: () => {
           noteReadGesture();
           transcriptScroll.scrollTo({ top: transcriptScroll.scrollHeight, behavior: 'smooth' });
-          latestButton.hidden = true;
+          setLatestButtonVisible(latestButton, false);
         },
       },
     },
@@ -2598,7 +2638,7 @@ function ensureShell() {
       transcriptScroll.scrollHeight -
       transcriptScroll.clientHeight -
       transcriptScroll.scrollTop;
-    latestButton.hidden = distance < 120;
+    setLatestButtonVisible(latestButton, distance >= 120);
     transcriptNav.root.classList.toggle('is-scrolled', transcriptScroll.scrollTop > 1);
     scheduleReadEvaluation();
   });
@@ -2632,6 +2672,7 @@ function ensureShell() {
     chatStrip,
     transcriptBanner,
     transcriptScroll,
+    transcriptColumn,
     messageList,
     statusRow,
     latestButton,
@@ -2647,6 +2688,13 @@ function cancelReadTracking() {
   if (readEvaluationTimer !== null) clearTimeout(readEvaluationTimer);
   readEvaluationTimer = null;
   readProgress = emptyReadProgress();
+}
+
+function setLatestButtonVisible(button, visible) {
+  if (!button) return;
+  button.classList.toggle('is-visible', visible);
+  button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  button.tabIndex = visible ? 0 : -1;
 }
 
 function invalidateUnreadHeadEvidence({ render = true } = {}) {
@@ -3036,6 +3084,22 @@ function createComposer() {
   };
 }
 
+function syncPanelExposure() {
+  if (!state.shell) return;
+  const panels = [
+    state.shell.workspacePanel,
+    state.shell.sessionPanel,
+    state.shell.transcriptPanel,
+  ];
+  for (const panel of panels) {
+    const active = PHONE_LAYOUT.matches
+      ? panel.classList.contains('is-active')
+      : panel !== state.shell.workspacePanel;
+    panel.toggleAttribute('inert', !active);
+    panel.setAttribute('aria-hidden', active ? 'false' : 'true');
+  }
+}
+
 function updateRoutePanels() {
   if (!state.shell) return;
   const { view } = state.route;
@@ -3052,6 +3116,7 @@ function updateRoutePanels() {
   state.shell.workspacePanel.classList.toggle('is-active', view === 'workspaces');
   state.shell.sessionPanel.classList.toggle('is-active', view === 'sessions');
   state.shell.transcriptPanel.classList.toggle('is-active', view === 'transcript');
+  syncPanelExposure();
   if (view !== 'transcript' || transcriptHiddenAnchor === null || !scroller) return;
   // Reading scrollHeight forces the layout the panel just gained, so this lands
   // in the same frame the panel becomes visible and nothing renders at the top
@@ -3064,13 +3129,24 @@ function updateRoutePanels() {
 
 function navigate(route, push = true) {
   cancelReadTracking();
+  if (route.view === 'transcript' && route.sessionId) {
+    return openSession(route.sessionId, {
+      workspaceId: route.workspaceId,
+      push,
+    });
+  }
+  state.sessionOpenController?.abort();
+  state.shell?.transcriptColumn.classList.remove(
+    'is-switching-in',
+    'is-switching-out',
+  );
+  state.shell?.transcriptPanel.removeAttribute('aria-busy');
   state.route = route;
   persistRoute();
   if (push) history.pushState({ pocketRoute: route }, '', '/');
   updateRoutePanels();
   renderWorkspacePanel();
   renderSessionsPanel();
-  if (route.view === 'transcript' && route.sessionId) openSession(route.sessionId, { push: false });
 }
 
 async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
@@ -3500,6 +3576,14 @@ async function openSession(sessionId, { workspaceId = state.route.workspaceId, p
   state.sessionOpenController?.abort();
   const controller = new AbortController();
   state.sessionOpenController = controller;
+  const switchingSession =
+    state.route.view === 'transcript' &&
+    Boolean(state.route.sessionId) &&
+    state.route.sessionId !== sessionId;
+  if (switchingSession) {
+    await transitionTranscriptOut(controller.signal);
+    if (controller.signal.aborted) return;
+  }
   const isCurrent = () =>
     !controller.signal.aborted &&
     state.route.sessionId === sessionId &&
@@ -3766,11 +3850,58 @@ function activeSeat() {
 // gesture says otherwise is what makes that impossible.
 let transcriptMovedByHand = false;
 
+async function transitionTranscriptOut(signal) {
+  const column = state.shell?.transcriptColumn;
+  if (!column) return;
+  column.classList.remove('is-switching-in');
+  column.classList.add('is-switching-out');
+  state.shell.transcriptPanel.setAttribute('aria-busy', 'true');
+  await waitForVisualMotion(column, {
+    durationMs: MOTION_MS.quick,
+    signal,
+  });
+}
+
+function transitionTranscriptIn() {
+  const column = state.shell?.transcriptColumn;
+  if (!column) return;
+  column.classList.remove('is-switching-out');
+  column.classList.add('is-switching-in');
+  state.shell.transcriptPanel.removeAttribute('aria-busy');
+  void waitForVisualMotion(column, {
+    durationMs: MOTION_MS.content,
+  }).then(() => column.classList.remove('is-switching-in'));
+}
+
+function renderTranscriptPlaceholder({ loading }) {
+  return node('li', {
+    className: `transcript-placeholder${loading ? ' is-loading' : ''}`,
+    role: 'status',
+  }, [
+    loading
+      ? node('span', { className: 'status-dot working', 'aria-hidden': 'true' })
+      : icon('terminal'),
+    node('h2', { text: loading ? 'Opening chat…' : 'No messages yet' }),
+    node('p', {
+      text: loading
+        ? 'Keeping this screen steady while Pocket loads it.'
+        : 'Send the first message from Pocket or your Mac.',
+    }),
+  ]);
+}
+
 function renderChatStrip() {
   const strip = state.shell?.chatStrip;
   if (!strip) return;
   const workspaceId = state.route.workspaceId;
   const sessions = sessionsFor(workspaceId) || [];
+  const renderKey = JSON.stringify([
+    workspaceId,
+    state.route.sessionId,
+    sessions.map((session) => [session.id, session.title, session.status]),
+  ]);
+  if (strip.dataset.renderKey === renderKey) return;
+  strip.dataset.renderKey = renderKey;
   if (sessions.length === 0) {
     strip.replaceChildren();
     strip.hidden = true;
@@ -3937,7 +4068,7 @@ function renderTranscript() {
       if (!rendered) continue;
       rendered.dataset.messageId = messageId;
       rendered.__pocketRenderKey = renderKey;
-      if (!state.seenMessageIds.has(messageId)) {
+      if (!state.seenMessageIds.has(messageId) && !transcriptSessionChanged) {
         rendered.classList.add('is-new');
         rendered.addEventListener(
           'animationend',
@@ -3965,6 +4096,15 @@ function renderTranscript() {
     state.seenMessageIds.add(messageId);
     fragment.append(rendered);
     previousVisibleMessage = message;
+  }
+  if (fragment.childElementCount === 0) {
+    fragment.append(
+      renderTranscriptPlaceholder({
+        loading:
+          !state.messagesBySession.has(state.route.sessionId) &&
+          !state.messageBaselinesBySession.has(state.route.sessionId),
+      }),
+    );
   }
   messageList.replaceChildren(fragment);
   renderAgentStatus(statusRow, session, messages);
@@ -3998,13 +4138,16 @@ function renderTranscript() {
     // against a 48px pin threshold while the handler hides below 120px, so any
     // render with the reader between the two flashed the button on and the next
     // scroll event flashed it back off.
-    state.shell.latestButton.hidden =
+    setLatestButtonVisible(
+      state.shell.latestButton,
       transcriptScroll.scrollHeight -
         transcriptScroll.clientHeight -
-        transcriptScroll.scrollTop <
-      120;
+        transcriptScroll.scrollTop >=
+        120,
+    );
     scheduleReadEvaluation();
   }
+  if (transcriptSessionChanged) transitionTranscriptIn();
   renderComposerState();
   appUpdateCoordinator?.stateChanged();
 }
@@ -4278,6 +4421,8 @@ function renderMessage(message, toolResults) {
       meta.textContent = 'Checking delivery…';
     } else if (message.delivery === 'failed') {
       const definitelyUnsent = message.definitelyUnsent === true;
+      const activeAction = deliveryActionCoordinator.current(message.id);
+      const actionBusy = Boolean(activeAction);
       meta.classList.add(
         'terminal',
         definitelyUnsent ? 'failed' : 'unknown',
@@ -4296,9 +4441,11 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Retry',
+            text: activeAction === 'retry' ? 'Checking…' : 'Retry',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'retry' ? 'true' : null,
             'aria-label': 'Retry this message',
-            on: { click: () => retryMessage(message) },
+            on: { click: () => void retryMessage(message) },
           }),
         );
       }
@@ -4307,9 +4454,11 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Edit',
+            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'edit' ? 'true' : null,
             'aria-label': 'Move this message back to the editor',
-            on: { click: () => editFailedMessage(message) },
+            on: { click: () => void editFailedMessage(message) },
           }),
         );
       } else {
@@ -4317,10 +4466,12 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Check',
+            text: activeAction === 'check' ? 'Checking…' : 'Check',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'check' ? 'true' : null,
             'aria-label': 'Check this message’s delivery',
             on: {
-              click: () => checkDelivery(message, { force: true }),
+              click: () => void checkDeliveryNow(message),
             },
           }),
           // Also offered when delivery is UNKNOWN. Editing returns the text to
@@ -4331,9 +4482,11 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: 'Edit',
+            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            disabled: actionBusy,
+            'aria-busy': activeAction === 'edit' ? 'true' : null,
             'aria-label': 'Move this message back to the editor',
-            on: { click: () => editFailedMessage(message) },
+            on: { click: () => void editFailedMessage(message) },
           }),
         );
       }
@@ -4341,9 +4494,11 @@ function renderMessage(message, toolResults) {
         node('button', {
           className: 'message-retry',
           type: 'button',
-          text: 'Delete',
+          text: activeAction === 'delete' ? 'Deleting…' : 'Delete',
+          disabled: actionBusy,
+          'aria-busy': activeAction === 'delete' ? 'true' : null,
           'aria-label': 'Delete this delivery notice',
-          on: { click: () => discardFailedMessage(message) },
+          on: { click: () => void discardFailedMessage(message) },
         }),
       );
       meta.append(
@@ -5151,6 +5306,53 @@ async function watchDeliveryProgress(message, isActive, onTerminal) {
   }
 }
 
+async function checkDeliveryNow(message) {
+  if (message?.kind !== 'optimistic' || message.delivery !== 'failed') {
+    return false;
+  }
+  cancelDeliveryRecovery(message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'check',
+    async () => {
+      announce('Checking delivery...');
+      try {
+        const delivery = await requestDeliveryStatus(message);
+        const disposition = terminalDeliveryActionDisposition(delivery);
+        if (disposition === 'resolved') {
+          await settleTerminalDeliveryStatus(message, delivery);
+          return true;
+        }
+        if (disposition === 'actionable') {
+          await settleTerminalDeliveryStatus(message, delivery);
+          announce(
+            message.definitelyUnsent === true
+              ? `Message was not sent. ${deliveryErrorCopy(message.errorCode)}`
+              : 'Delivery is still unconfirmed. Edit the text if you need it.',
+          );
+          return false;
+        }
+        if (disposition === 'pending') {
+          message.delivery = 'delivering';
+          message.deliveryPhase = delivery.phase || 'queued';
+          message.retrySafe = false;
+          message.definitelyUnsent = false;
+          await persistPendingDeliveries({ upserts: [message] });
+          renderTranscript();
+          announce('This message is still sending on the Mac.');
+          return false;
+        }
+        announce('Still unconfirmed. Check again later or edit the text.');
+        return false;
+      } catch {
+        announce('Could not check delivery right now. Try again later.');
+        return false;
+      }
+    },
+  );
+  return result.value;
+}
+
 function checkDelivery(message, { force = false } = {}) {
   const key = message?.id;
   if (typeof key !== 'string') return Promise.resolve(false);
@@ -5166,6 +5368,7 @@ function checkDelivery(message, { force = false } = {}) {
     key,
     message,
     force,
+    cancelled: false,
     operation,
     resolve: resolveOperation,
     reject: rejectOperation,
@@ -5177,6 +5380,21 @@ function checkDelivery(message, { force = false } = {}) {
   return operation;
 }
 
+function cancelDeliveryRecovery(message) {
+  const key = message?.id;
+  if (typeof key !== 'string') return;
+  const entry = deliveryRecoveryInFlight.get(key);
+  if (entry) entry.cancelled = true;
+}
+
+function deliveryRecoveryEntryIsCurrent(entry) {
+  return (
+    entry?.cancelled !== true &&
+    deliveryRecoveryInFlight.get(entry?.key) === entry &&
+    state.optimistic.includes(entry?.message)
+  );
+}
+
 function drainDeliveryRecoveryQueue() {
   while (
     activeDeliveryRecoveryCount < MAX_CONCURRENT_DELIVERY_RECOVERIES &&
@@ -5184,7 +5402,7 @@ function drainDeliveryRecoveryQueue() {
   ) {
     const entry = deliveryRecoveryQueue.shift();
     activeDeliveryRecoveryCount += 1;
-    void checkDeliveryOnce(entry.message, { force: entry.force })
+    void checkDeliveryOnce(entry)
       .then(entry.resolve, entry.reject)
       .finally(() => {
         if (deliveryRecoveryInFlight.get(entry.key) === entry) {
@@ -5196,8 +5414,12 @@ function drainDeliveryRecoveryQueue() {
   }
 }
 
-async function checkDeliveryOnce(message, { force = false } = {}) {
-  if (!state.optimistic.includes(message)) return true;
+async function checkDeliveryOnce(entry) {
+  const message = entry.message;
+  if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
+  if (!deliveryNeedsAutomaticRecovery(message)) {
+    return message.delivery === 'delivered';
+  }
   message.delivery = 'confirming';
   message.deliveryPhase = 'confirming';
   message.retrySafe = false;
@@ -5205,6 +5427,7 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
   message.deliveryRecoveryExhausted = false;
   message.errorCode = null;
   await persistPendingDeliveries({ upserts: [message] });
+  if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   renderTranscript();
   const deadline = Date.now() + DELIVERY_RECOVERY_MS;
   let lastErrorCode = null;
@@ -5212,9 +5435,11 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
   let inconclusiveChecks = 0;
   let firstCheck = true;
   while (firstCheck || Date.now() < deadline) {
+    if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
     firstCheck = false;
     try {
       const delivery = await requestDeliveryStatus(message);
+      if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
       lastErrorCode = null;
       if (await settleTerminalDeliveryStatus(message, delivery)) {
         return delivery.state === 'delivered';
@@ -5234,6 +5459,7 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
         lastDeliveryCode = delivery.code || 'delivery_unknown';
       }
     } catch (error) {
+      if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
       if (error.status === 401 || error.status === 423) {
         message.delivery = 'failed';
         message.errorCode = error.code;
@@ -5266,6 +5492,7 @@ async function checkDeliveryOnce(message, { force = false } = {}) {
       );
     }
   }
+  if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   // The full recovery window elapsed without authoritative proof. Keep this
   // delivery eligible for visibility/online rechecks instead of turning a
   // temporary receipt outage into a permanent failure.
@@ -5318,33 +5545,42 @@ async function retryMessage(message) {
         ? 'This one cannot be retried automatically. Edit it and send again.'
         : 'Not retried, because it is not certain this message failed to send.',
     );
-    return;
+    return false;
   }
-  if (!(await verifyTerminalDeliveryAction(message))) return;
-  if (!deliveryCanRetry(message)) {
-    announce('This delivery changed. Check the chat before sending again.');
-    return;
-  }
-  announce('Retrying...');
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
-  } catch {
-    announce('Could not safely retry this message yet. Try again.');
-    return;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    renderTranscript();
-    return;
-  }
-  applyAuthoritativePendingDelivery(message, claimed);
-  renderTranscript();
-  deliverOptimistic(message, {
-    replaceDraft: message.replaceDraft === true,
-    deliveryIdentityPersisted: true,
-  });
+  cancelDeliveryRecovery(message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'retry',
+    async () => {
+      if (!(await verifyTerminalDeliveryAction(message))) return false;
+      if (!deliveryCanRetry(message)) {
+        announce('This delivery changed. Check the chat before sending again.');
+        return false;
+      }
+      announce('Retrying...');
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
+      } catch {
+        announce('Could not safely retry this message yet. Try again.');
+        return false;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      applyAuthoritativePendingDelivery(message, claimed);
+      renderTranscript();
+      void deliverOptimistic(message, {
+        replaceDraft: message.replaceDraft === true,
+        deliveryIdentityPersisted: true,
+      });
+      return true;
+    },
+  );
+  return result.value;
 }
 
 // Every conflict-sheet action first verifies this delivery is still the
@@ -5352,28 +5588,36 @@ async function retryMessage(message) {
 // and Edit paths: two Pocket windows can show the same sheet, and the claim
 // is what keeps them from both acting on it.
 async function claimConflictAction(message, action) {
-  if (!(await verifyTerminalDeliveryAction(message))) {
-    closeOverlay();
-    return null;
-  }
-  let claimed;
-  try {
-    claimed = await claimTerminalDeliveryActionRequired(message, action);
-  } catch {
-    announce('Could not safely send this message yet. Try again.');
-    return null;
-  }
-  if (!claimed) {
-    announce('This delivery changed in another Pocket window.');
-    await restorePendingDeliveries();
-    closeOverlay();
-    renderTranscript();
-    return null;
-  }
-  applyAuthoritativePendingDelivery(message, claimed);
-  closeOverlay();
-  renderTranscript();
-  return claimed;
+  cancelDeliveryRecovery(message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    action,
+    async () => {
+      if (!(await verifyTerminalDeliveryAction(message))) {
+        closeOverlay();
+        return null;
+      }
+      let claimed;
+      try {
+        claimed = await claimTerminalDeliveryActionRequired(message, action);
+      } catch {
+        announce('Could not safely send this message yet. Try again.');
+        return null;
+      }
+      if (!claimed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        closeOverlay();
+        renderTranscript();
+        return null;
+      }
+      applyAuthoritativePendingDelivery(message, claimed);
+      closeOverlay();
+      renderTranscript();
+      return claimed;
+    },
+  );
+  return result.value;
 }
 
 const draftConflictFlow = createDraftConflictFlow({
@@ -5539,8 +5783,6 @@ function startEvents() {
       // The periodic health check remains the update fallback.
     }
     void appUpdateCoordinator?.checkForUpdate({ force: true });
-    transcriptRefresh.schedule();
-    metadataRefresh.schedule();
     void transcriptRefresh.flush();
     void metadataRefresh.flush();
     recheckAmbiguousDeliveries();
@@ -5550,8 +5792,6 @@ function startEvents() {
     live();
     if (!wasLive) {
       invalidateUnreadHeadEvidence();
-      transcriptRefresh.schedule();
-      metadataRefresh.schedule();
       void transcriptRefresh.flush();
       void metadataRefresh.flush();
       recheckAmbiguousDeliveries();
@@ -5674,6 +5914,31 @@ function stopEvents() {
   state.backstopTimer = null;
 }
 
+function applyAppConnectionAvailability(status, { now = Date.now() } = {}) {
+  const appReady = Boolean(state.auth && state.shell);
+  applyConnectionAvailability({
+    state,
+    status,
+    now,
+    render: renderConnectionState,
+    restartEvents: () => {
+      if (appReady) startEvents();
+    },
+    refresh: () => {
+      if (!appReady) return;
+      invalidateUnreadHeadEvidence();
+      void transcriptRefresh.flush();
+      void metadataRefresh.flush();
+    },
+    recheckDeliveries: () => {
+      if (appReady) recheckAmbiguousDeliveries();
+    },
+    recoverDeliveries: () => {
+      if (appReady) void recoverPendingDeliveries();
+    },
+  });
+}
+
 function renderConnectionState() {
   renderWorkspacePanel();
   renderSessionsPanel();
@@ -5690,12 +5955,51 @@ function handleRuntimeError(error) {
   }
 }
 
-function openSheet(title, content, { className = '', onClose } = {}) {
+let activeOverlay = null;
+let overlayRequestGeneration = 0;
+
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+function waitForVisualMotion(element, { durationMs, signal } = {}) {
+  if (!element || prefersReducedMotion() || signal?.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      element.removeEventListener('animationend', onAnimationEnd);
+      signal?.removeEventListener('abort', finish);
+      if (timer !== null) clearTimeout(timer);
+      resolve();
+    };
+    const onAnimationEnd = (event) => {
+      if (event.target === element) finish();
+    };
+    element.addEventListener('animationend', onAnimationEnd);
+    signal?.addEventListener('abort', finish, { once: true });
+    timer = setTimeout(finish, Math.max(0, durationMs || 0) + 80);
+  });
+}
+
+function finishOverlayClose(options) {
+  return closeOverlay({ ...options, preservePendingOpen: true });
+}
+
+async function openSheet(title, content, { className = '', onClose } = {}) {
+  const requestGeneration = overlayRequestGeneration + 1;
+  overlayRequestGeneration = requestGeneration;
   cancelReadTracking();
-  closeOverlay();
+  await finishOverlayClose();
+  if (requestGeneration !== overlayRequestGeneration) return;
+  const previousFocus = document.activeElement;
   const close = button('Close', {
     iconName: 'close',
-    onClick: () => closeOverlay(onClose),
+    onClick: () => closeOverlay(),
   });
   const sheet = node('section', {
     className: `sheet ${className}`,
@@ -5714,25 +6018,55 @@ function openSheet(title, content, { className = '', onClose } = {}) {
     className: `overlay${className ? ` ${className}-overlay` : ''}`,
     on: {
       pointerdown: (event) => {
-        if (event.target === overlay) closeOverlay(onClose);
+        if (event.target === overlay) closeOverlay();
       },
     },
   }, sheet);
   overlayRoot.replaceChildren(overlay);
+  activeOverlay = {
+    overlay,
+    sheet,
+    onClose,
+    previousFocus,
+    closingPromise: null,
+  };
   document.addEventListener('keydown', sheetEscape);
-  close.focus();
+  close.focus({ preventScroll: true });
+  appUpdateCoordinator?.stateChanged();
 }
 
 function sheetEscape(event) {
   if (event.key === 'Escape') closeOverlay();
 }
 
-function closeOverlay(onClose) {
+async function closeOverlay({ immediate = false, preservePendingOpen = false } = {}) {
+  if (!preservePendingOpen) overlayRequestGeneration += 1;
   document.removeEventListener('keydown', sheetEscape);
-  overlayRoot.replaceChildren();
-  onClose?.();
-  appUpdateCoordinator?.stateChanged();
-  scheduleReadEvaluation();
+  const lifecycle = activeOverlay;
+  if (!lifecycle) return;
+
+  const finish = () => {
+    if (activeOverlay !== lifecycle) return;
+    activeOverlay = null;
+    lifecycle.overlay.remove();
+    lifecycle.onClose?.();
+    if (!activeOverlay && lifecycle.previousFocus?.isConnected) {
+      lifecycle.previousFocus.focus({ preventScroll: true });
+    }
+    appUpdateCoordinator?.stateChanged();
+    scheduleReadEvaluation();
+  };
+
+  if (immediate || prefersReducedMotion()) {
+    finish();
+    return;
+  }
+  if (lifecycle.closingPromise) return lifecycle.closingPromise;
+  lifecycle.overlay.classList.add('is-closing');
+  lifecycle.closingPromise = waitForVisualMotion(lifecycle.sheet, {
+    durationMs: MOTION_MS.overlayExit,
+  }).then(finish);
+  return lifecycle.closingPromise;
 }
 
 async function openSwitcher() {
@@ -6053,6 +6387,7 @@ function openChatsSheet() {
 // caller can place it without awaiting.
 function accountUsageSection({ force = false } = {}) {
   const section = node('div', { className: 'usage-section' });
+  section.append(skeletonRows(6));
   void fillAccountUsage(section, { force });
   return section;
 }
@@ -6072,6 +6407,7 @@ function usageResetLabel(value) {
 
 async function fillAccountUsage(section, { force = false } = {}) {
   const usage = await refreshSeatUsage({ force });
+  section.replaceChildren();
   const providers = Array.isArray(usage?.providers)
     ? usage.providers
     : Array.isArray(usage?.seats)
@@ -6160,16 +6496,19 @@ function openUsageSheet() {
   });
 }
 
-async function openConnectionSheet() {
+async function runConnectionCheck(content) {
+  if (content.dataset.connectionCheckBusy === 'true') return;
+  content.dataset.connectionCheckBusy = 'true';
+  content.setAttribute('aria-busy', 'true');
   const startedAt = performance.now();
-  const content = node('div', {}, skeletonRows(4));
-  openSheet('Connection', content);
+  content.replaceChildren(skeletonRows(4));
   try {
     const probe = await request('/api/connection?force=1');
     state.connectionProbe = probe;
+    applyAppConnectionAvailability('live');
     const latency = Math.round(performance.now() - startedAt);
     const rows = [
-      ['Private round trip', state.connection === 'live', `${latency} ms`],
+      ['Private round trip', true, `${latency} ms`],
       ['Relay on your Mac', true, probe.relayVersion],
       ['Conductor app', probe.conductor, probe.conductor ? 'Ready' : 'Not ready'],
       ['Accessibility send path', probe.sendPath, probe.sendPath ? 'Verified' : probe.reason],
@@ -6191,16 +6530,9 @@ async function openConnectionSheet() {
     // can sit at 0% on the five hour window while the weekly one is spent,
     // which is precisely the state that reads as unexplained.
     void appendAccountUsage(content, { force: true });
-    content.append(
-      node('button', {
-        className: 'text-button',
-        type: 'button',
-        text: 'Run check again',
-        on: { click: () => openConnectionSheet() },
-      }),
-    );
     renderComposerState();
   } catch (error) {
+    applyAppConnectionAvailability('offline');
     content.replaceChildren(
       node('div', { className: 'empty-state' }, [
         icon('warn'),
@@ -6209,6 +6541,28 @@ async function openConnectionSheet() {
       ]),
     );
   }
+  const rerunButton = node('button', {
+    className: 'text-button',
+    type: 'button',
+    text: 'Run check again',
+    on: {
+      click: async () => {
+        rerunButton.disabled = true;
+        rerunButton.setAttribute('aria-busy', 'true');
+        rerunButton.textContent = 'Checking…';
+        await runConnectionCheck(content);
+      },
+    },
+  });
+  content.append(rerunButton);
+  content.dataset.connectionCheckBusy = 'false';
+  content.removeAttribute('aria-busy');
+}
+
+function openConnectionSheet() {
+  const content = node('div', {}, skeletonRows(4));
+  openSheet('Connection', content);
+  void runConnectionCheck(content);
 }
 
 async function openSecurity() {
@@ -6292,7 +6646,7 @@ async function openSecurity() {
         onAction: isStandalone()
           ? null
           : () => {
-              closeOverlay();
+              closeOverlay({ immediate: true });
               renderInstallGuidance();
             },
       }),
@@ -6316,7 +6670,7 @@ async function lockPocketNow() {
       csrf: true,
     });
     if (result.locked) {
-      closeOverlay();
+      closeOverlay({ immediate: true });
       renderLock();
     }
   } catch (error) {
@@ -6379,11 +6733,11 @@ function confirmClearCache() {
             try {
               await clearTranscriptCache();
               resetSessionMessageState();
-              closeOverlay();
+              await closeOverlay();
               await startApplication();
             } catch (error) {
               if (isLocalPurgeFailure(error)) {
-                closeOverlay();
+                closeOverlay({ immediate: true });
                 renderLocalPurgeFailure(() => confirmClearCache());
               } else {
                 handleRuntimeError(error);
@@ -6440,7 +6794,7 @@ function confirmRevoke(device) {
                 // #overlay-root is a sibling, so without this the confirmation
                 // sheet stayed on top of the signed-out screen with its Sign
                 // out button still live. Same order the lock path uses.
-                closeOverlay();
+                closeOverlay({ immediate: true });
                 renderSignedOut();
               } else {
                 openSecurity();
@@ -6450,7 +6804,7 @@ function confirmRevoke(device) {
                 device.id === state.auth?.device?.id &&
                 isLocalPurgeFailure(error)
               ) {
-                closeOverlay();
+                closeOverlay({ immediate: true });
                 renderLocalPurgeFailure(() => confirmRevoke(device));
               } else {
                 handleRuntimeError(error);
@@ -6471,14 +6825,11 @@ function confirmRevoke(device) {
 
 window.addEventListener('popstate', (event) => {
   if (event.state?.pocketRoute) {
-    state.route = event.state.pocketRoute;
-    persistRoute();
-    updateRoutePanels();
-    renderWorkspacePanel();
-    renderSessionsPanel();
-    if (state.route.sessionId) openSession(state.route.sessionId, { push: false });
+    navigate(event.state.pocketRoute, false);
   }
 });
+
+PHONE_LAYOUT.addEventListener('change', syncPanelExposure);
 
 function shieldApplication() {
   invalidateUnreadHeadEvidence({ render: false });
@@ -6684,13 +7035,12 @@ document.addEventListener('visibilitychange', () => {
   void recoverPendingDeliveries();
 });
 
-window.addEventListener('online', () => {
-  void recoverPendingDeliveries();
-});
-
 window.addEventListener('pagehide', shieldApplication);
 window.addEventListener('online', () => {
-  recheckAmbiguousDeliveries();
+  applyAppConnectionAvailability('connecting');
+});
+window.addEventListener('offline', () => {
+  applyAppConnectionAvailability('offline');
 });
 window.addEventListener('pageshow', () => {
   appUpdateCoordinator?.foreground();
