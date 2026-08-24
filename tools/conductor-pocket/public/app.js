@@ -13,18 +13,18 @@ import {
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
-} from './delivery-receipts.js?v=0.2.0-pocket-final-20260823';
+} from './delivery-receipts.js?v=0.2.0-chat-status-20260824';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-pocket-final-20260823';
+} from './app-update.js?v=0.2.0-chat-status-20260824';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-pocket-final-20260823';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-pocket-final-20260823';
-import { fetchJson } from './http.js?v=0.2.0-pocket-final-20260823';
+} from './bootstrap-recovery.js?v=0.2.0-chat-status-20260824';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chat-status-20260824';
+import { fetchJson } from './http.js?v=0.2.0-chat-status-20260824';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -34,16 +34,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-pocket-final-20260823';
+} from './image-attachments.js?v=0.2.0-chat-status-20260824';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-pocket-final-20260823';
+} from './live-refresh.js?v=0.2.0-chat-status-20260824';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-pocket-final-20260823';
+} from './rich-text.js?v=0.2.0-chat-status-20260824';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -54,19 +54,19 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-pocket-final-20260823';
+} from './read-state.js?v=0.2.0-chat-status-20260824';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-pocket-final-20260823';
+} from './transcript-focus.js?v=0.2.0-chat-status-20260824';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-pocket-final-20260823';
+} from './swipe-navigation.js?v=0.2.0-chat-status-20260824';
 import {
   activeGptUsage,
   createUsageReader,
-} from './usage-state.js?v=0.2.0-pocket-final-20260823';
+} from './usage-state.js?v=0.2.0-chat-status-20260824';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -110,7 +110,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-pocket-final-20260823';
+const CLIENT_SHELL_REVISION = '0.2.0-chat-status-20260824';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -2018,6 +2018,7 @@ function commitReadReceipt(candidate) {
     readReceiptChannel?.postMessage({ type: 'read-receipts-updated' });
     renderWorkspacePanel();
     renderSessionsPanel();
+    renderChatStrip();
     appUpdateCoordinator?.stateChanged();
   };
   const operation = readReceiptWriteQueue.then(commit, commit);
@@ -2037,6 +2038,7 @@ readReceiptChannel?.addEventListener('message', (event) => {
     state.readReceipts = normalizeReadReceipts(snapshot);
     renderWorkspacePanel();
     renderSessionsPanel();
+    renderChatStrip();
     scheduleReadEvaluation();
   });
 });
@@ -2907,6 +2909,7 @@ function invalidateUnreadHeadEvidence({ render = true } = {}) {
   if (render) {
     renderWorkspacePanel();
     renderSessionsPanel();
+    renderChatStrip();
   }
 }
 
@@ -3427,6 +3430,7 @@ async function refreshWorkspaces({ signal, timeoutMs = 0 } = {}) {
         [...state.unreadHeads.values()],
       );
     }
+    if (state.route.view === 'transcript') renderChatStrip();
     scheduleReadEvaluation();
   } catch (error) {
     if (signal?.aborted || error?.name === 'AbortError') return;
@@ -4283,13 +4287,18 @@ function renderChatStrip() {
   const strip = state.shell?.chatStrip;
   if (!strip) return;
   const sessions = recentSessionsNewestFirst();
+  const chatStates = sessions.map((session) => ({
+    session,
+    unreadCount: sessionUnreadCount(session),
+  }));
   const renderKey = JSON.stringify([
     state.route.sessionId,
-    sessions.map((session) => [
+    chatStates.map(({ session, unreadCount }) => [
       session.id,
       session.title,
       session.workspaceName,
       session.status,
+      unreadCount,
     ]),
   ]);
   if (strip.dataset.renderKey === renderKey) return;
@@ -4301,7 +4310,7 @@ function renderChatStrip() {
   }
   strip.hidden = false;
   let activeChip = null;
-  const chips = sessions.map((session) => {
+  const chips = chatStates.map(({ session, unreadCount }) => {
     const active = session.id === state.route.sessionId;
     // Status rides along on the session rows the app already loads, and
     // metadataRefresh reloads those on every live change event, so this costs
@@ -4309,14 +4318,17 @@ function renderChatStrip() {
     // already in memory. idle deliberately shows nothing, so the strip stays
     // quiet and a dot always means something is happening.
     const state_ = STRIP_STATUS[session.status] || null;
+    const unread = !state_ && unreadCount > 0;
     const chip = node('button', {
-      className: `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}`,
+      className: `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}${unread ? ' is-unread' : ''}`,
       type: 'button',
       'aria-current': active ? 'page' : undefined,
-      // Screen readers get the meaning; sighted users get the dot.
+      // Screen readers get the meaning; sighted users get the dot or number.
       'aria-label': state_
         ? `${session.title}, ${session.workspaceName}, ${state_.label}`
-        : `${session.title}, ${session.workspaceName}`,
+        : unread
+          ? `${session.title}, ${session.workspaceName}, reply ready, ${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
+          : `${session.title}, ${session.workspaceName}`,
       on: {
         click: () => {
           if (active) return;
@@ -4328,7 +4340,15 @@ function renderChatStrip() {
         },
       },
     }, [
-      state_ ? node('span', { className: `chip-dot ${state_.dot}` }) : null,
+      state_
+        ? node('span', { className: `chip-dot ${state_.dot}`, 'aria-hidden': 'true' })
+        : unread
+          ? node('span', {
+              className: 'chip-unread',
+              text: cappedCount(unreadCount),
+              'aria-hidden': 'true',
+            })
+          : null,
       node('span', { className: 'chip-copy' }, [
         node('span', { className: 'chip-label', text: session.title }),
         node('span', {

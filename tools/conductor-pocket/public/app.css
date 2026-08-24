@@ -2844,10 +2844,9 @@ button:active {
   font-weight: 600;
 }
 
-/* Status on the chat strip. Deliberately still: the existing .status-dot
-   pulses, which is right for a single focused indicator but wrong for a row of
-   them, where several animating dots read as an alarm rather than information.
-   idle renders nothing at all, so a dot always means something is happening. */
+/* Status on the chat strip. Working gets one slow opacity pulse driven by CSS.
+   It adds no timer or request. Waiting, unread, and error stay still so the
+   strip remains calm even when several chats need attention. */
 .chip-dot {
   display: inline-block;
   width: 6px;
@@ -2896,6 +2895,7 @@ button:active {
 /* Working is the calm case: the agent is busy and needs nothing from you. */
 .chip-dot.is-working {
   color: var(--copper);
+  animation: working-pulse 1.8s ease-in-out infinite;
 }
 
 /* Waiting is the one that should catch the eye, because it is blocked ON YOU.
@@ -2911,6 +2911,27 @@ button:active {
   color: var(--danger, #d92d20);
 }
 
+/* A number means the reply is finished and has not been read. It is static,
+   compact, and reuses the count already held by the session model. */
+.chip-unread {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--copper-fill);
+  color: var(--on-copper);
+  font-family: var(--font-round);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 /* The active chip inverts to a filled background, so its dot must switch to the
    foreground colour or it disappears against the fill. */
 .chat-chip.is-active .chip-dot {
@@ -2919,6 +2940,11 @@ button:active {
 
 .chat-chip.is-active .chip-dot.is-waiting {
   border-color: var(--on-copper);
+}
+
+.chat-chip.is-active .chip-unread {
+  background: var(--on-copper);
+  color: var(--copper-fill);
 }
 
 /* The header marker sits on the subtitle line, which is smaller than a chip, so
@@ -2962,6 +2988,11 @@ button:active {
 @media (prefers-reduced-motion: reduce) {
   #toast {
     transition: none;
+  }
+
+  .chip-dot.is-working {
+    opacity: 1;
+    animation: none !important;
   }
 }
 

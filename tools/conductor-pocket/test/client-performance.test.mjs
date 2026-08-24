@@ -190,7 +190,7 @@ test('closing a chat is never an inline second tap', async () => {
   assert.doesNotMatch(js, /is-armed/);
 });
 
-test('chat strip status costs nothing extra and never animates', async () => {
+test('chat strip separates working from finished unread with no extra work', async () => {
   const [js, css] = await Promise.all([
     fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
     fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
@@ -203,12 +203,31 @@ test('chat strip status costs nothing extra and never animates', async () => {
   assert.doesNotMatch(body, /fetch\(|setInterval\(|request\(/);
   // idle must render nothing, or a dot stops meaning anything.
   assert.doesNotMatch(js, /STRIP_STATUS = \{[\s\S]*\bidle:/);
-  // The strip's dots must not inherit the pulsing .status-dot animation.
-  const dot = css.slice(css.indexOf('.chip-dot {'));
-  assert.doesNotMatch(dot.slice(0, dot.indexOf('}')), /animation/);
+  // Working owns the indicator until it finishes. Only then can the existing
+  // effective unread count become the static ready-to-read number.
+  assert.match(body, /unreadCount: sessionUnreadCount\(session\)/);
+  assert.match(body, /const unread = !state_ && unreadCount > 0;/);
+  assert.match(body, /className: 'chip-unread'/);
+  assert.match(body, /text: cappedCount\(unreadCount\)/);
+  assert.match(body, /reply ready, \$\{unreadCount\} unread/);
+  // The render key includes effective unread state so a durable read receipt
+  // removes the number without waiting for unrelated session metadata.
+  assert.match(body, /sessionUnreadCount\(session\)/);
+  assert.match(
+    js,
+    /readReceiptChannel\?\.postMessage[\s\S]*renderChatStrip\(\)[\s\S]*readReceiptChannel\?\.addEventListener[\s\S]*renderChatStrip\(\)/,
+  );
+  // One compositor-friendly opacity pulse is the only motion. It has no JS
+  // timer and Reduced Motion explicitly disables it.
+  assert.match(css, /\.chip-dot\.is-working \{[\s\S]*animation: working-pulse/);
+  assert.match(css, /\.chip-unread \{/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.chip-dot\.is-working[\s\S]*animation: none !important/,
+  );
   assert.doesNotMatch(body, /status-dot/);
   // The meaning has to reach screen readers, not just sighted users.
-  assert.match(body, /aria-label[\s\S]*state_\.label/);
+  assert.match(body, /aria-label[\s\S]*state_\.label[\s\S]*reply ready/);
 });
 
 test('the header reports the current chat’s state, including waiting', async () => {
