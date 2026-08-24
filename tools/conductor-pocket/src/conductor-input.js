@@ -1600,8 +1600,18 @@ function waitForExactDraft(pid, expectedDraft, routeLease) {
 // decision point before anything is pressed. A false negative just costs one
 // more 20ms poll.
 function sendControlLikelyReady(pid, expectedDraft) {
+  let process;
   try {
-    const process = validateFocusedComposer(pid, expectedDraft);
+    process = validateFocusedComposer(pid, expectedDraft);
+  } catch (error) {
+    // Structured validation failures carry safety and recovery meaning. Do
+    // not flatten draft, lock, route or target failures into 250 more polls.
+    // An unstructured AX bridge throw can still be retried by the next cheap
+    // sample without authorizing a press.
+    if (typeof error?.pocketCode === 'string') throw error;
+    return false;
+  }
+  try {
     const focused = process.attributes.byName('AXFocusedUIElement').value();
     const composer = focused.attributes.byName('AXParent').value();
     const children = childElements(composer);
@@ -1615,17 +1625,22 @@ function sendControlLikelyReady(pid, expectedDraft) {
       // case cheap and local to the composer. An unreadable child contributes
       // no match, so an incomplete probe can never authorize the expensive
       // decision-point proof on every poll.
+      let complete = true;
       classGroups = children.map((child) => {
         try {
           const classes = child.attributes
             .byName('AXDOMClassList')
             .value();
-          return Array.isArray(classes) ? classes : null;
+          if (Array.isArray(classes)) return classes;
         } catch {
-          return null;
+          // Mark the snapshot incomplete below.
         }
+        complete = false;
+        return null;
       });
+      if (!complete) return false;
     }
+    if (classGroups.some((classes) => !Array.isArray(classes))) return false;
     let matches = 0;
     for (const classes of classGroups) {
       if (!Array.isArray(classes)) continue;

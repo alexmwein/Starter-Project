@@ -1713,9 +1713,10 @@ globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
       },
     },
   };
+  let composerChildren = [child];
   const composer = {
     uiElements() {
-      return [child];
+      return composerChildren;
     },
   };
   const focused = {
@@ -1738,13 +1739,62 @@ globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
   assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
   assert.equal(childClassReads, 1);
 
-  child.attributes.byName = () => ({
-    value() {
-      childClassReads += 1;
-      throw new Error('child class unreadable');
+  const unreadableChild = {
+    attributes: {
+      byName: () => ({
+        value() {
+          childClassReads += 1;
+          throw new Error('child class unreadable');
+        },
+      }),
     },
-  });
+  };
+  composerChildren = [child, unreadableChild];
   assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+
+  composerChildren = [unreadableChild];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+
+  composerChildren = [child, unreadableChild];
+  composer.uiElements.attributes = {
+    byName: () => ({ value: () => [activeClasses, null] }),
+  };
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+});
+
+test('send readiness propagates structured validation failures immediately', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+validateFocusedComposer = () => fail('draft_changed', 'fixture');
+globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__sendControlLikelyReady(123, 'draft'),
+    (error) => error?.pocketCode === 'draft_changed',
+  );
+  vm.runInContext(
+    `validateFocusedComposer = () => fail('session_locked', 'fixture');`,
+    sandbox,
+  );
+  assert.throws(
+    () => sandbox.__sendControlLikelyReady(123, 'draft'),
+    (error) => error?.pocketCode === 'session_locked',
+  );
 });
 
 test('a missing Conductor window is recovered before the send gives up', async () => {
