@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
 import {
+  createDeliveryActionCoordinator,
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
   readDeliveryStatusResponse,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
+  terminalDeliveryActionDisposition,
 } from '../public/delivery-receipts.js';
 
 test('the client receipt parser preserves body aborts and rejects malformed success', async () => {
@@ -74,6 +76,83 @@ test('delivered and authoritative final delivery statuses are terminal', () => {
   );
   assert.equal(deliveryStatusIsTerminal({ state: 'unknown' }), false);
   assert.equal(deliveryStatusIsTerminal({ state: 'pending' }), false);
+});
+
+test('terminal delivery actions continue only for authoritative failures', () => {
+  assert.equal(
+    terminalDeliveryActionDisposition({ state: 'delivered' }),
+    'resolved',
+  );
+  assert.equal(
+    terminalDeliveryActionDisposition({
+      state: 'failed',
+      retrySafe: true,
+    }),
+    'actionable',
+  );
+  assert.equal(
+    terminalDeliveryActionDisposition({
+      state: 'failed',
+      retrySafe: false,
+      final: true,
+    }),
+    'actionable',
+  );
+  assert.equal(
+    terminalDeliveryActionDisposition({
+      state: 'failed',
+      retrySafe: false,
+    }),
+    'unverified',
+  );
+  assert.equal(
+    terminalDeliveryActionDisposition({
+      state: 'pending',
+      phase: 'automating',
+    }),
+    'pending',
+  );
+  assert.equal(
+    terminalDeliveryActionDisposition({ state: 'unknown' }),
+    'unverified',
+  );
+});
+
+test('rapid terminal action taps run one operation and expose its busy label', async () => {
+  const changes = [];
+  const coordinator = createDeliveryActionCoordinator({
+    onChange(key, action) {
+      changes.push([key, action]);
+    },
+  });
+  let release;
+  let calls = 0;
+  const first = coordinator.run('optimistic-1', 'retry', async () => {
+    calls += 1;
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  });
+  const second = await coordinator.run(
+    'optimistic-1',
+    'edit',
+    async () => {
+      calls += 1;
+      return 'duplicate';
+    },
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(coordinator.current('optimistic-1'), 'retry');
+  assert.deepEqual(second, { started: false, value: null });
+
+  release('claimed');
+  assert.deepEqual(await first, { started: true, value: 'claimed' });
+  assert.equal(coordinator.current('optimistic-1'), null);
+  assert.deepEqual(changes, [
+    ['optimistic-1', 'retry'],
+    ['optimistic-1', null],
+  ]);
 });
 
 test('inconclusive delivery statuses remain recoverable through slow receipt checks', () => {
@@ -292,6 +371,16 @@ test('recovering typed text never requires proof, resending always does', async 
     /message\.definitelyUnsent !== true/,
     'recovering typed text must not require proof the send failed',
   );
+  assert.doesNotMatch(
+    editBody,
+    /verifyTerminalDeliveryAction\(message\)/,
+    'recovering typed text must not depend on a reachable status endpoint',
+  );
+  assert.match(
+    editBody,
+    /claimTerminalDeliveryActionRequired\(message, 'edit'\)/,
+    'the atomic local claim remains the cross-window edit gate',
+  );
 
   // The claim gate must treat edit like delete, not like retry.
   assert.match(
@@ -305,3 +394,94 @@ test('recovering typed text never requires proof, resending always does', async 
   assert.match(canRetryBody, /message\.retrySafe === true/);
   assert.match(canRetryBody, /message\.definitelyUnsent === true/);
 })
+
+test('failed terminal verification reaches one visible action path', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const verifyStart = js.indexOf(
+    'async function verifyTerminalDeliveryAction(message)',
+  );
+  const verifyEnd = js.indexOf(
+    'function applyAuthoritativePendingDelivery',
+    verifyStart,
+  );
+  const verify = js.slice(verifyStart, verifyEnd);
+  assert.match(verify, /terminalDeliveryActionDisposition\(delivery\)/);
+  const actionableStart = verify.indexOf("if (disposition === 'actionable')");
+  const actionableEnd = verify.indexOf(
+    "if (disposition === 'pending')",
+    actionableStart,
+  );
+  const actionable = verify.slice(actionableStart, actionableEnd);
+  assert.match(
+    actionable,
+    /settleTerminalDeliveryStatus\(message, delivery\)[\s\S]*return message/,
+  );
+  assert.doesNotMatch(actionable, /return null/);
+  assert.match(
+    verify,
+    /disposition === 'resolved'[\s\S]*settleTerminalDeliveryStatus\(message, delivery\)[\s\S]*return null/,
+  );
+
+  const retryStart = js.indexOf('async function retryMessage(message)');
+  const retryEnd = js.indexOf('async function claimConflictAction', retryStart);
+  const retry = js.slice(retryStart, retryEnd);
+  assert.match(retry, /deliveryActionCoordinator\.run\(/);
+  assert.match(retry, /claimTerminalDeliveryActionRequired\(message, 'retry'\)/);
+  assert.match(retry, /void deliverOptimistic\(message/);
+
+  const checkStart = js.indexOf('async function checkDeliveryNow(message)');
+  const checkEnd = js.indexOf('function checkDelivery(message', checkStart);
+  const check = js.slice(checkStart, checkEnd);
+  assert.match(check, /requestDeliveryStatus\(message\)/);
+  assert.match(check, /terminalDeliveryActionDisposition\(delivery\)/);
+  assert.doesNotMatch(
+    check,
+    /checkDelivery\(message/,
+    'manual Check must not enqueue another two minute recovery pass',
+  );
+  assert.match(js, /activeAction === 'retry' \? 'Checking…' : 'Retry'/);
+  assert.match(js, /click: \(\) => void checkDeliveryNow\(message\)/);
+});
+
+test('manual delivery actions cancel stale automatic recovery work', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const recoveryStart = js.indexOf('function checkDelivery(message');
+  const recoveryEnd = js.indexOf('async function recoverPendingDeliveries');
+  const recovery = js.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /function cancelDeliveryRecovery\(message\)/);
+  assert.match(recovery, /cancelled: false/);
+  assert.match(recovery, /deliveryRecoveryEntryIsCurrent\(entry\)/);
+  assert.match(
+    recovery,
+    /deliveryNeedsAutomaticRecovery\(message\)[\s\S]*message\.delivery = 'confirming'/,
+    'a queued recovery must recheck eligibility before changing visible state',
+  );
+  assert.match(
+    recovery,
+    /requestDeliveryStatus\(message\)[\s\S]*deliveryRecoveryEntryIsCurrent\(entry\)/,
+    'an active recovery must stop after a manual action cancels it',
+  );
+
+  for (const functionName of [
+    'discardFailedMessage',
+    'editFailedMessage',
+    'checkDeliveryNow',
+    'retryMessage',
+    'claimConflictAction',
+  ]) {
+    const start = js.indexOf(`function ${functionName}`);
+    assert.ok(start > 0, `${functionName} must exist`);
+    const body = js.slice(start, js.indexOf('\n}\n', start));
+    assert.match(
+      body,
+      /cancelDeliveryRecovery\(message\)/,
+      `${functionName} must cancel background recovery first`,
+    );
+  }
+});

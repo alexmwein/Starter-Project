@@ -22,6 +22,52 @@ export function deliveryStatusIsTerminal(delivery) {
   );
 }
 
+export function terminalDeliveryActionDisposition(delivery) {
+  if (delivery?.state === 'delivered') return 'resolved';
+  if (
+    delivery?.state === 'failed' &&
+    deliveryStatusIsTerminal(delivery)
+  ) {
+    return 'actionable';
+  }
+  if (delivery?.state === 'pending') return 'pending';
+  return 'unverified';
+}
+
+export function createDeliveryActionCoordinator({
+  onChange = () => {},
+} = {}) {
+  if (typeof onChange !== 'function') {
+    throw new TypeError('invalid_delivery_action_change_handler');
+  }
+  const active = new Map();
+  return {
+    current(key) {
+      return active.get(key) || null;
+    },
+    async run(key, action, operation) {
+      if (
+        typeof key !== 'string' ||
+        key.length === 0 ||
+        typeof action !== 'string' ||
+        action.length === 0 ||
+        typeof operation !== 'function'
+      ) {
+        throw new TypeError('invalid_delivery_action');
+      }
+      if (active.has(key)) return { started: false, value: null };
+      active.set(key, action);
+      onChange(key, action);
+      try {
+        return { started: true, value: await operation() };
+      } finally {
+        active.delete(key);
+        onChange(key, null);
+      }
+    },
+  };
+}
+
 export async function readDeliveryStatusResponse(response) {
   let payload;
   try {

@@ -362,7 +362,7 @@ test('AppleScript resolves AX roots semantically instead of by position', async 
   );
   assert.match(
     source,
-    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*set selectedWorkspaceCount to 0[\s\S]*candidateClasses[\s\S]*"bg-sidebar-accent"[\s\S]*selectedWorkspaceCount to selectedWorkspaceCount \+ 1[\s\S]*selectedWorkspaceCount is not 1/,
+    /on inspectWorkspaceCandidate[\s\S]*candidateClasses contains "bg-sidebar-accent"[\s\S]*set selectedIncrement to 1[\s\S]*on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*set selectedWorkspaceCount to 0[\s\S]*selectedWorkspaceCount to selectedWorkspaceCount \+ containerSelectedCount[\s\S]*selectedWorkspaceCount is not 1/,
   );
   assert.match(
     source,
@@ -381,7 +381,7 @@ test('AppleScript resolves AX roots semantically instead of by position', async 
     "if (exactDraftExposedAt <= 0) fail('draft_changed');",
   );
   const finalWait = inputSource.indexOf(
-    'waitForComposerSend(pid, message, inputLease, routeLease);',
+    'waitForComposerSend(pid, message, inputLease);',
     finalReadiness,
   );
   assert.ok(finalReadiness >= 0);

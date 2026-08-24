@@ -1632,7 +1632,6 @@ function waitForComposerSend(
   pid,
   expectedDraft,
   inputLease,
-  routeLease,
 ) {
   // Split into a cheap poll and a single decision-point proof. The old shape
   // proved the whole route on EVERY iteration, so a persistent mismatch
@@ -1640,10 +1639,10 @@ function waitForComposerSend(
   // minutes of spinning, and one orphaned helper was observed still running
   // 2.5 minutes after the transport gave up at 45s. The poll now reads only
   // the focused composer and the Send control (~100ms), and the full route
-  // proof runs ONCE, when the button is actually present, immediately before
-  // the caller's own pinned pre-press proof. A genuine route change still
-  // fails, in seconds instead of never returning, and the window in which a
-  // keystroke at the Mac can abort the send shrinks by the same factor.
+  // complete Send resolution runs once when the button is actually present.
+  // The caller then performs its two pinned route proofs immediately before
+  // the press. Repeating one of those proofs here only produced a result that
+  // the caller discarded, at a measured cost of about two seconds.
   const deadlineAt = automationDeadline();
   // Each iteration's send_unavailable is swallowed by design (the button may
   // simply not be ready yet), which meant a loop that died of exhaustion or
@@ -1662,9 +1661,7 @@ function waitForComposerSend(
       try {
         return withTransientReadRetry(() => {
           const process = validateFocusedComposer(pid, expectedDraft);
-          assertRouteLease(process, routeLease);
-          const refreshed = validateFocusedComposer(pid, expectedDraft);
-          return resolveComposerSend(refreshed, expectedDraft);
+          return resolveComposerSend(process, expectedDraft);
         });
       } catch (error) {
         // The probe is a hint, not a proof. When the full check disagrees the
@@ -1742,6 +1739,7 @@ function typeAndSendMessage(pid) {
     fail('invalid_message');
   }
   const carriedInputCounters = expectedInputCounters();
+  const helperStartedAt = Date.now();
 
   // Allocate and round-trip every event before clearing an owned draft.
   const prepared = prepareInput(message);
@@ -1751,6 +1749,9 @@ function typeAndSendMessage(pid) {
   let lastAttemptedPrefix = null;
   let exactDraftExposedAt = 0;
   let pressInvokedAt = 0;
+  let routeReadyAt = 0;
+  let draftReadyAt = 0;
+  let sendReadyAt = 0;
   try {
     inputLease = acquireInputLease();
     if (
@@ -1765,6 +1766,7 @@ function typeAndSendMessage(pid) {
     assertSessionUnlocked();
     let process = validateFocusedComposer(pid);
     routeLease = acquireRouteLease(process);
+    routeReadyAt = Date.now();
     assertNotQueuedEditMode(process);
     process = validateFocusedComposer(pid);
     const draftReadStartedAt = Date.now();
@@ -1818,8 +1820,10 @@ function typeAndSendMessage(pid) {
     }
 
     if (exactDraftExposedAt <= 0) fail('draft_changed');
+    draftReadyAt = Date.now();
     assertInputLease(inputLease);
-    waitForComposerSend(pid, message, inputLease, routeLease);
+    waitForComposerSend(pid, message, inputLease);
+    sendReadyAt = Date.now();
     delay(0.02);
     process = validateFocusedComposer(pid, message);
     assertRouteLease(process, routeLease);
@@ -1838,6 +1842,21 @@ function typeAndSendMessage(pid) {
     recordPressProvenance(attemptStartedAt, pressInvokedAt);
     assertSessionUnlocked();
     assertInputLease(inputLease);
+    const completedAt = Date.now();
+    recordDiagnostic({
+      at: new Date().toISOString(),
+      attemptStartedAt,
+      outcome: 'pressed',
+      timings: {
+        outerNavigationMs: Math.max(0, helperStartedAt - attemptStartedAt),
+        routeAcquireMs: Math.max(0, routeReadyAt - helperStartedAt),
+        draftReadyMs: Math.max(0, draftReadyAt - routeReadyAt),
+        sendReadyMs: Math.max(0, sendReadyAt - draftReadyAt),
+        finalProofMs: Math.max(0, pressInvokedAt - sendReadyAt),
+        postPressChecksMs: Math.max(0, completedAt - pressInvokedAt),
+        totalMs: Math.max(0, completedAt - attemptStartedAt),
+      },
+    });
     return `pressed:${pressInvokedAt}`;
   } catch (error) {
     const possibleExposureAt = Number(

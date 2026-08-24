@@ -1,21 +1,21 @@
-const SHELL_REVISION = '0.2.0-phone-polish-20260821';
-const CACHE = 'conductor-pocket-shell-v24';
+const SHELL_REVISION = '0.2.0-fast-recovery-20260823';
+const CACHE = 'conductor-pocket-shell-v25';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-phone-polish-20260821',
-  '/app.js?v=0.2.0-phone-polish-20260821',
-  '/bootstrap-recovery.js?v=0.2.0-phone-polish-20260821',
-  '/delivery-receipts.js?v=0.2.0-phone-polish-20260821',
-  '/draft-conflict.js?v=0.2.0-phone-polish-20260821',
-  '/app-update.js?v=0.2.0-phone-polish-20260821',
-  '/http.js?v=0.2.0-phone-polish-20260821',
-  '/image-attachments.js?v=0.2.0-phone-polish-20260821',
-  '/live-refresh.js?v=0.2.0-phone-polish-20260821',
-  '/read-state.js?v=0.2.0-phone-polish-20260821',
-  '/rich-text.js?v=0.2.0-phone-polish-20260821',
-  '/transcript-focus.js?v=0.2.0-phone-polish-20260821',
-  '/swipe-navigation.js?v=0.2.0-phone-polish-20260821',
+  '/app.css?v=0.2.0-fast-recovery-20260823',
+  '/app.js?v=0.2.0-fast-recovery-20260823',
+  '/bootstrap-recovery.js?v=0.2.0-fast-recovery-20260823',
+  '/delivery-receipts.js?v=0.2.0-fast-recovery-20260823',
+  '/draft-conflict.js?v=0.2.0-fast-recovery-20260823',
+  '/app-update.js?v=0.2.0-fast-recovery-20260823',
+  '/http.js?v=0.2.0-fast-recovery-20260823',
+  '/image-attachments.js?v=0.2.0-fast-recovery-20260823',
+  '/live-refresh.js?v=0.2.0-fast-recovery-20260823',
+  '/read-state.js?v=0.2.0-fast-recovery-20260823',
+  '/rich-text.js?v=0.2.0-fast-recovery-20260823',
+  '/transcript-focus.js?v=0.2.0-fast-recovery-20260823',
+  '/swipe-navigation.js?v=0.2.0-fast-recovery-20260823',
   '/icon.svg',
   '/manifest.webmanifest',
 ];

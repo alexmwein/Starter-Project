@@ -218,12 +218,13 @@ test('session lookup scans every radio button in the Conductor tab group', async
     new URL('../src/conductor-send.applescript', import.meta.url),
     'utf8',
   );
-  assert.match(source, /repeat with tabGroupChild in tabGroupChildren/);
-  assert.match(source, /repeat with tabGroupElement in tabGroupElements/);
+  assert.match(source, /repeat with childIndex from 1 to childCount/);
+  assert.match(source, /repeat with nestedIndex from 1 to nestedCount/);
   assert.match(
     source,
-    /if \(role of tabGroupElement as text\) is "AXRadioButton" then copy tabGroupElement to end of sessionTabs/,
+    /if nestedRole is "AXRadioButton" then copy tabGroupElement to end of sessionTabs/,
   );
+  assert.match(source, /set nestedRole to role of tabGroupElement as text/);
   assert.doesNotMatch(
     source,
     /return UI elements of item 1 of tabGroupChildren/,
@@ -579,13 +580,18 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.ok(firstEditCheck >= 0);
   assert.ok(firstInputPost > firstEditCheck);
-  assert.match(
-    inputHelper,
-    /function waitForComposerSend[\s\S]*attempt < 250[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(refreshed, expectedDraft\)/,
+  const composerWait = inputHelper.slice(
+    inputHelper.indexOf('function waitForComposerSend'),
+    inputHelper.indexOf('// Deliver the ENTIRE message'),
   );
   assert.match(
+    composerWait,
+    /attempt < 250[\s\S]*validateFocusedComposer\(pid, expectedDraft\)[\s\S]*resolveComposerSend\(process, expectedDraft\)/,
+  );
+  assert.doesNotMatch(composerWait, /assertRouteLease/);
+  assert.match(
     inputHelper,
-    /routeLease = acquireRouteLease\(process\)[\s\S]*assertNotQueuedEditMode\(process\)[\s\S]*waitForComposerSend\(pid, message, inputLease, routeLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(process, message\)/,
+    /routeLease = acquireRouteLease\(process\)[\s\S]*assertNotQueuedEditMode\(process\)[\s\S]*waitForComposerSend\(pid, message, inputLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(process, message\)/,
   );
   const finalResolve = inputHelper.lastIndexOf(
     'const sendButton = resolveComposerSend(process, message);',
@@ -611,6 +617,18 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.ok(pressBoundary > finalActionResolve);
   assert.ok(finalRouteProof > finalResolve);
   assert.ok(finalPress > pressBoundary);
+  const finalSendBoundary = inputHelper.slice(
+    inputHelper.lastIndexOf(
+      'waitForComposerSend(pid, message, inputLease);',
+      finalResolve,
+    ),
+    finalPress,
+  );
+  assert.equal(
+    (finalSendBoundary.match(/assertRouteLease\(process, routeLease\);/g) || [])
+      .length,
+    2,
+  );
   assert.doesNotMatch(inputHelper, /validateRoute\(/);
   assert.match(inputHelper, /exactDraftExposedAt = draftReadStartedAt/);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
@@ -692,11 +710,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     source,
-    /set stableRouteChecks to 0[\s\S]*repeat with waitIndex from 1 to 50[\s\S]*workspaceLinkIsSelected\(workspaceLink, workspaceName\)[\s\S]*set stableRouteChecks to stableRouteChecks \+ 1[\s\S]*if stableRouteChecks is 3 then exit repeat/,
-  );
-  assert.doesNotMatch(
-    source,
-    /if routeAlreadySelected is true then[\s\S]*set stableRouteChecks to 3/,
+    /set stableRouteChecks to 0[\s\S]*if routeAlreadySelected is true and operationMode is "send" then[\s\S]*set stableRouteChecks to 3[\s\S]*else[\s\S]*repeat with waitIndex from 1 to 50[\s\S]*workspaceLinkIsSelected\(workspaceLink, workspaceName\)[\s\S]*set stableRouteChecks to stableRouteChecks \+ 1[\s\S]*if stableRouteChecks is 3 then exit repeat/,
   );
   assert.match(
     source,
@@ -1444,13 +1458,18 @@ test('a transient accessibility read is retried instead of aborting the send', a
     queuedEditMode.slice(0, queuedEditMode.indexOf('\n}\n')),
     /withTransientReadRetry\(\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES/,
   );
-  for (const waiter of ['waitForExactDraft', 'waitForComposerSend']) {
-    const body = inputHelper.slice(inputHelper.indexOf(`function ${waiter}`));
-    assert.match(
-      body.slice(0, body.indexOf('\n}\n')),
-      /withTransientReadRetry\(\(\) => \{[\s\S]*assertRouteLease\(process, routeLease\)/,
-    );
-  }
+  const exactWait = inputHelper.slice(
+    inputHelper.indexOf('function waitForExactDraft'),
+  );
+  assert.match(
+    exactWait.slice(0, exactWait.indexOf('\n}\n')),
+    /withTransientReadRetry\(\(\) => \{[\s\S]*assertRouteLease\(process, routeLease\)/,
+  );
+  const composerWait = inputHelper.slice(
+    inputHelper.indexOf('function waitForComposerSend'),
+    inputHelper.indexOf('// Deliver the ENTIRE message'),
+  );
+  assert.doesNotMatch(composerWait, /assertRouteLease/);
 
   // The typing hot loop must poll with the cheap focused read and prove the
   // route ONCE at the decision point. A measured assertRouteLease walk costs
@@ -1519,7 +1538,57 @@ test('the send path does not re-derive work it already has', async () => {
   );
   const probeBody = probe.slice(0, probe.indexOf('\n}\n'));
   assert.doesNotMatch(probeBody, /AXPress|perform\(\)/);
-  assert.match(waitBody, /assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend/);
+  assert.match(waitBody, /resolveComposerSend\(process, expectedDraft\)/);
+  assert.doesNotMatch(waitBody, /assertRouteLease/);
+
+  // The outer route resolver bulk-reads stable attributes and retains its
+  // exact per-element fallback when the Accessibility bridge cannot batch.
+  const sendScript = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const workspaceRoute = sendScript.slice(
+    sendScript.indexOf('on getWorkspaceRoute'),
+    sendScript.indexOf('end getWorkspaceRoute'),
+  );
+  assert.match(workspaceRoute, /role of UI elements of workspaceContainer/);
+  assert.match(workspaceRoute, /name of UI elements of workspaceContainer/);
+  assert.match(
+    workspaceRoute,
+    /value of attribute "AXDOMClassList" of UI elements of workspaceContainer/,
+  );
+  assert.match(workspaceRoute, /role of candidate as text/);
+
+  const sessionTabs = sendScript.slice(
+    sendScript.indexOf('on getSessionTabs'),
+    sendScript.indexOf('end getSessionTabs'),
+  );
+  assert.match(sessionTabs, /role of UI elements of mainGroup/);
+  assert.match(sessionTabs, /role of UI elements of tabGroup/);
+  assert.match(sessionTabs, /role of tabGroupChild as text/);
+
+  const selectedSession = sendScript.slice(
+    sendScript.indexOf('on sessionIsSelected'),
+    sendScript.indexOf('end sessionIsSelected'),
+  );
+  assert.match(selectedSession, /name of every item of sessionTabs/);
+  assert.match(selectedSession, /value of every item of sessionTabs/);
+  assert.match(selectedSession, /set normalizedTabNames to \{\}/);
+  assert.match(selectedSession, /set normalizedTabValues to \{\}/);
+  assert.match(selectedSession, /item tabIndex of candidateTabNames as text/);
+  assert.match(selectedSession, /item tabIndex of candidateTabValues as boolean/);
+  assert.ok(
+    selectedSession.indexOf('item tabIndex of candidateTabValues as boolean') <
+      selectedSession.indexOf('set tabValues to normalizedTabValues'),
+    'batched values must be validated before the fallback is bypassed',
+  );
+  assert.match(selectedSession, /name of candidate as text/);
+
+  // Send timing rows identify phases without recording message content.
+  assert.match(
+    inputHelper,
+    /outcome: 'pressed'[\s\S]*timings: \{[\s\S]*outerNavigationMs[\s\S]*sendReadyMs[\s\S]*finalProofMs[\s\S]*totalMs/,
+  );
 
   // The queued-edit scan is proven once per attempt, and only the scan: the
   // structural resolution still runs on every call.
@@ -1560,14 +1629,9 @@ test('a missing Conductor window is recovered before the send gives up', async (
     source.indexOf('on restoreConductorWindow()'),
     source.indexOf('end restoreConductorWindow'),
   );
-  const repeatMatch = handler.match(/repeat with waitIndex from 1 to (\d+)/);
-  const delayMatch = handler.match(/delay ([\d.]+)/);
-  assert.ok(repeatMatch && delayMatch, 'recovery must be a bounded poll');
-  const budgetSeconds = Number(repeatMatch[1]) * Number(delayMatch[1]);
-  assert.ok(
-    budgetSeconds > 2 && budgetSeconds <= 10,
-    `recovery budget ${budgetSeconds}s must outlast a wake but stay well inside the 45s automation timeout`,
-  );
+  assert.match(handler, /set recoveryDeadline to \(current date\) \+ 6/);
+  assert.match(handler, /repeat while \(current date\) < recoveryDeadline/);
+  assert.doesNotMatch(handler, /repeat with waitIndex from 1 to 30/);
 });
 
 test('a windowless Conductor tells the operator the only thing that works', async () => {

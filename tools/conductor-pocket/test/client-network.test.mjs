@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import { fetchJson } from '../public/http.js';
 import {
+  applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
 } from '../public/live-refresh.js';
@@ -96,6 +98,96 @@ test('live refresh changes collapse into one trailing pass', async () => {
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(calls, 2);
   coordinator.stop();
+});
+
+test('flush consumes a scheduled refresh instead of running it twice', async () => {
+  let calls = 0;
+  const coordinator = createLiveRefreshCoordinator({
+    delayMs: 15,
+    run() {
+      calls += 1;
+    },
+  });
+
+  coordinator.schedule();
+  await coordinator.flush();
+  assert.equal(calls, 1);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(calls, 1);
+  coordinator.stop();
+});
+
+test('reachable connection recovery revives data and delivery state', () => {
+  const state = {
+    connection: 'offline',
+    lastHeartbeat: 10,
+  };
+  const calls = [];
+  applyConnectionAvailability({
+    state,
+    status: 'live',
+    now: 900,
+    render: () => calls.push('render'),
+    restartEvents: () => calls.push('events'),
+    refresh: () => calls.push('refresh'),
+    recheckDeliveries: () => calls.push('recheck'),
+    recoverDeliveries: () => calls.push('recover'),
+  });
+
+  assert.equal(state.connection, 'live');
+  assert.equal(state.lastHeartbeat, 900);
+  assert.deepEqual(calls, [
+    'render',
+    'events',
+    'refresh',
+    'recheck',
+    'recover',
+  ]);
+});
+
+test('offline connection state updates immediately without recovery work', () => {
+  const state = {
+    connection: 'live',
+    lastHeartbeat: 900,
+  };
+  const calls = [];
+  applyConnectionAvailability({
+    state,
+    status: 'offline',
+    render: () => calls.push('render'),
+    restartEvents: () => calls.push('events'),
+    refresh: () => calls.push('refresh'),
+    recheckDeliveries: () => calls.push('recheck'),
+    recoverDeliveries: () => calls.push('recover'),
+  });
+
+  assert.equal(state.connection, 'offline');
+  assert.deepEqual(calls, ['render']);
+});
+
+test('connection controls revive the current app without replacing the sheet', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const connectionSheet = source.match(
+    /async function runConnectionCheck[\s\S]*?(?=\nasync function openSecurity)/,
+  )?.[0];
+  assert.ok(connectionSheet);
+  assert.match(connectionSheet, /applyAppConnectionAvailability\('live'/);
+  assert.match(connectionSheet, /await runConnectionCheck\(content\)/);
+  assert.doesNotMatch(
+    connectionSheet,
+    /click:\s*\(\)\s*=>\s*openConnectionSheet/,
+  );
+  assert.equal(
+    (source.match(/window\.addEventListener\('online'/g) || []).length,
+    1,
+  );
+  assert.match(
+    source,
+    /window\.addEventListener\('offline', \(\) => \{[\s\S]*?applyAppConnectionAvailability\('offline'/,
+  );
 });
 
 test('a full session baseline supersedes an older incremental response', async () => {
