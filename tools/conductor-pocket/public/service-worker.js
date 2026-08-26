@@ -1,21 +1,21 @@
-const SHELL_REVISION = '0.2.0-fast-recovery-20260823';
-const CACHE = 'conductor-pocket-shell-v25';
+const SHELL_REVISION = '0.2.0-collapsed-project-20260825';
+const CACHE = 'conductor-pocket-shell-v26';
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-fast-recovery-20260823',
-  '/app.js?v=0.2.0-fast-recovery-20260823',
-  '/bootstrap-recovery.js?v=0.2.0-fast-recovery-20260823',
-  '/delivery-receipts.js?v=0.2.0-fast-recovery-20260823',
-  '/draft-conflict.js?v=0.2.0-fast-recovery-20260823',
-  '/app-update.js?v=0.2.0-fast-recovery-20260823',
-  '/http.js?v=0.2.0-fast-recovery-20260823',
-  '/image-attachments.js?v=0.2.0-fast-recovery-20260823',
-  '/live-refresh.js?v=0.2.0-fast-recovery-20260823',
-  '/read-state.js?v=0.2.0-fast-recovery-20260823',
-  '/rich-text.js?v=0.2.0-fast-recovery-20260823',
-  '/transcript-focus.js?v=0.2.0-fast-recovery-20260823',
-  '/swipe-navigation.js?v=0.2.0-fast-recovery-20260823',
+  '/app.css?v=0.2.0-collapsed-project-20260825',
+  '/app.js?v=0.2.0-collapsed-project-20260825',
+  '/bootstrap-recovery.js?v=0.2.0-collapsed-project-20260825',
+  '/delivery-receipts.js?v=0.2.0-collapsed-project-20260825',
+  '/draft-conflict.js?v=0.2.0-collapsed-project-20260825',
+  '/app-update.js?v=0.2.0-collapsed-project-20260825',
+  '/http.js?v=0.2.0-collapsed-project-20260825',
+  '/image-attachments.js?v=0.2.0-collapsed-project-20260825',
+  '/live-refresh.js?v=0.2.0-collapsed-project-20260825',
+  '/read-state.js?v=0.2.0-collapsed-project-20260825',
+  '/rich-text.js?v=0.2.0-collapsed-project-20260825',
+  '/transcript-focus.js?v=0.2.0-collapsed-project-20260825',
+  '/swipe-navigation.js?v=0.2.0-collapsed-project-20260825',
   '/icon.svg',
   '/manifest.webmanifest',
 ];

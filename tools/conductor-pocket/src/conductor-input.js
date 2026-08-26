@@ -238,6 +238,95 @@ function workspaceMatches(workspaceName, candidateName) {
   );
 }
 
+function workspaceNameAppearsInRoute(workspaceName, candidateName) {
+  return (
+    workspaceMatches(workspaceName, candidateName) ||
+    candidateName.startsWith(`${workspaceName} -`) ||
+    candidateName.endsWith(`/${workspaceName}`) ||
+    candidateName.includes(`/${workspaceName} +`) ||
+    candidateName.includes(`/${workspaceName} -`)
+  );
+}
+
+// Conductor exposes a collapsed project as one AXButton row whose flattened
+// title is "project project COUNT ...", followed immediately by the next
+// project row instead of by AXLink workspace rows. There is no AXExpanded
+// attribute to read. Require the repeated project name and a positive integer
+// count so an ordinary sidebar button can never masquerade as this diagnosis.
+function countedProjectName(rowTitle) {
+  if (typeof rowTitle !== 'string' || rowTitle.length > 500) return null;
+  const match = /^(.+?)\s+\1\s+([1-9][0-9]*)\b/u.exec(rowTitle.trim());
+  if (!match) return null;
+  const projectName = match[1].trim();
+  if (
+    !projectName ||
+    projectName.length > 160 ||
+    /[\u0000-\u001f\u007f]/u.test(projectName)
+  ) {
+    return null;
+  }
+  return projectName;
+}
+
+// Read-only post-failure diagnosis. This never presses the project row: AXPress
+// navigates to repo Settings in Conductor 0.82.6 instead of expanding it. The
+// target-link count is checked across every root first, so an unselected or
+// duplicate visible route keeps the old generic failure rather than blaming an
+// unrelated collapsed project.
+function diagnoseWorkspaceFailure(process, workspaceName) {
+  const generic = Object.freeze({
+    ok: false,
+    code: 'workspace_list_unavailable',
+  });
+  if (typeof workspaceName !== 'string' || !workspaceName) return generic;
+
+  const collapsedProjects = [];
+  let targetLinkCount = 0;
+  const rootElements = webAreaRootElements(process);
+  for (const root of rootElements) {
+    const containers = routeElements(root);
+    for (const container of containers) {
+      const rows = routeElements(container);
+      let currentProject = null;
+      const finishProject = () => {
+        if (currentProject?.workspaceLinks === 0) {
+          collapsedProjects.push(currentProject.name);
+        }
+      };
+      for (const row of rows) {
+        const role = routeRole(row);
+        if (role === 'AXButton') {
+          const projectName = countedProjectName(routeName(row));
+          if (projectName) {
+            finishProject();
+            currentProject = { name: projectName, workspaceLinks: 0 };
+          }
+          continue;
+        }
+        if (role !== 'AXLink') continue;
+        const linkName = routeName(row);
+        if (
+          typeof linkName === 'string' &&
+          workspaceNameAppearsInRoute(workspaceName, linkName)
+        ) {
+          targetLinkCount += 1;
+        }
+        if (currentProject) currentProject.workspaceLinks += 1;
+      }
+      finishProject();
+    }
+  }
+
+  if (targetLinkCount !== 0 || collapsedProjects.length === 0) {
+    return generic;
+  }
+  return Object.freeze({
+    ok: false,
+    code: 'workspace_project_collapsed',
+    projectName: collapsedProjects[0],
+  });
+}
+
 function isWellFormed(value) {
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
@@ -830,6 +919,21 @@ function validatedConductorProcess(pid) {
   const systemEvents = Application('System Events');
   const process = systemEvents.processes.byName('Conductor');
   if (!process.exists() || Number(process.unixId()) !== pid || !process.frontmost()) {
+    fail('invalid_target_process');
+  }
+  return process;
+}
+
+function conductorProcessForReadOnlyDiagnosis(pid) {
+  const conductor = $.NSRunningApplication.runningApplicationWithProcessIdentifier(
+    pid,
+  );
+  if (!conductor || ObjC.unwrap(conductor.bundleIdentifier) !== CONDUCTOR_BUNDLE_ID) {
+    fail('invalid_target_process');
+  }
+  const systemEvents = Application('System Events');
+  const process = systemEvents.processes.byName('Conductor');
+  if (!process.exists() || Number(process.unixId()) !== pid) {
     fail('invalid_target_process');
   }
   return process;
@@ -1956,6 +2060,16 @@ function run(argv) {
   if (operation === 'input-check') {
     assertSessionUnlocked();
     return waitForInputIdle() ? 'ready' : 'busy';
+  }
+  if (operation === 'workspace-failure') {
+    assertSessionUnlocked();
+    // Diagnosis is read-only and may run while Conductor is visible behind
+    // another app. Requiring frontmost here would turn the useful collapsed
+    // result back into the generic code unless Pocket first stole focus.
+    const process = conductorProcessForReadOnlyDiagnosis(pid);
+    return JSON.stringify(
+      diagnoseWorkspaceFailure(process, environmentValue('POCKET_WORKSPACE_NAME')),
+    );
   }
   if (operation === 'tab-new') return postTabShortcut(pid, KEY_T);
   if (operation === 'tab-close') return postTabShortcut(pid, KEY_W);
