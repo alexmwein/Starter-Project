@@ -702,7 +702,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.ok(routeStabilization > refreshedWorkspaceLookup);
   assert.match(
     source.slice(routeRefreshBlock, routeStabilization),
-    /workspace_list_unavailable[\s\S]*workspace_not_visible/,
+    /workspaceListFailure\(inputScriptPath, conductorPid\)[\s\S]*workspace_not_visible/,
   );
   assert.match(
     source,

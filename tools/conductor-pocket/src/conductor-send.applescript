@@ -114,6 +114,19 @@ on getSidebarGroup()
 	return my findSidebarGroup(my workspaceName)
 end getSidebarGroup
 
+-- A collapsed project removes all of its workspace AXLinks, which makes the
+-- exactly-one sidebar proof correctly return zero. Diagnose that real shape in
+-- the fixture-tested JXA reader, but never press the project row here: in 0.82.6
+-- AXPress opens repo Settings rather than expanding it. Any unreadable or
+-- malformed diagnosis falls back to the old generic failure.
+on workspaceListFailure(inputScriptPath, conductorPid)
+	try
+		return do shell script "/usr/bin/env POCKET_OPERATION=workspace-failure /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error
+		return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
+	end try
+end workspaceListFailure
+
 on isMainGroup(candidate)
 	set tabGroupCount to 0
 	set composerCount to 0
@@ -802,7 +815,7 @@ if getMainGroup() is missing value then
 end if
 
 set sidebarGroup to getSidebarGroup()
-if sidebarGroup is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
+if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
 set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
 if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 set workspaceLink to item 1 of workspaceRoute
@@ -851,7 +864,7 @@ if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visib
 
 if routeAlreadySelected is false then
 	set sidebarGroup to getSidebarGroup()
-	if sidebarGroup is missing value then return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
+	if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
 	set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
 	if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 	set workspaceLink to item 1 of workspaceRoute
