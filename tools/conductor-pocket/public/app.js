@@ -13,6 +13,7 @@ import {
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
+  workspaceProjectCollapsedCopy,
 } from './delivery-receipts.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   appUpdateReloadIsSafe,
@@ -265,6 +266,8 @@ const SEND_FAILURE_REASONS = Object.freeze({
   composer_unavailable: 'The message box was not found in Conductor.',
   workspace_list_unavailable: 'The workspace list was not found in Conductor.',
   workspace_not_visible: 'This workspace is not visible in Conductor.',
+  workspace_project_collapsed:
+    "A project is collapsed in Conductor's sidebar. Expand it to send.",
   session_not_visible: 'This chat is not visible in Conductor.',
   user_input_active: 'Someone was using the Mac keyboard.',
   send_unavailable: 'The send button was not available in Conductor.',
@@ -387,6 +390,8 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   user_input_active: 'Your Mac was being used, so Pocket stopped safely.',
   workspace_list_unavailable: 'Pocket could not read the Conductor workspace list.',
   workspace_not_visible: 'That workspace is not visible in Conductor.',
+  workspace_project_collapsed:
+    "A project is collapsed in Conductor's sidebar. Expand it to send.",
 });
 
 const EDIT_BEFORE_RETRY_CODES = new Set([
@@ -404,9 +409,24 @@ function safeDeliveryErrorCode(value) {
     : 'delivery_unknown';
 }
 
-function deliveryErrorCopy(code) {
+function deliveryErrorCopy(code, projectName = null) {
   const safeCode = safeDeliveryErrorCode(code);
+  if (safeCode === 'workspace_project_collapsed') {
+    return workspaceProjectCollapsedCopy(projectName);
+  }
   return DELIVERY_ERROR_COPY[safeCode] || `Conductor reported ${safeCode.replaceAll('_', ' ')}.`;
+}
+
+function safeCollapsedProjectName(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 160 &&
+    value === value.trim() &&
+    !/[\u0000-\u001f\u007f]/u.test(value)
+  )
+    ? value
+    : null;
 }
 
 function deliveryCanRetry(message) {
@@ -2117,6 +2137,7 @@ function sanitizePendingDelivery(value) {
       value.deliveryRecoveryExhausted === true,
     errorCode:
       typeof value.errorCode === 'string' ? value.errorCode : null,
+    errorProjectName: safeCollapsedProjectName(value.errorProjectName),
     deliveryPhase: new Set([
       'queued',
       'automating',
@@ -4708,6 +4729,7 @@ function messageRenderKey(message, toolResults) {
       : null,
     message.delivery,
     message.errorCode,
+    message.errorProjectName,
     message.retrySafe,
     message.definitelyUnsent,
     message.deliveryRecoveryExhausted,
@@ -4921,7 +4943,7 @@ function renderMessage(message, toolResults) {
       }, [
         icon('warn'),
         node('span', {
-          text: `${definitelyUnsent ? 'Not sent' : 'Delivery unknown'} · ${deliveryErrorCopy(message.errorCode)}`,
+          text: `${definitelyUnsent ? 'Not sent' : 'Delivery unknown'} · ${deliveryErrorCopy(message.errorCode, message.errorProjectName)}`,
         }),
       ]);
       const actions = node('span', { className: 'delivery-actions' });
@@ -4994,7 +5016,10 @@ function renderMessage(message, toolResults) {
         summary,
         actions,
       );
-      const reason = SEND_FAILURE_REASONS[message.errorCode] || null;
+      const reason =
+        message.errorCode === 'workspace_project_collapsed'
+          ? workspaceProjectCollapsedCopy(message.errorProjectName)
+          : SEND_FAILURE_REASONS[message.errorCode] || null;
       const detail =
         typeof message.errorDetail === 'string' && message.errorDetail !== ''
           ? message.errorDetail
@@ -5607,12 +5632,15 @@ async function markDefinitelyUnsent(optimistic, error) {
   optimistic.delivery = 'failed';
   optimistic.deliveryPhase = null;
   optimistic.errorCode = error.code;
+  optimistic.errorProjectName = safeCollapsedProjectName(error.projectName);
   optimistic.retrySafe = error.retrySafe === true;
   optimistic.definitelyUnsent = true;
   optimistic.deliveryRecoveryExhausted = true;
   await persistPendingDeliveries({ upserts: [optimistic] });
   renderTranscript();
-  announce(`Message was not sent. ${deliveryErrorCopy(error.code)}`);
+  announce(
+    `Message was not sent. ${deliveryErrorCopy(error.code, error.projectName)}`,
+  );
 }
 
 async function deliverOptimistic(
@@ -5726,6 +5754,7 @@ async function deliverOptimistic(
         typeof payload.error?.detail === 'string'
           ? payload.error.detail.slice(0, 300)
           : null;
+      error.projectName = safeCollapsedProjectName(payload.error?.projectName);
       throw error;
     }
     applyDeliveryReceipt(optimistic, payload);
@@ -5756,6 +5785,7 @@ async function deliverOptimistic(
       typeof error.detail === 'string' && error.detail !== ''
         ? error.detail
         : null;
+    optimistic.errorProjectName = safeCollapsedProjectName(error.projectName);
     if (error.definitelyUnsent === true) {
       await markDefinitelyUnsent(optimistic, error);
       if (error.status === 401 || error.status === 423) {
@@ -5810,6 +5840,7 @@ function applyDeliveryReceipt(message, receipt) {
   message.definitelyUnsent = false;
   message.deliveryRecoveryExhausted = false;
   message.errorCode = null;
+  message.errorProjectName = null;
   message.deliveryPhase = null;
   for (const attachment of message.attachments || []) {
     releaseAttachmentPreview(attachment);
@@ -5875,6 +5906,7 @@ async function settleTerminalDeliveryStatus(message, delivery) {
   if (delivery.state === 'failed') {
     if (!deliveryStatusIsTerminal(delivery)) return false;
     message.errorCode = delivery.code || 'delivery_unknown';
+    message.errorProjectName = safeCollapsedProjectName(delivery.projectName);
     message.delivery = 'failed';
     message.deliveryPhase = null;
     message.retrySafe = delivery.retrySafe === true;
@@ -5969,7 +6001,7 @@ async function checkDeliveryNow(message) {
           await settleTerminalDeliveryStatus(message, delivery);
           announce(
             message.definitelyUnsent === true
-              ? `Message was not sent. ${deliveryErrorCopy(message.errorCode)}`
+              ? `Message was not sent. ${deliveryErrorCopy(message.errorCode, message.errorProjectName)}`
               : 'Delivery is still unconfirmed. Edit the text if you need it.',
           );
           return false;

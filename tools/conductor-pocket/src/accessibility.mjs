@@ -28,6 +28,7 @@ const safeToRetryCodes = new Set([
   'user_input_active',
   'workspace_list_unavailable',
   'workspace_not_visible',
+  'workspace_project_collapsed',
   // Control-operation outcomes. None of these touch the composer text or the
   // Send control, so a retry can never duplicate a message.
   'close_not_confirmed',
@@ -46,6 +47,18 @@ function byteLength(value) {
 
 function safeToRetry(code) {
   return { ok: false, code, safeToRetry: true };
+}
+
+function validProjectName(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 160 &&
+    value.isWellFormed() &&
+    byteLength(value) <= 256 &&
+    !/[\u0000-\u001f\u007f]/u.test(value) &&
+    value === value.trim()
+  );
 }
 
 export function parseResult(stdout) {
@@ -85,6 +98,18 @@ export function parseResult(stdout) {
         ))
     ) {
       throw new Error('Missing composer retry certificate');
+    }
+    if (
+      result.code === 'workspace_project_collapsed' &&
+      (result.ok || !validProjectName(result.projectName))
+    ) {
+      throw new Error('Missing collapsed project name');
+    }
+    if (
+      result.code !== 'workspace_project_collapsed' &&
+      Object.hasOwn(result, 'projectName')
+    ) {
+      throw new Error('Unexpected collapsed project name');
     }
     if (!result.ok && safeToRetryCodes.has(result.code)) {
       result.safeToRetry = true;

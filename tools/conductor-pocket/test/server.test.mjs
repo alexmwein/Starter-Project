@@ -1133,6 +1133,81 @@ test('a transient route lookup retries once inside the original send boundary', 
   );
 });
 
+test('collapsed project failures skip automatic retry and preserve the project name', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'iphone-conductor',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return {
+          ok: false,
+          code: 'workspace_project_collapsed',
+          projectName: 'Quickstart',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'collapsed_project_key',
+    message: 'Stay unsent',
+  });
+  const status = await postDeliveryStatus(port, {
+    idempotencyKey: 'collapsed_project_key',
+  });
+
+  assert.equal(sends, 1);
+  assert.equal(response.status, 503);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'workspace_project_collapsed',
+    retrySafe: true,
+    definitelyUnsent: true,
+    projectName: 'Quickstart',
+  });
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'failed',
+    code: 'workspace_project_collapsed',
+    retrySafe: true,
+    final: true,
+    projectName: 'Quickstart',
+  });
+});
+
 test('a started route retry is never reported as definitely unsent after an exception', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',

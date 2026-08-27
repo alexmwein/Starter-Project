@@ -114,6 +114,7 @@ const errorStatuses = new Map([
   ['message_too_large', 413],
   ['workspace_list_unavailable', 503],
   ['workspace_not_visible', 503],
+  ['workspace_project_collapsed', 503],
   ['session_not_visible', 503],
   ['composer_unavailable', 503],
   ['composer_changed_pre_send', 502],
@@ -479,6 +480,18 @@ function deliveryLedgerProofMatches(left, right) {
   return timingSafeEqual(Buffer.from(left), Buffer.from(right));
 }
 
+function validCollapsedProjectName(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 160 &&
+    value.isWellFormed() &&
+    Buffer.byteLength(value, 'utf8') <= 256 &&
+    !/[\u0000-\u001f\u007f]/u.test(value) &&
+    value === value.trim()
+  );
+}
+
 function durableDeliveryResult(result, secret) {
   if (!result || typeof result.ok !== 'boolean') return null;
   if (result.ok) {
@@ -504,6 +517,12 @@ function durableDeliveryResult(result, secret) {
         : 'internal_error',
     safeToRetry: result.safeToRetry === true,
   };
+  if (
+    durable.code === 'workspace_project_collapsed' &&
+    validCollapsedProjectName(result.projectName)
+  ) {
+    durable.projectName = result.projectName;
+  }
   const recovery = result.recovery;
   if (
     recovery &&
@@ -575,6 +594,12 @@ function validateDurableDeliveryResult(result) {
     code: result.code,
     safeToRetry: result.safeToRetry,
   };
+  if (result.code === 'workspace_project_collapsed') {
+    if (!validCollapsedProjectName(result.projectName)) return null;
+    validated.projectName = result.projectName;
+  } else if (result.projectName !== undefined) {
+    return null;
+  }
   if (result.recovery !== undefined) {
     const recovery = result.recovery;
     if (
@@ -857,6 +882,10 @@ class IdempotencyStore {
       code: entry.result.code,
       retrySafe: entry.result.safeToRetry === true,
       final: true,
+      ...(entry.result.code === 'workspace_project_collapsed' &&
+      validCollapsedProjectName(entry.result.projectName)
+        ? { projectName: entry.result.projectName }
+        : {}),
     };
   }
 
@@ -2611,6 +2640,10 @@ export function createPocketServer({
                 // instead of pointing the user at a log they cannot see.
                 ...(typeof result.detail === 'string' && result.detail !== ''
                   ? { detail: result.detail.slice(0, 300) }
+                  : {}),
+                ...(result.code === 'workspace_project_collapsed' &&
+                validCollapsedProjectName(result.projectName)
+                  ? { projectName: result.projectName }
                   : {}),
               },
             },

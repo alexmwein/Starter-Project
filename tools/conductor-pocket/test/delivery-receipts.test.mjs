@@ -60,6 +60,26 @@ test('a terminal tombstone stops a stale Pocket window from resurrecting a delet
   assert.equal(staleRecovery?.snapshot?.tombstones?.length, 1);
 });
 
+test('a retry clears the collapsed project name from the prior failure', () => {
+  const message = persistedMessage({
+    errorCode: 'workspace_project_collapsed',
+    errorProjectName: 'Quickstart',
+  });
+  const retried = deliveryReceipts.pendingDeliverySnapshotTransition(
+    [message],
+    {
+      type: 'claim-terminal',
+      action: 'retry',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+
+  assert.equal(retried.value?.delivery, 'delivering');
+  assert.equal(retried.value?.errorCode, null);
+  assert.equal(retried.value?.errorProjectName, null);
+});
+
 test('a failed draft write releases an edit claim and leaves the delivery recoverable', async () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const recover = deliveryReceipts.persistRecoveredDraftBeforeFinalizing;

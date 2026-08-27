@@ -393,6 +393,7 @@ export function pendingDeliverySnapshotTransition(
       definitelyUnsent: false,
       deliveryRecoveryExhausted: false,
       errorCode: null,
+      errorProjectName: null,
       deliveryAttempt: candidate.deliveryAttempt + 1,
     };
     snapshot.messages[index] = claimed;
@@ -537,6 +538,21 @@ export async function persistRecoveredDraftBeforeFinalizing({
     status: (await releaseSafely()) ? 'finalize-failed' : 'release-failed',
     value: null,
   };
+}
+
+export function workspaceProjectCollapsedCopy(projectName) {
+  const safeName =
+    typeof projectName === 'string' &&
+    projectName.length > 0 &&
+    projectName.length <= 160 &&
+    projectName === projectName.trim() &&
+    !/[\u0000-\u001f\u007f]/u.test(projectName)
+      ? projectName
+      : null;
+  if (!safeName) {
+    return "A project is collapsed in Conductor's sidebar. Expand it to send.";
+  }
+  return `The '${safeName}' project is collapsed in Conductor's sidebar. Expand it to send.`;
 }
 
 export function deliveryStatusIsTerminal(delivery) {
