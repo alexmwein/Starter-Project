@@ -13,18 +13,18 @@ import {
   readDeliveryStatusResponse,
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
-} from './delivery-receipts.js?v=0.2.0-chat-strip-stable-20260824';
+} from './delivery-receipts.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-chat-strip-stable-20260824';
+} from './app-update.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-chat-strip-stable-20260824';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-chat-strip-stable-20260824';
-import { fetchJson } from './http.js?v=0.2.0-chat-strip-stable-20260824';
+} from './bootstrap-recovery.js?v=0.2.0-delivery-motion-stable-20260827';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-delivery-motion-stable-20260827';
+import { fetchJson } from './http.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -34,16 +34,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-chat-strip-stable-20260824';
+} from './image-attachments.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-chat-strip-stable-20260824';
+} from './live-refresh.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-chat-strip-stable-20260824';
+} from './rich-text.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -54,19 +54,22 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-chat-strip-stable-20260824';
+} from './read-state.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-chat-strip-stable-20260824';
+  reconciledTranscriptMessageIds,
+  stableTranscriptMessages,
+  transcriptRefreshShouldWait,
+} from './transcript-focus.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-chat-strip-stable-20260824';
+} from './swipe-navigation.js?v=0.2.0-delivery-motion-stable-20260827';
 import {
   activeGptUsage,
   createUsageReader,
-} from './usage-state.js?v=0.2.0-chat-strip-stable-20260824';
+} from './usage-state.js?v=0.2.0-delivery-motion-stable-20260827';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -110,7 +113,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-chat-strip-stable-20260824';
+const CLIENT_SHELL_REVISION = '0.2.0-delivery-motion-stable-20260827';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -3314,12 +3317,11 @@ function updateRoutePanels() {
   const scroller = state.shell.transcriptScroll;
   const wasShowingTranscript =
     state.shell.transcriptPanel.classList.contains('is-active');
-  // Measured BEFORE the class flips, because after it the position is already
-  // gone. Anchored to the end rather than to scrollTop so it survives messages
-  // arriving while the transcript was hidden.
+  // Measured before the class flips, because hidden panels can lose their
+  // scroll position. New rows append below the reader, so keeping scrollTop
+  // holds the same visible text in place while the transcript is hidden.
   if (wasShowingTranscript && view !== 'transcript' && scroller?.clientHeight > 0) {
-    transcriptHiddenAnchor =
-      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+    transcriptHiddenScrollTop = scroller.scrollTop;
   }
   state.shell.workspacePanel.classList.toggle(
     'is-active',
@@ -3346,14 +3348,12 @@ function updateRoutePanels() {
     }
   }
   lastPanelView = view;
-  if (view !== 'transcript' || transcriptHiddenAnchor === null || !scroller) return;
+  if (view !== 'transcript' || transcriptHiddenScrollTop === null || !scroller) return;
   // Reading scrollHeight forces the layout the panel just gained, so this lands
   // in the same frame the panel becomes visible and nothing renders at the top
   // first. renderTranscript measures afterwards and sees the restored position.
-  const restored =
-    scroller.scrollHeight - scroller.clientHeight - transcriptHiddenAnchor;
-  scroller.scrollTop = Math.max(0, restored);
-  transcriptHiddenAnchor = null;
+  scroller.scrollTop = Math.max(0, transcriptHiddenScrollTop);
+  transcriptHiddenScrollTop = null;
 }
 
 function clearRenderedSessionView() {
@@ -4061,6 +4061,20 @@ async function refreshMessages(
         return { cursor, data };
       },
       commit: ({ cursor, data }) => {
+        // The database event can beat the POST receipt by a few hundred
+        // milliseconds. Hold a batch containing a user row until that receipt
+        // settles, or the Mac row and its optimistic bubble briefly render as
+        // two messages. The cursor stays unchanged, so the next refresh reads
+        // the held row again and reconciles it before painting.
+        if (
+          transcriptRefreshShouldWait(
+            data.messages,
+            state.optimistic,
+            sessionId,
+          )
+        ) {
+          return [];
+        }
         const currentCursor = state.cursorsBySession.get(sessionId) || 0;
         const responseCursor = Math.max(0, Number(data.cursor) || 0);
         if (effectiveFull && responseCursor < currentCursor) {
@@ -4115,6 +4129,12 @@ function reconcileOptimistic(sessionId) {
   );
   state.optimistic = result.remaining;
   if (result.reconciled.length > 0) {
+    for (const messageId of reconciledTranscriptMessageIds(
+      state.messagesBySession.get(sessionId) || [],
+      result.reconciled,
+    )) {
+      state.seenMessageIds.add(messageId);
+    }
     for (const message of result.reconciled) {
       for (const attachment of message.attachments || []) {
         releaseAttachmentPreview(attachment);
@@ -4132,39 +4152,6 @@ function currentSession() {
     (session) => session.id === state.route.sessionId,
   ) || state.recentSessions.find((session) => session.id === state.route.sessionId);
 }
-
-function transcriptTimestamp(message) {
-  for (const value of [
-    message?.createdAt,
-    message?.sentAt,
-    message?.deliveredAt,
-  ]) {
-    const timestamp = Date.parse(value);
-    if (Number.isFinite(timestamp)) return timestamp;
-  }
-  return null;
-}
-
-function chronologicalTranscriptMessages(messages) {
-  return messages
-    .map((message, index) => ({
-      message,
-      index,
-      timestamp: transcriptTimestamp(message),
-    }))
-    .sort((left, right) => {
-      if (
-        left.timestamp != null &&
-        right.timestamp != null &&
-        left.timestamp !== right.timestamp
-      ) {
-        return left.timestamp - right.timestamp;
-      }
-      return left.index - right.index;
-    })
-    .map(({ message }) => message);
-}
-
 
 // One tap to switch, rendered from the workspace's own session list. The active
 // chip scrolls itself into view so the current chat is always visible after a
@@ -4204,13 +4191,13 @@ let lastTranscriptSessionId = null;
 let newestRootEventRowId = 0;
 // Seat usage is cached because it is rendered from the always-visible header.
 // Fetching per render would loop: fetch, store, render, fetch.
-// Distance from the end of the transcript at the moment its panel was hidden.
+// Scroll position at the moment the transcript panel was hidden.
 // Panels are toggled with display:none, and the browser DISCARDS the scroll
 // position of anything display:none, so leaving the transcript and coming back
 // always returned scrollTop to 0. No amount of correcting when the scroll is
 // written can fix that, because nothing in the app did the resetting. Captured
 // on the way out, reapplied on the way in.
-let transcriptHiddenAnchor = null;
+let transcriptHiddenScrollTop = null;
 let lastPanelView = null;
 
 const seatUsageReader = createUsageReader({
@@ -4534,6 +4521,7 @@ function renderTranscript() {
   lastTranscriptSessionId = state.route.sessionId;
   if (transcriptSessionChanged) transcriptMovedByHand = false;
   const measurable = transcriptScroll.clientHeight > 0;
+  const scrollTopBefore = transcriptScroll.scrollTop;
   const distanceBefore =
     transcriptScroll.scrollHeight -
     transcriptScroll.clientHeight -
@@ -4543,10 +4531,10 @@ function renderTranscript() {
     !measurable ||
     !transcriptMovedByHand ||
     distanceBefore < 48;
-  const messages = chronologicalTranscriptMessages([
-    ...(state.messagesBySession.get(state.route.sessionId) || []),
-    ...state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
-  ]);
+  const messages = stableTranscriptMessages(
+    state.messagesBySession.get(state.route.sessionId) || [],
+    state.optimistic.filter((item) => item.sessionId === state.route.sessionId),
+  );
   newestRootEventRowId = messages.reduce((newest, message) => {
     if (!['user', 'assistant', 'agent-error', 'turn-result'].includes(message.kind)) {
       return newest;
@@ -4628,19 +4616,11 @@ function renderTranscript() {
     if (pinned) {
       transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
     } else {
-      // The whole list is rebuilt on every render, so scroll anchoring is lost
-      // and the view lands wherever the new content puts it: that is the
-      // reading position jumping for no reason. distanceBefore was already
-      // measured to decide pinning; reusing it to restore the SAME distance
-      // from the end keeps the reader where they were, even as messages stream
-      // in. Anchoring to the end rather than to scrollTop is what makes it
-      // stable when content grows.
-      const restored =
-        transcriptScroll.scrollHeight -
-        transcriptScroll.clientHeight -
-        distanceBefore;
-      if (Math.abs(restored - transcriptScroll.scrollTop) > 1) {
-        transcriptScroll.scrollTop = Math.max(0, restored);
+      // New transcript rows append below an unpinned reader. Preserving the
+      // previous scrollTop keeps the same text under their eye instead of
+      // pulling them down by the height of every new update.
+      if (Math.abs(scrollTopBefore - transcriptScroll.scrollTop) > 1) {
+        transcriptScroll.scrollTop = Math.max(0, scrollTopBefore);
       }
     }
     // Same threshold the scroll handler uses. It was an unconditional reveal

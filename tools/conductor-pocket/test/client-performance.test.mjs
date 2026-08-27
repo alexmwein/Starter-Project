@@ -261,9 +261,13 @@ test('the app can never be left blank, and reading position survives a render', 
   // A rescued page needs its stream back or it sits stale and looks broken.
   const fn = js.slice(js.indexOf('function ensureNotShielded()'));
   assert.match(fn.slice(0, fn.indexOf('\n}\n')), /startEvents\(\)/);
-  // The transcript is fully rebuilt each render, so an unpinned reader must be
-  // restored to the same distance from the end.
-  assert.match(js, /transcriptScroll\.scrollHeight -\s*\n\s*transcriptScroll\.clientHeight -\s*\n\s*distanceBefore/);
+  // The transcript is fully rebuilt each render. New rows belong below an
+  // unpinned reader, so the exact visible reading position must stay put.
+  assert.match(js, /const scrollTopBefore = transcriptScroll\.scrollTop/);
+  assert.match(
+    js,
+    /transcriptScroll\.scrollTop = Math\.max\(0, scrollTopBefore\)/,
+  );
 });
 
 test('feedback reaches a sighted user, and retry never fails silently', async () => {
@@ -546,20 +550,20 @@ test('leaving a chat and coming back keeps the reading position', async () => {
   // app writes scroll could fix it, because the app was not doing the
   // resetting. This was the jump that survived every other fix.
   assert.match(css, /\.panel \{[\s\S]*?display: none;/);
-  assert.match(js, /let transcriptHiddenAnchor = null;/);
+  assert.match(js, /let transcriptHiddenScrollTop = null;/);
 
   const updateStart = js.indexOf('function updateRoutePanels()');
   assert.ok(updateStart > 0, 'updateRoutePanels must exist');
   const updateBody = js.slice(updateStart, js.indexOf('\n}\n', updateStart));
 
   // Captured BEFORE the class flips, or the position is already gone.
-  const capture = updateBody.indexOf('transcriptHiddenAnchor =\n');
+  const capture = updateBody.indexOf('transcriptHiddenScrollTop = scroller.scrollTop');
   const flip = updateBody.indexOf("classList.toggle('is-active', view === 'transcript')");
   assert.ok(capture > 0 && flip > 0 && capture < flip, 'anchor must be captured before the panel is hidden');
 
-  // Anchored to the end, so messages arriving while away do not move it.
-  assert.match(updateBody, /scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop/);
-  assert.match(updateBody, /scroller\.scrollTop = Math\.max\(0, restored\)/);
+  // New rows append below the reader, so returning keeps the exact visible
+  // reading position instead of pulling the transcript toward the end.
+  assert.match(updateBody, /scroller\.scrollTop = Math\.max\(0, transcriptHiddenScrollTop\)/);
   // Same-frame, like every other correction in this file.
   assert.doesNotMatch(updateBody, /requestAnimationFrame\(/);
 })

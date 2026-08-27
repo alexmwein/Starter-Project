@@ -4062,7 +4062,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.doesNotMatch(editBlock, /verifyTerminalDeliveryAction\(message\)/);
   assert.match(
     source,
-    /const messages = chronologicalTranscriptMessages\(\[/,
+    /const messages = stableTranscriptMessages\(/,
   );
   assert.match(
     source,
