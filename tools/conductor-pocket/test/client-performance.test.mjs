@@ -628,9 +628,10 @@ test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn',
 })
 
 test('all-account usage is a visible phone control inside every chat', async () => {
-  const [js, css] = await Promise.all([
+  const [js, css, usageState] = await Promise.all([
     fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
     fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/usage-state.js', import.meta.url), 'utf8'),
   ]);
 
   // Usage first landed behind the Chats sheet. A control that has to be
@@ -657,11 +658,13 @@ test('all-account usage is a visible phone control inside every chat', async () 
   assert.match(js, /usage\.providers/);
   assert.match(js, /usage-provider-heading/);
   assert.match(js, /provider\.available/);
+  assert.match(js, /usageAccountStatus\(account\)/);
   assert.match(
-    js,
+    usageState,
     /if \(account\.stale && parts\.length > 0\) parts\.push\('cached'\)/,
     'an account without usage must say No data yet, not only cached',
   );
+  assert.match(usageState, /account\.needsLogin[\s\S]*Needs sign-in/);
 
   // And the Workspaces header entry point stays.
   assert.match(js, /'aria-label': 'Connection and account usage'/);

@@ -7,6 +7,28 @@ export function activeGptUsage(snapshot) {
   return provider.accounts.find((account) => account?.active) || null;
 }
 
+export function usageAccountStatus(account = {}) {
+  const parts = [];
+  if (account.fiveHourPercent !== null && account.fiveHourPercent !== undefined) {
+    parts.push(`5h ${account.fiveHourPercent}%`);
+  }
+  if (account.weeklyPercent !== null && account.weeklyPercent !== undefined) {
+    parts.push(`week ${account.weeklyPercent}%`);
+  }
+  if (account.stale && parts.length > 0) parts.push('cached');
+  const blocked = Boolean(
+    account.blocked || account.fiveHourBlocked || account.weeklyBlocked,
+  );
+  if (account.needsLogin) return { blocked, text: 'Needs sign-in' };
+  if (blocked) {
+    return {
+      blocked,
+      text: `${account.weeklyBlocked ? 'Weekly spent' : 'Limit hit'} · ${parts.join(' · ')}`,
+    };
+  }
+  return { blocked, text: parts.join(' · ') || 'No data yet' };
+}
+
 export function createUsageReader({
   load,
   now = () => Date.now(),

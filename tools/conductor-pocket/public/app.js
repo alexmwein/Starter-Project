@@ -14,18 +14,18 @@ import {
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './delivery-receipts.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './app-update.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-delivery-motion-stable-20260827';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-delivery-motion-stable-20260827';
-import { fetchJson } from './http.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './bootstrap-recovery.js?v=0.2.0-usage-send-readiness-20260827';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-usage-send-readiness-20260827';
+import { fetchJson } from './http.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -35,16 +35,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './image-attachments.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './live-refresh.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './rich-text.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -55,7 +55,7 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './read-state.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   activityLabel,
   buildFocusedTranscript,
@@ -63,14 +63,15 @@ import {
   reconciledTranscriptMessageIds,
   stableTranscriptMessages,
   transcriptRefreshShouldWait,
-} from './transcript-focus.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './transcript-focus.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-delivery-motion-stable-20260827';
+} from './swipe-navigation.js?v=0.2.0-usage-send-readiness-20260827';
 import {
   activeGptUsage,
   createUsageReader,
-} from './usage-state.js?v=0.2.0-delivery-motion-stable-20260827';
+  usageAccountStatus,
+} from './usage-state.js?v=0.2.0-usage-send-readiness-20260827';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -114,7 +115,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-delivery-motion-stable-20260827';
+const CLIENT_SHELL_REVISION = '0.2.0-usage-send-readiness-20260827';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -7184,12 +7185,8 @@ async function fillAccountUsage(section, { force = false } = {}) {
       continue;
     }
     for (const account of accounts) {
-      const parts = [];
-      if (account.fiveHourPercent !== null) parts.push(`5h ${account.fiveHourPercent}%`);
-      if (account.weeklyPercent !== null) parts.push(`week ${account.weeklyPercent}%`);
-      if (account.stale && parts.length > 0) parts.push('cached');
-      const blocked =
-        account.blocked || account.fiveHourBlocked || account.weeklyBlocked;
+      const status = usageAccountStatus(account);
+      const blocked = status.blocked;
       const resetParts = [];
       const fiveHourReset = usageResetLabel(account.fiveHourResetAt);
       const weeklyReset = usageResetLabel(account.weeklyResetAt);
@@ -7210,9 +7207,7 @@ async function fillAccountUsage(section, { force = false } = {}) {
           // Naming which window is spent is the whole point: "out of usage"
           // with no window named is what sent the operator looking in the
           // wrong place.
-          text: blocked
-            ? `${account.weeklyBlocked ? 'Weekly spent' : 'Limit hit'} · ${parts.join(' · ')}`
-            : parts.join(' · ') || 'No data yet',
+          text: status.text,
         }),
       ]);
       if (resetParts.length > 0) {

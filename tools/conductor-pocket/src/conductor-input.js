@@ -39,7 +39,7 @@ const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
 // queued-edit scan happens after the transcript boundary. So it is budgeted
 // like its sibling band rather than pinned to the exact shape of one release.
 const MAX_PRE_TRANSCRIPT_CONTROLS = 8;
-const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8;
+const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 12;
 const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
 const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
 const MAX_MESSAGE_BYTES = 16 * 1024;

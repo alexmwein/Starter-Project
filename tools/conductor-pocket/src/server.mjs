@@ -1313,6 +1313,7 @@ const GPT_USAGE_CACHE = path.join(
   'codex-usage.json',
 );
 const GPT_USAGE_STALE_MS = 5 * 60 * 1000;
+const GPT_USAGE_MAX_SCHEDULE_MS = 30 * 60 * 1000;
 
 function seatPercent(value) {
   const number = Number(value);
@@ -1428,6 +1429,7 @@ export async function readGptUsage({
     cache.samples && typeof cache.samples === 'object' && !Array.isArray(cache.samples)
       ? cache.samples
       : {};
+  const refreshDueAt = gptTimestamp(cache.next_refresh_at);
   const snapshotNames = entries
     .filter(
       (entry) =>
@@ -1451,6 +1453,15 @@ export async function readGptUsage({
           : null;
       const fetchedAt = gptTimestamp(sample?.fetched_at);
       const weeklyPercent = gptPercent(sample?.used_percent);
+      const scheduledFreshUntil =
+        fetchedAt !== null &&
+        refreshDueAt !== null &&
+        refreshDueAt >= fetchedAt &&
+        refreshDueAt - fetchedAt <= GPT_USAGE_MAX_SCHEDULE_MS
+          ? refreshDueAt
+          : null;
+      const freshUntil = scheduledFreshUntil ??
+        (fetchedAt === null ? null : fetchedAt + GPT_USAGE_STALE_MS);
       return {
         name: name.slice(0, 64),
         label: label.slice(0, 120),
@@ -1462,10 +1473,12 @@ export async function readGptUsage({
         weeklyBlocked: weeklyPercent === 100,
         weeklyResetAt: gptTimestamp(sample?.resets_at),
         blocked: weeklyPercent === 100,
+        needsLogin: sample?.needs_login === true,
         stale:
           fetchedAt === null ||
           now < fetchedAt ||
-          now - fetchedAt > GPT_USAGE_STALE_MS,
+          freshUntil === null ||
+          now > freshUntil,
         fetchedAt,
       };
     }),

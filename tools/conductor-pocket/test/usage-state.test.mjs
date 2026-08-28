@@ -114,3 +114,26 @@ test('a refresh failure keeps the last account snapshot and marks it stale', asy
   assert.equal(activeGptUsage(retained).weeklyPercent, 76);
   assert.equal(activeGptUsage(retained).stale, true);
 });
+
+test('usage account status distinguishes sign-in from an unknown percentage', () => {
+  assert.ok(usageState, 'the usage state module must exist');
+  const { usageAccountStatus } = usageState;
+  assert.equal(typeof usageAccountStatus, 'function');
+
+  assert.deepEqual(
+    usageAccountStatus({ needsLogin: true, weeklyPercent: null, stale: true }),
+    { blocked: false, text: 'Needs sign-in' },
+  );
+  assert.deepEqual(
+    usageAccountStatus({ weeklyPercent: null, stale: true }),
+    { blocked: false, text: 'No data yet' },
+  );
+  assert.deepEqual(
+    usageAccountStatus({ weeklyPercent: 23, stale: true }),
+    { blocked: false, text: 'week 23% · cached' },
+  );
+  assert.deepEqual(
+    usageAccountStatus({ weeklyPercent: 100, weeklyBlocked: true }),
+    { blocked: true, text: 'Weekly spent · week 100%' },
+  );
+});

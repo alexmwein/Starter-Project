@@ -545,7 +545,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8/,
+    /const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 12/,
   );
   assert.match(
     inputHelper,
