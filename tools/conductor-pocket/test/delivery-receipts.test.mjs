@@ -194,12 +194,242 @@ test('two Pocket windows get one atomic winner for the same visible draft revisi
   );
 
   assert.equal(firstWindow?.value?.id, firstMessage.id);
-  assert.equal(secondWindow?.value, null);
+  assert.equal(secondWindow?.value?.kind, 'draft-claim-conflict');
+  assert.equal(secondWindow?.value?.message?.id, firstMessage.id);
   assert.deepEqual(
     secondWindow?.snapshot?.messages?.map((item) => item.id),
     [firstMessage.id],
   );
   assert.equal(secondWindow?.snapshot?.draftClaims?.length, 1);
+});
+
+test('a duplicate draft claim identifies the exact delivery that owns it', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const firstMessage = persistedMessage({
+    id: 'optimistic:owned-draft-first-123456789',
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+  });
+  const duplicateMessage = persistedMessage({
+    id: 'optimistic:owned-draft-duplicate-123456789',
+    idempotencyKey: 'idempotency-owned-draft-duplicate-123456789',
+    activeDeliveryKey: 'idempotency-owned-draft-duplicate-123456789',
+    delivery: 'delivering',
+  });
+  const claim = (message, draftRevision) => ({
+    type: 'claim-draft-send',
+    sessionId: 'session-1',
+    draftRevision,
+    payloadFingerprint: 'payload-owned-draft-123456789',
+    message,
+  });
+
+  const first = transition(
+    [],
+    claim(firstMessage, 'draft-owned-first-123456789'),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const duplicate = transition(
+    first.snapshot,
+    claim(duplicateMessage, 'draft-owned-duplicate-123456789'),
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.equal(first.snapshot.draftClaims[0].messageId, firstMessage.id);
+  assert.equal(duplicate.value?.kind, 'draft-claim-conflict');
+  assert.equal(duplicate.value?.message?.id, firstMessage.id);
+  assert.equal(duplicate.value?.message?.delivery, 'delivered');
+  assert.deepEqual(
+    duplicate.snapshot.messages.map((message) => message.id),
+    [firstMessage.id],
+  );
+});
+
+test('editing a definitely unsent delivery releases only its exact draft claim', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const message = persistedMessage({
+    id: 'optimistic:safe-edit-claim-123456789',
+    definitelyUnsent: true,
+  });
+  const first = transition(
+    [],
+    {
+      type: 'claim-draft-send',
+      sessionId: message.sessionId,
+      draftRevision: 'draft-safe-edit-123456789',
+      payloadFingerprint: 'payload-safe-edit-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const claimedEdit = transition(
+    first.snapshot,
+    {
+      type: 'claim-terminal',
+      action: 'edit',
+      claimToken: 'edit-safe-claim-token-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const finalized = transition(
+    claimedEdit.snapshot,
+    {
+      type: 'finalize-edit',
+      claimToken: 'edit-safe-claim-token-123456789',
+      payloadFingerprint: 'payload-safe-edit-123456789',
+      message: claimedEdit.value,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+
+  assert.equal(finalized.value?.id, message.id);
+  assert.deepEqual(finalized.snapshot.messages, []);
+  assert.deepEqual(finalized.snapshot.draftClaims, []);
+});
+
+test('editing an unconfirmed delivery keeps its duplicate protection', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const message = persistedMessage({
+    id: 'optimistic:ambiguous-edit-claim-123456789',
+    retrySafe: false,
+    definitelyUnsent: false,
+  });
+  const first = transition(
+    [],
+    {
+      type: 'claim-draft-send',
+      sessionId: message.sessionId,
+      draftRevision: 'draft-ambiguous-edit-123456789',
+      payloadFingerprint: 'payload-ambiguous-edit-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const claimedEdit = transition(
+    first.snapshot,
+    {
+      type: 'claim-terminal',
+      action: 'edit',
+      claimToken: 'edit-ambiguous-claim-token-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const finalized = transition(
+    claimedEdit.snapshot,
+    {
+      type: 'finalize-edit',
+      claimToken: 'edit-ambiguous-claim-token-123456789',
+      payloadFingerprint: 'payload-ambiguous-edit-123456789',
+      message: claimedEdit.value,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+
+  assert.equal(finalized.snapshot.draftClaims.length, 1);
+  assert.equal(
+    finalized.snapshot.draftClaims[0].messageId,
+    message.id,
+  );
+});
+
+test('a retried delivery remains the owner of its original draft claim', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const message = persistedMessage({
+    id: 'optimistic:retried-owner-123456789',
+    definitelyUnsent: true,
+  });
+  const duplicate = persistedMessage({
+    id: 'optimistic:retried-owner-duplicate-123456789',
+    idempotencyKey: 'idempotency-retried-owner-duplicate-123456789',
+    activeDeliveryKey: 'idempotency-retried-owner-duplicate-123456789',
+    delivery: 'delivering',
+  });
+  const first = transition(
+    [],
+    {
+      type: 'claim-draft-send',
+      sessionId: message.sessionId,
+      draftRevision: 'draft-retried-owner-first-123456789',
+      payloadFingerprint: 'payload-retried-owner-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const retried = transition(
+    first.snapshot,
+    { type: 'claim-terminal', action: 'retry', message },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const blocked = transition(
+    retried.snapshot,
+    {
+      type: 'claim-draft-send',
+      sessionId: duplicate.sessionId,
+      draftRevision: 'draft-retried-owner-second-123456789',
+      payloadFingerprint: 'payload-retried-owner-123456789',
+      message: duplicate,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+
+  assert.equal(retried.value?.deliveryAttempt, 2);
+  assert.equal(blocked.value?.kind, 'draft-claim-conflict');
+  assert.equal(blocked.value?.message?.id, message.id);
+  assert.equal(blocked.value?.message?.deliveryAttempt, 2);
+});
+
+test('deleting a definitely unsent legacy delivery releases its matching payload claim', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const message = persistedMessage({
+    id: 'optimistic:legacy-delete-123456789',
+    definitelyUnsent: true,
+  });
+  const snapshot = {
+    version: 2,
+    messages: [message],
+    tombstones: [],
+    draftClaims: [{
+      sessionId: message.sessionId,
+      draftRevision: 'draft-legacy-delete-123456789',
+      payloadFingerprint: 'payload-legacy-delete-123456789',
+      at: 1_777_777_777_000,
+    }],
+  };
+  const deleted = transition(
+    snapshot,
+    {
+      type: 'claim-terminal',
+      action: 'delete',
+      payloadFingerprint: 'payload-legacy-delete-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.equal(deleted.value?.id, message.id);
+  assert.deepEqual(deleted.snapshot.draftClaims, []);
+});
+
+test('draft claim conflicts explain the owning delivery without changing layout', () => {
+  assert.equal(
+    deliveryReceipts.draftClaimConflictCopy?.({
+      message: { delivery: 'delivered' },
+    }),
+    'This exact message already delivered. Clear this leftover draft before writing the next one.',
+  );
+  assert.equal(
+    deliveryReceipts.draftClaimConflictCopy?.({
+      message: { delivery: 'failed', definitelyUnsent: true },
+    }),
+    'This exact message already has a failed send. Use Retry or Edit on that message.',
+  );
+  assert.equal(
+    deliveryReceipts.draftClaimConflictCopy?.({ message: null }),
+    'This exact draft already started earlier. Check the chat before sending it again.',
+  );
 });
 
 test('two Pocket windows cannot send one visible payload through divergent revisions', () => {
@@ -254,7 +484,8 @@ test('two Pocket windows cannot send one visible payload through divergent revis
   );
 
   assert.equal(firstWindow.value?.id, firstMessage.id);
-  assert.equal(staleSecondWindow.value, null);
+  assert.equal(staleSecondWindow.value?.kind, 'draft-claim-conflict');
+  assert.equal(staleSecondWindow.value?.message?.id, firstMessage.id);
   assert.equal(changedSecondWindow.value?.id, changedMessage.id);
   assert.deepEqual(
     changedSecondWindow.snapshot.messages.map((item) => item.id),
@@ -304,7 +535,8 @@ test('a visible payload claim blocks divergent revisions for its full durable li
     },
   );
 
-  assert.equal(beforeExpiry.value, null);
+  assert.equal(beforeExpiry.value?.kind, 'draft-claim-conflict');
+  assert.equal(beforeExpiry.value?.message?.id, firstMessage.id);
   assert.equal(afterExpiry.value?.id, delayedDuplicate.id);
 });
 
@@ -604,6 +836,14 @@ test('the browser wires shared delivery authority before mutating visible state'
     send,
     /await claimDraftSendRequired\(optimistic, draftRevision, payloadFingerprint\)/,
   );
+  assert.match(
+    send,
+    /claimed\?\.kind === 'draft-claim-conflict'[\s\S]*await restorePendingDeliveries\(\)[\s\S]*renderTranscript\(\)[\s\S]*announce\(draftClaimConflictCopy\(claimed\)\)/,
+  );
+  assert.doesNotMatch(
+    send,
+    /showComposerSendError\([\s\S]{0,180}draft is already sending from another Pocket window/,
+  );
   assert.ok(
     send.indexOf(
       'await claimDraftSendRequired(optimistic, draftRevision, payloadFingerprint)',
@@ -634,7 +874,7 @@ test('the browser wires shared delivery authority before mutating visible state'
   assert.match(recovery, /persistAttachmentDrafts\(\{[\s\S]*sessionId,[\s\S]*items: mergedItems/);
   assert.ok(
     recovery.indexOf('persistAttachmentDrafts({') <
-      recovery.indexOf('finalizeTerminalDeliveryEditRequired(message)'),
+      recovery.indexOf('finalizeTerminalDeliveryEditRequired('),
     'restored attachment metadata must be durable before terminal removal',
   );
   assert.doesNotMatch(

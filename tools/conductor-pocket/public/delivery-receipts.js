@@ -201,6 +201,11 @@ function normalizePendingSnapshot(raw, sanitize, now) {
         value?.payloadFingerprint,
         200,
       );
+      const messageId = authorityString(value?.messageId, 500);
+      const activeDeliveryKey = authorityString(
+        value?.activeDeliveryKey,
+        200,
+      );
       const at = Number(value?.at);
       if (
         !sessionId ||
@@ -211,12 +216,18 @@ function normalizePendingSnapshot(raw, sanitize, now) {
       ) {
         return null;
       }
-      return {
+      const claim = {
         sessionId,
         draftRevision,
         payloadFingerprint,
         at,
       };
+      if (messageId && activeDeliveryKey) {
+        claim.messageId = messageId;
+        claim.activeDeliveryKey = activeDeliveryKey;
+        claim.deliveryAttempt = deliveryAttempt(value?.deliveryAttempt);
+      }
+      return claim;
     })
     .filter(Boolean)
     .sort((left, right) => right.at - left.at)
@@ -252,6 +263,33 @@ function tombstoneBlocks(snapshot, candidate) {
       item.id === candidate.id &&
       deliveryAttempt(candidate.deliveryAttempt) <= item.deliveryAttempt,
   );
+}
+
+function draftClaimOwnsMessage(claim, message) {
+  // The optimistic id is created once for the human-visible send and remains
+  // stable through retries and draft-conflict delivery-key changes. Those
+  // changes are the same attempt continuing, not a new draft owner.
+  return claim?.messageId === message?.id;
+}
+
+function releaseDefinitelyUnsentDraftClaim(
+  snapshot,
+  message,
+  payloadFingerprint,
+) {
+  if (message?.definitelyUnsent !== true) return;
+  const fingerprint = authorityString(
+    payloadFingerprint || message?.draftPayloadFingerprint,
+    200,
+  );
+  snapshot.draftClaims = snapshot.draftClaims.filter((claim) => {
+    if (claim.sessionId !== message.sessionId) return true;
+    if (draftClaimOwnsMessage(claim, message)) return false;
+    return !(
+      fingerprint &&
+      claim.payloadFingerprint === fingerprint
+    );
+  });
 }
 
 function mergePendingUpserts(
@@ -327,7 +365,7 @@ export function pendingDeliverySnapshotTransition(
       200,
     );
     const candidate = sanitize(command.message);
-    const alreadyClaimed = snapshot.draftClaims.some(
+    const existingClaim = snapshot.draftClaims.find(
       (item) => {
         if (item.sessionId !== sessionId) return false;
         const sameRevision = item.draftRevision === draftRevision;
@@ -349,13 +387,33 @@ export function pendingDeliverySnapshotTransition(
       !draftRevision ||
       !candidate ||
       candidate.sessionId !== sessionId ||
-      alreadyClaimed ||
       tombstoneBlocks(snapshot, candidate)
     ) {
       return { snapshot, value: null };
     }
+    if (existingClaim) {
+      const message = snapshot.messages.find(
+        (item) => draftClaimOwnsMessage(existingClaim, item),
+      ) || null;
+      return {
+        snapshot,
+        value: {
+          kind: 'draft-claim-conflict',
+          claim: existingClaim,
+          message,
+        },
+      };
+    }
     snapshot.draftClaims = [
-      { sessionId, draftRevision, payloadFingerprint, at: now },
+      {
+        sessionId,
+        draftRevision,
+        payloadFingerprint,
+        messageId: candidate.id,
+        activeDeliveryKey: candidate.activeDeliveryKey,
+        deliveryAttempt: deliveryAttempt(candidate.deliveryAttempt),
+        at: now,
+      },
       ...snapshot.draftClaims,
     ].slice(0, DRAFT_CLAIM_LIMIT);
     mergePendingUpserts(snapshot, [candidate], [], [], [], sanitize, now);
@@ -396,6 +454,11 @@ export function pendingDeliverySnapshotTransition(
     if (action === 'delete') {
       snapshot.messages.splice(index, 1);
       addTerminalTombstone(snapshot, candidate, 'delete', now);
+      releaseDefinitelyUnsentDraftClaim(
+        snapshot,
+        candidate,
+        command.payloadFingerprint,
+      );
       return { snapshot, value: candidate };
     }
     const claimed = {
@@ -471,6 +534,11 @@ export function pendingDeliverySnapshotTransition(
     if (command.type === 'finalize-edit') {
       snapshot.messages.splice(index, 1);
       addTerminalTombstone(snapshot, candidate, 'edit', now);
+      releaseDefinitelyUnsentDraftClaim(
+        snapshot,
+        candidate,
+        command.payloadFingerprint,
+      );
       return { snapshot, value: candidate };
     }
     const released = { ...candidate };
@@ -479,6 +547,26 @@ export function pendingDeliverySnapshotTransition(
     return { snapshot, value: released };
   }
   throw new Error('pending_delivery_transition_invalid');
+}
+
+export function draftClaimConflictCopy(conflict) {
+  const message = conflict?.message;
+  if (message?.delivery === 'delivered') {
+    return 'This exact message already delivered. Clear this leftover draft before writing the next one.';
+  }
+  if (
+    message?.delivery === 'delivering' ||
+    message?.delivery === 'confirming'
+  ) {
+    return 'This exact message is already sending. Watch the existing message in this chat.';
+  }
+  if (message?.delivery === 'failed' && message.definitelyUnsent === true) {
+    return 'This exact message already has a failed send. Use Retry or Edit on that message.';
+  }
+  if (message?.delivery === 'failed') {
+    return 'This exact message has an unconfirmed send. Use Check or Edit on that message.';
+  }
+  return 'This exact draft already started earlier. Check the chat before sending it again.';
 }
 
 export function pendingDeliveryMessages(
