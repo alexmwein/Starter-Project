@@ -10,6 +10,11 @@ property heldMainGroup : missing value
 property cachedWorkspaceName : missing value
 property cachedWorkspaceGroup : missing value
 property cachedWorkspaceRoute : missing value
+property targetRepositoryName : ""
+property workspaceHintContainerIndex : ""
+property workspaceHintLinkIndex : ""
+property workspaceHintSidebarChildCount : ""
+property workspaceHintContainerChildCount : ""
 
 on clearWorkspaceRouteCache()
 	set my cachedWorkspaceName to missing value
@@ -505,12 +510,12 @@ on workspaceLinkBelongsToRepository(workspaceElements, linkIndex, repositoryName
 end workspaceLinkBelongsToRepository
 
 on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)
-	if workspaceHintContainerIndex is "" or workspaceHintLinkIndex is "" or workspaceHintSidebarChildCount is "" or workspaceHintContainerChildCount is "" then return missing value
+	if my workspaceHintContainerIndex is "" or my workspaceHintLinkIndex is "" or my workspaceHintSidebarChildCount is "" or my workspaceHintContainerChildCount is "" then return missing value
 	try
-		set containerIndex to (workspaceHintContainerIndex as integer) + 1
-		set linkIndex to (workspaceHintLinkIndex as integer) + 1
-		set expectedSidebarChildCount to workspaceHintSidebarChildCount as integer
-		set expectedContainerChildCount to workspaceHintContainerChildCount as integer
+		set containerIndex to (my workspaceHintContainerIndex as integer) + 1
+		set linkIndex to (my workspaceHintLinkIndex as integer) + 1
+		set expectedSidebarChildCount to my workspaceHintSidebarChildCount as integer
+		set expectedContainerChildCount to my workspaceHintContainerChildCount as integer
 		if containerIndex < 1 or linkIndex < 1 then return missing value
 		tell application "System Events"
 			set sidebarElements to UI elements of sidebarGroup
@@ -523,7 +528,7 @@ on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)
 			set candidate to item linkIndex of workspaceElements
 			if (role of candidate as text) is not "AXLink" then return missing value
 			if my workspaceMatches(workspaceName, (name of candidate as text)) is false then return missing value
-			if my workspaceLinkBelongsToRepository(workspaceElements, linkIndex, repositoryName) is false then return missing value
+			if my workspaceLinkBelongsToRepository(workspaceElements, linkIndex, my targetRepositoryName) is false then return missing value
 			set candidateClasses to value of attribute "AXDOMClassList" of candidate
 			if candidateClasses does not contain "bg-sidebar-accent" then return missing value
 		end tell
@@ -563,7 +568,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 				set containerChildCount to count of workspaceElements
 				set containerRoutes to {}
 				set containerSelectedCount to 0
-				set currentRepositoryMatches to repositoryName is ""
+				set currentRepositoryMatches to my targetRepositoryName is ""
 				set bulkReady to false
 				try
 					set candidateRoles to role of UI elements of workspaceContainer
@@ -577,7 +582,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 							set candidate to item linkIndex of workspaceElements
 							set candidateRole to item linkIndex of candidateRoles as text
 							set candidateName to item linkIndex of candidateNames as text
-							if candidateRole is "AXButton" and candidateName ends with " Repo settings New workspace" then set currentRepositoryMatches to my repositoryHeaderMatches(repositoryName, candidateName)
+							if candidateRole is "AXButton" and candidateName ends with " Repo settings New workspace" then set currentRepositoryMatches to my repositoryHeaderMatches(my targetRepositoryName, candidateName)
 							set candidateClasses to item linkIndex of candidateClassLists
 							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, currentRepositoryMatches, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
 							set containerSelectedCount to containerSelectedCount + (item 1 of candidateResult)
@@ -591,13 +596,13 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 				if bulkReady is false then
 					set containerRoutes to {}
 					set containerSelectedCount to 0
-					set currentRepositoryMatches to repositoryName is ""
+					set currentRepositoryMatches to my targetRepositoryName is ""
 					repeat with linkIndex from 1 to containerChildCount
 						set candidate to item linkIndex of workspaceElements
 						set candidateRole to role of candidate as text
 						if candidateRole is "AXButton" then
 							set candidateName to name of candidate as text
-							if candidateName ends with " Repo settings New workspace" then set currentRepositoryMatches to my repositoryHeaderMatches(repositoryName, candidateName)
+							if candidateName ends with " Repo settings New workspace" then set currentRepositoryMatches to my repositoryHeaderMatches(my targetRepositoryName, candidateName)
 						else if candidateRole is "AXLink" then
 							set candidateClasses to value of attribute "AXDOMClassList" of candidate
 							set candidateName to name of candidate as text
@@ -858,11 +863,11 @@ if operationMode is "doctor" then
 end if
 
 set workspaceName to my decodeBase64(system attribute "POCKET_WORKSPACE_NAME_BASE64")
-set repositoryName to my decodeBase64(system attribute "POCKET_REPOSITORY_NAME_BASE64")
-set workspaceHintContainerIndex to system attribute "POCKET_WORKSPACE_HINT_CONTAINER_INDEX"
-set workspaceHintLinkIndex to system attribute "POCKET_WORKSPACE_HINT_LINK_INDEX"
-set workspaceHintSidebarChildCount to system attribute "POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT"
-set workspaceHintContainerChildCount to system attribute "POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT"
+set my targetRepositoryName to my decodeBase64(system attribute "POCKET_REPOSITORY_NAME_BASE64")
+set my workspaceHintContainerIndex to system attribute "POCKET_WORKSPACE_HINT_CONTAINER_INDEX"
+set my workspaceHintLinkIndex to system attribute "POCKET_WORKSPACE_HINT_LINK_INDEX"
+set my workspaceHintSidebarChildCount to system attribute "POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT"
+set my workspaceHintContainerChildCount to system attribute "POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT"
 set sessionTitle to my decodeBase64(system attribute "POCKET_SESSION_TITLE_BASE64")
 set sessionOrdinal to (system attribute "POCKET_SESSION_ORDINAL") as integer
 set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")

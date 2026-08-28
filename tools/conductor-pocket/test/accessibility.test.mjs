@@ -405,6 +405,46 @@ test('the workspace matcher accepts owner-prefixed sidebar titles', async () => 
   assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
 });
 
+test('route hint handlers read script properties instead of undefined run variables', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const propertyNames = [
+    'targetRepositoryName',
+    'workspaceHintContainerIndex',
+    'workspaceHintLinkIndex',
+    'workspaceHintSidebarChildCount',
+    'workspaceHintContainerChildCount',
+  ];
+  const properties = propertyNames.map((name) => {
+    const match = source.match(new RegExp(`^property ${name} : .*?$`, 'm'));
+    assert.ok(match, `${name} must be a script property`);
+    return match[0];
+  });
+  const handlerStart = source.indexOf(
+    'on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)',
+  );
+  const handlerEnd =
+    source.indexOf('end getWorkspaceRouteFromHint', handlerStart) +
+    'end getWorkspaceRouteFromHint'.length;
+  const handler = source.slice(handlerStart, handlerEnd);
+  const { stdout } = await execFileAsync(
+    '/usr/bin/osascript',
+    [
+      '-e',
+      `${properties.join('\n')}\n${handler}\nreturn my getWorkspaceRouteFromHint("Workspace", missing value) is missing value`,
+    ],
+    { timeout: 20_000 },
+  );
+  assert.equal(stdout.trim(), 'true');
+  assert.match(handler, /my targetRepositoryName/);
+  for (const name of propertyNames.slice(1)) {
+    assert.match(handler, new RegExp(`my ${name}`));
+  }
+  assert.match(source, /set my targetRepositoryName to my decodeBase64/);
+});
+
 test('workspace matching routes every diff-badge label Conductor renders', async () => {
   // Executes the real handler text rather than asserting it contains a
   // string. Labels observed live in the sidebar on 2026-08-16: "the plan",
