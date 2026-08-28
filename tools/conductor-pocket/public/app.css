@@ -2934,6 +2934,10 @@ button:active {
   animation: working-pulse 1.8s ease-in-out infinite;
 }
 
+.chat-chip.is-active .chip-dot.is-working {
+  color: var(--on-copper);
+}
+
 /* Waiting is the one that should catch the eye, because it is blocked ON YOU.
    A ring rather than a fill so it reads differently at a glance without motion. */
 .chip-dot.is-waiting {

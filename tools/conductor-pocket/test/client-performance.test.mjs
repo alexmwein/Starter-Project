@@ -220,6 +220,11 @@ test('chat strip separates working from finished unread with no extra work', asy
   // One compositor-friendly opacity pulse is the only motion. It has no JS
   // timer and Reduced Motion explicitly disables it.
   assert.match(css, /\.chip-dot\.is-working \{[\s\S]*animation: working-pulse/);
+  assert.match(
+    css,
+    /\.chat-chip\.is-active \.chip-dot\.is-working \{[\s\S]*color: var\(--on-copper\)/,
+    'the current working chat must not paint its dot into the active chip background',
+  );
   assert.match(css, /\.chip-unread \{/);
   assert.match(
     css,
