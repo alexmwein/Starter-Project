@@ -68,13 +68,14 @@ test('the transcript chat controls use all recent chats in newest order', async 
   assert.doesNotMatch(strip, /sessionsFor\(workspaceId\)/);
   assert.match(strip, /workspaceId: session\.workspaceId/);
   assert.match(strip, /className: 'chip-workspace'/);
-  assert.match(strip, /text: session\.workspaceName/);
+  assert.match(strip, /text: location/);
+  assert.match(strip, /const location = sessionLocationLabel\(session\)/);
 
   const sheetStart = js.indexOf('function openChatsSheet()');
   const sheetEnd = js.indexOf('function startEvents()', sheetStart);
   const sheet = js.slice(sheetStart, sheetEnd);
   assert.match(sheet, /recentSessionsNewestFirst\(\)/);
-  assert.match(sheet, /session\.workspaceName/);
+  assert.match(sheet, /sessionLocationLabel\(session\)/);
   assert.match(sheet, /workspaceId: session\.workspaceId/);
 
   const orderingStart = js.indexOf('function recentSessionsNewestFirst()');

@@ -235,6 +235,23 @@ test('chat strip separates working from finished unread with no extra work', asy
   assert.match(body, /aria-label[\s\S]*state_\.label[\s\S]*reply ready/);
 });
 
+test('cross-repository chat controls always show repository and workspace context', async () => {
+  const js = await applicationSource();
+  assert.match(js, /function sessionLocationLabel\(session\)/);
+  assert.match(
+    js,
+    /session\.repositoryName[\s\S]*session\.workspaceName/,
+  );
+  assert.match(
+    js,
+    /if \(workspace\) workspace\.textContent = sessionLocationLabel\(session\)/,
+  );
+  assert.match(
+    js,
+    /const subtitleText = crossWorkspace[\s\S]*sessionLocationLabel\(session\)/,
+  );
+});
+
 test('the header reports the current chat’s state, including waiting', async () => {
   const js = await fs.readFile(
     new URL('../public/app.js', import.meta.url),
@@ -345,6 +362,43 @@ test('checking delivery exposes a safe way back to terminal actions', async () =
   assert.match(
     js,
     /type: 'stop-check'[\s\S]{0,800}applyAuthoritativePendingDelivery/,
+  );
+});
+
+test('a rejected stale steer is terminal and never shown as delivery unknown', async () => {
+  const js = await applicationSource();
+  assert.match(
+    js,
+    /conductor_turn_rejected: 'Conductor rejected this message because the chat no longer has an active turn\.'/,
+  );
+  assert.match(js, /error\.final = payload\.error\?\.final === true/);
+  assert.match(
+    js,
+    /else if \(error\.final === true\)[\s\S]*delivery = 'failed'[\s\S]*deliveryRecoveryExhausted = true/,
+  );
+  assert.match(
+    js,
+    /message\.errorCode === 'conductor_turn_rejected'[\s\S]*'Rejected'/,
+  );
+});
+
+test('a canceled confirmed row stays actionable instead of disappearing', async () => {
+  const js = await applicationSource();
+  assert.match(
+    js,
+    /conductor_message_cancelled: 'Conductor canceled this message after it entered the chat\.'/,
+  );
+  assert.match(
+    js,
+    /knownTerminalFailure =[\s\S]*conductor_message_cancelled/,
+  );
+  assert.match(
+    js,
+    /receiptMessageId:[\s\S]*value\.receiptMessageId/,
+  );
+  assert.match(
+    js,
+    /function reconcileOptimistic[\s\S]*result\.missing[\s\S]*verifyMissingDeliveryReceipt/,
   );
 });
 

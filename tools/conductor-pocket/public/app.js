@@ -14,18 +14,18 @@ import {
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-working-status-20260827';
+} from './delivery-receipts.js?v=0.2.0-send-hardening-20260828';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-working-status-20260827';
+} from './app-update.js?v=0.2.0-send-hardening-20260828';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-working-status-20260827';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-working-status-20260827';
-import { fetchJson } from './http.js?v=0.2.0-working-status-20260827';
+} from './bootstrap-recovery.js?v=0.2.0-send-hardening-20260828';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-send-hardening-20260828';
+import { fetchJson } from './http.js?v=0.2.0-send-hardening-20260828';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -35,16 +35,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-working-status-20260827';
+} from './image-attachments.js?v=0.2.0-send-hardening-20260828';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-working-status-20260827';
+} from './live-refresh.js?v=0.2.0-send-hardening-20260828';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-working-status-20260827';
+} from './rich-text.js?v=0.2.0-send-hardening-20260828';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -55,7 +55,7 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-working-status-20260827';
+} from './read-state.js?v=0.2.0-send-hardening-20260828';
 import {
   activityLabel,
   buildFocusedTranscript,
@@ -63,15 +63,15 @@ import {
   reconciledTranscriptMessageIds,
   stableTranscriptMessages,
   transcriptRefreshShouldWait,
-} from './transcript-focus.js?v=0.2.0-working-status-20260827';
+} from './transcript-focus.js?v=0.2.0-send-hardening-20260828';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-working-status-20260827';
+} from './swipe-navigation.js?v=0.2.0-send-hardening-20260828';
 import {
   activeGptUsage,
   createUsageReader,
   usageAccountStatus,
-} from './usage-state.js?v=0.2.0-working-status-20260827';
+} from './usage-state.js?v=0.2.0-send-hardening-20260828';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -112,10 +112,12 @@ const DELIVERY_RECOVERY_MS = 120_000;
 const DELIVERY_STATUS_REQUEST_MS = 8_000;
 const DELIVERY_RECOVERY_POLL_MS = 1_000;
 const DELIVERY_PROGRESS_POLL_MS = 1_000;
+const DELIVERY_RECEIPT_OBSERVATION_MS = 10_000;
+const DELIVERY_RECEIPT_OBSERVATION_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-working-status-20260827';
+const CLIENT_SHELL_REVISION = '0.2.0-send-hardening-20260828';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -175,6 +177,8 @@ let readGestureSequence = 0;
 let readReceiptWriteQueue = Promise.resolve();
 const readReceiptCommits = new Set();
 const deliveryRecoveryInFlight = new Map();
+const missingReceiptChecks = new Map();
+const deliveryReceiptObservations = new Map();
 const deliveryRecoveryQueue = [];
 let activeDeliveryRecoveryCount = 0;
 let bootstrapCoordinator = null;
@@ -368,6 +372,8 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   automation_timeout: 'Conductor took too long to respond.',
   composer_changed_pre_send: 'The Conductor composer changed before sending.',
   composer_unavailable: 'The message box is not ready on your Mac.',
+  conductor_message_cancelled: 'Conductor canceled this message after it entered the chat.',
+  conductor_turn_rejected: 'Conductor rejected this message because the chat no longer has an active turn.',
   conductor_not_running: 'Conductor is not open on your Mac.',
   conductor_window_unavailable:
     'Conductor has no window on your Mac. Quit and reopen it there.',
@@ -2133,6 +2139,17 @@ function sanitizePendingDelivery(value) {
     receiptRowId: Number.isSafeInteger(value.receiptRowId)
       ? value.receiptRowId
       : null,
+    receiptMessageId:
+      typeof value.receiptMessageId === 'string' &&
+      value.receiptMessageId.length > 0 &&
+      value.receiptMessageId.length <= 200
+        ? value.receiptMessageId
+        : null,
+    receiptObservedAt:
+      Number.isFinite(value.receiptObservedAt) &&
+      value.receiptObservedAt > 0
+        ? value.receiptObservedAt
+        : null,
     retrySafe: value.retrySafe === true,
     definitelyUnsent: value.definitelyUnsent === true,
     deliveryRecoveryExhausted:
@@ -3609,20 +3626,33 @@ function sessionsFor(workspaceId) {
 }
 
 function recentSessionsNewestFirst() {
-  const workspaceNames = new Map(
-    state.workspaces.map((workspace) => [workspace.id, workspace.name]),
+  const workspaceDetails = new Map(
+    state.workspaces.map((workspace) => [workspace.id, workspace]),
   );
   return state.recentSessions
-    .map((session) => ({
-      ...session,
-      workspaceName:
-        session.workspaceName || workspaceNames.get(session.workspaceId) || 'Workspace',
-    }))
+    .map((session) => {
+      const workspace = workspaceDetails.get(session.workspaceId);
+      return {
+        ...session,
+        repositoryName: session.repositoryName || workspace?.repositoryName || null,
+        workspaceName: session.workspaceName || workspace?.name || 'Workspace',
+      };
+    })
     .sort((left, right) => {
       const leftActivity = Date.parse(left.activityAt || '') || 0;
       const rightActivity = Date.parse(right.activityAt || '') || 0;
       return rightActivity - leftActivity || left.id.localeCompare(right.id);
     });
+}
+
+function sessionLocationLabel(session) {
+  const workspaceName = session?.workspaceName || 'Workspace';
+  const repositoryName =
+    typeof session?.repositoryName === 'string'
+      ? session.repositoryName.trim()
+      : '';
+  if (!repositoryName || repositoryName === workspaceName) return workspaceName;
+  return `${repositoryName} \u00b7 ${workspaceName}`;
 }
 
 function connectionVoice() {
@@ -3741,7 +3771,9 @@ function renderWorkspacePanel() {
     }
     const query = state.searchQuery.trim().toLowerCase();
     const sessions = state.recentSessions.filter((session) =>
-      `${session.title} ${session.workspaceName}`.toLowerCase().includes(query),
+      `${session.title} ${session.repositoryName || ''} ${session.workspaceName}`
+        .toLowerCase()
+        .includes(query),
     );
     if (sessions.length > 0) {
       const list = node('ul', { className: 'row-list' });
@@ -3854,7 +3886,9 @@ function renderSearchResults(content) {
     `${workspace.name} ${workspace.branch || ''}`.toLowerCase().includes(query),
   );
   const sessions = state.recentSessions.filter((session) =>
-    `${session.title} ${session.workspaceName}`.toLowerCase().includes(query),
+    `${session.title} ${session.repositoryName || ''} ${session.workspaceName}`
+      .toLowerCase()
+      .includes(query),
   );
   appendWorkspaceSection(content, 'Workspaces', workspaces);
   if (sessions.length) {
@@ -3976,7 +4010,7 @@ function sessionRow(session, { crossWorkspace = false } = {}) {
   const isError = session.status === 'error';
   const unreadCount = sessionUnreadCount(session);
   const subtitleText = crossWorkspace
-    ? session.workspaceName
+    ? sessionLocationLabel(session)
     : `${session.agentType || 'agent'}${session.model ? ` · ${session.model}` : ''}`;
   const meta = node('span', { className: 'row-meta' }, [
     node('span', { text: formatRelative(session.activityAt) }),
@@ -4183,9 +4217,11 @@ function reconcileOptimistic(sessionId) {
     state.optimistic,
     sessionId,
     state.cursorsBySession.get(sessionId),
+    state.messagesBySession.get(sessionId) || [],
   );
   state.optimistic = result.remaining;
   if (result.reconciled.length > 0) {
+    const newlyObserved = [];
     for (const messageId of reconciledTranscriptMessageIds(
       state.messagesBySession.get(sessionId) || [],
       result.reconciled,
@@ -4193,13 +4229,21 @@ function reconcileOptimistic(sessionId) {
       state.seenMessageIds.add(messageId);
     }
     for (const message of result.reconciled) {
+      if (!Number.isFinite(message.receiptObservedAt)) {
+        message.receiptObservedAt = Date.now();
+        newlyObserved.push(message);
+      }
       for (const attachment of message.attachments || []) {
         releaseAttachmentPreview(attachment);
       }
+      void observeDeliveredReceipt(message);
     }
-    void persistPendingDeliveries({
-      removeIds: result.reconciled.map((message) => message.id),
-    });
+    if (newlyObserved.length > 0) {
+      void persistPendingDeliveries({ upserts: newlyObserved });
+    }
+  }
+  for (const message of result.missing) {
+    void verifyMissingDeliveryReceipt(message);
   }
   return result.reconciled;
 }
@@ -4352,7 +4396,7 @@ function syncChatStripChip(chip, {
   const label = chip.querySelector('.chip-label');
   const workspace = chip.querySelector('.chip-workspace');
   if (label) label.textContent = session.title;
-  if (workspace) workspace.textContent = session.workspaceName;
+  if (workspace) workspace.textContent = sessionLocationLabel(session);
 }
 
 function reconcileChatStripChildren(strip, desiredChildren) {
@@ -4385,6 +4429,7 @@ function renderChatStrip() {
     chatStates.map(({ session, unreadCount }) => [
       session.id,
       session.title,
+      session.repositoryName,
       session.workspaceName,
       session.status,
       unreadCount,
@@ -4417,13 +4462,14 @@ function renderChatStrip() {
     // keeps its exact DOM node, which preserves a finger scroll in progress.
     const state_ = STRIP_STATUS[session.status] || null;
     const unread = !state_ && unreadCount > 0;
+    const location = sessionLocationLabel(session);
     const className = `chat-chip${active ? ' is-active' : ''}${state_ ? ` ${state_.className}` : ''}${unread ? ' is-unread' : ''}`;
     const accessibility = {
       'aria-label': state_
-        ? `${session.title}, ${session.workspaceName}, ${state_.label}`
+        ? `${session.title}, ${location}, ${state_.label}`
         : unread
-          ? `${session.title}, ${session.workspaceName}, reply ready, ${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
-          : `${session.title}, ${session.workspaceName}`,
+          ? `${session.title}, ${location}, reply ready, ${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
+          : `${session.title}, ${location}`,
     };
     const ariaLabel = accessibility['aria-label'];
     const chipRenderKey = JSON.stringify([
@@ -4432,7 +4478,7 @@ function renderChatStrip() {
       session.id,
       session.workspaceId,
       session.title,
-      session.workspaceName,
+      location,
     ]);
     let chip = chatStripChips.get(session.id);
     if (!chip) {
@@ -4455,7 +4501,7 @@ function renderChatStrip() {
           node('span', { className: 'chip-label', text: session.title }),
           node('span', {
             className: 'chip-workspace',
-            text: session.workspaceName,
+            text: location,
           }),
         ]),
       ]);
@@ -4978,18 +5024,21 @@ function renderMessage(message, toolResults) {
       );
     } else if (message.delivery === 'failed') {
       const definitelyUnsent = message.definitelyUnsent === true;
+      const knownTerminalFailure =
+        message.errorCode === 'conductor_turn_rejected' ||
+        message.errorCode === 'conductor_message_cancelled';
       const activeAction = deliveryActionCoordinator.current(message.id);
       const actionBusy = Boolean(activeAction);
       meta.classList.add(
         'terminal',
-        definitelyUnsent ? 'failed' : 'unknown',
+        definitelyUnsent || knownTerminalFailure ? 'failed' : 'unknown',
       );
       const summary = node('span', {
         className: 'delivery-summary',
       }, [
         icon('warn'),
         node('span', {
-          text: `${definitelyUnsent ? 'Not sent' : 'Delivery unknown'} · ${deliveryErrorCopy(message.errorCode, message.errorProjectName)}`,
+          text: `${knownTerminalFailure ? 'Rejected' : definitelyUnsent ? 'Not sent' : 'Delivery unknown'} · ${deliveryErrorCopy(message.errorCode, message.errorProjectName)}`,
         }),
       ]);
       const actions = node('span', { className: 'delivery-actions' });
@@ -5006,7 +5055,7 @@ function renderMessage(message, toolResults) {
           }),
         );
       }
-      if (definitelyUnsent) {
+      if (definitelyUnsent || knownTerminalFailure) {
         actions.append(
           node('button', {
             className: 'message-retry',
@@ -5796,6 +5845,16 @@ async function deliverOptimistic(
       error.retrySafe = payload.error?.retrySafe === true;
       error.definitelyUnsent =
         payload.error?.definitelyUnsent === true;
+      error.final = payload.error?.final === true;
+      error.messageId =
+        typeof payload.error?.messageId === 'string' &&
+        payload.error.messageId.length > 0 &&
+        payload.error.messageId.length <= 200
+          ? payload.error.messageId
+          : null;
+      error.rowId = Number.isSafeInteger(payload.error?.rowId)
+        ? payload.error.rowId
+        : null;
       error.detail =
         typeof payload.error?.detail === 'string'
           ? payload.error.detail.slice(0, 300)
@@ -5825,6 +5884,7 @@ async function deliverOptimistic(
       error = timeoutError;
     }
     optimistic.errorCode = error.code;
+    applyDeliveryReceiptIdentity(optimistic, error);
     optimistic.deliveryPhase = null;
     optimistic.definitelyUnsent = error.definitelyUnsent === true;
     optimistic.errorDetail =
@@ -5857,6 +5917,14 @@ async function deliverOptimistic(
       } else {
         openDraftConflict(optimistic);
       }
+    } else if (error.final === true) {
+      optimistic.delivery = 'failed';
+      optimistic.retrySafe = false;
+      optimistic.definitelyUnsent = false;
+      optimistic.deliveryRecoveryExhausted = true;
+      await persistPendingDeliveries({ upserts: [optimistic] });
+      renderTranscript();
+      announce(deliveryErrorCopy(error.code, error.projectName));
     } else if (error.status === 401 || error.status === 423) {
       optimistic.delivery = 'failed';
       optimistic.retrySafe = false;
@@ -5873,15 +5941,24 @@ async function deliverOptimistic(
   }
 }
 
+function applyDeliveryReceiptIdentity(message, receipt) {
+  message.receiptBaselineCursor = Number.isSafeInteger(receipt.baselineCursor)
+    ? receipt.baselineCursor
+    : message.receiptBaselineCursor || null;
+  message.receiptRowId = Number.isSafeInteger(receipt.rowId)
+    ? receipt.rowId
+    : message.receiptRowId || null;
+  message.receiptMessageId =
+    typeof receipt.messageId === 'string' && receipt.messageId.length > 0
+      ? receipt.messageId
+      : message.receiptMessageId || null;
+}
+
 function applyDeliveryReceipt(message, receipt) {
   message.delivery = 'delivered';
   message.deliveredAt = receipt.deliveredAt;
-  message.receiptBaselineCursor = Number.isSafeInteger(receipt.baselineCursor)
-    ? receipt.baselineCursor
-    : null;
-  message.receiptRowId = Number.isSafeInteger(receipt.rowId)
-    ? receipt.rowId
-    : null;
+  applyDeliveryReceiptIdentity(message, receipt);
+  message.receiptObservedAt = null;
   message.retrySafe = false;
   message.definitelyUnsent = false;
   message.deliveryRecoveryExhausted = false;
@@ -5896,6 +5973,113 @@ function applyDeliveryReceipt(message, receipt) {
     releaseAttachmentPreview(item);
   }
   message.draftAttachmentItems = null;
+}
+
+async function verifyMissingDeliveryReceipt(message) {
+  if (
+    missingReceiptChecks.has(message.id) ||
+    message.delivery !== 'delivered' ||
+    !state.optimistic.includes(message)
+  ) {
+    return;
+  }
+  const check = (async () => {
+    try {
+      const delivery = await requestDeliveryStatus(message);
+      if (
+        message.delivery === 'delivered' &&
+        state.optimistic.includes(message) &&
+        deliveryStatusIsTerminal(delivery)
+      ) {
+        await settleTerminalDeliveryStatus(message, delivery);
+      }
+    } catch {
+      // The next live refresh can retry this read-only receipt check.
+    }
+  })().finally(() => {
+    missingReceiptChecks.delete(message.id);
+  });
+  missingReceiptChecks.set(message.id, check);
+  await check;
+}
+
+async function observeDeliveredReceipt(message) {
+  if (
+    deliveryReceiptObservations.has(message.id) ||
+    message.delivery !== 'delivered' ||
+    !Number.isFinite(message.receiptObservedAt) ||
+    !state.optimistic.includes(message)
+  ) {
+    return;
+  }
+  const observedAt = message.receiptObservedAt;
+  const deadline = observedAt + DELIVERY_RECEIPT_OBSERVATION_MS;
+  const observation = (async () => {
+    while (
+      message.delivery === 'delivered' &&
+      state.optimistic.includes(message)
+    ) {
+      const remaining = deadline - Date.now();
+      if (remaining > 0) {
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.min(remaining, DELIVERY_RECEIPT_OBSERVATION_POLL_MS),
+          ),
+        );
+      }
+      if (
+        message.delivery !== 'delivered' ||
+        !state.optimistic.includes(message)
+      ) {
+        return;
+      }
+      let delivery;
+      try {
+        delivery = await requestDeliveryStatus(message);
+      } catch {
+        if (Date.now() >= deadline) return;
+        continue;
+      }
+      if (
+        delivery?.state === 'failed' &&
+        deliveryStatusIsTerminal(delivery)
+      ) {
+        await settleTerminalDeliveryStatus(message, delivery);
+        announce(deliveryErrorCopy(message.errorCode, message.errorProjectName));
+        await refreshMessages(message.sessionId, { full: true });
+        return;
+      }
+      if (delivery?.state !== 'delivered' || Date.now() < deadline) {
+        continue;
+      }
+      let expired;
+      try {
+        expired = await transitionPendingDeliveryRequired({
+          type: 'expire-receipt',
+          message,
+          observedAt,
+        });
+      } catch {
+        return;
+      }
+      if (!expired) {
+        await restorePendingDeliveries();
+      } else {
+        state.optimistic = state.optimistic.filter(
+          (candidate) => candidate !== message,
+        );
+      }
+      if (state.route.sessionId === message.sessionId) renderTranscript();
+      return;
+    }
+  })().finally(() => {
+    if (deliveryReceiptObservations.get(message.id) === observation) {
+      deliveryReceiptObservations.delete(message.id);
+    }
+  });
+  deliveryReceiptObservations.set(message.id, observation);
+  await observation;
 }
 
 async function requestDeliveryStatus(message) {
@@ -5951,6 +6135,8 @@ async function settleTerminalDeliveryStatus(message, delivery) {
   // anything and leaves the decision to a human who can see the transcript.
   if (delivery.state === 'failed') {
     if (!deliveryStatusIsTerminal(delivery)) return false;
+    const previousDelivery = message.delivery;
+    applyDeliveryReceiptIdentity(message, delivery);
     message.errorCode = delivery.code || 'delivery_unknown';
     message.errorProjectName = safeCollapsedProjectName(delivery.projectName);
     message.delivery = 'failed';
@@ -5958,7 +6144,13 @@ async function settleTerminalDeliveryStatus(message, delivery) {
     message.retrySafe = delivery.retrySafe === true;
     message.definitelyUnsent = delivery.retrySafe === true;
     message.deliveryRecoveryExhausted = true;
-    await persistPendingDeliveries({ upserts: [message] });
+    await persistPendingDeliveries({
+      upserts: [message],
+      deliveryStateTransitions: authorizedDeliveryStateTransition(
+        message,
+        previousDelivery,
+      ),
+    });
     renderTranscript();
     return true;
   }
@@ -6857,7 +7049,9 @@ async function openSwitcher() {
     list.replaceChildren();
     const query = search.value.trim().toLowerCase();
     const sessions = state.recentSessions.filter((session) =>
-      `${session.title} ${session.workspaceName}`.toLowerCase().includes(query),
+      `${session.title} ${session.repositoryName || ''} ${session.workspaceName}`
+        .toLowerCase()
+        .includes(query),
     );
     if (state.recentSessionsError) {
       list.append(
@@ -7105,7 +7299,7 @@ function openChatsSheet() {
     // The model comes from Conductor's own database, so it reflects what this
     // chat is actually running. It cannot be changed from the phone: Conductor
     // exposes nothing for its model and effort menus to accessibility.
-    const meta = [session.workspaceName, session.model, active ? 'open' : null]
+    const meta = [sessionLocationLabel(session), session.model, active ? 'open' : null]
       .filter(Boolean)
       .join(' \u00b7 ');
     return node('div', { className: `chats-sheet-row${active ? ' is-active' : ''}` }, [

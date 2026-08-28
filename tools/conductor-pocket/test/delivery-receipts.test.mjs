@@ -924,6 +924,7 @@ function optimistic(overrides = {}) {
     delivery: 'delivered',
     receiptBaselineCursor: 10,
     receiptRowId: null,
+    receiptMessageId: null,
     ...overrides,
   };
 }
@@ -945,6 +946,148 @@ test('a delivery receipt reconciles only after its transcript boundary arrives',
       12,
     ),
     true,
+  );
+});
+
+test('a confirmed receipt stays visible until its exact transcript row exists', () => {
+  const message = optimistic({
+    receiptRowId: 12,
+    receiptMessageId: 'server-user-12',
+  });
+  const missing = reconcileDeliveryReceipts(
+    [message],
+    'session-1',
+    12,
+    [],
+  );
+  assert.deepEqual(missing.remaining, [message]);
+  assert.deepEqual(missing.reconciled, []);
+  assert.deepEqual(missing.missing, [message]);
+
+  const present = reconcileDeliveryReceipts(
+    [message],
+    'session-1',
+    12,
+    [{ id: 'server-user-12' }],
+  );
+  assert.deepEqual(present.remaining, [message]);
+  assert.deepEqual(present.reconciled, [message]);
+  assert.deepEqual(present.missing, []);
+
+  const cancelledLater = reconcileDeliveryReceipts(
+    present.remaining,
+    'session-1',
+    12,
+    [],
+  );
+  assert.deepEqual(cancelledLater.remaining, [message]);
+  assert.deepEqual(cancelledLater.reconciled, []);
+  assert.deepEqual(cancelledLater.missing, [message]);
+});
+
+test('receipt expiry cannot erase a cancellation written by another window', () => {
+  const observed = persistedMessage({
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+    receiptMessageId: 'server-user-12',
+    receiptRowId: 12,
+    receiptObservedAt: 1_777_777_777_000,
+  });
+  const expired = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [observed] },
+    {
+      type: 'expire-receipt',
+      message: observed,
+      observedAt: observed.receiptObservedAt,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(expired.value?.id, observed.id);
+  assert.deepEqual(expired.snapshot.messages, []);
+
+  const cancelled = {
+    ...observed,
+    delivery: 'failed',
+    errorCode: 'conductor_message_cancelled',
+  };
+  const protectedResult = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [cancelled] },
+    {
+      type: 'expire-receipt',
+      message: observed,
+      observedAt: observed.receiptObservedAt,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(protectedResult.value, null);
+  assert.deepEqual(protectedResult.snapshot.messages, [cancelled]);
+});
+
+test('a cancellation durably replaces an observed delivered receipt', () => {
+  const delivered = persistedMessage({
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+    receiptMessageId: 'server-user-12',
+    receiptRowId: 12,
+    receiptObservedAt: 1_777_777_777_000,
+  });
+  const cancelled = {
+    ...delivered,
+    delivery: 'failed',
+    errorCode: 'conductor_message_cancelled',
+  };
+  const unauthorized = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [delivered] },
+    { type: 'mutate', upserts: [cancelled] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  const authorized = deliveryReceipts.pendingDeliverySnapshotTransition(
+    unauthorized.snapshot,
+    {
+      type: 'mutate',
+      upserts: [cancelled],
+      deliveryStateTransitions: [{
+        id: delivered.id,
+        deliveryAttempt: delivered.deliveryAttempt,
+        activeDeliveryKey: delivered.activeDeliveryKey,
+        from: 'delivered',
+        to: 'failed',
+      }],
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+  const staleDeliveredWriter = deliveryReceipts.pendingDeliverySnapshotTransition(
+    authorized.snapshot,
+    { type: 'mutate', upserts: [delivered] },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_780_000 },
+  );
+  assert.equal(unauthorized.snapshot.messages[0].delivery, 'delivered');
+  assert.equal(authorized.snapshot.messages[0].delivery, 'failed');
+  assert.equal(
+    staleDeliveredWriter.snapshot.messages[0].delivery,
+    'failed',
+  );
+  assert.equal(
+    staleDeliveredWriter.snapshot.messages[0].errorCode,
+    'conductor_message_cancelled',
+  );
+});
+
+test('the browser observes confirmed receipts before expiring them', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(js, /DELIVERY_RECEIPT_OBSERVATION_MS = 10_000/);
+  assert.match(
+    js,
+    /observeDeliveredReceipt\(message\)[\s\S]*requestDeliveryStatus\(message\)[\s\S]*type: 'expire-receipt'/,
+  );
+  assert.match(
+    js,
+    /const previousDelivery = message\.delivery[\s\S]*deliveryStateTransitions: authorizedDeliveryStateTransition\([\s\S]*previousDelivery/,
   );
 });
 

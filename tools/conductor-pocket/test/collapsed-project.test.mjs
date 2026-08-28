@@ -24,14 +24,14 @@ function makeNode({ children = [], name = '', role = 'AXGroup' } = {}) {
 function makeProcess({ includeTargetLink = false } = {}) {
   const listRows = [
     makeNode({
-      name: 'Quickstart Quickstart 46 Repo settings New workspace',
+      name: 'Quickstart Quickstart Repo settings New workspace',
       role: 'AXButton',
     }),
     ...(includeTargetLink
       ? [makeNode({ name: targetWorkspace, role: 'AXLink' })]
       : []),
     makeNode({
-      name: 'OVO CRM Fable OVO CRM Fable 4 Repo settings New workspace',
+      name: 'OVO CRM Fable OVO CRM Fable Repo settings New workspace',
       role: 'AXButton',
     }),
     ...['Hiring', 'calendar', 'OVO CRM Fable', 'filming'].map((name) =>
@@ -100,6 +100,7 @@ test('collapsed project fixture returns workspace_project_collapsed with the rea
   const fixtureFailure = diagnoseWorkspaceFailure(
     makeProcess(),
     targetWorkspace,
+    'Quickstart',
   );
   const parsed = parseResult(JSON.stringify(fixtureFailure));
 
@@ -136,6 +137,7 @@ test('collapsed project fixture keeps genuine visible-route failures generic', a
   const fixtureFailure = diagnoseWorkspaceFailure(
     makeProcess({ includeTargetLink: true }),
     targetWorkspace,
+    'Quickstart',
   );
   assert.equal(fixtureFailure.code, 'workspace_list_unavailable');
   assert.equal('projectName' in fixtureFailure, false);

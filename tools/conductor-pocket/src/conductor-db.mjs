@@ -600,7 +600,8 @@ export class ConductorDatabase {
           w.secondary_directory_name,
           w.placeholder_branch_name,
           w.branch,
-          w.directory_name
+          w.directory_name,
+          r.name AS repository_name
         FROM sessions s
         JOIN workspaces w ON w.id = s.workspace_id
         JOIN repos r ON r.id = w.repository_id
@@ -617,6 +618,8 @@ export class ConductorDatabase {
             s.status,
             s.agent_type,
             s.model,
+            w.repository_id,
+            r.name AS repository_name,
             w.workspace_name,
             w.secondary_directory_name,
             w.placeholder_branch_name,
@@ -630,6 +633,7 @@ export class ConductorDatabase {
             ) AS title_ordinal
           FROM sessions s
           JOIN workspaces w ON w.id = s.workspace_id
+          JOIN repos r ON r.id = w.repository_id
           WHERE s.is_hidden = 0
         )
         SELECT * FROM ranked WHERE id = ?
@@ -736,6 +740,25 @@ export class ConductorDatabase {
           AND cancelled_at IS NULL
         ORDER BY rowid
         LIMIT 100
+      `),
+      eventsAfterMessage: this.#db.prepare(`
+        SELECT
+          rowid AS row_id,
+          role,
+          content,
+          turn_id
+        FROM session_messages
+        WHERE session_id = ?
+          AND rowid > ?
+          AND cancelled_at IS NULL
+        ORDER BY rowid
+        LIMIT 32
+      `),
+      deliveredMessageState: this.#db.prepare(`
+        SELECT role, cancelled_at
+        FROM session_messages
+        WHERE session_id = ? AND rowid = ?
+        LIMIT 1
       `),
       attachmentMessages: this.#db.prepare(`
         SELECT content
@@ -869,6 +892,7 @@ export class ConductorDatabase {
     return this.#statements.recentSessions.all(safeLimit).map((row) => ({
       id: row.id,
       workspaceId: row.workspace_id,
+      repositoryName: row.repository_name,
       workspaceName: workspaceDisplayName(row),
       title: row.title || 'Untitled chat',
       agentType: row.agent_type || 'unknown',
@@ -884,6 +908,8 @@ export class ConductorDatabase {
     if (!row) return null;
     return {
       id: row.id,
+      repositoryId: row.repository_id,
+      repositoryName: row.repository_name,
       workspaceId: row.workspace_id,
       workspaceName: workspaceDisplayName(row),
       title: row.title || 'Untitled chat',
@@ -925,6 +951,51 @@ export class ConductorDatabase {
     return this.#statements.userMessagesAfter
       .all(sessionId, safeAfter)
       .flatMap(parseAssistantRow);
+  }
+
+  findImmediateSendRejection(sessionId, message) {
+    if (
+      typeof sessionId !== 'string' ||
+      !message ||
+      !Number.isSafeInteger(message.rowId) ||
+      message.rowId <= 0 ||
+      typeof message.turnId !== 'string' ||
+      message.turnId.length === 0
+    ) {
+      return null;
+    }
+    for (const row of this.#statements.eventsAfterMessage.all(
+      sessionId,
+      message.rowId,
+    )) {
+      if (row.role === 'user') return null;
+      if (row.turn_id !== message.turnId) continue;
+      const event = parseJson(row.content);
+      if (
+        event?.type === 'error' &&
+        typeof event.content === 'string' &&
+        /^Cannot steer: no active turn\b/.test(event.content)
+      ) {
+        return {
+          code: 'conductor_turn_rejected',
+          rowId: Number(row.row_id),
+        };
+      }
+    }
+    return null;
+  }
+
+  getDeliveredMessageState(sessionId, rowId) {
+    if (
+      typeof sessionId !== 'string' ||
+      !Number.isSafeInteger(rowId) ||
+      rowId <= 0
+    ) {
+      return 'missing';
+    }
+    const row = this.#statements.deliveredMessageState.get(sessionId, rowId);
+    if (!row || row.role !== 'user') return 'missing';
+    return row.cancelled_at == null ? 'visible' : 'cancelled';
   }
 
   resolveSessionAttachment(sessionId, attachmentId) {

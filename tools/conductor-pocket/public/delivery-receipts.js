@@ -13,6 +13,10 @@ const LEGACY_INCONCLUSIVE_RECOVERY_CODES = new Set([
   'delivery_status_invalid_response',
   'delivery_unknown',
 ]);
+const AUTHORITATIVE_POST_RECEIPT_FAILURE_CODES = new Set([
+  'conductor_message_cancelled',
+  'conductor_turn_rejected',
+]);
 const PENDING_SNAPSHOT_VERSION = 2;
 const TERMINAL_TOMBSTONE_LIMIT = 256;
 const TERMINAL_TOMBSTONE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -92,15 +96,24 @@ function newerPendingDelivery(
       ? candidate
       : current;
   }
+  const stateTransitionAuthorized = deliveryStateTransitionAllows(
+    current,
+    candidate,
+    deliveryStateTransitions,
+  );
+  if (
+    current.delivery === 'failed' &&
+    AUTHORITATIVE_POST_RECEIPT_FAILURE_CODES.has(current.errorCode) &&
+    candidate.delivery !== current.delivery &&
+    !stateTransitionAuthorized
+  ) {
+    return current;
+  }
   const candidateIsNewer =
     deliveryStateRank(candidate) >= deliveryStateRank(current);
   const newer =
     candidateIsNewer ||
-    deliveryStateTransitionAllows(
-      current,
-      candidate,
-      deliveryStateTransitions,
-    )
+    stateTransitionAuthorized
       ? candidate
       : current;
   if (
@@ -424,6 +437,24 @@ export function pendingDeliverySnapshotTransition(
     snapshot.messages[index] = stopped;
     return { snapshot, value: stopped };
   }
+  if (command?.type === 'expire-receipt') {
+    const index = snapshot.messages.findIndex(
+      (candidate) => candidate.id === command.message?.id,
+    );
+    const candidate = index >= 0 ? snapshot.messages[index] : null;
+    const observedAt = Number(command.observedAt);
+    if (
+      candidate?.delivery !== 'delivered' ||
+      !deliveryIdentityMatches(candidate, command.message) ||
+      !Number.isFinite(observedAt) ||
+      candidate.receiptObservedAt !== observedAt
+    ) {
+      return { snapshot, value: null };
+    }
+    snapshot.messages.splice(index, 1);
+    addTerminalTombstone(snapshot, candidate, 'resolved', now);
+    return { snapshot, value: candidate };
+  }
   if (
     command?.type === 'finalize-edit' ||
     command?.type === 'release-edit'
@@ -697,34 +728,57 @@ export function deliveryNeedsAutomaticRecovery(message) {
   );
 }
 
-export function receiptReachedTranscript(message, transcriptCursor) {
+export function receiptReachedTranscript(
+  message,
+  transcriptCursor,
+  transcriptMessages = null,
+) {
   if (message.delivery !== 'delivered' || !validCursor(transcriptCursor)) {
     return false;
   }
-  if (validCursor(message.receiptRowId)) {
-    return transcriptCursor >= message.receiptRowId;
+  const boundaryReached = validCursor(message.receiptRowId)
+    ? transcriptCursor >= message.receiptRowId
+    : validCursor(message.receiptBaselineCursor)
+      ? transcriptCursor > message.receiptBaselineCursor
+      : false;
+  if (!boundaryReached) return false;
+  if (
+    Array.isArray(transcriptMessages) &&
+    typeof message.receiptMessageId === 'string' &&
+    message.receiptMessageId.length > 0
+  ) {
+    return transcriptMessages.some(
+      (candidate) => candidate?.id === message.receiptMessageId,
+    );
   }
-  if (validCursor(message.receiptBaselineCursor)) {
-    return transcriptCursor > message.receiptBaselineCursor;
-  }
-  return false;
+  return true;
 }
 
 export function reconcileDeliveryReceipts(
   optimisticMessages,
   sessionId,
   transcriptCursor,
+  transcriptMessages = null,
 ) {
   const reconciled = [];
+  const missing = [];
   const remaining = optimisticMessages.filter((message) => {
-    if (
-      message.sessionId !== sessionId ||
-      !receiptReachedTranscript(message, transcriptCursor)
-    ) {
+    if (message.sessionId !== sessionId) return true;
+    if (!receiptReachedTranscript(message, transcriptCursor)) return true;
+    if (!receiptReachedTranscript(
+      message,
+      transcriptCursor,
+      transcriptMessages,
+    )) {
+      missing.push(message);
       return true;
     }
     reconciled.push(message);
-    return false;
+    return (
+      Array.isArray(transcriptMessages) &&
+      typeof message.receiptMessageId === 'string' &&
+      message.receiptMessageId.length > 0
+    );
   });
-  return { remaining, reconciled };
+  return { remaining, reconciled, missing };
 }

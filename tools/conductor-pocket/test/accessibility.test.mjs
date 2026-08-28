@@ -456,6 +456,182 @@ test('workspace matching routes every diff-badge label Conductor renders', async
   });
 });
 
+test('the final route lease uses the same workspace label policy as navigation', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}\nglobalThis.__workspaceMatches = workspaceMatches;`,
+    sandbox,
+  );
+  const cases = [
+    ['daemon', 'daemon', true],
+    ['daemon', 'daemon +3.7k -165', true],
+    ['daemon', 'daemon -165', true],
+    ['daemon', 'Owner/daemon', true],
+    ['daemon', 'Owner/daemon +8', true],
+    ['daemon', 'Owner/daemon -165', true],
+    ['daemon', 'daemon two', false],
+    ['daemon', 'daemonics +8', false],
+    ['plan', 'the plan', false],
+  ];
+  for (const [base, candidate, expected] of cases) {
+    assert.equal(
+      sandbox.__workspaceMatches(base, candidate),
+      expected,
+      `${base} must match ${candidate}: ${expected}`,
+    );
+  }
+});
+
+test('repository-scoped routing distinguishes duplicate workspace names', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}\nglobalThis.__repoRoute = { repositoryHeaderMatches, workspaceBelongsToRepository };`,
+    sandbox,
+  );
+  const element = (role, name) => ({ role: () => role, name: () => name });
+  const elements = [
+    element('AXButton', 'alpha alpha Repo settings New workspace'),
+    element('AXLink', 'Shared'),
+    element('AXButton', 'beta beta Repo settings New workspace'),
+    element('AXLink', 'Shared'),
+  ];
+  assert.equal(
+    sandbox.__repoRoute.repositoryHeaderMatches(
+      'alpha',
+      'alpha alpha Repo settings New workspace',
+    ),
+    true,
+  );
+  assert.equal(
+    sandbox.__repoRoute.repositoryHeaderMatches(
+      'alpha',
+      'beta alpha beta alpha Repo settings New workspace',
+    ),
+    false,
+  );
+  assert.equal(
+    sandbox.__repoRoute.workspaceBelongsToRepository(elements, 1, 'alpha'),
+    true,
+  );
+  assert.equal(
+    sandbox.__repoRoute.workspaceBelongsToRepository(elements, 1, 'beta'),
+    false,
+  );
+  assert.equal(
+    sandbox.__repoRoute.workspaceBelongsToRepository(elements, 3, 'beta'),
+    true,
+  );
+});
+
+test('navigation scopes workspace links to the exact Conductor project block', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('on repositoryHeaderMatches');
+  const end = source.indexOf('end repositoryHeaderMatches', start);
+  const handler = source.slice(
+    start,
+    end + 'end repositoryHeaderMatches'.length,
+  );
+  const probes = [
+    ['growth-operating', 'growth-operating growth-operating Repo settings New workspace', true],
+    ['lucas-domain', '💀 lucas-domain Repo settings New workspace', true],
+    ['homework', 'growth-operating growth-operating Repo settings New workspace', false],
+    ['foo', 'bar foo bar foo Repo settings New workspace', false],
+  ].map(([repository, candidate]) =>
+    `(my repositoryHeaderMatches(${JSON.stringify(repository)}, ${JSON.stringify(candidate)}) as text)`,
+  ).join(' & "," & ');
+  const { stdout } = await execFileAsync(
+    '/usr/bin/osascript',
+    ['-e', `${handler}\nreturn ${probes}`],
+    { timeout: 20_000 },
+  );
+  assert.deepEqual(stdout.trim().split(','), ['true', 'true', 'false', 'false']);
+  assert.match(
+    source,
+    /currentRepositoryMatches[\s\S]*inspectWorkspaceCandidate\([\s\S]*currentRepositoryMatches/,
+  );
+});
+
+test('verified workspace hints are strict and retained for the next operation', async () => {
+  assert.deepEqual(
+    parseResult(JSON.stringify({
+      ok: true,
+      code: 'sent',
+      pressedAt: 123,
+      composerOwned: true,
+      workspaceHint: {
+        containerIndex: 15,
+        linkIndex: 5,
+        sidebarChildCount: 20,
+        containerChildCount: 13,
+      },
+    })).workspaceHint,
+    {
+      containerIndex: 15,
+      linkIndex: 5,
+      sidebarChildCount: 20,
+      containerChildCount: 13,
+    },
+  );
+  assert.deepEqual(
+    parseResult(JSON.stringify({
+      ok: true,
+      code: 'sent',
+      pressedAt: 123,
+      composerOwned: true,
+      workspaceHint: {
+        containerIndex: 15,
+        linkIndex: 99,
+        sidebarChildCount: 20,
+        containerChildCount: 13,
+      },
+    })),
+    { ok: false, code: 'automation_invalid_response' },
+  );
+  const transport = await fs.readFile(
+    new URL('../src/accessibility.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(transport, /#routeHints = new Map\(\)/);
+  assert.match(
+    transport,
+    /POCKET_WORKSPACE_HINT_CONTAINER_INDEX:[\s\S]*POCKET_WORKSPACE_HINT_LINK_INDEX/,
+  );
+  const script = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(script, /on getWorkspaceRouteFromHint\(/);
+  assert.match(
+    script,
+    /getWorkspaceRouteFromHint\([\s\S]*if hintedRoute is not missing value then return hintedRoute/,
+  );
+});
+
 test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
   const mapped = mapAutomationError({
     stderr:
@@ -591,7 +767,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.doesNotMatch(composerWait, /assertRouteLease/);
   assert.match(
     inputHelper,
-    /routeLease = acquireRouteLease\(process\)[\s\S]*assertNotQueuedEditMode\(process\)[\s\S]*waitForComposerSend\(pid, message, inputLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(process, message\)/,
+    /routeLease = acquireRouteLease\(process\)[\s\S]*assertNotQueuedEditMode\(process\)[\s\S]*waitForComposerSend\(pid, message, inputLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*resolveComposerSend\(process, message\)[\s\S]*resolveComposerPressAction\(sendButton\)[\s\S]*assertRouteLease\(process, routeLease\)/,
   );
   const finalResolve = inputHelper.lastIndexOf(
     'const sendButton = resolveComposerSend(process, message);',
@@ -612,7 +788,16 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     'pressAction.perform();',
     pressBoundary,
   );
+  const preResolveProof = inputHelper.lastIndexOf(
+    'assertRouteLease(process, routeLease);',
+    finalResolve,
+  );
   assert.ok(finalResolve >= 0);
+  assert.ok(
+    preResolveProof < inputHelper.indexOf(
+      'waitForComposerSend(pid, message, inputLease);',
+    ),
+  );
   assert.ok(finalActionResolve > finalResolve);
   assert.ok(pressBoundary > finalActionResolve);
   assert.ok(finalRouteProof > finalResolve);
@@ -627,7 +812,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.equal(
     (finalSendBoundary.match(/assertRouteLease\(process, routeLease\);/g) || [])
       .length,
-    2,
+    1,
   );
   assert.doesNotMatch(inputHelper, /validateRoute\(/);
   assert.match(inputHelper, /exactDraftExposedAt = draftReadStartedAt/);
@@ -1547,9 +1732,12 @@ test('the send path does not re-derive work it already has', async () => {
     new URL('../src/conductor-send.applescript', import.meta.url),
     'utf8',
   );
+  const workspaceRouteStart = sendScript.indexOf(
+    'on getWorkspaceRoute(workspaceName, sidebarGroup)',
+  );
   const workspaceRoute = sendScript.slice(
-    sendScript.indexOf('on getWorkspaceRoute'),
-    sendScript.indexOf('end getWorkspaceRoute'),
+    workspaceRouteStart,
+    sendScript.indexOf('end getWorkspaceRoute', workspaceRouteStart),
   );
   assert.match(workspaceRoute, /role of UI elements of workspaceContainer/);
   assert.match(workspaceRoute, /name of UI elements of workspaceContainer/);
@@ -1566,6 +1754,23 @@ test('the send path does not re-derive work it already has', async () => {
   assert.match(sessionTabs, /role of UI elements of mainGroup/);
   assert.match(sessionTabs, /role of UI elements of tabGroup/);
   assert.match(sessionTabs, /role of tabGroupChild as text/);
+
+  const mainGroup = sendScript.slice(
+    sendScript.indexOf('on getMainGroup()'),
+    sendScript.indexOf('end getMainGroup'),
+  );
+  assert.match(
+    mainGroup,
+    /set my heldMainGroup to item 1 of matchingGroups/,
+  );
+  assert.match(
+    sendScript,
+    /if stableRouteChecks is not 3 then return[\s\S]*set my heldMainGroup to missing value[\s\S]*set textArea to missing value/,
+  );
+  assert.match(
+    sendScript,
+    /sessionIsSelected\(sessionTitle, sessionOrdinal\) is false then return[\s\S]*set my heldMainGroup to missing value[\s\S]*commitAndPressMessage/,
+  );
 
   const selectedSession = sendScript.slice(
     sendScript.indexOf('on sessionIsSelected'),
@@ -1890,6 +2095,19 @@ test('a missing Conductor window is recovered before the send gives up', async (
   assert.match(handler, /set recoveryDeadline to \(current date\) \+ 6/);
   assert.match(handler, /repeat while \(current date\) < recoveryDeadline/);
   assert.doesNotMatch(handler, /repeat with waitIndex from 1 to 30/);
+});
+
+test('connection diagnostics never change Mac focus or race the send composer', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('if operationMode is "doctor" then');
+  const end = source.indexOf('end if', start) + 'end if'.length;
+  const doctor = source.slice(start, end);
+  assert.match(doctor, /set textArea to getTextArea\(\)/);
+  assert.doesNotMatch(doctor, /set frontmost|set focused|type-and-send/);
+  assert.doesNotMatch(doctor, /osascript -l JavaScript/);
 });
 
 test('a transient workspace tree render is retried before routing fails', async () => {

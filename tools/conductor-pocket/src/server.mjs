@@ -132,6 +132,7 @@ const errorStatuses = new Map([
   ['automation_failed', 502],
   ['automation_invalid_response', 502],
   ['session_route_changed', 409],
+  ['conductor_turn_rejected', 409],
 ]);
 
 function securityHeaders(config, { api = false } = {}) {
@@ -425,6 +426,52 @@ function databaseDeliveryResult(match, baselineCursor) {
   };
 }
 
+function databaseDeliveryOutcome(
+  database,
+  sessionId,
+  match,
+  baselineCursor,
+) {
+  const rejection = database.findImmediateSendRejection?.(
+    sessionId,
+    match,
+  );
+  if (rejection?.code === 'conductor_turn_rejected') {
+    return {
+      ok: false,
+      code: rejection.code,
+      safeToRetry: false,
+      final: true,
+      baselineCursor,
+      messageId: match.id,
+      rowId: match.rowId,
+    };
+  }
+  let deliveredMessageState = 'visible';
+  try {
+    deliveredMessageState =
+      database.getDeliveredMessageState?.(sessionId, match.rowId) ||
+      'visible';
+  } catch {
+    deliveredMessageState = 'unavailable';
+  }
+  if (
+    deliveredMessageState === 'cancelled' ||
+    deliveredMessageState === 'missing'
+  ) {
+    return {
+      ok: false,
+      code: 'conductor_message_cancelled',
+      safeToRetry: false,
+      final: true,
+      baselineCursor,
+      messageId: match.id,
+      rowId: match.rowId,
+    };
+  }
+  return databaseDeliveryResult(match, baselineCursor);
+}
+
 function sendNotConfirmedResult({
   code = 'send_not_confirmed',
   baselineCursor,
@@ -505,6 +552,10 @@ function durableDeliveryResult(result, secret) {
       baselineCursor: Number.isSafeInteger(result.baselineCursor)
         ? result.baselineCursor
         : null,
+      messageId:
+        typeof result.messageId === 'string' && result.messageId.length <= 200
+          ? result.messageId
+          : null,
       rowId: Number.isSafeInteger(result.rowId) ? result.rowId : null,
     };
   }
@@ -517,6 +568,16 @@ function durableDeliveryResult(result, secret) {
         : 'internal_error',
     safeToRetry: result.safeToRetry === true,
   };
+  if (
+    Number.isSafeInteger(result.rowId) &&
+    result.rowId > 0 &&
+    typeof result.messageId === 'string' &&
+    result.messageId.length > 0 &&
+    result.messageId.length <= 200
+  ) {
+    durable.messageId = result.messageId;
+    durable.rowId = result.rowId;
+  }
   if (
     durable.code === 'workspace_project_collapsed' &&
     validCollapsedProjectName(result.projectName)
@@ -569,6 +630,12 @@ function validateDurableDeliveryResult(result) {
       !(
         result.rowId === null ||
         (Number.isSafeInteger(result.rowId) && result.rowId >= 0)
+      ) ||
+      !(
+        result.messageId == null ||
+        (typeof result.messageId === 'string' &&
+          result.messageId.length > 0 &&
+          result.messageId.length <= 200)
       )
     ) {
       return null;
@@ -578,6 +645,8 @@ function validateDurableDeliveryResult(result) {
       code: 'sent',
       deliveredAt: result.deliveredAt,
       baselineCursor: result.baselineCursor,
+      messageId:
+        typeof result.messageId === 'string' ? result.messageId : null,
       rowId: result.rowId,
     };
   }
@@ -594,6 +663,19 @@ function validateDurableDeliveryResult(result) {
     code: result.code,
     safeToRetry: result.safeToRetry,
   };
+  if (result.messageId !== undefined || result.rowId !== undefined) {
+    if (
+      typeof result.messageId !== 'string' ||
+      result.messageId.length === 0 ||
+      result.messageId.length > 200 ||
+      !Number.isSafeInteger(result.rowId) ||
+      result.rowId <= 0
+    ) {
+      return null;
+    }
+    validated.messageId = result.messageId;
+    validated.rowId = result.rowId;
+  }
   if (result.code === 'workspace_project_collapsed') {
     if (!validCollapsedProjectName(result.projectName)) return null;
     validated.projectName = result.projectName;
@@ -637,8 +719,9 @@ class IdempotencyStore {
   #ledgerPath;
   #secret;
   #persistQueue = Promise.resolve();
+  #beforePersist;
 
-  constructor({ ledgerPath = null, secret }) {
+  constructor({ ledgerPath = null, secret, beforePersist = null }) {
     if (typeof secret !== 'string' || secret.length < 32) {
       throw new Error('Delivery ledger secret is unavailable');
     }
@@ -650,10 +733,12 @@ class IdempotencyStore {
     }
     this.#ledgerPath = ledgerPath;
     this.#secret = secret;
+    this.#beforePersist =
+      typeof beforePersist === 'function' ? beforePersist : null;
     this.#load();
   }
 
-  run(key, sessionId, fingerprint, task) {
+  run(key, sessionId, fingerprint, task, schedule = (operation) => operation()) {
     this.#prune();
     const entryKey = this.#keyProof(key);
     const sessionProof = this.#sessionProof(sessionId);
@@ -731,7 +816,10 @@ class IdempotencyStore {
     // Conductor. A crash can then never resurrect an older safe-to-retry
     // tombstone and invite a duplicate press.
     this.#entries.set(entryKey, entry);
-    const taskPromise = this.#persist().then(() => task(setPhase));
+    const durablePending = this.#persist();
+    const taskPromise = schedule(() =>
+      durablePending.then(() => task(setPhase)),
+    );
     const promise = taskPromise.then(
       async (result) => {
         entry.state = 'resolved';
@@ -842,7 +930,9 @@ class IdempotencyStore {
               reconciliation.state === 'delivered' &&
               !entry.result.ok
             ) {
-              const delivered = databaseDeliveryResult(
+              const delivered = databaseDeliveryOutcome(
+                database,
+                sessionId,
                 reconciliation.match,
                 recovery.baselineCursor,
               );
@@ -869,6 +959,47 @@ class IdempotencyStore {
       }
     }
     if (entry.result.ok) {
+      let deliveredMessageState = 'visible';
+      try {
+        if (
+          Number.isSafeInteger(entry.result.rowId) &&
+          entry.result.rowId > 0
+        ) {
+          deliveredMessageState =
+            database.getDeliveredMessageState?.(
+              sessionId,
+              entry.result.rowId,
+            ) || 'visible';
+        }
+      } catch {
+        deliveredMessageState = 'unavailable';
+      }
+      if (
+        deliveredMessageState === 'cancelled' ||
+        deliveredMessageState === 'missing'
+      ) {
+        const messageId = entry.result.messageId || null;
+        const rowId = entry.result.rowId || null;
+        entry.result = {
+          ok: false,
+          code: 'conductor_message_cancelled',
+          safeToRetry: false,
+          ...(messageId && Number.isSafeInteger(rowId)
+            ? { messageId, rowId }
+            : {}),
+        };
+        entry.promise = Promise.resolve(entry.result);
+        await this.#persist();
+        return {
+          state: 'failed',
+          code: entry.result.code,
+          retrySafe: false,
+          final: true,
+          ...(messageId && Number.isSafeInteger(rowId)
+            ? { messageId, rowId }
+            : {}),
+        };
+      }
       return {
         state: 'delivered',
         deliveredAt: entry.result.deliveredAt,
@@ -882,6 +1013,12 @@ class IdempotencyStore {
       code: entry.result.code,
       retrySafe: entry.result.safeToRetry === true,
       final: true,
+      ...(typeof entry.result.messageId === 'string'
+        ? {
+            messageId: entry.result.messageId,
+            rowId: entry.result.rowId,
+          }
+        : {}),
       ...(entry.result.code === 'workspace_project_collapsed' &&
       validCollapsedProjectName(entry.result.projectName)
         ? { projectName: entry.result.projectName }
@@ -1046,6 +1183,7 @@ class IdempotencyStore {
   #persist() {
     if (!this.#ledgerPath) return Promise.resolve();
     const write = async () => {
+      await this.#beforePersist?.();
       const now = Date.now();
       const entries = [];
       for (const [keyProof, entry] of this.#entries) {
@@ -1246,6 +1384,9 @@ function sameSessionRoute(expected, current, { attachments = false } = {}) {
   if (
     !current ||
     current.id !== expected.id ||
+    current.repositoryId !== expected.repositoryId ||
+    current.repositoryName !== expected.repositoryName ||
+    current.workspaceId !== expected.workspaceId ||
     current.workspaceName !== expected.workspaceName ||
     current.title !== expected.title ||
     current.titleOrdinal !== expected.titleOrdinal
@@ -1553,14 +1694,16 @@ export function createPocketServer({
   attachmentManager = new AttachmentManager(),
   deliveryLedgerPath = null,
   usageReader = readAccountUsage,
+  beforeDeliveryLedgerPersist = null,
 }) {
   const idempotency = new IdempotencyStore({
     ledgerPath: deliveryLedgerPath,
     secret: configStore.value.csrfSecret,
+    beforePersist: beforeDeliveryLedgerPersist,
   });
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
-  let sendQueue = Promise.resolve();
+  let mutationQueue = Promise.resolve();
 
   function recordAudit(event) {
     try {
@@ -1574,9 +1717,9 @@ export function createPocketServer({
     }
   }
 
-  function serializeSend(task) {
-    const pending = sendQueue.then(task, task);
-    sendQueue = pending.then(
+  function serializeMutation(task) {
+    const pending = mutationQueue.then(task, task);
+    mutationQueue = pending.then(
       () => undefined,
       () => undefined,
     );
@@ -1982,48 +2125,61 @@ export function createPocketServer({
         if (!route) throw new HttpError(404, 'session_not_found');
         const body = await readJson(request);
         const action = body?.action;
-        const target = {
-          workspaceName: route.workspaceName,
-          sessionTitle: route.title,
-          sessionOrdinal: route.titleOrdinal,
-        };
-        let result;
-        if (action === 'new') {
-          // Snapshot before acting so the created chat can be named rather
-          // than guessed. Measured on 2026-08-16: by the time the Mac proves
-          // the tab exists, Conductor has already written the row, so the
-          // lookup below resolves on its first read. Taking the newest row
-          // instead would be wrong, since the operator can create a chat on
-          // the Mac at the same moment.
-          const before = new Set(
-            database.listSessions(route.workspaceId).map((row) => row.id),
-          );
-          result = await transport.newTab(target);
-          if (result.ok === true) {
-            const appeared = database
-              .listSessions(route.workspaceId)
-              .filter((row) => !before.has(row.id));
-            // Exactly one, or the phone is told nothing and simply refreshes.
-            // Navigating to a chat we cannot uniquely identify is worse than
-            // leaving the operator where they are.
-            result =
-              appeared.length === 1
-                ? {
-                    ...result,
-                    createdSessionId: appeared[0].id,
-                    createdSessionTitle: appeared[0].title,
-                    workspaceId: route.workspaceId,
-                    workspaceName: route.workspaceName,
-                  }
-                : { ...result, workspaceId: route.workspaceId };
+        const result = await serializeMutation(async () => {
+          const activeRoute = database.getSessionRoute(route.id);
+          if (!activeRoute) throw new HttpError(404, 'session_not_found');
+          const target = {
+            repositoryName: activeRoute.repositoryName,
+            workspaceId: activeRoute.workspaceId,
+            workspaceName: activeRoute.workspaceName,
+            sessionId: activeRoute.id,
+            sessionTitle: activeRoute.title,
+            sessionOrdinal: activeRoute.titleOrdinal,
+          };
+          let operationResult;
+          if (action === 'new') {
+            // Snapshot before acting so the created chat can be named rather
+            // than guessed. Measured on 2026-08-16: by the time the Mac proves
+            // the tab exists, Conductor has already written the row, so the
+            // lookup below resolves on its first read. Taking the newest row
+            // instead would be wrong, since the operator can create a chat on
+            // the Mac at the same moment.
+            const before = new Set(
+              database
+                .listSessions(activeRoute.workspaceId)
+                .map((row) => row.id),
+            );
+            operationResult = await transport.newTab(target);
+            if (operationResult.ok === true) {
+              const appeared = database
+                .listSessions(activeRoute.workspaceId)
+                .filter((row) => !before.has(row.id));
+              // Exactly one, or the phone is told nothing and simply refreshes.
+              // Navigating to a chat we cannot uniquely identify is worse than
+              // leaving the operator where they are.
+              operationResult =
+                appeared.length === 1
+                  ? {
+                      ...operationResult,
+                      createdSessionId: appeared[0].id,
+                      createdSessionTitle: appeared[0].title,
+                      workspaceId: activeRoute.workspaceId,
+                      workspaceName: activeRoute.workspaceName,
+                    }
+                  : {
+                      ...operationResult,
+                      workspaceId: activeRoute.workspaceId,
+                    };
+            }
+          } else if (action === 'close') {
+            operationResult = await transport.closeTab(target, {
+              confirmClose: body?.confirm === true,
+            });
+          } else {
+            throw new HttpError(400, 'unknown_tab_action');
           }
-        } else if (action === 'close') {
-          result = await transport.closeTab(target, {
-            confirmClose: body?.confirm === true,
-          });
-        } else {
-          throw new HttpError(400, 'unknown_tab_action');
-        }
+          return operationResult;
+        });
         recordAudit({
           phase: 'tab-action',
           action,
@@ -2118,8 +2274,7 @@ export function createPocketServer({
           key,
           route.id,
           fingerprint,
-          (setDeliveryPhase) =>
-            serializeSend(async () => {
+          async (setDeliveryPhase) => {
               await setDeliveryPhase('automating');
               recordAudit({
                 traceId,
@@ -2135,8 +2290,26 @@ export function createPocketServer({
               if (currentAuth.device.id !== auth.device.id) {
                 throw new HttpError(401, 'device_revoked');
               }
+              const definitelyUnsentResult = (code) => ({
+                ok: false,
+                code,
+                safeToRetry: true,
+              });
+              const activeRoute = database.getSessionRoute(route.id);
+              if (!activeRoute) {
+                deliveryDefinitelyUnsent = true;
+                return definitelyUnsentResult('session_route_changed');
+              }
+              if (
+                selectedAttachments.length > 0 &&
+                attachmentWorkspace(activeRoute) !==
+                  attachmentWorkspace(route)
+              ) {
+                deliveryDefinitelyUnsent = true;
+                return definitelyUnsentResult('session_route_changed');
+              }
               const beforeRowId =
-                database.getSessionMessageCursor(route.id);
+                database.getSessionMessageCursor(activeRoute.id);
               let attachmentsRetained = false;
               let attachmentsReleased = false;
               const markDefinitelyUnsent = async () => {
@@ -2154,8 +2327,8 @@ export function createPocketServer({
                     selectedAttachments.map(({ id }) => id),
                     {
                       deviceId: auth.device.id,
-                      sessionId: route.id,
-                      workspacePath: attachmentWorkspace(route),
+                      sessionId: activeRoute.id,
+                      workspacePath: attachmentWorkspace(activeRoute),
                     },
                   );
                 } catch {
@@ -2166,20 +2339,12 @@ export function createPocketServer({
                 }
               };
               if (selectedAttachments.length > 0) {
-                const currentRoute = database.getSessionRoute(route.id);
-                if (
-                  !currentRoute ||
-                  attachmentWorkspace(currentRoute) !==
-                    attachmentWorkspace(route)
-                ) {
-                  throw new HttpError(409, 'session_route_changed');
-                }
                 await attachmentManager.retainForSend(
                   selectedAttachments.map(({ id }) => id),
                   {
                     deviceId: auth.device.id,
-                    sessionId: route.id,
-                    workspacePath: attachmentWorkspace(route),
+                    sessionId: activeRoute.id,
+                    workspacePath: attachmentWorkspace(activeRoute),
                   },
                 );
                 attachmentsRetained = true;
@@ -2190,11 +2355,6 @@ export function createPocketServer({
                   Date.now() + SEND_AUTOMATION_RETRY_BUDGET_MS;
                 let attributionBaseline = beforeRowId;
                 let transportAttempt = 1;
-                const definitelyUnsentResult = (code) => ({
-                  ok: false,
-                  code,
-                  safeToRetry: true,
-                });
                 const recordTransport = (sendResult, attempt) => {
                   recordAudit({
                     traceId,
@@ -2218,9 +2378,12 @@ export function createPocketServer({
                 };
                 deliveryTransportStarted = true;
                 let sendResult = await transport.send({
-                  workspaceName: route.workspaceName,
-                  sessionTitle: route.title,
-                  sessionOrdinal: route.titleOrdinal,
+                  repositoryName: activeRoute.repositoryName,
+                  workspaceId: activeRoute.workspaceId,
+                  workspaceName: activeRoute.workspaceName,
+                  sessionId: activeRoute.id,
+                  sessionTitle: activeRoute.title,
+                  sessionOrdinal: activeRoute.titleOrdinal,
                   message: deliveryMessage,
                   replaceDraft,
                   expectedMacDraft,
@@ -2244,9 +2407,9 @@ export function createPocketServer({
                     if (retryAuth.device.id !== auth.device.id) {
                       throw new HttpError(401, 'device_revoked');
                     }
-                    const retryRoute = database.getSessionRoute(route.id);
+                    const retryRoute = database.getSessionRoute(activeRoute.id);
                     if (
-                      !sameSessionRoute(route, retryRoute, {
+                      !sameSessionRoute(activeRoute, retryRoute, {
                         attachments: selectedAttachments.length > 0,
                       })
                     ) {
@@ -2255,7 +2418,7 @@ export function createPocketServer({
                       );
                     } else {
                       const retryBeforeRowId =
-                        database.getSessionMessageCursor(route.id);
+                        database.getSessionMessageCursor(activeRoute.id);
                       let retryBoundary = 'unreadable';
                       try {
                         const cursorValid =
@@ -2263,7 +2426,7 @@ export function createPocketServer({
                           retryBeforeRowId >= beforeRowId;
                         if (cursorValid) {
                           retryBoundary = database.listUserMessagesAfter(
-                            route.id,
+                            activeRoute.id,
                             beforeRowId,
                           ).length === 0
                             ? 'clear'
@@ -2291,7 +2454,10 @@ export function createPocketServer({
                         // certified or confirmed from the database.
                         certifiedPreSend = false;
                         sendResult = await transport.send({
+                          repositoryName: retryRoute.repositoryName,
+                          workspaceId: retryRoute.workspaceId,
                           workspaceName: retryRoute.workspaceName,
+                          sessionId: retryRoute.id,
                           sessionTitle: retryRoute.title,
                           sessionOrdinal: retryRoute.titleOrdinal,
                           message: deliveryMessage,
@@ -2330,7 +2496,7 @@ export function createPocketServer({
                       try {
                         noUserRows =
                           database.listUserMessagesAfter(
-                            route.id,
+                            activeRoute.id,
                             beforeRowId,
                           ).length === 0;
                       } catch {
@@ -2350,9 +2516,9 @@ export function createPocketServer({
                           throw new HttpError(401, 'device_revoked');
                         }
                         const retryRoute =
-                          database.getSessionRoute(route.id);
+                          database.getSessionRoute(activeRoute.id);
                         if (
-                          !sameSessionRoute(route, retryRoute, {
+                          !sameSessionRoute(activeRoute, retryRoute, {
                             attachments:
                               selectedAttachments.length > 0,
                           })
@@ -2362,14 +2528,14 @@ export function createPocketServer({
                           );
                         } else {
                           const retryBeforeRowId =
-                            database.getSessionMessageCursor(route.id);
+                            database.getSessionMessageCursor(activeRoute.id);
                           let retryBoundaryClear = false;
                           try {
                             retryBoundaryClear =
                               Number.isSafeInteger(retryBeforeRowId) &&
                               retryBeforeRowId >= beforeRowId &&
                               database.listUserMessagesAfter(
-                                route.id,
+                                activeRoute.id,
                                 beforeRowId,
                               ).length === 0;
                           } catch {
@@ -2398,10 +2564,10 @@ export function createPocketServer({
                               );
                             }
                             const finalRetryRoute =
-                              database.getSessionRoute(route.id);
+                              database.getSessionRoute(activeRoute.id);
                             if (
                               !sameSessionRoute(
-                                route,
+                                activeRoute,
                                 finalRetryRoute,
                                 {
                                   attachments:
@@ -2428,8 +2594,13 @@ export function createPocketServer({
                                 // started retry as definitely unsent.
                                 certifiedPreSend = false;
                                 sendResult = await transport.send({
+                                  repositoryName:
+                                    finalRetryRoute.repositoryName,
+                                  workspaceId:
+                                    finalRetryRoute.workspaceId,
                                   workspaceName:
                                     finalRetryRoute.workspaceName,
+                                  sessionId: finalRetryRoute.id,
                                   sessionTitle:
                                     finalRetryRoute.title,
                                   sessionOrdinal:
@@ -2504,7 +2675,10 @@ export function createPocketServer({
                     let nothingLanded = false;
                     try {
                       nothingLanded =
-                        database.listUserMessagesAfter(route.id, beforeRowId)
+                        database.listUserMessagesAfter(
+                          activeRoute.id,
+                          beforeRowId,
+                        )
                           .length === 0;
                     } catch {
                       // An unreadable transcript proves nothing. Stay unconfirmed.
@@ -2529,7 +2703,7 @@ export function createPocketServer({
                 await setDeliveryPhase('confirming');
                 const confirmed = await waitForExactUserMessage({
                   database,
-                  sessionId: route.id,
+                  sessionId: activeRoute.id,
                   afterRowId: attributionBaseline,
                   exactContent: deliveryMessage,
                   pressedAt: confirmationPressedAt,
@@ -2545,7 +2719,7 @@ export function createPocketServer({
                   if (sendResult.code === 'send_interrupted') {
                     try {
                       const rows = database.listUserMessagesAfter(
-                        route.id,
+                        activeRoute.id,
                         attributionBaseline,
                       );
                       if (rows.length === 0) {
@@ -2597,7 +2771,9 @@ export function createPocketServer({
                     composerOwned: sendResult.composerOwned,
                   });
                 }
-                return databaseDeliveryResult(
+                return databaseDeliveryOutcome(
+                  database,
+                  activeRoute.id,
                   confirmed,
                   attributionBaseline,
                 );
@@ -2615,7 +2791,8 @@ export function createPocketServer({
                 }
                 throw error;
               }
-            }),
+          },
+          serializeMutation,
         );
         if (deliveryOperation.joined) deliveryTransportStarted = true;
         const result = await deliveryOperation.promise;
@@ -2645,8 +2822,16 @@ export function createPocketServer({
               error: {
                 code: result.code,
                 retrySafe: result.safeToRetry === true,
+                ...(result.final === true ? { final: true } : {}),
                 ...(result.safeToRetry === true
                   ? { definitelyUnsent: true }
+                  : {}),
+                ...(typeof result.messageId === 'string' &&
+                Number.isSafeInteger(result.rowId)
+                  ? {
+                      messageId: result.messageId,
+                      rowId: result.rowId,
+                    }
                   : {}),
                 // Already redacted at the source (quoted spans and base64
                 // runs stripped), so the phone can show why the Mac failed

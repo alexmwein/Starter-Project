@@ -235,18 +235,51 @@ function encodeBase64(value) {
 function workspaceMatches(workspaceName, candidateName) {
   return (
     candidateName === workspaceName ||
-    candidateName.startsWith(`${workspaceName} +`)
-  );
-}
-
-function workspaceNameAppearsInRoute(workspaceName, candidateName) {
-  return (
-    workspaceMatches(workspaceName, candidateName) ||
+    candidateName.startsWith(`${workspaceName} +`) ||
     candidateName.startsWith(`${workspaceName} -`) ||
     candidateName.endsWith(`/${workspaceName}`) ||
     candidateName.includes(`/${workspaceName} +`) ||
     candidateName.includes(`/${workspaceName} -`)
   );
+}
+
+function workspaceNameAppearsInRoute(workspaceName, candidateName) {
+  return workspaceMatches(workspaceName, candidateName);
+}
+
+const PROJECT_HEADER_SUFFIX = ' Repo settings New workspace';
+
+function repositoryHeaderMatches(repositoryName, candidateName) {
+  if (
+    typeof repositoryName !== 'string' ||
+    repositoryName.length === 0 ||
+    typeof candidateName !== 'string' ||
+    !candidateName.endsWith(PROJECT_HEADER_SUFFIX)
+  ) {
+    return false;
+  }
+  const label = candidateName.slice(0, -PROJECT_HEADER_SUFFIX.length);
+  return (
+    label === repositoryName ||
+    label === `${repositoryName} ${repositoryName}` ||
+    label === `💀 ${repositoryName}`
+  );
+}
+
+function workspaceBelongsToRepository(
+  containerElements,
+  workspaceIndex,
+  repositoryName,
+) {
+  if (!repositoryName) return true;
+  for (let index = workspaceIndex - 1; index >= 0; index -= 1) {
+    const candidate = containerElements[index];
+    if (routeRole(candidate) !== 'AXButton') continue;
+    const candidateName = routeName(candidate);
+    if (!candidateName.endsWith(PROJECT_HEADER_SUFFIX)) continue;
+    return repositoryHeaderMatches(repositoryName, candidateName);
+  }
+  return false;
 }
 
 // Conductor exposes a collapsed project as one AXButton row whose flattened
@@ -274,7 +307,11 @@ function countedProjectName(rowTitle) {
 // target-link count is checked across every root first, so an unselected or
 // duplicate visible route keeps the old generic failure rather than blaming an
 // unrelated collapsed project.
-function diagnoseWorkspaceFailure(process, workspaceName) {
+function diagnoseWorkspaceFailure(
+  process,
+  workspaceName,
+  repositoryName = '',
+) {
   const generic = Object.freeze({
     ok: false,
     code: 'workspace_list_unavailable',
@@ -290,23 +327,39 @@ function diagnoseWorkspaceFailure(process, workspaceName) {
       const rows = routeElements(container);
       let currentProject = null;
       const finishProject = () => {
-        if (currentProject?.workspaceLinks === 0) {
+        if (
+          typeof currentProject?.name === 'string' &&
+          currentProject.workspaceLinks === 0
+        ) {
           collapsedProjects.push(currentProject.name);
         }
       };
       for (const row of rows) {
         const role = routeRole(row);
         if (role === 'AXButton') {
-          const projectName = countedProjectName(routeName(row));
-          if (projectName) {
+          const rowName = routeName(row);
+          const legacyName = countedProjectName(rowName);
+          const isCurrentProjectHeader =
+            typeof rowName === 'string' &&
+            rowName.endsWith(PROJECT_HEADER_SUFFIX);
+          if (legacyName || isCurrentProjectHeader) {
             finishProject();
-            currentProject = { name: projectName, workspaceLinks: 0 };
+            const targetProjectName = repositoryName
+              ? repositoryHeaderMatches(repositoryName, rowName)
+                ? repositoryName
+                : null
+              : legacyName;
+            currentProject = {
+              name: targetProjectName,
+              workspaceLinks: 0,
+            };
           }
           continue;
         }
         if (role !== 'AXLink') continue;
         const linkName = routeName(row);
         if (
+          typeof currentProject?.name === 'string' &&
           typeof linkName === 'string' &&
           workspaceNameAppearsInRoute(workspaceName, linkName)
         ) {
@@ -399,6 +452,7 @@ function routeElements(element) {
 }
 
 function routeTarget() {
+  const repositoryName = environmentValue('POCKET_REPOSITORY_NAME') || '';
   const workspaceName = environmentValue('POCKET_WORKSPACE_NAME');
   const sessionTitle = environmentValue('POCKET_SESSION_TITLE');
   const sessionOrdinal = Number(environmentValue('POCKET_SESSION_ORDINAL'));
@@ -449,6 +503,7 @@ function routeTarget() {
     };
   }
   return {
+    repositoryName,
     sessionOrdinal,
     sessionTitle,
     workspaceHint,
@@ -682,6 +737,11 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
         links.length !== containerChildCount ||
         !link ||
         routeRole(link) !== 'AXLink' ||
+        !workspaceBelongsToRepository(
+          links,
+          path[1],
+          target.repositoryName,
+        ) ||
         !workspaceMatches(target.workspaceName, routeName(link))
       ) {
         continue;
@@ -714,6 +774,15 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
         for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
           const link = links[linkIndex];
           if (routeRole(link) !== 'AXLink') continue;
+          if (
+            !workspaceBelongsToRepository(
+              links,
+              linkIndex,
+              target.repositoryName,
+            )
+          ) {
+            continue;
+          }
           if (!workspaceMatches(target.workspaceName, routeName(link))) continue;
           const classes = routeClasses(link);
           rootMatches.push({
@@ -793,6 +862,10 @@ function acquireRouteLease(process, target = routeTarget()) {
     tabGroupIndex,
     targetSessionPath: Object.freeze(targetSession.path.slice()),
     workspaceContainerChildCount: workspace.containerChildCount,
+    repositoryName:
+      typeof target.repositoryName === 'string'
+        ? target.repositoryName
+        : '',
     workspaceName: target.workspaceName,
     workspacePath: Object.freeze(workspace.path.slice()),
   });
@@ -808,6 +881,7 @@ function sameRoutePath(left, right) {
 function assertRouteLease(process, lease) {
   if (
     !lease ||
+    typeof lease.repositoryName !== 'string' ||
     typeof lease.workspaceName !== 'string' ||
     !Array.isArray(lease.workspacePath) ||
     !Array.isArray(lease.targetSessionPath) ||
@@ -834,6 +908,7 @@ function assertRouteLease(process, lease) {
     fail('route_changed', 'rootHandleMissing');
   }
   resolveWorkspaceRoot([sidebarRoot], {
+    repositoryName: lease.repositoryName,
     workspaceHint: {
       containerChildCount: lease.workspaceContainerChildCount,
       path: lease.workspacePath,
@@ -2002,8 +2077,6 @@ function typeAndSendMessage(pid) {
     sendReadyAt = Date.now();
     delay(0.02);
     process = validateFocusedComposer(pid, message);
-    assertRouteLease(process, routeLease);
-    process = validateFocusedComposer(pid, message);
     const sendButton = resolveComposerSend(process, message);
     const pressAction = resolveComposerPressAction(sendButton);
     assertRouteLease(process, routeLease);
@@ -2150,7 +2223,11 @@ function run(argv) {
     // result back into the generic code unless Pocket first stole focus.
     const process = conductorProcessForReadOnlyDiagnosis(pid);
     return JSON.stringify(
-      diagnoseWorkspaceFailure(process, environmentValue('POCKET_WORKSPACE_NAME')),
+      diagnoseWorkspaceFailure(
+        process,
+        environmentValue('POCKET_WORKSPACE_NAME'),
+        environmentValue('POCKET_REPOSITORY_NAME') || '',
+      ),
     );
   }
   if (operation === 'tab-new') return postTabShortcut(pid, KEY_T);

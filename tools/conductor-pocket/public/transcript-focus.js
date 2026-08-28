@@ -2,7 +2,34 @@ const ACTIVITY_KINDS = new Set(['assistant', 'tool']);
 const HIDDEN_KINDS = new Set(['status', 'tool-result', 'turn-result']);
 
 export function stableTranscriptMessages(serverMessages, pendingMessages) {
-  return [...serverMessages, ...pendingMessages];
+  const serverIds = new Set(serverMessages.map((message) => message?.id));
+  const failedByReceiptId = new Map(
+    pendingMessages
+      .filter(
+        (message) =>
+          message?.delivery === 'failed' &&
+          typeof message.receiptMessageId === 'string' &&
+          message.receiptMessageId.length > 0,
+      )
+      .map((message) => [message.receiptMessageId, message]),
+  );
+  const replacedPendingIds = new Set();
+  const visibleServer = serverMessages.map((message) => {
+    const replacement = failedByReceiptId.get(message?.id);
+    if (!replacement) return message;
+    replacedPendingIds.add(replacement.id);
+    return replacement;
+  });
+  const visiblePending = pendingMessages.filter(
+    (message) =>
+      !replacedPendingIds.has(message?.id) &&
+      !(
+        message?.delivery === 'delivered' &&
+        typeof message.receiptMessageId === 'string' &&
+        serverIds.has(message.receiptMessageId)
+      ),
+  );
+  return [...visibleServer, ...visiblePending];
 }
 
 export function reconciledTranscriptMessageIds(messages, reconciled) {
