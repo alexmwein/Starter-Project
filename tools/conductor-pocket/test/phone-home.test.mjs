@@ -111,6 +111,16 @@ test('connection and panel motion are calm and finger sized', async () => {
   assert.match(css, /@keyframes panel-content-enter/);
   assert.match(css, /\.panel\.is-entering \.panel-content/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  const panelContentEnter = css.slice(
+    css.indexOf('@keyframes panel-content-enter'),
+    css.indexOf('.panel.is-entering .panel-content'),
+  );
+  assert.match(panelContentEnter, /opacity:/);
+  assert.doesNotMatch(
+    panelContentEnter,
+    /transform:/,
+    'root content must fade without hopping vertically',
+  );
   assert.doesNotMatch(
     css.slice(css.indexOf('@keyframes panel-content-enter')),
     /width|height|top|right|bottom|left/,

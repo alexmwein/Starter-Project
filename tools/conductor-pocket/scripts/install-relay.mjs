@@ -11,6 +11,7 @@ import {
 } from '../src/constants.mjs';
 import { withOperationLock } from '../src/operation-lock.mjs';
 import {
+  RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
   bootoutIfLoaded,
   launchdArguments,
   launchdNotFound,
@@ -345,7 +346,7 @@ async function install() {
         '[install-relay] loaded relay changed during cutover; runtime retention will be skipped',
       );
     }
-    await waitForLaunchdRemoval(label);
+    await waitForLaunchdRemoval(label, RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS);
     await run('/bin/launchctl', [
       'bootstrap',
       `gui/${process.getuid()}`,
@@ -356,7 +357,7 @@ async function install() {
     if (!plistReplaced) throw primaryError;
     try {
       await bootoutIfLoaded(label);
-      await waitForLaunchdRemoval(label);
+      await waitForLaunchdRemoval(label, RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS);
       const rollbackPlist = rollbackPlistForLoadedRelay({
         previousJobWasLoaded,
         previousLoadedPlist,

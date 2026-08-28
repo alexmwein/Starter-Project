@@ -15,6 +15,7 @@ import {
   verifyPublicRelease,
 } from './lib/live-verification.mjs';
 import {
+  RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
   assertRelayLaunchProfile,
   bootoutIfLoaded,
   RELAY_LABEL,
@@ -48,7 +49,11 @@ async function recover(config) {
       port: config.port,
       attest: assertRelayLaunchProfile,
       bootout: () => bootoutIfLoaded(RELAY_LABEL),
-      waitForRemoval: () => waitForLaunchdRemoval(RELAY_LABEL),
+      waitForRemoval: () =>
+        waitForLaunchdRemoval(
+          RELAY_LABEL,
+          RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
+        ),
       waitForShutdown: (options) => waitForRelayShutdown(options),
       bootstrap: () =>
         run('/bin/launchctl', [

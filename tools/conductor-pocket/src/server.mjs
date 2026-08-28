@@ -1705,6 +1705,11 @@ export function createPocketServer({
   const clients = new Set();
   let mutationQueue = Promise.resolve();
 
+  function closePocketEventStreams() {
+    for (const client of clients) client.end();
+    clients.clear();
+  }
+
   function recordAudit(event) {
     try {
       audit({
@@ -2946,12 +2951,13 @@ export function createPocketServer({
     }
   });
 
+  server.closePocketEventStreams = closePocketEventStreams;
+
   server.on('close', () => {
     unsubscribe();
     watcher.stop();
     attachmentManager.stop?.();
-    for (const client of clients) client.end();
-    clients.clear();
+    closePocketEventStreams();
   });
 
   return server;

@@ -878,8 +878,23 @@ test('chat switching keeps the shell mounted and transitions only its content', 
   );
   assert.match(transcript, /renderTranscriptPlaceholder/);
   assert.match(transcript, /!transcriptSessionChanged/);
-  assert.match(css, /@keyframes chat-content-out \{[\s\S]*?opacity:[\s\S]*?transform:/);
-  assert.match(css, /@keyframes chat-content-in \{[\s\S]*?opacity:[\s\S]*?transform:/);
+  const chatContentOut = css.slice(
+    css.indexOf('@keyframes chat-content-out'),
+    css.indexOf('@keyframes chat-content-in'),
+  );
+  const chatContentIn = css.slice(
+    css.indexOf('@keyframes chat-content-in'),
+    css.indexOf('@keyframes sheet-in'),
+  );
+  assert.match(chatContentOut, /opacity:/);
+  assert.match(chatContentIn, /opacity:/);
+  assert.doesNotMatch(chatContentOut, /transform:/);
+  assert.doesNotMatch(chatContentIn, /transform:/);
+  assert.match(
+    css,
+    /\.data-row:active,\s*\n\.chat-chip:active \{\s*\n\s*transform: none;/,
+    'large navigation targets must not shrink under the finger',
+  );
 
   const strip = functionSource(js, 'function renderChatStrip', 'function renderTranscript');
   assert.match(strip, /const renderKey = JSON\.stringify/);

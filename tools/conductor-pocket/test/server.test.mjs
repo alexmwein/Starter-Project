@@ -202,6 +202,30 @@ function get(
   });
 }
 
+function openEventStream(port) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/events',
+        headers: { Host: '127.0.0.1:4317' },
+      },
+      (response) => {
+        response.once('data', (chunk) => {
+          resolve({
+            request,
+            response,
+            firstChunk: chunk.toString('utf8'),
+          });
+        });
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 function postJson(
   port,
   pathname,
@@ -569,6 +593,42 @@ test('a freshly rejected event stream emits a lock event for cached clients', as
     response.body,
     'event: locked\ndata: {"code":"device_locked"}\n\n',
   );
+});
+
+test('shutdown can close event streams before waiting for the HTTP server', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const server = createServer(config);
+  const port = await listen(server);
+  let stream;
+  context.after(async () => {
+    stream?.request.destroy();
+    stream?.response.destroy();
+    if (server.listening) await close(server);
+  });
+
+  stream = await openEventStream(port);
+  assert.match(stream.firstChunk, /event: ready/);
+  assert.equal(typeof server.closePocketEventStreams, 'function');
+
+  const streamEnded = new Promise((resolve) => {
+    stream.response.once('end', resolve);
+    stream.response.once('close', resolve);
+  });
+  server.closePocketEventStreams();
+  await streamEnded;
+
+  await Promise.race([
+    close(server),
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error('event_stream_blocked_server_close')),
+        500,
+      ).unref();
+    }),
+  ]);
 });
 
 test('connection probe reports the real relay version', async (context) => {

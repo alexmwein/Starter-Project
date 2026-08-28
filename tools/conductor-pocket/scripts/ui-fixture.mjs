@@ -646,7 +646,10 @@ server.listen(relayPort, config.bindHost, () => {
 });
 
 function shutdown() {
-  const closeRelay = () => server.close(() => process.exit(0));
+  const closeRelay = () => {
+    server.closePocketEventStreams?.();
+    server.close(() => process.exit(0));
+  };
   if (proxy) proxy.close(closeRelay);
   else closeRelay();
 }

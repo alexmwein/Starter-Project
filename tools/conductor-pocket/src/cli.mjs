@@ -708,6 +708,7 @@ async function serve(options) {
       database.close();
       process.exit(0);
     };
+    server.closePocketEventStreams?.();
     server.close(() => {
       serverClosed = true;
       exitWhenBothSettle();

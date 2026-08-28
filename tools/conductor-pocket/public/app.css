@@ -478,6 +478,11 @@ button:active {
   background: var(--raised);
 }
 
+.data-row:active,
+.chat-chip:active {
+  transform: none;
+}
+
 .row-monogram {
   display: flex;
   align-items: center;
@@ -2417,22 +2422,18 @@ button:active {
 @keyframes chat-content-out {
   from {
     opacity: 1;
-    transform: translateY(0);
   }
   to {
     opacity: 0;
-    transform: translateY(-4px);
   }
 }
 
 @keyframes chat-content-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -3160,11 +3161,9 @@ button.connection-voice:active {
 @keyframes panel-content-enter {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
