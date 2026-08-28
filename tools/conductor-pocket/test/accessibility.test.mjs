@@ -1892,6 +1892,25 @@ test('a missing Conductor window is recovered before the send gives up', async (
   assert.doesNotMatch(handler, /repeat with waitIndex from 1 to 30/);
 });
 
+test('a transient workspace tree render is retried before routing fails', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const retryStart = source.indexOf('on findSidebarGroupWithRetry(workspaceName)');
+  const retryEnd = source.indexOf('end findSidebarGroupWithRetry', retryStart);
+  const retryBody = source.slice(retryStart, retryEnd);
+
+  assert.ok(retryStart > 0, 'the workspace scan must have a retry wrapper');
+  assert.match(retryBody, /repeat with attemptIndex from 1 to 3/);
+  assert.match(retryBody, /my findSidebarGroup\(workspaceName\)/);
+  assert.match(retryBody, /delay 0\.15/);
+  assert.match(
+    source,
+    /on getSidebarGroup\(\)[\s\S]{0,120}my findSidebarGroupWithRetry\(my workspaceName\)/,
+  );
+});
+
 test('a windowless Conductor tells the operator the only thing that works', async () => {
   // Verified live on 2026-08-19 against a real windowless Conductor (0 windows
   // after 3 days uptime): `tell application "Conductor" to activate`,

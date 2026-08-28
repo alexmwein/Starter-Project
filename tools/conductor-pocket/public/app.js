@@ -14,18 +14,18 @@ import {
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-usage-send-readiness-20260827';
+} from './delivery-receipts.js?v=0.2.0-pocket-recovery-20260827';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-usage-send-readiness-20260827';
+} from './app-update.js?v=0.2.0-pocket-recovery-20260827';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-usage-send-readiness-20260827';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-usage-send-readiness-20260827';
-import { fetchJson } from './http.js?v=0.2.0-usage-send-readiness-20260827';
+} from './bootstrap-recovery.js?v=0.2.0-pocket-recovery-20260827';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-pocket-recovery-20260827';
+import { fetchJson } from './http.js?v=0.2.0-pocket-recovery-20260827';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -35,16 +35,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-usage-send-readiness-20260827';
+} from './image-attachments.js?v=0.2.0-pocket-recovery-20260827';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-usage-send-readiness-20260827';
+} from './live-refresh.js?v=0.2.0-pocket-recovery-20260827';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-usage-send-readiness-20260827';
+} from './rich-text.js?v=0.2.0-pocket-recovery-20260827';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -55,7 +55,7 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-usage-send-readiness-20260827';
+} from './read-state.js?v=0.2.0-pocket-recovery-20260827';
 import {
   activityLabel,
   buildFocusedTranscript,
@@ -63,15 +63,15 @@ import {
   reconciledTranscriptMessageIds,
   stableTranscriptMessages,
   transcriptRefreshShouldWait,
-} from './transcript-focus.js?v=0.2.0-usage-send-readiness-20260827';
+} from './transcript-focus.js?v=0.2.0-pocket-recovery-20260827';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-usage-send-readiness-20260827';
+} from './swipe-navigation.js?v=0.2.0-pocket-recovery-20260827';
 import {
   activeGptUsage,
   createUsageReader,
   usageAccountStatus,
-} from './usage-state.js?v=0.2.0-usage-send-readiness-20260827';
+} from './usage-state.js?v=0.2.0-pocket-recovery-20260827';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -115,7 +115,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-usage-send-readiness-20260827';
+const CLIENT_SHELL_REVISION = '0.2.0-pocket-recovery-20260827';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -372,6 +372,7 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   conductor_window_unavailable:
     'Conductor has no window on your Mac. Quit and reopen it there.',
   delivery_confirmation_timeout: 'Pocket could not verify delivery in time.',
+  delivery_check_stopped: 'Automatic delivery checking was stopped.',
   delivery_unknown: 'Pocket could not verify whether Conductor accepted it.',
   draft_conflict: 'The Conductor composer already has unsent text.',
   draft_recheck_required: 'The Mac draft needs to be checked again.',
@@ -2329,6 +2330,40 @@ async function discardFailedMessage(message) {
       message.draftAttachmentItems = null;
       state.optimistic = state.optimistic.filter((item) => item !== message);
       renderTranscript();
+      return true;
+    },
+  );
+  return result.value;
+}
+
+async function stopCheckingDelivery(message) {
+  if (message?.kind !== 'optimistic' || message.delivery !== 'confirming') {
+    return false;
+  }
+  cancelDeliveryRecovery(message);
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'stop-check',
+    async () => {
+      let stopped;
+      try {
+        stopped = await transitionPendingDeliveryRequired({
+          type: 'stop-check',
+          message,
+        });
+      } catch {
+        announce('Could not stop checking yet. Try again.');
+        return false;
+      }
+      if (!stopped) {
+        await restorePendingDeliveries();
+        renderTranscript();
+        announce('This delivery changed in another Pocket window.');
+        return false;
+      }
+      applyAuthoritativePendingDelivery(message, stopped);
+      renderTranscript();
+      announce('Delivery checking stopped. You can check, edit, or delete it.');
       return true;
     },
   );
@@ -4930,7 +4965,17 @@ function renderMessage(message, toolResults) {
               ? 'Sending through Conductor…'
               : 'Sending…';
     } else if (message.delivery === 'confirming') {
-      meta.textContent = 'Checking delivery…';
+      meta.append(
+        document.createTextNode('Checking delivery…'),
+        node('button', {
+          className: 'message-retry',
+          type: 'button',
+          text: 'Stop checking',
+          disabled: Boolean(deliveryActionCoordinator.current(message.id)),
+          'aria-label': 'Stop checking this message’s delivery',
+          on: { click: () => void stopCheckingDelivery(message) },
+        }),
+      );
     } else if (message.delivery === 'failed') {
       const definitelyUnsent = message.definitelyUnsent === true;
       const activeAction = deliveryActionCoordinator.current(message.id);
@@ -6953,7 +6998,20 @@ async function createChat({ onCreated, control } = {}) {
 
 async function runCreateChat({ onCreated } = {}) {
   const workspaceId = state.route.workspaceId;
-  const done = await runTabAction('new');
+  if (!workspaceId) {
+    announce('Pick a repository first.');
+    return null;
+  }
+  let anchorSessionId = state.route.sessionId;
+  if (!anchorSessionId) {
+    const sessions = await loadSessions(workspaceId);
+    anchorSessionId = sessionsFor(workspaceId)[0]?.id || sessions[0]?.id || null;
+  }
+  if (!anchorSessionId) {
+    announce('Pocket could not find a chat in this repository.');
+    return null;
+  }
+  const done = await runTabAction('new', { sessionId: anchorSessionId });
   if (!done) return null;
   onCreated?.();
   // The server reports the workspace it actually acted on. Local route state

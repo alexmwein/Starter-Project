@@ -111,7 +111,7 @@ on getWebArea()
 end getWebArea
 
 on getSidebarGroup()
-	return my findSidebarGroup(my workspaceName)
+	return my findSidebarGroupWithRetry(my workspaceName)
 end getSidebarGroup
 
 -- A collapsed project removes all of its workspace AXLinks, which makes the
@@ -204,6 +204,20 @@ on findSidebarGroup(workspaceName)
 	set my cachedWorkspaceRoute to item 1 of matchingRoutes
 	return item 1 of matchingGroups
 end findSidebarGroup
+
+-- Conductor rebuilds the Electron accessibility tree while chats and projects
+-- update. One read can therefore see no unique sidebar even though the next
+-- read is healthy. This wrapper retries only that read-only scan. It never
+-- presses a route or changes the Mac, and the full route proof still runs
+-- after it returns.
+on findSidebarGroupWithRetry(workspaceName)
+	repeat with attemptIndex from 1 to 3
+		set sidebarGroup to my findSidebarGroup(workspaceName)
+		if sidebarGroup is not missing value then return sidebarGroup
+		if attemptIndex is less than 3 then delay 0.15
+	end repeat
+	return missing value
+end findSidebarGroupWithRetry
 
 on getMainGroup()
 	if my heldMainGroup is not missing value then return my heldMainGroup

@@ -399,6 +399,31 @@ export function pendingDeliverySnapshotTransition(
     snapshot.messages[index] = claimed;
     return { snapshot, value: claimed };
   }
+  if (command?.type === 'stop-check') {
+    const index = snapshot.messages.findIndex(
+      (candidate) => candidate.id === command.message?.id,
+    );
+    const candidate = index >= 0 ? snapshot.messages[index] : null;
+    if (
+      candidate?.delivery !== 'confirming' ||
+      !deliveryIdentityMatches(candidate, command.message) ||
+      candidate.terminalActionClaim
+    ) {
+      return { snapshot, value: null };
+    }
+    const stopped = {
+      ...candidate,
+      delivery: 'failed',
+      deliveryPhase: null,
+      retrySafe: false,
+      definitelyUnsent: false,
+      deliveryRecoveryExhausted: true,
+      errorCode: 'delivery_check_stopped',
+      errorProjectName: null,
+    };
+    snapshot.messages[index] = stopped;
+    return { snapshot, value: stopped };
+  }
   if (
     command?.type === 'finalize-edit' ||
     command?.type === 'release-edit'

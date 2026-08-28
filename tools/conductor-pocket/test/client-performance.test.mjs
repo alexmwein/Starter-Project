@@ -310,6 +310,39 @@ test('feedback reaches a sighted user, and retry never fails silently', async ()
   assert.match(createBody, /aria-busy/);
 })
 
+test('new chat uses the selected repository even when no chat is open', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const createStart = js.indexOf('async function runCreateChat(');
+  const createEnd = js.indexOf('\n}\n', createStart);
+  const createBody = js.slice(createStart, createEnd);
+
+  assert.match(createBody, /await loadSessions\(workspaceId\)/);
+  assert.match(createBody, /sessionsFor\(workspaceId\)/);
+  assert.match(
+    createBody,
+    /runTabAction\('new', \{ sessionId: anchorSessionId \}\)/,
+  );
+});
+
+test('checking delivery exposes a safe way back to terminal actions', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(js, /async function stopCheckingDelivery\(message\)/);
+  assert.match(
+    js,
+    /message\.delivery === 'confirming'[\s\S]{0,500}text: 'Stop checking'/,
+  );
+  assert.match(
+    js,
+    /type: 'stop-check'[\s\S]{0,800}applyAuthoritativePendingDelivery/,
+  );
+});
+
 test('the composer growing a line does not move the transcript under the reader', async () => {
   const js = await fs.readFile(
     new URL('../public/app.js', import.meta.url),

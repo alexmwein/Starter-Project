@@ -344,7 +344,11 @@ test('AppleScript resolves AX roots semantically instead of by position', async 
   assert.match(source, /on findSidebarGroup\(workspaceName\)/);
   assert.match(
     source,
-    /on getSidebarGroup\(\)[\s\S]*findSidebarGroup\(my workspaceName\)/,
+    /on getSidebarGroup\(\)[\s\S]*findSidebarGroupWithRetry\(my workspaceName\)/,
+  );
+  assert.match(
+    source,
+    /on findSidebarGroupWithRetry\(workspaceName\)[\s\S]*findSidebarGroup\(workspaceName\)/,
   );
   assert.match(
     source,

@@ -60,6 +60,45 @@ test('a terminal tombstone stops a stale Pocket window from resurrecting a delet
   assert.equal(staleRecovery?.snapshot?.tombstones?.length, 1);
 });
 
+test('stopping a delivery check leaves one actionable notice without rearming recovery', () => {
+  const checking = persistedMessage({
+    delivery: 'confirming',
+    deliveryPhase: 'confirming',
+    retrySafe: false,
+    definitelyUnsent: false,
+    deliveryRecoveryExhausted: false,
+    errorCode: null,
+  });
+  const stopped = deliveryReceipts.pendingDeliverySnapshotTransition(
+    [checking],
+    { type: 'stop-check', message: checking },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+
+  assert.equal(stopped.value?.delivery, 'failed');
+  assert.equal(stopped.value?.deliveryPhase, null);
+  assert.equal(stopped.value?.errorCode, 'delivery_check_stopped');
+  assert.equal(stopped.value?.deliveryRecoveryExhausted, true);
+  assert.equal(stopped.value?.definitelyUnsent, false);
+  assert.equal(
+    deliveryNeedsAutomaticRecovery(stopped.value),
+    false,
+    'a user-stopped check must stay stopped until Check is tapped',
+  );
+
+  const staleIdentity = {
+    ...checking,
+    activeDeliveryKey: 'different-idempotency-key-123456789',
+  };
+  const rejected = deliveryReceipts.pendingDeliverySnapshotTransition(
+    stopped.snapshot,
+    { type: 'stop-check', message: staleIdentity },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+  assert.equal(rejected.value, null);
+  assert.equal(rejected.snapshot.messages[0].errorCode, 'delivery_check_stopped');
+});
+
 test('a retry clears the collapsed project name from the prior failure', () => {
   const message = persistedMessage({
     errorCode: 'workspace_project_collapsed',
