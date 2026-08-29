@@ -99,6 +99,7 @@ export async function main(values = process.argv.slice(2)) {
         'codex:',
         'load:',
       ],
+      unresolvedIssueIds: [],
     };
   }
   printReport(report);
@@ -110,6 +111,7 @@ export async function main(values = process.argv.slice(2)) {
   }
   const state = await loadState(statePath);
   const plan = planNotifications(state, report.issues, Date.now(), {
+    unresolvedIssueIds: report.unresolvedIssueIds,
     unresolvedIssuePrefixes: report.unresolvedIssuePrefixes,
   });
   await deliverNotifications(plan.notifications);

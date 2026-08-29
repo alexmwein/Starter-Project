@@ -248,14 +248,15 @@ function workspaceNameAppearsInRoute(workspaceName, candidateName) {
   );
 }
 
-// Conductor exposes a collapsed project as one AXButton row whose flattened
-// title is "project project COUNT ...", followed immediately by the next
-// project row instead of by AXLink workspace rows. There is no AXExpanded
-// attribute to read. Require the repeated project name and a positive integer
-// count so an ordinary sidebar button can never masquerade as this diagnosis.
-function countedProjectName(rowTitle) {
+// Conductor exposes both project states as AXButton rows. A collapsed title is
+// "project project COUNT Repo settings New workspace"; an expanded title omits
+// COUNT. Parse the complete fixed suffix so other sidebar buttons cannot become
+// project boundaries merely because part of their text repeats.
+function projectRowState(rowTitle) {
   if (typeof rowTitle !== 'string' || rowTitle.length > 500) return null;
-  const match = /^(.+?)\s+\1\s+([1-9][0-9]*)\b/u.exec(rowTitle.trim());
+  const match = /^(.+?)\s+\1(?:\s+([1-9][0-9]*))?\s+Repo settings New workspace$/u.exec(
+    rowTitle.trim(),
+  );
   if (!match) return null;
   const projectName = match[1].trim();
   if (
@@ -265,7 +266,15 @@ function countedProjectName(rowTitle) {
   ) {
     return null;
   }
-  return projectName;
+  return {
+    name: projectName,
+    collapsed: match[2] !== undefined,
+  };
+}
+
+function countedProjectName(rowTitle) {
+  const project = projectRowState(rowTitle);
+  return project?.collapsed ? project.name : null;
 }
 
 // Read the same strict project-row shape used by send recovery, but never
@@ -277,30 +286,14 @@ function sidebarProjectSnapshot(process) {
   const names = new Set();
   for (const root of webAreaRootElements(process)) {
     for (const container of routeElements(root)) {
-      let currentProject = null;
-      const finishProject = () => {
-        if (!currentProject) return true;
-        if (names.has(currentProject.name)) return false;
-        names.add(currentProject.name);
-        projects.push({
-          name: currentProject.name,
-          collapsed: currentProject.workspaceLinks === 0,
-        });
-        currentProject = null;
-        return true;
-      };
       for (const row of routeElements(container)) {
-        const role = routeRole(row);
-        if (role === 'AXButton') {
-          const name = countedProjectName(routeName(row));
-          if (!name) continue;
-          if (!finishProject()) return { ok: false, projects: [] };
-          currentProject = { name, workspaceLinks: 0 };
-        } else if (role === 'AXLink' && currentProject) {
-          currentProject.workspaceLinks += 1;
-        }
+        if (routeRole(row) !== 'AXButton') continue;
+        const project = projectRowState(routeName(row));
+        if (!project) continue;
+        if (names.has(project.name)) return { ok: false, projects: [] };
+        names.add(project.name);
+        projects.push(project);
       }
-      if (!finishProject()) return { ok: false, projects: [] };
     }
   }
   return projects.length > 0
@@ -329,26 +322,12 @@ function inspectCollapsedProject(process, workspaceName, expectedProjectName) {
     const containers = routeElements(root);
     for (const container of containers) {
       const rows = routeElements(container);
-      let currentProject = null;
-      const finishProject = () => {
-        if (
-          currentProject?.name === expectedProjectName &&
-          currentProject.workspaceLinks === 0
-        ) {
-          matchingCollapsedRows.push(currentProject.row);
-        }
-      };
       for (const row of rows) {
         const role = routeRole(row);
         if (role === 'AXButton') {
           const projectName = countedProjectName(routeName(row));
-          if (projectName) {
-            finishProject();
-            currentProject = {
-              name: projectName,
-              row,
-              workspaceLinks: 0,
-            };
+          if (projectName === expectedProjectName) {
+            matchingCollapsedRows.push(row);
           }
           continue;
         }
@@ -360,9 +339,7 @@ function inspectCollapsedProject(process, workspaceName, expectedProjectName) {
         ) {
           targetLinkCount += 1;
         }
-        if (currentProject) currentProject.workspaceLinks += 1;
       }
-      finishProject();
     }
   }
   if (targetLinkCount !== 0 || matchingCollapsedRows.length !== 1) {

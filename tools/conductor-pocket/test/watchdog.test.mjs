@@ -148,7 +148,6 @@ test('every watchdog check fires on its bad state and clears on green', () => {
     ['trust expiry', (value) => { value.devices[0].trustedUntil = new Date(NOW + 2 * DAY).toISOString(); }, 'session:phone-1'],
     ['hard session expiry', (value) => { value.devices[0].sessionExpiresAt = new Date(NOW - DAY).toISOString(); }, 'session:phone-1'],
     ['collapsed sidebar', (value) => { value.sidebar.projects[0].collapsed = true; }, 'sidebar:Quickstart'],
-    ['missing project row', (value) => { value.sidebar.projects = []; }, 'sidebar:missing:Quickstart'],
     ['sidebar read', (value) => { value.sidebar.ok = false; }, 'sidebar:unreadable'],
     ['duplicate Codex seat', (value) => { value.codex.routes[0].name = 'primary'; }, 'codex:duplicate:primary'],
     ['missing route auth', (value) => { value.codex.routes[0].hasAuth = false; }, 'codex:missing-auth:secondary'],
@@ -259,6 +258,80 @@ test('an unreadable sidebar never invents a recovery', () => {
     false,
   );
   assert.ok(held.nextState.issues['sidebar:Quickstart']);
+});
+
+test('virtualized project rows are inconclusive and never warn', () => {
+  const collapsed = goodSnapshot();
+  collapsed.sidebar.projects[0].collapsed = true;
+  const collapsedReport = evaluateSnapshot(collapsed, NOW);
+  const first = planNotifications(
+    { version: 1, issues: {} },
+    collapsedReport.issues,
+    NOW,
+  );
+  const virtualized = goodSnapshot();
+  virtualized.sidebar.activeRepositories = ['Quickstart', 'OVO CRM Fable'];
+  virtualized.sidebar.projects = [];
+  const report = evaluateSnapshot(virtualized, NOW + 1);
+
+  assert.deepEqual(
+    report.issues.filter((entry) => entry.id.startsWith('sidebar:')),
+    [],
+  );
+  const held = planNotifications(
+    first.nextState,
+    report.issues,
+    NOW + 1,
+    {
+      unresolvedIssueIds: report.unresolvedIssueIds,
+      unresolvedIssuePrefixes: report.unresolvedIssuePrefixes,
+    },
+  );
+  assert.deepEqual(held.notifications, []);
+  assert.ok(held.nextState.issues['sidebar:Quickstart']);
+
+  const visible = evaluateSnapshot(goodSnapshot(), NOW + 2);
+  const recovered = planNotifications(
+    held.nextState,
+    visible.issues,
+    NOW + 2,
+    {
+      unresolvedIssueIds: visible.unresolvedIssueIds,
+      unresolvedIssuePrefixes: visible.unresolvedIssuePrefixes,
+    },
+  );
+  assert.deepEqual(
+    recovered.notifications.map(({ id, type }) => ({ id, type })),
+    [{ id: 'sidebar:Quickstart', type: 'recovery' }],
+  );
+});
+
+test('virtualized rows preserve legacy missing-row cooldown state', () => {
+  const virtualized = goodSnapshot();
+  virtualized.sidebar.projects = [];
+  const report = evaluateSnapshot(virtualized, NOW);
+  const legacyState = {
+    version: 1,
+    issues: {
+      'sidebar:missing:Quickstart': {
+        lastAlertAt: NOW - 1,
+        severity: 'warn',
+        recovery: 'Pocket recovered: the Quickstart project row is visible in Conductor again.',
+      },
+    },
+  };
+  const held = planNotifications(
+    legacyState,
+    report.issues,
+    NOW,
+    {
+      unresolvedIssueIds: report.unresolvedIssueIds,
+      unresolvedIssuePrefixes: report.unresolvedIssuePrefixes,
+    },
+  );
+
+  assert.deepEqual(held.notifications, []);
+  assert.deepEqual(held.nextState, legacyState);
 });
 
 test('notification transport can only invoke safe-imessage for Alex', async () => {
@@ -421,6 +494,7 @@ test('watchdog LaunchAgent runs every ten minutes and exposes the doctor CLI', a
   assert.match(installer, /com\.ovo\.pocket-watchdog/);
   assert.match(installer, /<key>StartInterval<\/key><integer>600<\/integer>/);
   assert.match(installer, /<string>run<\/string>/);
+  assert.doesNotMatch(installer, /--dry-run/);
   assert.match(installer, /pocket-doctor/);
   assert.match(installer, /Pocket watchdog`\);/);
   assert.match(installer, /\} doctor \"\$@\"/);
@@ -428,6 +502,36 @@ test('watchdog LaunchAgent runs every ten minutes and exposes the doctor CLI', a
     packageDocument.scripts.doctor,
     'node --no-warnings=ExperimentalWarning src/cli.mjs doctor',
   );
+});
+
+test('prepared watchdog LaunchAgent enables real delivery without dry-run', async (context) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'pocket-watchdog-plist-'));
+  context.after(() => fs.rm(home, { recursive: true, force: true }));
+  const packageRoot = new URL('../../pocket-watchdog/', import.meta.url);
+  await execFile(
+    process.execPath,
+    ['scripts/install.mjs', '--prepare-only'],
+    {
+      cwd: fileURLToPath(packageRoot),
+      env: { ...process.env, POCKET_WATCHDOG_HOME: home },
+      timeout: 10_000,
+    },
+  );
+  const preparedPlist = path.join(
+    home,
+    '.config',
+    'pocket-watchdog',
+    'com.ovo.pocket-watchdog.plist',
+  );
+  const { stdout } = await execFile(
+    '/usr/bin/plutil',
+    ['-convert', 'json', '-o', '-', preparedPlist],
+    { timeout: 10_000 },
+  );
+  const profile = JSON.parse(stdout);
+
+  assert.equal(profile.ProgramArguments.at(-1), 'run');
+  assert.equal(profile.ProgramArguments.includes('--dry-run'), false);
 });
 
 test('prepared doctor runs read-only from a versioned runtime', async (context) => {
