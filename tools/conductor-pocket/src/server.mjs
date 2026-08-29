@@ -83,6 +83,10 @@ const staticFiles = new Map([
   ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
   [
+    '/session-lifecycle.js',
+    ['session-lifecycle.js', 'text/javascript; charset=utf-8'],
+  ],
+  [
     '/image-attachments.js',
     ['image-attachments.js', 'text/javascript; charset=utf-8'],
   ],
@@ -1246,6 +1250,7 @@ function sameSessionRoute(expected, current, { attachments = false } = {}) {
     !current ||
     current.id !== expected.id ||
     current.workspaceName !== expected.workspaceName ||
+    current.repositoryName !== expected.repositoryName ||
     current.title !== expected.title ||
     current.titleOrdinal !== expected.titleOrdinal
   ) {
@@ -1673,6 +1678,39 @@ export function createPocketServer({
 
       if (
         request.method === 'POST' &&
+        requestUrl.pathname === '/api/auth/recover/options'
+      ) {
+        const recovery = await security.recoveryAuthenticationOptions(request);
+        return sendJson(
+          response,
+          200,
+          recovery.options,
+          config,
+          { 'Set-Cookie': recovery.setCookie },
+        );
+      }
+
+      if (
+        request.method === 'POST' &&
+        requestUrl.pathname === '/api/auth/recover/verify'
+      ) {
+        const body = await readJson(request);
+        const recovery = await security.verifyRecoveryAuthentication(
+          request,
+          body.response,
+        );
+        const { setCookies, ...result } = recovery;
+        return sendJson(
+          response,
+          200,
+          result,
+          config,
+          { 'Set-Cookie': setCookies },
+        );
+      }
+
+      if (
+        request.method === 'POST' &&
         requestUrl.pathname === '/api/auth/options'
       ) {
         const options = await security.authenticationOptions(request);
@@ -1707,8 +1745,14 @@ export function createPocketServer({
       }
 
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/touch') {
-        const result = security.touch(request);
-        return sendJson(response, 200, result, config);
+        const { setCookie, ...result } = await security.touch(request);
+        return sendJson(
+          response,
+          200,
+          result,
+          config,
+          setCookie ? { 'Set-Cookie': setCookie } : {},
+        );
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/events') {
@@ -2205,6 +2249,7 @@ export function createPocketServer({
                 deliveryTransportStarted = true;
                 let sendResult = await transport.send({
                   workspaceName: route.workspaceName,
+                  projectName: route.repositoryName,
                   sessionTitle: route.title,
                   sessionOrdinal: route.titleOrdinal,
                   message: deliveryMessage,
@@ -2278,6 +2323,7 @@ export function createPocketServer({
                         certifiedPreSend = false;
                         sendResult = await transport.send({
                           workspaceName: retryRoute.workspaceName,
+                          projectName: retryRoute.repositoryName,
                           sessionTitle: retryRoute.title,
                           sessionOrdinal: retryRoute.titleOrdinal,
                           message: deliveryMessage,
@@ -2416,6 +2462,8 @@ export function createPocketServer({
                                 sendResult = await transport.send({
                                   workspaceName:
                                     finalRetryRoute.workspaceName,
+                                  projectName:
+                                    finalRetryRoute.repositoryName,
                                   sessionTitle:
                                     finalRetryRoute.title,
                                   sessionOrdinal:
@@ -2832,6 +2880,7 @@ async function serveStatic(
         pathname === '/bootstrap-recovery.js' ||
         pathname === '/delivery-receipts.js' ||
         pathname === '/app-update.js' ||
+        pathname === '/session-lifecycle.js' ||
         pathname === '/' ||
         pathname === '/index.html'
           ? 'no-cache'

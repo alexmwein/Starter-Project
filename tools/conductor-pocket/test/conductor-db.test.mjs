@@ -439,6 +439,10 @@ test('workspace routes use the visible Conductor name instead of the folder code
     database.getSessionRoute('session-1').workspaceName,
     'visible workspace name',
   );
+  assert.equal(
+    database.getSessionRoute('session-1').repositoryName,
+    'Quickstart',
+  );
   assert.equal(database.listLocalWorkspacePaths().length, 1);
   assert.equal(path.isAbsolute(database.listLocalWorkspacePaths()[0]), true);
 });

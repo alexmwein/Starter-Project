@@ -7,13 +7,25 @@ import { parseResult } from '../src/accessibility.mjs';
 
 const targetWorkspace = 'iphone-conductor';
 
-function makeNode({ children = [], name = '', role = 'AXGroup' } = {}) {
+function makeNode({
+  children = [],
+  name = '',
+  position = [0, 0],
+  role = 'AXGroup',
+  size = [0, 0],
+} = {}) {
   return {
     name() {
       return name;
     },
     role() {
       return role;
+    },
+    position() {
+      return position;
+    },
+    size() {
+      return size;
     },
     uiElements() {
       return children;
@@ -25,7 +37,9 @@ function makeProcess({ includeTargetLink = false } = {}) {
   const listRows = [
     makeNode({
       name: 'Quickstart Quickstart 46 Repo settings New workspace',
+      position: [25, 351],
       role: 'AXButton',
+      size: [216, 44],
     }),
     ...(includeTargetLink
       ? [makeNode({ name: targetWorkspace, role: 'AXLink' })]
@@ -89,7 +103,17 @@ async function diagnosisHarness() {
   };
   vm.createContext(sandbox);
   vm.runInContext(
-    `${source}\nglobalThis.__collapsed = { diagnoseWorkspaceFailure };`,
+    `${source}\nglobalThis.__collapsed = {
+      diagnoseWorkspaceFailure,
+      expandCollapsedProject:
+        typeof expandCollapsedProject === 'function'
+          ? expandCollapsedProject
+          : null,
+      sidebarProjectSnapshot:
+        typeof sidebarProjectSnapshot === 'function'
+          ? sidebarProjectSnapshot
+          : null,
+    };`,
     sandbox,
   );
   return sandbox.__collapsed;
@@ -100,6 +124,7 @@ test('collapsed project fixture returns workspace_project_collapsed with the rea
   const fixtureFailure = diagnoseWorkspaceFailure(
     makeProcess(),
     targetWorkspace,
+    'Quickstart',
   );
   const parsed = parseResult(JSON.stringify(fixtureFailure));
 
@@ -124,7 +149,7 @@ test('collapsed project fixture returns workspace_project_collapsed with the rea
   assert.match(failureHandler, /POCKET_OPERATION=workspace-failure/);
   assert.doesNotMatch(failureHandler, /AXPress|AXShowMenu/);
   assert.equal(
-    (appleScript.match(/return my workspaceListFailure\(inputScriptPath, conductorPid\)/g) || [])
+    (appleScript.match(/set (?:initial|later)WorkspaceFailure to my workspaceListFailure\(inputScriptPath, conductorPid\)/g) || [])
       .length,
     2,
   );
@@ -136,6 +161,7 @@ test('collapsed project fixture keeps genuine visible-route failures generic', a
   const fixtureFailure = diagnoseWorkspaceFailure(
     makeProcess({ includeTargetLink: true }),
     targetWorkspace,
+    'Quickstart',
   );
   assert.equal(fixtureFailure.code, 'workspace_list_unavailable');
   assert.equal('projectName' in fixtureFailure, false);
@@ -149,4 +175,146 @@ test('collapsed project fixture keeps genuine visible-route failures generic', a
     ),
     { ok: false, code: 'automation_invalid_response' },
   );
+});
+
+test('collapsed project expansion clicks the proven owner once at its leading edge', async () => {
+  const { expandCollapsedProject } = await diagnosisHarness();
+  assert.equal(typeof expandCollapsedProject, 'function');
+  const calls = [];
+
+  const result = expandCollapsedProject(
+    makeProcess(),
+    targetWorkspace,
+    'Quickstart',
+    {
+      acquireLease() {
+        calls.push('acquire');
+        return { inputCounters: [0], syntheticInputPosted: false };
+      },
+      assertLease() {
+        calls.push('assert');
+      },
+      click(point) {
+        calls.push(['click', point.x, point.y]);
+      },
+    },
+  );
+
+  assert.equal(result, 'expanded');
+  assert.deepEqual(calls, [
+    'acquire',
+    'assert',
+    'assert',
+    ['click', 37, 373],
+    'assert',
+  ]);
+});
+
+test('collapsed project expansion never clicks a different collapsed project', async () => {
+  const { expandCollapsedProject } = await diagnosisHarness();
+  let clicks = 0;
+
+  const result = expandCollapsedProject(
+    makeProcess(),
+    targetWorkspace,
+    'Another project',
+    {
+      acquireLease: () => ({}),
+      assertLease() {},
+      click() {
+        clicks += 1;
+      },
+    },
+  );
+
+  assert.equal(result, 'not-expanded');
+  assert.equal(clicks, 0);
+});
+
+test('collapsed project expansion re-proves the row immediately before click', async () => {
+  const { expandCollapsedProject } = await diagnosisHarness();
+  let inspections = 0;
+  let clicks = 0;
+  const row = makeNode({
+    name: 'Quickstart Quickstart 46 Repo settings New workspace',
+    position: [25, 351],
+    role: 'AXButton',
+    size: [216, 44],
+  });
+  const result = expandCollapsedProject(
+    makeProcess(),
+    targetWorkspace,
+    'Quickstart',
+    {
+      acquireLease: () => ({ syntheticInputPosted: false }),
+      activate() {},
+      assertLease() {},
+      inspect: () => {
+        inspections += 1;
+        return inspections === 1 ? row : null;
+      },
+      click() {
+        clicks += 1;
+      },
+    },
+  );
+
+  assert.equal(result, 'not-expanded');
+  assert.equal(inspections, 2);
+  assert.equal(clicks, 0);
+});
+
+test('watchdog sidebar snapshot is read-only and names collapsed projects', async () => {
+  const { sidebarProjectSnapshot } = await diagnosisHarness();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sidebarProjectSnapshot(makeProcess()))),
+    {
+      ok: true,
+      projects: [
+        { name: 'Quickstart', collapsed: true },
+        { name: 'OVO CRM Fable', collapsed: false },
+      ],
+    },
+  );
+  const inputSource = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const operation = inputSource.slice(
+    inputSource.indexOf("operation === 'sidebar-snapshot'"),
+    inputSource.indexOf("operation === 'workspace-failure'"),
+  );
+  assert.match(operation, /conductorProcessForReadOnlyDiagnosis/);
+  assert.doesNotMatch(operation, /CGEvent|AXPress|click|activate/i);
+});
+
+test('the send path attempts collapsed project expansion at most once', async () => {
+  const appleScript = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const transport = await fs.readFile(
+    new URL('../src/accessibility.mjs', import.meta.url),
+    'utf8',
+  );
+  const sendPath = appleScript.slice(
+    appleScript.indexOf(
+      'set sidebarGroup to getSidebarGroup()',
+      appleScript.indexOf('set my projectExpansionAttempted to false'),
+    ),
+    appleScript.indexOf(
+      'set workspaceRoute to my getWorkspaceRoute',
+      appleScript.indexOf('set my projectExpansionAttempted to false'),
+    ),
+  );
+
+  assert.equal(
+    (sendPath.match(/expandCollapsedProject/g) || []).length,
+    1,
+  );
+  assert.match(sendPath, /set sidebarGroup to getSidebarGroup\(\)/);
+  assert.match(sendPath, /return initialWorkspaceFailure/);
+  assert.match(transport, /POCKET_PROJECT_NAME_BASE64/);
+  assert.match(appleScript, /POCKET_OPERATION=workspace-expand/);
+  assert.doesNotMatch(sendPath, /AXPress/);
 });

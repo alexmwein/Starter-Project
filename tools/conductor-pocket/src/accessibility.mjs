@@ -390,6 +390,7 @@ export class AccessibilityTransport {
 
   send({
     workspaceName,
+    projectName = '',
     sessionTitle,
     sessionOrdinal,
     message,
@@ -399,6 +400,14 @@ export class AccessibilityTransport {
     timeoutMs = 45_000,
   }) {
     const normalized = normalizeText(message);
+    const normalizedProjectName = normalizeText(projectName);
+    if (
+      normalizedProjectName.length > 160 ||
+      normalizedProjectName.includes('\0') ||
+      /[\u0001-\u001f\u007f]/.test(normalizedProjectName)
+    ) {
+      return Promise.resolve(safeToRetry('workspace_list_unavailable'));
+    }
     if (!normalized.trim()) {
       return Promise.resolve(safeToRetry('message_empty'));
     }
@@ -458,6 +467,7 @@ export class AccessibilityTransport {
     return this.#enqueue({
       operation: 'send',
       workspaceName,
+      projectName: normalizedProjectName,
       sessionTitle,
       sessionOrdinal,
       message: normalized,
@@ -471,6 +481,7 @@ export class AccessibilityTransport {
   async #run({
     operation,
     workspaceName = '',
+    projectName = '',
     sessionTitle = '',
     sessionOrdinal = 1,
     message = '',
@@ -520,6 +531,10 @@ export class AccessibilityTransport {
           POCKET_WORKSPACE_NAME: workspaceName,
           POCKET_WORKSPACE_NAME_BASE64: Buffer.from(
             workspaceName,
+            'utf8',
+          ).toString('base64'),
+          POCKET_PROJECT_NAME_BASE64: Buffer.from(
+            projectName,
             'utf8',
           ).toString('base64'),
           POCKET_SESSION_TITLE: sessionTitle,
