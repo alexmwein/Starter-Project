@@ -532,6 +532,11 @@ test('prepared watchdog LaunchAgent enables real delivery without dry-run', asyn
 
   assert.equal(profile.ProgramArguments.at(-1), 'run');
   assert.equal(profile.ProgramArguments.includes('--dry-run'), false);
+  assert.notEqual(
+    profile.RunAtLoad,
+    true,
+    'installation must not emit unrequested alerts before the verification text',
+  );
 });
 
 test('prepared doctor runs read-only from a versioned runtime', async (context) => {

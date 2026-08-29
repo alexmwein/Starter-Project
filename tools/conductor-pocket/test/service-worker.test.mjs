@@ -4,8 +4,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const ORIGIN = 'https://pocket.test';
-const PREVIOUS_CACHE = 'conductor-pocket-shell-v24';
-const CURRENT_CACHE = 'conductor-pocket-shell-v27';
+const PREVIOUS_CACHE = 'conductor-pocket-shell-v27';
+const CURRENT_CACHE = 'conductor-pocket-shell-v28';
 
 function requestKey(request) {
   const value = typeof request === 'string' ? request : request.url;

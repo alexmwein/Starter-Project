@@ -45,6 +45,7 @@ const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
 const MAX_MESSAGE_BYTES = 16 * 1024;
 const MAX_CHUNK_UTF16 = 256;
 const MIN_PHYSICAL_IDLE_SECONDS = 1;
+const MAX_PHYSICAL_INPUT_EPOCH_DRIFT_SECONDS = 0.05;
 const PHYSICAL_INPUT_EVENT_TYPES = [
   $.kCGEventLeftMouseDown,
   $.kCGEventLeftMouseUp,
@@ -410,9 +411,9 @@ function expandCollapsedProject(
   workspaceName,
   expectedProjectName,
   {
-    acquireLease = acquireInputLease,
+    acquireLease = acquireExpansionInputLease,
     activate = () => {},
-    assertLease = assertInputLease,
+    assertLease = assertExpansionInputLease,
     inspect = inspectCollapsedProject,
     click = postGlobalLeftClick,
   } = {},
@@ -458,7 +459,9 @@ function expandCollapsedProject(
   assertLease(lease);
   click(currentPoint, lease);
   delay(0.03);
-  assertLease(lease);
+  // The aggregate HID idle clock includes this synthetic global click. The
+  // mutation boundary is the click itself, so the lease is proven immediately
+  // before it. The caller resolves the freshly expanded workspace by identity.
   return 'expanded';
 }
 
@@ -1074,7 +1077,12 @@ function conductorProcessForReadOnlyDiagnosis(pid) {
   return process;
 }
 
-function activateConductorForClick(pid, process, lease) {
+function activateConductorForClick(
+  pid,
+  process,
+  lease,
+  assertLease = assertInputLease,
+) {
   assertSessionUnlocked();
   const conductor = $.NSRunningApplication.runningApplicationWithProcessIdentifier(
     pid,
@@ -1082,12 +1090,12 @@ function activateConductorForClick(pid, process, lease) {
   if (!conductor || ObjC.unwrap(conductor.bundleIdentifier) !== CONDUCTOR_BUNDLE_ID) {
     fail('invalid_target_process');
   }
-  assertInputLease(lease);
+  assertLease(lease);
   conductor.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
   const deadline = Date.now() + 1_000;
   do {
     assertSessionUnlocked();
-    assertInputLease(lease);
+    assertLease(lease);
     if (process.frontmost()) return;
     delay(0.05);
   } while (Date.now() < deadline);
@@ -1166,6 +1174,74 @@ function physicalIdleSeconds() {
       $.kCGAnyInputEventType,
     ),
   );
+}
+
+function monotonicUptimeSeconds() {
+  return Number($.NSProcessInfo.processInfo.systemUptime);
+}
+
+function physicalInputEpochSnapshot() {
+  const uptimeBefore = monotonicUptimeSeconds();
+  const idleBefore = physicalIdleSeconds();
+  const idleAfter = physicalIdleSeconds();
+  const uptimeAfter = monotonicUptimeSeconds();
+  if (
+    !Number.isFinite(uptimeBefore) ||
+    !Number.isFinite(uptimeAfter) ||
+    !Number.isFinite(idleBefore) ||
+    !Number.isFinite(idleAfter) ||
+    idleBefore < 0 ||
+    idleAfter < 0 ||
+    uptimeAfter < uptimeBefore
+  ) {
+    fail('user_input_active');
+  }
+  const lastInputBefore = uptimeBefore - idleBefore;
+  const lastInputAfter = uptimeAfter - idleAfter;
+  if (
+    Math.abs(lastInputAfter - lastInputBefore) >
+    MAX_PHYSICAL_INPUT_EPOCH_DRIFT_SECONDS
+  ) {
+    fail('user_input_active');
+  }
+  return {
+    idleSeconds: Math.min(idleBefore, idleAfter),
+    lastPhysicalInputUptimeSeconds: Math.max(
+      lastInputBefore,
+      lastInputAfter,
+    ),
+  };
+}
+
+function physicalInputEpochAdvanced(lease, snapshot) {
+  return (
+    snapshot.lastPhysicalInputUptimeSeconds >
+    lease.lastPhysicalInputUptimeSeconds +
+      MAX_PHYSICAL_INPUT_EPOCH_DRIFT_SECONDS
+  );
+}
+
+function acquireExpansionInputLease() {
+  const snapshot = physicalInputEpochSnapshot();
+  if (snapshot.idleSeconds < MIN_PHYSICAL_IDLE_SECONDS) {
+    fail('user_input_active');
+  }
+  return {
+    lastPhysicalInputUptimeSeconds:
+      snapshot.lastPhysicalInputUptimeSeconds,
+    syntheticInputPosted: false,
+  };
+}
+
+function assertExpansionInputLease(lease) {
+  const snapshot = physicalInputEpochSnapshot();
+  if (
+    physicalInputEpochAdvanced(lease, snapshot) ||
+    (!lease.syntheticInputPosted &&
+      snapshot.idleSeconds < MIN_PHYSICAL_IDLE_SECONDS)
+  ) {
+    fail('user_input_active');
+  }
 }
 
 function physicalInputCounters() {
@@ -2244,7 +2320,12 @@ function run(argv) {
       decodeBase64Environment('POCKET_PROJECT_NAME_BASE64'),
       {
         activate: (lease) =>
-          activateConductorForClick(pid, process, lease),
+          activateConductorForClick(
+            pid,
+            process,
+            lease,
+            assertExpansionInputLease,
+          ),
       },
     );
   }

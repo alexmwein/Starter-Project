@@ -119,6 +119,10 @@ async function diagnosisHarness() {
           : null,
       projectRowState:
         typeof projectRowState === 'function' ? projectRowState : null,
+      physicalInputEpochAdvanced:
+        typeof physicalInputEpochAdvanced === 'function'
+          ? physicalInputEpochAdvanced
+          : null,
       sidebarProjectSnapshot:
         typeof sidebarProjectSnapshot === 'function'
           ? sidebarProjectSnapshot
@@ -128,6 +132,51 @@ async function diagnosisHarness() {
   );
   return sandbox.__collapsed;
 }
+
+test('collapsed expansion lease ignores synthetic counters but detects new physical input', async () => {
+  const { physicalInputEpochAdvanced } = await diagnosisHarness();
+  assert.equal(typeof physicalInputEpochAdvanced, 'function');
+
+  const lease = {
+    inputCounters: [10, 20],
+    lastPhysicalInputUptimeSeconds: 100,
+  };
+  assert.equal(
+    physicalInputEpochAdvanced(lease, {
+      inputCounters: [500, 900],
+      lastPhysicalInputUptimeSeconds: 100.01,
+    }),
+    false,
+  );
+  assert.equal(
+    physicalInputEpochAdvanced(lease, {
+      inputCounters: [10, 20],
+      lastPhysicalInputUptimeSeconds: 100.2,
+    }),
+    true,
+  );
+
+  const inputSource = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    inputSource,
+    /acquireLease = acquireExpansionInputLease[\s\S]*assertLease = assertExpansionInputLease/,
+  );
+  assert.match(
+    inputSource,
+    /function activateConductorForClick\([\s\S]{0,100}assertLease = assertInputLease,[\s\S]{0,20}\)/,
+  );
+  const expansionOperation = inputSource.slice(
+    inputSource.indexOf("operation === 'workspace-expand'"),
+    inputSource.indexOf("operation === 'tab-new'"),
+  );
+  assert.match(
+    expansionOperation,
+    /activateConductorForClick\([\s\S]{0,100}assertExpansionInputLease,[\s\S]{0,20}\)/,
+  );
+});
 
 test('exact Conductor 0.82.6 mixed sidebar fixture returns workspace_project_collapsed', async () => {
   const { diagnoseWorkspaceFailure } = await diagnosisHarness();
@@ -280,7 +329,6 @@ test('collapsed project expansion clicks the proven owner once at its leading ed
     'assert',
     'assert',
     ['click', 37, 373],
-    'assert',
   ]);
 });
 

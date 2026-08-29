@@ -123,7 +123,6 @@ async function main() {
     <string>${xml(cliPath)}</string>
     <string>run</string>
   </array>
-  <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>600</integer>
   <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>${xml(path.join(logDirectory, 'watchdog.out.log'))}</string>
