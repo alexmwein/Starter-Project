@@ -3,6 +3,7 @@ import { execFile as nodeExecFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -21,13 +22,74 @@ import {
 } from '../../pocket-watchdog/src/notifications.mjs';
 import {
   codexRegistrySnapshot,
+  collectSnapshot,
   hasEnabledFunnel,
+  TAILNET_HEALTH_TIMEOUT_MS,
 } from '../../pocket-watchdog/src/system.mjs';
 
 const GB = 1024 ** 3;
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-08-29T18:00:00.000Z');
 const execFile = promisify(nodeExecFile);
+
+function healthyResponse(shellRevision = 'shell-r1') {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ ok: true, shellRevision }),
+  };
+}
+
+async function collectorFixture(context) {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'pocket-watchdog-system-'));
+  context.after(() => fs.rm(home, { recursive: true, force: true }));
+  const dbPath = path.join(home, 'conductor.db');
+  const database = new DatabaseSync(dbPath);
+  database.exec(`
+    CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL, hidden INTEGER NOT NULL);
+    CREATE TABLE workspaces (id INTEGER PRIMARY KEY, repository_id INTEGER NOT NULL, state TEXT NOT NULL);
+    INSERT INTO repos (id, name, hidden) VALUES (1, 'Quickstart', 0);
+    INSERT INTO workspaces (id, repository_id, state) VALUES (1, 1, 'active');
+  `);
+  database.close();
+  const configPath = path.join(home, 'config.json');
+  await fs.writeFile(configPath, JSON.stringify({
+    port: 4317,
+    publicOrigin: 'https://pocket.example.test',
+    bindHost: '127.0.0.1',
+    dbPath,
+    devices: [],
+  }));
+  return { home, configPath };
+}
+
+function collectorExec({ pidOutput = '1676\n', calls = [] } = {}) {
+  return async (executable, argumentsList, options) => {
+    calls.push([executable, argumentsList, options]);
+    if (executable === '/usr/bin/plutil') {
+      return {
+        stdout: JSON.stringify({
+          ProgramArguments: ['node', '/tmp/pocket-runtime/src/cli.mjs'],
+        }),
+      };
+    }
+    if (
+      executable === '/usr/bin/osascript' &&
+      argumentsList[0] === '-e'
+    ) {
+      return { stdout: pidOutput };
+    }
+    if (executable === '/usr/bin/osascript') {
+      return {
+        stdout: JSON.stringify({
+          ok: true,
+          projects: [{ name: 'Quickstart', collapsed: false }],
+        }),
+      };
+    }
+    return { stdout: '{}' };
+  };
+}
 
 function goodSnapshot() {
   return {
@@ -252,6 +314,99 @@ test('Funnel collector rejects any nested enabled AllowFunnel value', () => {
     hasEnabledFunnel({ nested: { AllowFunnel: { 'pocket.example:443': true } } }),
     true,
   );
+});
+
+test('tailnet health retries once before reporting a failure', async (context) => {
+  assert.equal(TAILNET_HEALTH_TIMEOUT_MS, 15_000);
+  const fixture = await collectorFixture(context);
+  let tailnetAttempts = 0;
+  const recoveredDelays = [];
+  const recoveredTimeouts = [];
+  const recovered = await collectSnapshot({
+    ...fixture,
+    execFile: collectorExec(),
+    sleep: async (milliseconds) => { recoveredDelays.push(milliseconds); },
+    tailnetSignalFactory: (milliseconds) => {
+      recoveredTimeouts.push(milliseconds);
+      return undefined;
+    },
+    fetchImpl: async (url) => {
+      if (url.startsWith('http://127.0.0.1:')) return healthyResponse();
+      tailnetAttempts += 1;
+      if (tailnetAttempts === 1) throw new Error('transient timeout');
+      return healthyResponse();
+    },
+  });
+  assert.equal(recovered.relay.tailnetStatus, 200);
+  assert.equal(tailnetAttempts, 2);
+  assert.deepEqual(recoveredDelays, [250]);
+  assert.deepEqual(recoveredTimeouts, [15_000, 15_000]);
+
+  tailnetAttempts = 0;
+  const failedDelays = [];
+  const failed = await collectSnapshot({
+    ...fixture,
+    execFile: collectorExec(),
+    sleep: async (milliseconds) => { failedDelays.push(milliseconds); },
+    tailnetSignalFactory: () => undefined,
+    fetchImpl: async (url) => {
+      if (url.startsWith('http://127.0.0.1:')) return healthyResponse();
+      tailnetAttempts += 1;
+      throw new Error('persistent timeout');
+    },
+  });
+  assert.equal(failed.relay.tailnetStatus, null);
+  assert.equal(tailnetAttempts, 2);
+  assert.deepEqual(failedDelays, [250]);
+
+  tailnetAttempts = 0;
+  const unhealthyBody = await collectSnapshot({
+    ...fixture,
+    execFile: collectorExec(),
+    sleep: async () => {},
+    tailnetSignalFactory: () => undefined,
+    fetchImpl: async (url) => {
+      if (url.startsWith('http://127.0.0.1:')) return healthyResponse();
+      tailnetAttempts += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: false }),
+      };
+    },
+  });
+  assert.equal(unhealthyBody.relay.tailnetStatus, null);
+  assert.equal(tailnetAttempts, 2);
+});
+
+test('sidebar resolves its pid through System Events and rejects an empty lookup', async (context) => {
+  const fixture = await collectorFixture(context);
+  const calls = [];
+  const readable = await collectSnapshot({
+    ...fixture,
+    execFile: collectorExec({ calls }),
+    fetchImpl: async () => healthyResponse(),
+  });
+  assert.equal(readable.sidebar.ok, true);
+  assert.ok(calls.some(([executable, argumentsList]) => (
+    executable === '/usr/bin/osascript' &&
+    argumentsList[0] === '-e' &&
+    argumentsList[1] === 'tell application "System Events" to return unix id of first process whose name is "Conductor"'
+  )));
+  assert.ok(calls.some(([executable, argumentsList]) => (
+    executable === '/usr/bin/osascript' &&
+    argumentsList[0] === '-l' &&
+    argumentsList.at(-1) === '1676'
+  )));
+
+  const emptyCalls = [];
+  const unreadable = await collectSnapshot({
+    ...fixture,
+    execFile: collectorExec({ pidOutput: '', calls: emptyCalls }),
+    fetchImpl: async () => healthyResponse(),
+  });
+  assert.equal(unreadable.sidebar.ok, false);
+  assert.equal(emptyCalls.some(([, argumentsList]) => argumentsList[0] === '-l'), false);
 });
 
 test('watchdog LaunchAgent runs every ten minutes and exposes the doctor CLI', async () => {

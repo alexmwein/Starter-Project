@@ -7,6 +7,9 @@ import { promisify } from 'node:util';
 
 const defaultExecFile = promisify(nodeExecFile);
 const RELAY_LABEL = 'com.ovo.conductor-pocket';
+const LOOPBACK_HEALTH_TIMEOUT_MS = 3_000;
+export const TAILNET_HEALTH_TIMEOUT_MS = 15_000;
+const TAILNET_RETRY_DELAY_MS = 250;
 const SIDECAR_SOCKET_PARTS = [
   '.config',
   'conductor-pocket',
@@ -133,26 +136,42 @@ async function readRelayProfile(home, execFile) {
   };
 }
 
-async function health(origin, fetchImpl) {
-  try {
-    const response = await fetchImpl(`${origin}/api/health`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(3_000),
-    });
-    let body = null;
+async function health(
+  origin,
+  fetchImpl,
+  {
+    timeoutMs = LOOPBACK_HEALTH_TIMEOUT_MS,
+    retries = 0,
+    retryDelayMs = TAILNET_RETRY_DELAY_MS,
+    signalFactory = AbortSignal.timeout,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  let result = { ok: false, status: null, shellRevision: null };
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      body = await response.json();
+      const response = await fetchImpl(`${origin}/api/health`, {
+        cache: 'no-store',
+        signal: signalFactory(timeoutMs),
+      });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch {
+        // An invalid health response is unhealthy.
+      }
+      result = {
+        ok: response.ok && body?.ok === true,
+        status: response.status,
+        shellRevision: body?.shellRevision || null,
+      };
     } catch {
-      // An invalid health response is unhealthy.
+      result = { ok: false, status: null, shellRevision: null };
     }
-    return {
-      ok: response.ok && body?.ok === true,
-      status: response.status,
-      shellRevision: body?.shellRevision || null,
-    };
-  } catch {
-    return { ok: false, status: null, shellRevision: null };
+    if (result.ok || attempt === retries) return result;
+    await sleep(retryDelayMs);
   }
+  return result;
 }
 
 async function funnelState(home, execFile) {
@@ -209,15 +228,18 @@ async function sidebarSnapshot(config, inputScriptPath, execFile) {
   if (!inputScriptPath) {
     return { ok: false, activeRepositories: repositories.names, projects: [] };
   }
-  const pgrep = await commandOk(execFile, '/usr/bin/pgrep', ['-x', 'Conductor']);
-  const pids = pgrep.stdout.trim().split(/\s+/u).filter(Boolean);
-  if (!pgrep.ok || pids.length !== 1 || !/^\d+$/u.test(pids[0])) {
+  const pidLookup = await commandOk(execFile, '/usr/bin/osascript', [
+    '-e',
+    'tell application "System Events" to return unix id of first process whose name is "Conductor"',
+  ]);
+  const pid = pidLookup.stdout.trim();
+  if (!pidLookup.ok || !/^\d+$/u.test(pid)) {
     return { ok: false, activeRepositories: repositories.names, projects: [] };
   }
   const result = await commandOk(
     execFile,
     '/usr/bin/osascript',
-    ['-l', 'JavaScript', inputScriptPath, pids[0]],
+    ['-l', 'JavaScript', inputScriptPath, pid],
     {
       env: { ...process.env, POCKET_OPERATION: 'sidebar-snapshot' },
       timeout: 10_000,
@@ -243,6 +265,8 @@ export async function collectSnapshot({
   configPath = process.env.CONDUCTOR_POCKET_CONFIG || path.join(home, '.config', 'conductor-pocket', 'config.json'),
   execFile = defaultExecFile,
   fetchImpl = fetch,
+  sleep,
+  tailnetSignalFactory,
   loadavg = () => os.loadavg(),
 } = {}) {
   const config = await readJson(configPath);
@@ -251,7 +275,12 @@ export async function collectSnapshot({
   const blockSize = Number(disk.bsize);
   const runtime = await readRelayProfile(home, execFile);
   const loopback = await health(`http://127.0.0.1:${config.port}`, fetchImpl);
-  const tailnet = await health(config.publicOrigin, fetchImpl);
+  const tailnet = await health(config.publicOrigin, fetchImpl, {
+    timeoutMs: TAILNET_HEALTH_TIMEOUT_MS,
+    retries: 1,
+    ...(sleep ? { sleep } : {}),
+    ...(tailnetSignalFactory ? { signalFactory: tailnetSignalFactory } : {}),
+  });
   const launch = await commandOk(execFile, '/bin/launchctl', [
     'print',
     `gui/${process.getuid()}/${RELAY_LABEL}`,
@@ -270,7 +299,9 @@ export async function collectSnapshot({
       bindHost: config.bindHost,
       loopback,
       installedShellRevision: runtime.shellRevision,
-      tailnetStatus: tailnet.status,
+      tailnetStatus: tailnet.ok || tailnet.status !== 200
+        ? tailnet.status
+        : null,
       launchLoaded: launch.ok,
       funnelEnabled,
     },
