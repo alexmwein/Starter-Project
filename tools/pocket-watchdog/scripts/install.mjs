@@ -111,6 +111,19 @@ async function main() {
 
   const node = await stableNode();
   const cliPath = path.join(runtime, 'src', 'cli.mjs');
+  // Explicit, absolute, and ordered so the job resolves the same binaries a
+  // login shell would: Homebrew node for safe-imessage's shebang, then the
+  // user's own bin, then the system defaults.
+  const launchdPath = [
+    path.dirname(node),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    path.join(os.homedir(), '.local', 'bin'),
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ].join(':');
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -124,6 +137,16 @@ async function main() {
     <string>run</string>
   </array>
   <key>RunAtLoad</key><true/>
+  <!-- launchd hands a job a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin). That is
+       not enough here: safe-imessage is a '#!/usr/bin/env node' script, so without
+       Homebrew on PATH every alert dies with "env: node: No such file or
+       directory" and the watchdog goes silent exactly when it matters. The
+       Tailscale lookups degrade the same way and report a false Funnel CRITICAL.
+       Observed live 2026-08-29 before this key existed. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>${xml(launchdPath)}</string>
+  </dict>
   <key>StartInterval</key><integer>600</integer>
   <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>${xml(path.join(logDirectory, 'watchdog.out.log'))}</string>
