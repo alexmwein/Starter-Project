@@ -140,7 +140,13 @@ function sessionIssues(snapshot, now, issues, statuses) {
   }
 }
 
-function sidebarIssues(snapshot, issues, statuses, unresolvedIssuePrefixes) {
+function sidebarIssues(
+  snapshot,
+  issues,
+  statuses,
+  unresolvedIssuePrefixes,
+  unresolvedIssueIds,
+) {
   const sidebar = snapshot.sidebar || {};
   if (sidebar.ok !== true) {
     statuses.push(status('Conductor sidebar', false, 'not readable'));
@@ -162,19 +168,15 @@ function sidebarIssues(snapshot, issues, statuses, unresolvedIssuePrefixes) {
   }
   for (const name of sidebar.activeRepositories || []) {
     const project = projects.get(name);
-    const collapsed = project?.collapsed === true;
-    const readable = Boolean(project);
-    statuses.push(status(`Sidebar: ${name}`, readable && !collapsed, !readable ? 'project row not visible' : collapsed ? 'collapsed' : 'expanded'));
-    if (!readable) {
-      issues.push(issue(
-        `sidebar:missing:${name}`,
-        'warn',
-        `Sidebar: ${name}`,
-        `Pocket: the ${name} project row is missing from Conductor. Open that project in Conductor, then run pocket-doctor.`,
-        `Pocket recovered: the ${name} project row is visible in Conductor again.`,
-      ));
+    // Conductor virtualizes long sidebars. An absent row is not evidence that
+    // the project is missing or collapsed, so make no claim until it is visible.
+    if (!project) {
+      unresolvedIssueIds.push(`sidebar:${name}`);
+      unresolvedIssueIds.push(`sidebar:missing:${name}`);
       continue;
     }
+    const collapsed = project?.collapsed === true;
+    statuses.push(status(`Sidebar: ${name}`, !collapsed, collapsed ? 'collapsed' : 'expanded'));
     if (!collapsed) continue;
     issues.push(issue(
       `sidebar:${name}`,
@@ -227,6 +229,7 @@ export function evaluateSnapshot(snapshot, now = Date.now()) {
   const issues = [];
   const statuses = [];
   const unresolvedIssuePrefixes = [];
+  const unresolvedIssueIds = [];
   const free = Number(snapshot.diskFreeBytes);
   const diskOk = Number.isFinite(free) && free >= DISK_WARN_BYTES;
   statuses.push(status('Disk space', diskOk, Number.isFinite(free) ? `${roundedGb(free)} GB free` : 'unreadable'));
@@ -243,7 +246,13 @@ export function evaluateSnapshot(snapshot, now = Date.now()) {
 
   relayIssues(snapshot, issues, statuses);
   sessionIssues(snapshot, now, issues, statuses);
-  sidebarIssues(snapshot, issues, statuses, unresolvedIssuePrefixes);
+  sidebarIssues(
+    snapshot,
+    issues,
+    statuses,
+    unresolvedIssuePrefixes,
+    unresolvedIssueIds,
+  );
   codexIssues(snapshot, issues, statuses);
 
   const load = Number(snapshot.load5);
@@ -258,17 +267,23 @@ export function evaluateSnapshot(snapshot, now = Date.now()) {
       'Pocket recovered: the Mac 5-minute load average is back at or below 25.',
     ));
   }
-  return Object.freeze({ statuses, issues, unresolvedIssuePrefixes });
+  return Object.freeze({
+    statuses,
+    issues,
+    unresolvedIssuePrefixes,
+    unresolvedIssueIds,
+  });
 }
 
 export function planNotifications(
   previousState,
   issues,
   now = Date.now(),
-  { unresolvedIssuePrefixes = [] } = {},
+  { unresolvedIssueIds = [], unresolvedIssuePrefixes = [] } = {},
 ) {
   const previous = previousState?.issues || {};
   const current = new Map(issues.map((entry) => [entry.id, entry]));
+  const unresolvedIds = new Set(unresolvedIssueIds);
   const notifications = [];
   const nextIssues = {};
   for (const entry of issues) {
@@ -286,7 +301,10 @@ export function planNotifications(
   }
   for (const [id, old] of Object.entries(previous)) {
     if (!current.has(id)) {
-      if (unresolvedIssuePrefixes.some((prefix) => id.startsWith(prefix))) {
+      if (
+        unresolvedIds.has(id) ||
+        unresolvedIssuePrefixes.some((prefix) => id.startsWith(prefix))
+      ) {
         nextIssues[id] = old;
         continue;
       }
