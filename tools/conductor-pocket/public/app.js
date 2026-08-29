@@ -7,18 +7,22 @@ import {
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-collapsed-project-20260825';
+} from './delivery-receipts.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-collapsed-project-20260825';
+} from './app-update.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-collapsed-project-20260825';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-collapsed-project-20260825';
-import { fetchJson } from './http.js?v=0.2.0-collapsed-project-20260825';
+} from './bootstrap-recovery.js?v=0.2.0-pocket-never-silent-20260829';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-pocket-never-silent-20260829';
+import { fetchJson } from './http.js?v=0.2.0-pocket-never-silent-20260829';
+import {
+  bootstrapFailureState,
+  sessionExpiryNotice,
+} from './session-lifecycle.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -28,16 +32,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-collapsed-project-20260825';
+} from './image-attachments.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-collapsed-project-20260825';
+} from './live-refresh.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-collapsed-project-20260825';
+} from './rich-text.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -48,15 +52,15 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-collapsed-project-20260825';
+} from './read-state.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
-} from './transcript-focus.js?v=0.2.0-collapsed-project-20260825';
+} from './transcript-focus.js?v=0.2.0-pocket-never-silent-20260829';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-collapsed-project-20260825';
+} from './swipe-navigation.js?v=0.2.0-pocket-never-silent-20260829';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -97,7 +101,7 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-collapsed-project-20260825';
+const CLIENT_SHELL_REVISION = '0.2.0-pocket-never-silent-20260829';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -959,14 +963,77 @@ function bootstrap() {
       else renderLock();
     },
     onFailure: async (error) => {
-      if (error.status === 401 || error.code === 'device_revoked') {
+      const failure = bootstrapFailureState(error);
+      if (error.code === 'device_revoked') {
         await purgeThenRenderSignedOut();
+      } else if (failure.state === 'unauthenticated') {
+        renderExpiredSession();
       } else {
         renderConnectionGate(error.code);
       }
     },
   });
   return bootstrapCoordinator.run();
+}
+
+function renderExpiredSession({ errorMessage = '' } = {}) {
+  stopEvents();
+  state.auth = null;
+  state.csrfToken = null;
+  const action = node('button', {
+    className: 'primary-button',
+    type: 'button',
+    text: 'Unlock with Face ID',
+    on: {
+      click: async (event) => {
+        const control = event.currentTarget;
+        control.disabled = true;
+        control.textContent = 'Waiting for Face ID…';
+        try {
+          await runWithAppUpdatePaused(async () => {
+            const options = await request('/api/auth/recover/options', {
+              method: 'POST',
+              body: {},
+            });
+            const credential = await navigator.credentials.get({
+              publicKey: authenticationOptions(options),
+            });
+            const result = await request('/api/auth/recover/verify', {
+              method: 'POST',
+              body: { response: authenticationResponse(credential) },
+            });
+            state.auth = result;
+            state.csrfToken = result.csrfToken;
+            await startApplication();
+          });
+        } catch (error) {
+          if (
+            error.code === 'tailscale_identity_required' ||
+            error.code === 'tailscale_identity_denied' ||
+            error.code === 'tailscale_identity_unpaired'
+          ) {
+            renderConnectionGate(error.code);
+            return;
+          }
+          renderExpiredSession({
+            errorMessage:
+              error.name === 'NotAllowedError'
+                ? 'Face ID was canceled. Try again.'
+                : 'Face ID could not renew this session. Try again.',
+          });
+        }
+      },
+    },
+  });
+  gateView({
+    mark: 'faceid',
+    title: 'Session expired',
+    body: 'Unlock with Face ID to reconnect this iPhone.',
+    content: errorMessage
+      ? node('p', { className: 'inline-error', text: errorMessage })
+      : null,
+    action,
+  });
 }
 
 function renderLock({ errorMessage = '' } = {}) {
@@ -1135,7 +1202,11 @@ function renderConnectionGate(code) {
   gateView({
     connectionAnchor: !upgradeRequired && !identityProblem,
     mark: upgradeRequired ? 'refresh' : 'wifiOff',
-    title: upgradeRequired ? 'Pocket must refresh' : 'Mac unreachable',
+    title: upgradeRequired
+      ? 'Pocket must refresh'
+      : identityProblem
+        ? 'Tailscale connection required'
+        : 'Mac unreachable',
     body:
       upgradeRequired
         ? 'Fully close Pocket, reopen it while online, then sign out again. The old app cannot retire this phone.'
@@ -3375,7 +3446,11 @@ function renderWorkspacePanel() {
     icon('search'),
     searchInput,
   ]);
-  const content = node('div', { className: 'panel-content' }, [header, search]);
+  const content = node('div', { className: 'panel-content' }, [
+    header,
+    sessionExpiryNoticeNode(),
+    search,
+  ]);
 
   if (!state.workspacesLoaded && state.workspaces.length === 0) {
     content.append(skeletonRows(6));
@@ -3507,6 +3582,8 @@ function renderSessionsPanel() {
   sessionNav.heading.textContent = workspace?.name || 'Chats';
   updateNavSubtitle(sessionNav.subtitle, workspace?.branch || connectionVoice().text);
   sessionContent.replaceChildren();
+  const expiryNotice = sessionExpiryNoticeNode();
+  if (expiryNotice) sessionContent.append(expiryNotice);
   if (!workspace) {
     sessionContent.append(
       node('div', { className: 'empty-state' }, [
@@ -4255,6 +4332,8 @@ function messageRenderKey(message, toolResults) {
 
 function renderBanner(container) {
   container.replaceChildren();
+  const expiryNotice = sessionExpiryNoticeNode();
+  if (expiryNotice) container.append(expiryNotice);
   if (state.connection === 'live') return;
   const down = state.connection === 'offline';
   const banner = node('div', {
@@ -4278,6 +4357,18 @@ function renderBanner(container) {
     }),
   ]);
   container.append(banner);
+}
+
+function sessionExpiryNoticeNode() {
+  const notice = sessionExpiryNotice({ device: state.auth?.device });
+  if (!notice) return null;
+  return node('div', {
+    className: 'session-expiry-notice',
+    role: 'status',
+  }, [
+    icon('warn'),
+    node('span', { text: notice.text }),
+  ]);
 }
 
 function messageAttachments(message) {
@@ -5844,12 +5935,13 @@ function startEvents() {
     } catch {
       // Keep the locked fallback.
     }
-    if (
-      code === 'device_revoked' ||
+    if (code === 'device_revoked') {
+      await purgeThenRenderSignedOut();
+    } else if (
       code === 'authentication_required' ||
       code === 'device_session_expired'
     ) {
-      await purgeThenRenderSignedOut();
+      renderExpiredSession();
     } else if (
       code === 'tailscale_identity_required' ||
       code === 'tailscale_identity_denied' ||
@@ -5911,6 +6003,10 @@ function startEvents() {
       body: {},
       csrf: true,
       timeoutMs: LIVE_REFRESH_REQUEST_MS,
+    }).then((result) => {
+      state.auth = { ...state.auth, ...result };
+      state.csrfToken = result.csrfToken || state.csrfToken;
+      renderConnectionState();
     }).catch((error) => {
       if (
         error.status === 401 ||
@@ -5979,7 +6075,12 @@ function renderConnectionState() {
 }
 
 function handleRuntimeError(error) {
-  if (error.status === 401 || error.code === 'device_revoked') {
+  if (
+    error.code === 'authentication_required' ||
+    error.code === 'device_session_expired'
+  ) {
+    renderExpiredSession();
+  } else if (error.code === 'device_revoked') {
     void purgeThenRenderSignedOut();
   } else if (error.status === 423 || error.code === 'device_locked') {
     renderLock();
@@ -6929,12 +7030,14 @@ async function revealApplication() {
       renderLock();
     } else {
       try {
-        await request('/api/auth/touch', {
+        const result = await request('/api/auth/touch', {
           method: 'POST',
           body: {},
           csrf: true,
           timeoutMs: RESUME_REQUEST_MS,
         });
+        state.auth = { ...state.auth, ...result };
+        state.csrfToken = result.csrfToken || state.csrfToken;
         if (
           document.hidden ||
           revealEpoch !== state.visibilityEpoch

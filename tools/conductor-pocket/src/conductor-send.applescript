@@ -10,6 +10,7 @@ property heldMainGroup : missing value
 property cachedWorkspaceName : missing value
 property cachedWorkspaceGroup : missing value
 property cachedWorkspaceRoute : missing value
+property projectExpansionAttempted : false
 
 on clearWorkspaceRouteCache()
 	set my cachedWorkspaceName to missing value
@@ -126,6 +127,15 @@ on workspaceListFailure(inputScriptPath, conductorPid)
 		return "{\"ok\":false,\"code\":\"workspace_list_unavailable\"}"
 	end try
 end workspaceListFailure
+
+on expandCollapsedProject(inputScriptPath, conductorPid)
+	set my projectExpansionAttempted to true
+	try
+		return do shell script "/usr/bin/env POCKET_OPERATION=workspace-expand /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error
+		return "not-expanded"
+	end try
+end expandCollapsedProject
 
 on isMainGroup(candidate)
 	set tabGroupCount to 0
@@ -789,6 +799,7 @@ set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")
 set replaceDraft to (system attribute "POCKET_REPLACE_DRAFT") is "true"
 set expectedDraft to my decodeBase64(system attribute "POCKET_EXPECTED_DRAFT_BASE64")
 set retryInputCounters to system attribute "POCKET_EXPECTED_INPUT_COUNTERS"
+set my projectExpansionAttempted to false
 
 set inputReadiness to my waitForInputIdle(inputScriptPath, conductorPid)
 if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_active\"}"
@@ -815,7 +826,20 @@ if getMainGroup() is missing value then
 end if
 
 set sidebarGroup to getSidebarGroup()
-if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
+if sidebarGroup is missing value then
+	set initialWorkspaceFailure to my workspaceListFailure(inputScriptPath, conductorPid)
+	if initialWorkspaceFailure contains "workspace_project_collapsed" and my projectExpansionAttempted is false then
+		set expansionResult to my expandCollapsedProject(inputScriptPath, conductorPid)
+		if expansionResult is "expanded" then
+			repeat with expansionWaitIndex from 1 to 40
+				delay 0.1
+				set sidebarGroup to getSidebarGroup()
+				if sidebarGroup is not missing value then exit repeat
+			end repeat
+		end if
+	end if
+	if sidebarGroup is missing value then return initialWorkspaceFailure
+end if
 set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
 if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 set workspaceLink to item 1 of workspaceRoute
@@ -864,7 +888,20 @@ if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visib
 
 if routeAlreadySelected is false then
 	set sidebarGroup to getSidebarGroup()
-	if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
+	if sidebarGroup is missing value then
+		set laterWorkspaceFailure to my workspaceListFailure(inputScriptPath, conductorPid)
+		if laterWorkspaceFailure contains "workspace_project_collapsed" and my projectExpansionAttempted is false then
+			set expansionResult to my expandCollapsedProject(inputScriptPath, conductorPid)
+			if expansionResult is "expanded" then
+				repeat with expansionWaitIndex from 1 to 40
+					delay 0.1
+					set sidebarGroup to getSidebarGroup()
+					if sidebarGroup is not missing value then exit repeat
+				end repeat
+			end if
+		end if
+		if sidebarGroup is missing value then return laterWorkspaceFailure
+	end if
 	set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
 	if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 	set workspaceLink to item 1 of workspaceRoute

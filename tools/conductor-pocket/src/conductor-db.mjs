@@ -624,12 +624,14 @@ export class ConductorDatabase {
             w.directory_name,
             w.workspace_path,
             w.sandbox_provider,
+            r.name AS repository_name,
             ROW_NUMBER() OVER (
               PARTITION BY s.workspace_id, s.title
               ORDER BY s.created_at, s.id
             ) AS title_ordinal
           FROM sessions s
           JOIN workspaces w ON w.id = s.workspace_id
+          JOIN repos r ON r.id = w.repository_id
           WHERE s.is_hidden = 0
         )
         SELECT * FROM ranked WHERE id = ?
@@ -886,6 +888,7 @@ export class ConductorDatabase {
       id: row.id,
       workspaceId: row.workspace_id,
       workspaceName: workspaceDisplayName(row),
+      repositoryName: row.repository_name,
       title: row.title || 'Untitled chat',
       titleOrdinal: Number(row.title_ordinal),
       status: row.status || 'unknown',

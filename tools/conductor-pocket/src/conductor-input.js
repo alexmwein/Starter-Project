@@ -268,19 +268,61 @@ function countedProjectName(rowTitle) {
   return projectName;
 }
 
+// Read the same strict project-row shape used by send recovery, but never
+// interact with it. launchd calls this while the watchdog is checking the
+// chain, so unreadable or duplicate rows fail closed instead of producing a
+// guess about which project is collapsed.
+function sidebarProjectSnapshot(process) {
+  const projects = [];
+  const names = new Set();
+  for (const root of webAreaRootElements(process)) {
+    for (const container of routeElements(root)) {
+      let currentProject = null;
+      const finishProject = () => {
+        if (!currentProject) return true;
+        if (names.has(currentProject.name)) return false;
+        names.add(currentProject.name);
+        projects.push({
+          name: currentProject.name,
+          collapsed: currentProject.workspaceLinks === 0,
+        });
+        currentProject = null;
+        return true;
+      };
+      for (const row of routeElements(container)) {
+        const role = routeRole(row);
+        if (role === 'AXButton') {
+          const name = countedProjectName(routeName(row));
+          if (!name) continue;
+          if (!finishProject()) return { ok: false, projects: [] };
+          currentProject = { name, workspaceLinks: 0 };
+        } else if (role === 'AXLink' && currentProject) {
+          currentProject.workspaceLinks += 1;
+        }
+      }
+      if (!finishProject()) return { ok: false, projects: [] };
+    }
+  }
+  return projects.length > 0
+    ? { ok: true, projects }
+    : { ok: false, projects: [] };
+}
+
 // Read-only post-failure diagnosis. This never presses the project row: AXPress
 // navigates to repo Settings in Conductor 0.82.6 instead of expanding it. The
 // target-link count is checked across every root first, so an unselected or
 // duplicate visible route keeps the old generic failure rather than blaming an
 // unrelated collapsed project.
-function diagnoseWorkspaceFailure(process, workspaceName) {
-  const generic = Object.freeze({
-    ok: false,
-    code: 'workspace_list_unavailable',
-  });
-  if (typeof workspaceName !== 'string' || !workspaceName) return generic;
-
-  const collapsedProjects = [];
+function inspectCollapsedProject(process, workspaceName, expectedProjectName) {
+  if (
+    typeof workspaceName !== 'string' ||
+    !workspaceName ||
+    typeof expectedProjectName !== 'string' ||
+    !expectedProjectName
+  ) {
+    return null;
+  }
+  const matchingCollapsedRows = [];
   let targetLinkCount = 0;
   const rootElements = webAreaRootElements(process);
   for (const root of rootElements) {
@@ -289,8 +331,11 @@ function diagnoseWorkspaceFailure(process, workspaceName) {
       const rows = routeElements(container);
       let currentProject = null;
       const finishProject = () => {
-        if (currentProject?.workspaceLinks === 0) {
-          collapsedProjects.push(currentProject.name);
+        if (
+          currentProject?.name === expectedProjectName &&
+          currentProject.workspaceLinks === 0
+        ) {
+          matchingCollapsedRows.push(currentProject.row);
         }
       };
       for (const row of rows) {
@@ -299,7 +344,11 @@ function diagnoseWorkspaceFailure(process, workspaceName) {
           const projectName = countedProjectName(routeName(row));
           if (projectName) {
             finishProject();
-            currentProject = { name: projectName, workspaceLinks: 0 };
+            currentProject = {
+              name: projectName,
+              row,
+              workspaceLinks: 0,
+            };
           }
           continue;
         }
@@ -316,15 +365,124 @@ function diagnoseWorkspaceFailure(process, workspaceName) {
       finishProject();
     }
   }
-
-  if (targetLinkCount !== 0 || collapsedProjects.length === 0) {
-    return generic;
+  if (targetLinkCount !== 0 || matchingCollapsedRows.length !== 1) {
+    return null;
   }
+  return matchingCollapsedRows[0];
+}
+
+function diagnoseWorkspaceFailure(
+  process,
+  workspaceName,
+  expectedProjectName = '',
+) {
+  const generic = Object.freeze({
+    ok: false,
+    code: 'workspace_list_unavailable',
+  });
+  if (
+    !inspectCollapsedProject(
+      process,
+      workspaceName,
+      expectedProjectName,
+    )
+  ) return generic;
   return Object.freeze({
     ok: false,
     code: 'workspace_project_collapsed',
-    projectName: collapsedProjects[0],
+    projectName: expectedProjectName,
   });
+}
+
+function axisPair(value) {
+  let pair = value;
+  try {
+    pair = ObjC.deepUnwrap(value);
+  } catch {
+    // Plain arrays from System Events and unit fixtures need no bridge unwrap.
+  }
+  const x = Number(Array.isArray(pair) ? pair[0] : pair?.x);
+  const y = Number(Array.isArray(pair) ? pair[1] : pair?.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function postGlobalLeftClick(point, lease) {
+  const source = $.CGEventSourceCreate($.kCGEventSourceStatePrivate);
+  if (!source) fail('event_source_failed');
+  const location = $.CGPointMake(point.x, point.y);
+  const down = $.CGEventCreateMouseEvent(
+    source,
+    $.kCGEventLeftMouseDown,
+    location,
+    $.kCGMouseButtonLeft,
+  );
+  const up = $.CGEventCreateMouseEvent(
+    source,
+    $.kCGEventLeftMouseUp,
+    location,
+    $.kCGMouseButtonLeft,
+  );
+  if (!down || !up) fail('event_source_failed');
+  $.CGEventPost($.kCGHIDEventTap, down);
+  lease.syntheticInputPosted = true;
+  $.CGEventPost($.kCGHIDEventTap, up);
+}
+
+function expandCollapsedProject(
+  process,
+  workspaceName,
+  expectedProjectName,
+  {
+    acquireLease = acquireInputLease,
+    activate = () => {},
+    assertLease = assertInputLease,
+    inspect = inspectCollapsedProject,
+    click = postGlobalLeftClick,
+  } = {},
+) {
+  const lease = acquireLease();
+  activate(lease);
+  const row = inspect(process, workspaceName, expectedProjectName);
+  if (!row) return 'not-expanded';
+  let position;
+  let size;
+  try {
+    position = axisPair(row.position());
+    size = axisPair(row.size());
+  } catch {
+    return 'not-expanded';
+  }
+  if (!position || !size || size.x <= 0 || size.y <= 0) {
+    return 'not-expanded';
+  }
+  assertLease(lease);
+  const currentRow = inspect(process, workspaceName, expectedProjectName);
+  if (!currentRow) return 'not-expanded';
+  let currentPosition;
+  let currentSize;
+  try {
+    currentPosition = axisPair(currentRow.position());
+    currentSize = axisPair(currentRow.size());
+  } catch {
+    return 'not-expanded';
+  }
+  if (
+    !currentPosition ||
+    !currentSize ||
+    currentSize.x <= 0 ||
+    currentSize.y <= 0
+  ) {
+    return 'not-expanded';
+  }
+  const currentPoint = {
+    x: currentPosition.x + 12,
+    y: currentPosition.y + currentSize.y / 2,
+  };
+  assertLease(lease);
+  click(currentPoint, lease);
+  delay(0.03);
+  assertLease(lease);
+  return 'expanded';
 }
 
 function isWellFormed(value) {
@@ -937,6 +1095,26 @@ function conductorProcessForReadOnlyDiagnosis(pid) {
     fail('invalid_target_process');
   }
   return process;
+}
+
+function activateConductorForClick(pid, process, lease) {
+  assertSessionUnlocked();
+  const conductor = $.NSRunningApplication.runningApplicationWithProcessIdentifier(
+    pid,
+  );
+  if (!conductor || ObjC.unwrap(conductor.bundleIdentifier) !== CONDUCTOR_BUNDLE_ID) {
+    fail('invalid_target_process');
+  }
+  assertInputLease(lease);
+  conductor.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+  const deadline = Date.now() + 1_000;
+  do {
+    assertSessionUnlocked();
+    assertInputLease(lease);
+    if (process.frontmost()) return;
+    delay(0.05);
+  } while (Date.now() < deadline);
+  fail('target_not_active');
 }
 
 function validateFocusedComposer(pid, expectedDraft = null) {
@@ -2061,6 +2239,11 @@ function run(argv) {
     assertSessionUnlocked();
     return waitForInputIdle() ? 'ready' : 'busy';
   }
+  if (operation === 'sidebar-snapshot') {
+    assertSessionUnlocked();
+    const process = conductorProcessForReadOnlyDiagnosis(pid);
+    return JSON.stringify(sidebarProjectSnapshot(process));
+  }
   if (operation === 'workspace-failure') {
     assertSessionUnlocked();
     // Diagnosis is read-only and may run while Conductor is visible behind
@@ -2068,7 +2251,24 @@ function run(argv) {
     // result back into the generic code unless Pocket first stole focus.
     const process = conductorProcessForReadOnlyDiagnosis(pid);
     return JSON.stringify(
-      diagnoseWorkspaceFailure(process, environmentValue('POCKET_WORKSPACE_NAME')),
+      diagnoseWorkspaceFailure(
+        process,
+        environmentValue('POCKET_WORKSPACE_NAME'),
+        decodeBase64Environment('POCKET_PROJECT_NAME_BASE64'),
+      ),
+    );
+  }
+  if (operation === 'workspace-expand') {
+    assertSessionUnlocked();
+    const process = conductorProcessForReadOnlyDiagnosis(pid);
+    return expandCollapsedProject(
+      process,
+      environmentValue('POCKET_WORKSPACE_NAME'),
+      decodeBase64Environment('POCKET_PROJECT_NAME_BASE64'),
+      {
+        activate: (lease) =>
+          activateConductorForClick(pid, process, lease),
+      },
     );
   }
   if (operation === 'tab-new') return postTabShortcut(pid, KEY_T);
