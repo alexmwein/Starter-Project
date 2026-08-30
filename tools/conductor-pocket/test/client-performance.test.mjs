@@ -144,6 +144,54 @@ globalThis.__cacheDatabase = cacheDatabase;`,
   assert.equal(await reopened, secondDatabase);
 });
 
+test('a synchronous IndexedDB open failure does not poison later sends', async () => {
+  const source = await applicationSource();
+  const start = source.indexOf('function invalidateCacheDatabaseConnection');
+  const end = source.indexOf("cachePurgeChannel?.addEventListener", start);
+  assert.ok(start >= 0, 'cache invalidation helper must exist');
+  assert.ok(end > start, 'cache connection helpers must stay together');
+
+  let openAttempts = 0;
+  const openRequests = [];
+  const sandbox = {
+    Error,
+    indexedDB: {
+      open() {
+        openAttempts += 1;
+        if (openAttempts === 1) {
+          throw new Error('transient synchronous open failure');
+        }
+        const request = {};
+        openRequests.push(request);
+        return request;
+      },
+    },
+    localStorage: { getItem: () => null },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `let cacheDatabasePromise = null;
+let cacheDatabaseConnection = null;
+let originRetired = false;
+const ORIGIN_RETIRED_KEY = 'retired';
+${source.slice(start, end)}
+globalThis.__cacheDatabase = cacheDatabase;`,
+    sandbox,
+  );
+
+  await assert.rejects(
+    sandbox.__cacheDatabase(),
+    /transient synchronous open failure/,
+  );
+
+  const recovered = sandbox.__cacheDatabase();
+  assert.equal(openAttempts, 2, 'the rejected open must not stay memoized');
+  const database = { close() {} };
+  openRequests[0].result = database;
+  openRequests[0].onsuccess();
+  assert.equal(await recovered, database);
+});
+
 test('warm chat navigation paints before cache or network work', async () => {
   const source = await applicationSource();
   const openSession = functionSource(

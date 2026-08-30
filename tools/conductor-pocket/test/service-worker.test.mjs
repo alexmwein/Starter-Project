@@ -69,6 +69,7 @@ async function loadWorker({
   fetchImpl,
   failInstall = false,
   failedCacheDeletes = new Set(),
+  clients = [],
   source = SERVICE_WORKER_SOURCE,
 } = {}) {
   const listeners = new Map();
@@ -86,7 +87,7 @@ async function loadWorker({
         claimCalls += 1;
       },
       async matchAll() {
-        return [];
+        return clients;
       },
     },
     addEventListener(type, listener) {
@@ -269,6 +270,28 @@ test('activation claims clients when an old Pocket cache cannot be deleted', asy
   assert.equal(worker.caches.stores.has(failedCache), true);
   assert.equal(worker.caches.stores.has(removableCache), false);
   assert.equal(worker.caches.stores.has('unrelated-app-cache'), true);
+});
+
+test('activation escapes a stale document that already spent its reload cap', async () => {
+  const messages = [];
+  const worker = await loadWorker({
+    clients: [{
+      url: `${ORIGIN}/?appRevision=${encodeURIComponent(SHELL_REVISION)}`,
+      postMessage(message) {
+        messages.push(message);
+      },
+    }],
+    fetchImpl: async () => {
+      throw new Error('activation_must_not_fetch');
+    },
+  });
+  await worker.caches.open(CURRENT_CACHE);
+
+  await dispatchLifecycle(worker.listeners.get('activate'));
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, 'shell-activated');
+  assert.equal(messages[0].revision, `${SHELL_REVISION}:activated`);
 });
 
 test('script and style requests reject cached or network HTML', async () => {
