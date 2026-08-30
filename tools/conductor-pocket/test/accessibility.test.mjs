@@ -2007,6 +2007,222 @@ globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
   assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
 });
 
+test('authoritative send resolution recovers a false cheap readiness streak', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __cheapReads: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__cheapReads += 1;
+  globalThis.__now += 300;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  return { kind: 'authoritative-send' };
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  const result = sandbox.__waitForComposerSend(123, 'draft', {});
+  assert.equal(result.kind, 'authoritative-send');
+  assert.ok(sandbox.__cheapReads > 0);
+  assert.equal(sandbox.__fullReads, 1);
+  assert.ok(sandbox.__now < 40_000);
+});
+
+test('a real send control stall leaves time for certified recovery', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 500;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  fail('send_unavailable', 'fixture missing control');
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.ok(sandbox.__now < 40_000);
+  assert.ok(sandbox.__fullReads > 0);
+  assert.ok(sandbox.__fullReads <= 8);
+});
+
+test('authoritative send fallback propagates a changed draft immediately', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 500;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => fail('draft_changed', 'fixture changed draft');
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'draft_changed',
+  );
+  assert.ok(sandbox.__now < 40_000);
+});
+
+test('an expensive cheap probe cannot start authoritative work past the deadline', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = () => {};
+sendControlLikelyReady = () => {
+  globalThis.__now = 40_001;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  return { kind: 'late-send' };
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'deadline_exceeded',
+  );
+  assert.equal(sandbox.__fullReads, 0);
+});
+
+test('cheap and authoritative disagreement cannot create a structural hot loop', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 20;
+  return true;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  fail('send_unavailable', 'fixture disagreement');
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.ok(sandbox.__fullReads > 0);
+  assert.ok(sandbox.__fullReads <= 8);
+});
+
 test('send readiness propagates structured validation failures immediately', async () => {
   const source = await fs.readFile(
     new URL('../src/conductor-input.js', import.meta.url),

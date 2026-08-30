@@ -141,6 +141,9 @@ function assertDeadline(deadlineAt) {
 
 const TRANSIENT_READ_ATTEMPTS = 5;
 const TRANSIENT_READ_DELAY_SECONDS = 0.05;
+const SEND_CONTROL_RECOVERY_WINDOW_MS = 6_000;
+const SEND_CONTROL_AUTHORITATIVE_DELAY_MS = 750;
+const SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS = 1_500;
 
 // Conductor re-renders its transcript continuously while an agent streams, so
 // an AX element is routinely replaced between the moment a walk enumerates it
@@ -1779,10 +1782,10 @@ function waitForExactDraft(pid, expectedDraft, routeLease) {
 // bulk-reads the class lists of its children in a SINGLE Apple Event, so the
 // probe costs a handful of round trips instead of a full walk.
 //
-// It is deliberately NOT a proof: a true result only ends the wait, and the
-// caller then runs the complete resolveComposerSend plus route proof at the
-// decision point before anything is pressed. A false negative just costs one
-// more 20ms poll.
+// It is deliberately NOT a proof: a true result only ends the cheap wait, and
+// the caller then runs the complete resolveComposerSend plus route proof at the
+// decision point before anything is pressed. A false streak receives a bounded
+// authoritative read in waitForComposerSend.
 function sendControlLikelyReady(pid, expectedDraft) {
   let process;
   try {
@@ -1857,26 +1860,52 @@ function waitForComposerSend(
   // multiplied into 250 iterations x 5 transient retries x a full route walk:
   // minutes of spinning, and one orphaned helper was observed still running
   // 2.5 minutes after the transport gave up at 45s. The poll now reads only
-  // the focused composer and the Send control (~100ms), and the full route
-  // complete Send resolution runs once when the button is actually present.
+  // the focused composer and the Send control (~100ms). A rate limited full
+  // Send resolution recovers an incomplete cheap Accessibility snapshot.
   // The caller then performs its two pinned route proofs immediately before
   // the press. Repeating one of those proofs here only produced a result that
   // the caller discarded, at a measured cost of about two seconds.
   const deadlineAt = automationDeadline();
+  const waitStartedAt = Date.now();
+  const recoveryDeadlineAt = Math.min(
+    deadlineAt ?? Number.POSITIVE_INFINITY,
+    waitStartedAt + SEND_CONTROL_RECOVERY_WINDOW_MS,
+  );
+  let nextAuthoritativeAt =
+    waitStartedAt + SEND_CONTROL_AUTHORITATIVE_DELAY_MS;
   // Each iteration's send_unavailable is swallowed by design (the button may
   // simply not be ready yet), which meant a loop that died of exhaustion or
   // deadline reported nothing about WHY no iteration ever succeeded. Carry the
   // last swallowed failure into the terminal one.
   let lastSwallowed = null;
   for (let attempt = 0; attempt < 250; attempt += 1) {
-    if (deadlineAt !== null && Date.now() >= deadlineAt) {
+    const sampledAt = Date.now();
+    if (deadlineAt !== null && sampledAt >= deadlineAt) {
       fail(
         'deadline_exceeded',
         `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
       );
     }
+    if (sampledAt >= recoveryDeadlineAt) {
+      fail(
+        'send_unavailable',
+        `press-wait recovery; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
     assertInputLease(inputLease);
-    if (sendControlLikelyReady(pid, expectedDraft)) {
+    const likelyReady = sendControlLikelyReady(pid, expectedDraft);
+    const afterProbeAt = Date.now();
+    if (deadlineAt !== null && afterProbeAt >= deadlineAt) {
+      fail(
+        'deadline_exceeded',
+        `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
+    const authoritativeDue = afterProbeAt >= nextAuthoritativeAt;
+    const firstLikelyResolution = likelyReady && lastSwallowed === null;
+    if (firstLikelyResolution || authoritativeDue) {
+      nextAuthoritativeAt =
+        afterProbeAt + SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS;
       try {
         return withTransientReadRetry(() => {
           const process = validateFocusedComposer(pid, expectedDraft);
