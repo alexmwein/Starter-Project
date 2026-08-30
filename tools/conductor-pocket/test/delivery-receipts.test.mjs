@@ -381,6 +381,93 @@ test('a retried delivery remains the owner of its original draft claim', () => {
   assert.equal(blocked.value?.message?.deliveryAttempt, 2);
 });
 
+test('a reconciled delivery releases its draft claim before an intentional identical send', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const firstMessage = persistedMessage({
+    id: 'optimistic:resolved-draft-owner-123456789',
+    idempotencyKey: 'resolved-draft-owner-key-123456789',
+    activeDeliveryKey: 'resolved-draft-owner-key-123456789',
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+    receiptObservedAt: 1_777_777_778_000,
+  });
+  const snapshot = {
+    version: 2,
+    messages: [firstMessage],
+    tombstones: [],
+    draftClaims: [{
+      sessionId: firstMessage.sessionId,
+      draftRevision: 'resolved-draft-revision-123456789',
+      payloadFingerprint: 'resolved-draft-payload-123456789',
+      messageId: firstMessage.id,
+      activeDeliveryKey: firstMessage.activeDeliveryKey,
+      deliveryAttempt: firstMessage.deliveryAttempt,
+      at: 1_777_777_777_000,
+    }],
+  };
+  const expired = transition(
+    snapshot,
+    {
+      type: 'expire-receipt',
+      message: firstMessage,
+      observedAt: firstMessage.receiptObservedAt,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+  const secondMessage = persistedMessage({
+    id: 'optimistic:later-identical-send-123456789',
+    idempotencyKey: 'later-identical-send-key-123456789',
+    activeDeliveryKey: 'later-identical-send-key-123456789',
+    delivery: 'delivering',
+  });
+  const second = transition(
+    expired.snapshot,
+    {
+      type: 'claim-draft-send',
+      sessionId: secondMessage.sessionId,
+      draftRevision: 'later-identical-draft-revision-123456789',
+      payloadFingerprint: 'resolved-draft-payload-123456789',
+      message: secondMessage,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_780_000 },
+  );
+
+  assert.equal(expired.value?.id, firstMessage.id);
+  assert.deepEqual(expired.snapshot.draftClaims, []);
+  assert.equal(second.value?.id, secondMessage.id);
+});
+
+test('snapshot normalization clears a legacy draft claim whose delivery already resolved', () => {
+  const ownerId = 'optimistic:legacy-resolved-owner-123456789';
+  const normalized = deliveryReceipts.pendingDeliverySnapshotTransition(
+    {
+      version: 2,
+      messages: [],
+      tombstones: [{
+        id: ownerId,
+        activeDeliveryKey: 'legacy-resolved-owner-key-123456789',
+        deliveryAttempt: 1,
+        action: 'resolved',
+        at: 1_777_777_777_000,
+      }],
+      draftClaims: [{
+        sessionId: 'session-1',
+        draftRevision: 'legacy-resolved-revision-123456789',
+        payloadFingerprint: 'legacy-resolved-payload-123456789',
+        messageId: ownerId,
+        activeDeliveryKey: 'legacy-resolved-owner-key-123456789',
+        deliveryAttempt: 1,
+        at: 1_777_777_777_000,
+      }],
+    },
+    { type: 'mutate' },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.deepEqual(normalized.snapshot.draftClaims, []);
+});
+
 test('deleting a definitely unsent legacy delivery releases its matching payload claim', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const message = persistedMessage({
@@ -920,6 +1007,27 @@ test('the browser wires shared delivery authority before mutating visible state'
       automatic.indexOf("message.delivery = 'confirming'"),
     'automatic recovery must read shared authority before changing status',
   );
+});
+
+test('manual discovery of a pending send immediately resumes recovery controls', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const verifyStart = js.indexOf('async function verifyTerminalDeliveryAction(message)');
+  const verifyEnd = js.indexOf('async function readAuthoritativePendingDeliveryRequired', verifyStart);
+  const checkStart = js.indexOf('async function checkDeliveryNow(message)');
+  const checkEnd = js.indexOf('function checkDelivery(message', checkStart);
+  const verify = js.slice(verifyStart, verifyEnd);
+  const check = js.slice(checkStart, checkEnd);
+
+  for (const body of [verify, check]) {
+    const pendingStart = body.indexOf("if (disposition === 'pending')");
+    assert.ok(pendingStart >= 0, 'the pending status branch must exist');
+    const pending = body.slice(pendingStart);
+    assert.match(pending, /message\.delivery = 'confirming'/);
+    assert.match(pending, /void checkDelivery\(message, \{ force: true \}\)/);
+  }
 });
 
 test('the client receipt parser preserves body aborts and rejects malformed success', async () => {
@@ -1501,10 +1609,10 @@ test('failed terminal verification reaches one visible action path', async () =>
   const check = js.slice(checkStart, checkEnd);
   assert.match(check, /requestDeliveryStatus\(message\)/);
   assert.match(check, /terminalDeliveryActionDisposition\(delivery\)/);
-  assert.doesNotMatch(
-    check,
-    /checkDelivery\(message/,
-    'manual Check must not enqueue another two minute recovery pass',
+  assert.equal(
+    (check.match(/checkDelivery\(message, \{ force: true \}\)/g) || []).length,
+    1,
+    'manual Check may resume recovery only after the server proves the send is pending',
   );
   assert.match(js, /activeAction === 'retry' \? 'Checking…' : 'Retry'/);
   assert.match(js, /click: \(\) => void checkDeliveryNow\(message\)/);
@@ -1548,4 +1656,23 @@ test('manual delivery actions cancel stale automatic recovery work', async () =>
       `${functionName} must cancel background recovery first`,
     );
   }
+});
+
+test('a forced recovery request survives the cancelled recovery it replaces', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('function checkDelivery(message');
+  const end = js.indexOf('async function checkDeliveryOnce', start);
+  const coordinator = js.slice(start, end);
+
+  assert.match(
+    coordinator,
+    /if \(existing\) \{[\s\S]*existing\.cancelled && force[\s\S]*existing\.restartRequested = true[\s\S]*return existing\.operation/,
+  );
+  assert.match(
+    coordinator,
+    /const restart =[\s\S]*entry\.restartRequested === true[\s\S]*if \(restart\) \{[\s\S]*void checkDelivery\(entry\.message, \{ force: true \}\)/,
+  );
 });

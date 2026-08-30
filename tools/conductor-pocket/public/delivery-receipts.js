@@ -193,6 +193,11 @@ function normalizePendingSnapshot(raw, sanitize, now) {
     .filter(Boolean)
     .sort((left, right) => right.at - left.at)
     .slice(0, TERMINAL_TOMBSTONE_LIMIT);
+  const resolvedMessageIds = new Set(
+    tombstones
+      .filter((item) => item.action === 'resolved')
+      .map((item) => item.id),
+  );
   const draftClaims = (Array.isArray(raw?.draftClaims) ? raw.draftClaims : [])
     .map((value) => {
       const sessionId = authorityString(value?.sessionId, 300);
@@ -230,6 +235,9 @@ function normalizePendingSnapshot(raw, sanitize, now) {
       return claim;
     })
     .filter(Boolean)
+    .filter(
+      (claim) => !claim.messageId || !resolvedMessageIds.has(claim.messageId),
+    )
     .sort((left, right) => right.at - left.at)
     .slice(0, DRAFT_CLAIM_LIMIT);
   return {
@@ -516,6 +524,9 @@ export function pendingDeliverySnapshotTransition(
     }
     snapshot.messages.splice(index, 1);
     addTerminalTombstone(snapshot, candidate, 'resolved', now);
+    snapshot.draftClaims = snapshot.draftClaims.filter(
+      (claim) => !draftClaimOwnsMessage(claim, candidate),
+    );
     return { snapshot, value: candidate };
   }
   if (
