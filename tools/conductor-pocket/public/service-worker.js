@@ -1,23 +1,23 @@
-const SHELL_REVISION = '0.2.0-pocket-0831-20260830';
+const SHELL_REVISION = '0.2.0-pocket-storage-selfheal-20260830';
 const CACHE = `conductor-pocket-shell-${SHELL_REVISION}`;
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-pocket-0831-20260830',
-  '/app.js?v=0.2.0-pocket-0831-20260830',
-  '/bootstrap-recovery.js?v=0.2.0-pocket-0831-20260830',
-  '/delivery-receipts.js?v=0.2.0-pocket-0831-20260830',
-  '/draft-conflict.js?v=0.2.0-pocket-0831-20260830',
-  '/usage-state.js?v=0.2.0-pocket-0831-20260830',
-  '/app-update.js?v=0.2.0-pocket-0831-20260830',
-  '/http.js?v=0.2.0-pocket-0831-20260830',
-  '/session-lifecycle.js?v=0.2.0-pocket-0831-20260830',
-  '/image-attachments.js?v=0.2.0-pocket-0831-20260830',
-  '/live-refresh.js?v=0.2.0-pocket-0831-20260830',
-  '/read-state.js?v=0.2.0-pocket-0831-20260830',
-  '/rich-text.js?v=0.2.0-pocket-0831-20260830',
-  '/transcript-focus.js?v=0.2.0-pocket-0831-20260830',
-  '/swipe-navigation.js?v=0.2.0-pocket-0831-20260830',
+  '/app.css?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/app.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/bootstrap-recovery.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/delivery-receipts.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/draft-conflict.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/usage-state.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/app-update.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/http.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/session-lifecycle.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/image-attachments.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/live-refresh.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/read-state.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/rich-text.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/transcript-focus.js?v=0.2.0-pocket-storage-selfheal-20260830',
+  '/swipe-navigation.js?v=0.2.0-pocket-storage-selfheal-20260830',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -158,6 +158,24 @@ self.addEventListener('install', (event) => {
   );
 });
 
+function activationRevisionForClient(clientUrl) {
+  try {
+    const attemptedRevision = new URL(clientUrl).searchParams.get(
+      'appRevision',
+    );
+    if (attemptedRevision === SHELL_REVISION) {
+      // Older Pocket shells cap retries by revision. If an old worker served
+      // its cached document after a reload, use a one-time activation token so
+      // that old coordinator can safely try again now that this worker owns the
+      // complete new shell.
+      return `${SHELL_REVISION}:activated`;
+    }
+  } catch {
+    // A malformed client URL still receives the ordinary revision signal.
+  }
+  return SHELL_REVISION;
+}
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
@@ -179,7 +197,7 @@ self.addEventListener('activate', (event) => {
       for (const client of windows) {
         client.postMessage({
           type: 'shell-activated',
-          revision: SHELL_REVISION,
+          revision: activationRevisionForClient(client.url),
         });
       }
     })(),
