@@ -17,7 +17,6 @@ const COMPOSER_CLASSES = [
   'ProseMirror',
   'composer-tiptap-editor',
 ];
-const SEND_POSITION_CLASS = 'ml-1';
 const SEND_ACTIVE_CLASSES = [
   'bg-foreground',
   'hover:bg-foreground/80',
@@ -143,7 +142,8 @@ const TRANSIENT_READ_ATTEMPTS = 5;
 const TRANSIENT_READ_DELAY_SECONDS = 0.05;
 const SEND_CONTROL_RECOVERY_WINDOW_MS = 6_000;
 const SEND_CONTROL_AUTHORITATIVE_DELAY_MS = 750;
-const SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS = 1_500;
+const SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS = 3_000;
+const SEND_CONTROL_CERTIFICATION_RESERVE_MS = 8_000;
 
 // Conductor re-renders its transcript continuously while an agent streams, so
 // an AX element is routinely replaced between the moment a walk enumerates it
@@ -1657,7 +1657,6 @@ function isComposerSendButton(candidate, preceding, requireSpeechAnchor = true) 
       candidate.role() === 'AXButton' &&
       candidate.enabled() === true &&
       Array.isArray(classes) &&
-      classes.includes(SEND_POSITION_CLASS) &&
       SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
       NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
       (!requireSpeechAnchor || isSpeechControl(preceding)) &&
@@ -1721,10 +1720,11 @@ function resolveComposerSend(process, expectedDraft) {
     // delivered draft failing with `buttons=0` until the deadline. The anchor
     // still runs first so it keeps working the moment the label returns; the
     // fallback drops ONLY the label requirement and keeps every discriminating
-    // condition (position class, active classes, none of the disabled-state
-    // classes, enabled, exactly one press action), and it is accepted ONLY
-    // when it identifies exactly one candidate, so ambiguity still fails
-    // closed rather than pressing a guess.
+    // condition (active classes, none of the disabled-state classes, enabled,
+    // exactly one press action), and it is accepted ONLY when it identifies
+    // exactly one candidate, so ambiguity still fails closed rather than
+    // pressing a guess. Conductor 0.83 removed the old ml-1 layout class from
+    // this control, so layout is deliberately not part of the identity proof.
     buttons = composerElements.filter((candidate, index) =>
       isComposerSendButton(candidate, composerElements[index - 1], false),
     );
@@ -1835,7 +1835,6 @@ function sendControlLikelyReady(pid, expectedDraft) {
     for (const classes of classGroups) {
       if (!Array.isArray(classes)) continue;
       if (
-        classes.includes(SEND_POSITION_CLASS) &&
         SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
         NON_SEND_CLASSES.every((name) => !classes.includes(name))
       ) {
@@ -1868,8 +1867,13 @@ function waitForComposerSend(
   const deadlineAt = automationDeadline();
   const waitStartedAt = Date.now();
   const recoveryDeadlineAt = Math.min(
-    deadlineAt ?? Number.POSITIVE_INFINITY,
     waitStartedAt + SEND_CONTROL_RECOVERY_WINDOW_MS,
+    deadlineAt === null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(
+          waitStartedAt,
+          deadlineAt - SEND_CONTROL_CERTIFICATION_RESERVE_MS,
+        ),
   );
   let nextAuthoritativeAt =
     waitStartedAt + SEND_CONTROL_AUTHORITATIVE_DELAY_MS;
@@ -1886,7 +1890,7 @@ function waitForComposerSend(
         `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
       );
     }
-    if (sampledAt >= recoveryDeadlineAt) {
+    if (lastSwallowed && sampledAt >= recoveryDeadlineAt) {
       fail(
         'send_unavailable',
         `press-wait recovery; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
@@ -1901,22 +1905,33 @@ function waitForComposerSend(
         `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
       );
     }
+    if (!likelyReady && afterProbeAt >= recoveryDeadlineAt) {
+      fail(
+        'send_unavailable',
+        `press-wait recovery; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
     const authoritativeDue = afterProbeAt >= nextAuthoritativeAt;
     const firstLikelyResolution = likelyReady && lastSwallowed === null;
     if (firstLikelyResolution || authoritativeDue) {
-      nextAuthoritativeAt =
-        afterProbeAt + SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS;
       try {
-        return withTransientReadRetry(() => {
-          const process = validateFocusedComposer(pid, expectedDraft);
-          return resolveComposerSend(process, expectedDraft);
-        });
+        return withTransientReadRetry(
+          () => {
+            const process = validateFocusedComposer(pid, expectedDraft);
+            return resolveComposerSend(process, expectedDraft);
+          },
+          (error) => error?.pocketTransientRead === true,
+        );
       } catch (error) {
         // The probe is a hint, not a proof. When the full check disagrees the
         // control simply is not ready yet, so keep polling exactly as before
         // rather than turning a cheap false positive into a failed send.
         if (error?.pocketCode !== 'send_unavailable') throw error;
         lastSwallowed = lastFailure;
+        // Schedule from the end of the authoritative read. A slow AX walk must
+        // not make the next expensive read immediately overdue.
+        nextAuthoritativeAt =
+          Date.now() + SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS;
       }
     }
     delay(0.02);

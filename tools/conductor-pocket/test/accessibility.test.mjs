@@ -726,7 +726,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   ]);
   assert.match(
     inputHelper,
-    /const SEND_POSITION_CLASS = 'ml-1'[\s\S]*const SEND_ACTIVE_CLASSES = \[[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
+    /const SEND_ACTIVE_CLASSES = \[[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
   );
   assert.match(
     inputHelper,
@@ -742,8 +742,9 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function isComposerSendButton[\s\S]*classes\.includes\(SEND_POSITION_CLASS\)[\s\S]*SEND_ACTIVE_CLASSES\.every[\s\S]*NON_SEND_CLASSES\.every[\s\S]*isSpeechControl\(preceding\)[\s\S]*pressActions\.length === 1/,
+    /function isComposerSendButton[\s\S]*SEND_ACTIVE_CLASSES\.every[\s\S]*NON_SEND_CLASSES\.every[\s\S]*isSpeechControl\(preceding\)[\s\S]*pressActions\.length === 1/,
   );
+  assert.doesNotMatch(inputHelper, /SEND_POSITION_CLASS/);
   assert.match(
     inputHelper,
     /QUEUED_EDIT_MARKER = 'Editing queued message'/,
@@ -1004,6 +1005,22 @@ test('Conductor 0.80 send-control policy accepts send/queue and rejects stop tra
     'hover:bg-foreground/80',
   ];
   assert.equal(sandbox.__isComposerSendButton(candidate(active), speech), true);
+  const conductor083Active = [
+    'inline-flex',
+    'h-6',
+    'w-6',
+    'justify-center',
+    'bg-foreground',
+    'hover:bg-foreground/80',
+  ];
+  assert.equal(
+    sandbox.__isComposerSendButton(
+      candidate(conductor083Active),
+      null,
+      false,
+    ),
+    true,
+  );
   const pressAction = { name: () => 'AXPress', perform() {} };
   assert.equal(
     sandbox.__resolveComposerPressAction({ actions: () => [pressAction] }),
@@ -1021,7 +1038,7 @@ test('Conductor 0.80 send-control policy accepts send/queue and rejects stop tra
   assert.equal(sandbox.__isComposerSendButton(candidate(active), speech), true);
   assert.equal(
     sandbox.__isComposerSendButton(
-      candidate(['ml-1', 'border', 'border-border', 'hover:bg-muted']),
+      candidate(['border', 'border-border', 'hover:bg-muted']),
       speech,
     ),
     false,
@@ -1984,6 +2001,27 @@ globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
   assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
   assert.equal(childClassReads, 1);
 
+  const conductor083Child = {
+    attributes: {
+      byName: () => ({
+        value: () => [
+          'inline-flex',
+          'h-6',
+          'w-6',
+          'bg-foreground',
+          'hover:bg-foreground/80',
+        ],
+      }),
+    },
+  };
+  composerChildren = [conductor083Child];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
+
+  composerChildren = [conductor083Child, conductor083Child];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+
+  composerChildren = [child];
+
   const unreadableChild = {
     attributes: {
       byName: () => ({
@@ -2221,6 +2259,50 @@ globalThis.__waitForComposerSend = waitForComposerSend;`,
   );
   assert.ok(sandbox.__fullReads > 0);
   assert.ok(sandbox.__fullReads <= 8);
+});
+
+test('one slow semantic resolver failure leaves time for retry certification', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 25_000,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 800;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  globalThis.__now += 3_000;
+  fail('send_unavailable', 'buttons=0');
+};
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.ok(sandbox.__now <= 32_000, `stopped at ${sandbox.__now}`);
+  assert.equal(sandbox.__fullReads, 1);
 });
 
 test('send readiness propagates structured validation failures immediately', async () => {
