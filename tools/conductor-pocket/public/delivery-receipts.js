@@ -296,6 +296,7 @@ function mergePendingUpserts(
   snapshot,
   upserts,
   removeIds,
+  releaseDraftClaimIds,
   deliveryKeyTransitions,
   deliveryStateTransitions,
   sanitize,
@@ -305,6 +306,9 @@ function mergePendingUpserts(
     snapshot.messages.map((message) => [message.id, message]),
   );
   const removed = new Set(removeIds.filter((id) => typeof id === 'string'));
+  const releasedClaims = new Set(
+    releaseDraftClaimIds.filter((id) => typeof id === 'string'),
+  );
   for (const id of removed) {
     const current = merged.get(id);
     if (current) addTerminalTombstone(snapshot, current, 'resolved', now);
@@ -330,6 +334,11 @@ function mergePendingUpserts(
     );
   }
   snapshot.messages = [...merged.values()];
+  if (releasedClaims.size > 0) {
+    snapshot.draftClaims = snapshot.draftClaims.filter(
+      (claim) => !releasedClaims.has(claim.messageId),
+    );
+  }
 }
 
 export function pendingDeliverySnapshotTransition(
@@ -346,6 +355,9 @@ export function pendingDeliverySnapshotTransition(
       snapshot,
       Array.isArray(command.upserts) ? command.upserts : [],
       Array.isArray(command.removeIds) ? command.removeIds : [],
+      Array.isArray(command.releaseDraftClaimIds)
+        ? command.releaseDraftClaimIds
+        : [],
       Array.isArray(command.deliveryKeyTransitions)
         ? command.deliveryKeyTransitions
         : [],
@@ -372,14 +384,10 @@ export function pendingDeliverySnapshotTransition(
         const samePayload =
           payloadFingerprint &&
           item.payloadFingerprint === payloadFingerprint;
-        if (sameRevision) {
-          return (
-            !payloadFingerprint ||
-            !item.payloadFingerprint ||
-            samePayload
-          );
-        }
-        return samePayload;
+        return (
+          sameRevision &&
+          (!payloadFingerprint || !item.payloadFingerprint || samePayload)
+        );
       },
     );
     if (
@@ -416,7 +424,16 @@ export function pendingDeliverySnapshotTransition(
       },
       ...snapshot.draftClaims,
     ].slice(0, DRAFT_CLAIM_LIMIT);
-    mergePendingUpserts(snapshot, [candidate], [], [], [], sanitize, now);
+    mergePendingUpserts(
+      snapshot,
+      [candidate],
+      [],
+      [],
+      [],
+      [],
+      sanitize,
+      now,
+    );
     return { snapshot, value: candidate };
   }
   if (command?.type === 'claim-terminal') {
@@ -428,6 +445,10 @@ export function pendingDeliverySnapshotTransition(
       (candidate) => candidate.id === command.message?.id,
     );
     const candidate = index >= 0 ? snapshot.messages[index] : null;
+    const nextDeliveryKey =
+      action === 'retry'
+        ? authorityString(command.nextDeliveryKey, 200)
+        : null;
     const matches =
       candidate?.delivery === 'failed' &&
       deliveryIdentityMatches(candidate, command.message) &&
@@ -435,7 +456,8 @@ export function pendingDeliverySnapshotTransition(
       (action === 'delete' ||
         action === 'edit' ||
         candidate.definitelyUnsent === true) &&
-      (action !== 'retry' || candidate.retrySafe === true);
+      (action !== 'retry' ||
+        (candidate.retrySafe === true && nextDeliveryKey));
     if (!matches) return { snapshot, value: null };
     if (action === 'edit') {
       const claimToken = authorityString(command.claimToken, 200);
@@ -463,6 +485,10 @@ export function pendingDeliverySnapshotTransition(
     }
     const claimed = {
       ...candidate,
+      ...(candidate.replaceDraft === true
+        ? { replaceIdempotencyKey: nextDeliveryKey }
+        : { idempotencyKey: nextDeliveryKey }),
+      activeDeliveryKey: nextDeliveryKey,
       delivery: 'delivering',
       deliveryPhase: null,
       retrySafe: false,
@@ -516,6 +542,9 @@ export function pendingDeliverySnapshotTransition(
     }
     snapshot.messages.splice(index, 1);
     addTerminalTombstone(snapshot, candidate, 'resolved', now);
+    snapshot.draftClaims = snapshot.draftClaims.filter(
+      (claim) => !draftClaimOwnsMessage(claim, candidate),
+    );
     return { snapshot, value: candidate };
   }
   if (

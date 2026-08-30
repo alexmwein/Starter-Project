@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import vm from 'node:vm';
 import {
   AccessibilityTransport,
+  innerAutomationDeadlineAt,
   mapAutomationError,
   parseResult,
 } from '../src/accessibility.mjs';
@@ -59,6 +60,29 @@ test('accessibility transport rejects invalid messages before UI automation', as
       message: '\ud800',
     }),
     { ok: false, code: 'message_invalid', safeToRetry: true },
+  );
+});
+
+test('the nested JXA deadline always expires before its outer transport timeout', () => {
+  const now = 1_785_093_000_000;
+  for (const timeoutMs of [1_000, 1_001, 4_999, 5_000, 45_000]) {
+    const innerDeadline = innerAutomationDeadlineAt(now, timeoutMs);
+    assert.ok(innerDeadline > now);
+    assert.ok(
+      innerDeadline < now + timeoutMs,
+      `inner deadline ${innerDeadline - now} must precede ${timeoutMs}`,
+    );
+  }
+  assert.equal(innerAutomationDeadlineAt(now, 45_000), now + 40_000);
+});
+
+test('the release check compiles the AppleScript automation entrypoint', async () => {
+  const packageJson = JSON.parse(
+    await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  );
+  assert.match(
+    packageJson.scripts.check,
+    /\/usr\/bin\/osacompile -o \/dev\/null src\/conductor-send\.applescript/,
   );
 });
 
@@ -1555,6 +1579,91 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
 
   assert.doesNotMatch(`${appleScript}\n${inputHelper}`, /clipboard|NSPasteboard/i);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
+});
+
+test('whole-message AX delivery never overwrites or clears a newer Mac draft', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __composerValue: '',
+    __leaseValid: true,
+    __readFailureAfterWrite: false,
+    __writes: [],
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+const fixtureFocused = {};
+Object.defineProperty(fixtureFocused, 'value', {
+  get() { return globalThis.__composerValue; },
+  set(value) {
+    globalThis.__composerValue = value;
+    globalThis.__writes.push(value);
+  },
+});
+const fixtureProcess = {
+  attributes: {
+    byName() {
+      return { value: () => fixtureFocused };
+    },
+  },
+};
+validateFocusedComposer = (_pid, expectedDraft) => {
+  if (
+    globalThis.__readFailureAfterWrite &&
+    globalThis.__writes.length > 0
+  ) {
+    globalThis.__composerValue = 'new Mac text';
+    throw new Error('transient AX read');
+  }
+  if (
+    typeof expectedDraft === 'string' &&
+    globalThis.__composerValue !== expectedDraft
+  ) fail('draft_changed');
+  return fixtureProcess;
+};
+focusedDraft = () => globalThis.__composerValue;
+assertInputLease = () => {
+  if (!globalThis.__leaseValid) fail('user_input_active');
+};
+delay = () => {};
+globalThis.__deliverWholeMessage = deliverWholeMessage;`,
+    sandbox,
+  );
+
+  sandbox.__composerValue = 'new Mac text';
+  assert.equal(
+    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
+    false,
+  );
+  assert.equal(sandbox.__composerValue, 'new Mac text');
+  assert.deepEqual(sandbox.__writes, []);
+
+  sandbox.__composerValue = '';
+  sandbox.__leaseValid = false;
+  assert.equal(
+    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
+    false,
+  );
+  assert.equal(sandbox.__composerValue, '');
+  assert.deepEqual(sandbox.__writes, []);
+
+  sandbox.__leaseValid = true;
+  sandbox.__readFailureAfterWrite = true;
+  assert.equal(
+    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
+    false,
+  );
+  assert.equal(sandbox.__composerValue, 'new Mac text');
+  assert.deepEqual(sandbox.__writes, ['phone text']);
 });
 
 test('Pocket makes code and primary replies directly copyable on iPhone', async () => {

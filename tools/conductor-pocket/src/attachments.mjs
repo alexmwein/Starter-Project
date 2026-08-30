@@ -28,6 +28,7 @@ const POCKET_LEDGER_NAME = '.conductor-pocket.json';
 const POCKET_LEDGER_KIND = 'conductor-pocket-image';
 const POCKET_LEDGER_VERSION = 1;
 const MAX_LEDGER_BYTES = 16 * 1024;
+const MAX_RETENTION_CLAIMS = 64;
 const JANITOR_INTERVAL_MS = 5 * 60 * 1000;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const SALT_PATTERN = /^[A-Za-z0-9_-]{22}$/;
@@ -646,6 +647,14 @@ function validateAttachmentIds(ids) {
   return ids;
 }
 
+function validateRetentionClaim(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !HASH_PATTERN.test(value)) {
+    throw attachmentError(400, 'attachment_retention_claim_invalid');
+  }
+  return value;
+}
+
 function positiveInteger(value, maximum) {
   return (
     Number.isSafeInteger(value) &&
@@ -742,6 +751,8 @@ function ledgerForRecord(record) {
         }
       : null,
     retained: record.retained,
+    legacyRetained: record.legacyRetained === true,
+    retentionClaims: [...(record.retentionClaims || [])],
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
   };
@@ -938,6 +949,13 @@ async function readVerifiedPocketImage(filePath, metadata) {
 }
 
 function validLedgerShape(ledger) {
+  const retentionClaims = Array.isArray(ledger?.retentionClaims)
+    ? ledger.retentionClaims
+    : [];
+  const legacyRetained =
+    typeof ledger?.legacyRetained === 'boolean'
+      ? ledger.legacyRetained
+      : ledger?.retained === true && retentionClaims.length === 0;
   return Boolean(
     ledger &&
       typeof ledger === 'object' &&
@@ -970,6 +988,17 @@ function validLedgerShape(ledger) {
           maximumDimension: THUMBNAIL_DIMENSION,
         })) &&
       typeof ledger.retained === 'boolean' &&
+      (ledger.legacyRetained == null ||
+        typeof ledger.legacyRetained === 'boolean') &&
+      (ledger.retentionClaims == null ||
+        (retentionClaims.length <= MAX_RETENTION_CLAIMS &&
+          new Set(retentionClaims).size === retentionClaims.length &&
+          retentionClaims.every(
+            (claim) =>
+              typeof claim === 'string' && HASH_PATTERN.test(claim),
+          ))) &&
+      ledger.retained ===
+        (legacyRetained || retentionClaims.length > 0) &&
       Number.isSafeInteger(ledger.createdAt) &&
       ledger.createdAt > 0 &&
       Number.isSafeInteger(ledger.expiresAt) &&
@@ -1112,6 +1141,13 @@ async function loadPocketRecord(storage, id) {
     uploadFingerprintHash: ledger.upload.fingerprintHash,
     uploadExpiresAt: ledger.upload.expiresAt,
     retained: ledger.retained,
+    legacyRetained:
+      typeof ledger.legacyRetained === 'boolean'
+        ? ledger.legacyRetained
+        : ledger.retained && !ledger.retentionClaims?.length,
+    retentionClaims: Array.isArray(ledger.retentionClaims)
+      ? [...ledger.retentionClaims]
+      : [],
     createdAt: ledger.createdAt,
     expiresAt: ledger.expiresAt,
     directoryDevice: directoryStat.dev,
@@ -1477,6 +1513,8 @@ export class AttachmentManager {
         uploadFingerprintHash: fingerprintHash,
         uploadExpiresAt: now + UPLOAD_TTL_MS,
         retained: false,
+        legacyRetained: false,
+        retentionClaims: [],
         createdAt: now,
         expiresAt: now + UNUSED_ATTACHMENT_TTL_MS,
       };
@@ -1602,6 +1640,7 @@ export class AttachmentManager {
       deviceId,
       sessionId,
       workspacePath,
+      retentionClaim = null,
     },
   ) {
     return this.#transitionRetention(ids, {
@@ -1609,6 +1648,7 @@ export class AttachmentManager {
       sessionId,
       workspacePath,
       retained: true,
+      retentionClaim,
     });
   }
 
@@ -1618,6 +1658,7 @@ export class AttachmentManager {
       deviceId,
       sessionId,
       workspacePath,
+      retentionClaim = null,
     },
   ) {
     return this.#transitionRetention(ids, {
@@ -1625,7 +1666,52 @@ export class AttachmentManager {
       sessionId,
       workspacePath,
       retained: false,
+      retentionClaim,
     });
+  }
+
+  async releaseAfterFinalFailure(
+    retentionClaim,
+    {
+      workspacePaths = [],
+    } = {},
+  ) {
+    const claim = validateRetentionClaim(retentionClaim);
+    if (!Array.isArray(workspacePaths)) {
+      throw attachmentError(400, 'workspace_path_unavailable');
+    }
+    await this.sweepWorkspaces(workspacePaths);
+    let released = 0;
+    for (const record of [...this.#records.values()]) {
+      if (!record.retentionClaims?.includes(claim)) continue;
+      await this.#withLifecycleLocks([recordKey(record)], async () => {
+        const fresh = await loadPocketRecord(
+          {
+            workspace: record.workspacePath,
+            attachmentRoot: record.attachmentRoot,
+          },
+          record.id,
+        );
+        if (!fresh?.retentionClaims.includes(claim)) return;
+        const retentionClaims = fresh.retentionClaims.filter(
+          (value) => value !== claim,
+        );
+        const retained =
+          fresh.legacyRetained === true || retentionClaims.length > 0;
+        const updated = {
+          ...fresh,
+          retained,
+          retentionClaims,
+          expiresAt:
+            this.#now() +
+            (retained ? UPLOAD_TTL_MS : UNUSED_ATTACHMENT_TTL_MS),
+        };
+        await writeAtomicLedger(updated);
+        this.#registerRecord(updated);
+        released += 1;
+      });
+    }
+    return released;
   }
 
   async remove(
@@ -1806,9 +1892,11 @@ export class AttachmentManager {
       sessionId,
       workspacePath,
       retained,
+      retentionClaim = null,
     },
   ) {
     validateAttachmentIds(ids);
+    const claim = validateRetentionClaim(retentionClaim);
     if (ids.length === 0) return [];
     const storage = await this.#prepareStorage(workspacePath);
     await this.#prune({ scan: false });
@@ -1846,15 +1934,36 @@ export class AttachmentManager {
         }
         originals.push(record);
       }
-      const updates = originals.map((original) => ({
-        ...original,
-        retained,
-        expiresAt:
-          this.#now() +
-          (retained
-            ? UPLOAD_TTL_MS
-            : UNUSED_ATTACHMENT_TTL_MS),
-      }));
+      const updates = originals.map((original) => {
+        const retentionClaims = [...(original.retentionClaims || [])];
+        let legacyRetained = original.legacyRetained === true;
+        if (claim) {
+          const existingIndex = retentionClaims.indexOf(claim);
+          if (retained && existingIndex < 0) {
+            if (retentionClaims.length >= MAX_RETENTION_CLAIMS) {
+              throw attachmentError(409, 'attachment_retention_limit');
+            }
+            retentionClaims.push(claim);
+          } else if (!retained && existingIndex >= 0) {
+            retentionClaims.splice(existingIndex, 1);
+          }
+        } else {
+          legacyRetained = retained;
+        }
+        const nextRetained =
+          legacyRetained || retentionClaims.length > 0;
+        return {
+          ...original,
+          retained: nextRetained,
+          legacyRetained,
+          retentionClaims,
+          expiresAt:
+            this.#now() +
+            (nextRetained
+              ? UPLOAD_TTL_MS
+              : UNUSED_ATTACHMENT_TTL_MS),
+        };
+      });
       const preparedUpdates = [];
       const preparedRollbacks = [];
       const committed = [];

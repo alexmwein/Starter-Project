@@ -14,6 +14,8 @@ const inputScriptPath = fileURLToPath(new URL('./conductor-input.js', import.met
 const PHYSICAL_INPUT_COUNTER_COUNT = 16;
 const PRESS_MARKER_MAX_BYTES = 64;
 const PRESS_MARKER_PREFIX = 'conductor-pocket-press-';
+const INNER_AUTOMATION_MAX_GUARD_MS = 5_000;
+const INNER_AUTOMATION_MIN_GUARD_MS = 250;
 const safeToRetryCodes = new Set([
   'accessibility_disabled',
   'composer_changed_pre_send',
@@ -47,6 +49,17 @@ function byteLength(value) {
 
 function safeToRetry(code) {
   return { ok: false, code, safeToRetry: true };
+}
+
+export function innerAutomationDeadlineAt(now, timeoutMs) {
+  const guardMs = Math.min(
+    INNER_AUTOMATION_MAX_GUARD_MS,
+    Math.max(
+      INNER_AUTOMATION_MIN_GUARD_MS,
+      Math.floor(timeoutMs / 4),
+    ),
+  );
+  return now + Math.max(1, timeoutMs - guardMs);
 }
 
 function validProjectName(value) {
@@ -636,7 +649,7 @@ export class AccessibilityTransport {
           // the transport's, so it terminates itself with a structured code
           // and nothing outlives the send.
           POCKET_DEADLINE_AT: String(
-            Date.now() + Math.max(timeoutMs - 5_000, 5_000),
+            innerAutomationDeadlineAt(Date.now(), timeoutMs),
           ),
           POCKET_EXPECTED_DRAFT_BASE64: Buffer.from(
             expectedMacDraft,

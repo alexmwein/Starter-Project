@@ -756,7 +756,7 @@ export class ConductorDatabase {
         LIMIT 32
       `),
       deliveredMessageState: this.#db.prepare(`
-        SELECT role, cancelled_at
+        SELECT role, cancelled_at, turn_id
         FROM session_messages
         WHERE session_id = ? AND rowid = ?
         LIMIT 1
@@ -956,22 +956,36 @@ export class ConductorDatabase {
   }
 
   findImmediateSendRejection(sessionId, message) {
+    let turnId = message?.turnId;
     if (
       typeof sessionId !== 'string' ||
       !message ||
       !Number.isSafeInteger(message.rowId) ||
-      message.rowId <= 0 ||
-      typeof message.turnId !== 'string' ||
-      message.turnId.length === 0
+      message.rowId <= 0
     ) {
       return null;
+    }
+    if (typeof turnId !== 'string' || turnId.length === 0) {
+      const delivered = this.#statements.deliveredMessageState.get(
+        sessionId,
+        message.rowId,
+      );
+      if (
+        !delivered ||
+        delivered.role !== 'user' ||
+        typeof delivered.turn_id !== 'string' ||
+        delivered.turn_id.length === 0
+      ) {
+        return null;
+      }
+      turnId = delivered.turn_id;
     }
     for (const row of this.#statements.eventsAfterMessage.all(
       sessionId,
       message.rowId,
     )) {
       if (row.role === 'user') return null;
-      if (row.turn_id !== message.turnId) continue;
+      if (row.turn_id !== turnId) continue;
       const event = parseJson(row.content);
       if (
         event?.type === 'error' &&

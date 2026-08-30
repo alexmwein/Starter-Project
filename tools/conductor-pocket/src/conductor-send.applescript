@@ -217,7 +217,7 @@ on mainGroupCandidates(rootElements)
 					set candidateElements to {}
 				end try
 				set childCount to count of candidateElements
-				if childCount > 1 then
+				if childCount > 0 then
 					set bulkRoles to missing value
 					try
 						set candidateRoles to role of UI elements of candidate

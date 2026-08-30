@@ -109,12 +109,21 @@ test('a retry clears the collapsed project name from the prior failure', () => {
     {
       type: 'claim-terminal',
       action: 'retry',
+      nextDeliveryKey: 'idempotency-key-retry-123456789',
       message,
     },
     { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
   );
 
   assert.equal(retried.value?.delivery, 'delivering');
+  assert.equal(
+    retried.value?.activeDeliveryKey,
+    'idempotency-key-retry-123456789',
+  );
+  assert.equal(
+    retried.value?.idempotencyKey,
+    'idempotency-key-retry-123456789',
+  );
   assert.equal(retried.value?.errorCode, null);
   assert.equal(retried.value?.errorProjectName, null);
 });
@@ -203,7 +212,7 @@ test('two Pocket windows get one atomic winner for the same visible draft revisi
   assert.equal(secondWindow?.snapshot?.draftClaims?.length, 1);
 });
 
-test('a duplicate draft claim identifies the exact delivery that owns it', () => {
+test('a duplicate draft revision identifies the exact delivery that owns it', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const firstMessage = persistedMessage({
     id: 'optimistic:owned-draft-first-123456789',
@@ -232,7 +241,7 @@ test('a duplicate draft claim identifies the exact delivery that owns it', () =>
   );
   const duplicate = transition(
     first.snapshot,
-    claim(duplicateMessage, 'draft-owned-duplicate-123456789'),
+    claim(duplicateMessage, 'draft-owned-first-123456789'),
     { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
   );
 
@@ -287,6 +296,37 @@ test('editing a definitely unsent delivery releases only its exact draft claim',
   assert.equal(finalized.value?.id, message.id);
   assert.deepEqual(finalized.snapshot.messages, []);
   assert.deepEqual(finalized.snapshot.draftClaims, []);
+});
+
+test('restoring a phone draft can atomically remove its pending claim', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const message = persistedMessage({
+    id: 'optimistic:restored-phone-draft-123456789',
+  });
+  const claimed = transition(
+    [],
+    {
+      type: 'claim-draft-send',
+      sessionId: message.sessionId,
+      draftRevision: 'draft-restored-phone-123456789',
+      payloadFingerprint: 'payload-restored-phone-123456789',
+      message,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
+  );
+  const removed = transition(
+    claimed.snapshot,
+    {
+      type: 'mutate',
+      upserts: [],
+      removeIds: [message.id],
+      releaseDraftClaimIds: [message.id],
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.deepEqual(removed.snapshot.messages, []);
+  assert.deepEqual(removed.snapshot.draftClaims, []);
 });
 
 test('editing an unconfirmed delivery keeps its duplicate protection', () => {
@@ -360,7 +400,12 @@ test('a retried delivery remains the owner of its original draft claim', () => {
   );
   const retried = transition(
     first.snapshot,
-    { type: 'claim-terminal', action: 'retry', message },
+    {
+      type: 'claim-terminal',
+      action: 'retry',
+      nextDeliveryKey: 'idempotency-retried-owner-next-123456789',
+      message,
+    },
     { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
   );
   const blocked = transition(
@@ -368,7 +413,7 @@ test('a retried delivery remains the owner of its original draft claim', () => {
     {
       type: 'claim-draft-send',
       sessionId: duplicate.sessionId,
-      draftRevision: 'draft-retried-owner-second-123456789',
+      draftRevision: 'draft-retried-owner-first-123456789',
       payloadFingerprint: 'payload-retried-owner-123456789',
       message: duplicate,
     },
@@ -432,7 +477,7 @@ test('draft claim conflicts explain the owning delivery without changing layout'
   );
 });
 
-test('two Pocket windows cannot send one visible payload through divergent revisions', () => {
+test('a newly authored draft may intentionally repeat an earlier payload', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const firstMessage = persistedMessage({
     id: 'optimistic:first-payload-123456789',
@@ -484,16 +529,15 @@ test('two Pocket windows cannot send one visible payload through divergent revis
   );
 
   assert.equal(firstWindow.value?.id, firstMessage.id);
-  assert.equal(staleSecondWindow.value?.kind, 'draft-claim-conflict');
-  assert.equal(staleSecondWindow.value?.message?.id, firstMessage.id);
+  assert.equal(staleSecondWindow.value?.id, duplicateMessage.id);
   assert.equal(changedSecondWindow.value?.id, changedMessage.id);
   assert.deepEqual(
     changedSecondWindow.snapshot.messages.map((item) => item.id),
-    [firstMessage.id, changedMessage.id],
+    [firstMessage.id, duplicateMessage.id, changedMessage.id],
   );
 });
 
-test('a visible payload claim blocks divergent revisions for its full durable lifetime', () => {
+test('a payload fingerprint never blocks a different draft revision', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const firstMessage = persistedMessage({
     id: 'optimistic:full-life-first-123456789',
@@ -535,8 +579,7 @@ test('a visible payload claim blocks divergent revisions for its full durable li
     },
   );
 
-  assert.equal(beforeExpiry.value?.kind, 'draft-claim-conflict');
-  assert.equal(beforeExpiry.value?.message?.id, firstMessage.id);
+  assert.equal(beforeExpiry.value?.id, delayedDuplicate.id);
   assert.equal(afterExpiry.value?.id, delayedDuplicate.id);
 });
 

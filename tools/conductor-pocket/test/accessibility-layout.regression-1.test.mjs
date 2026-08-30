@@ -151,6 +151,8 @@ function makeLayout(
     roots = [makeNode(), sidebar, main];
   } else if (kind === 'conductor-0.83.1') {
     roots = [sidebar, makeMainWrapper(main), makeNode(), makeNode()];
+  } else if (kind === 'conductor-0.83.1-single-child') {
+    roots = [sidebar, makeMainWrapper(main, 0), makeNode(), makeNode()];
   } else {
     roots = [sidebar, main, makeNode(), makeNode()];
   }
@@ -227,7 +229,12 @@ test('semantic route discovery supports legacy and current Conductor root layout
     composerSendContext,
   } = await routeHarness();
 
-  for (const kind of ['legacy', 'conductor-0.79', 'conductor-0.83.1']) {
+  for (const kind of [
+    'legacy',
+    'conductor-0.79',
+    'conductor-0.83.1',
+    'conductor-0.83.1-single-child',
+  ]) {
     const state = makeLayout(kind);
     const process = processFor(state);
     const lease = acquireRouteLease(process, target);
@@ -393,6 +400,7 @@ test('AppleScript resolves AX roots semantically instead of by position', async 
     /on isMainGroup\(candidate\)[\s\S]*AXTabGroup[\s\S]*"composer"/,
   );
   assert.match(source, /on mainGroupCandidates\(rootElements\)/);
+  assert.doesNotMatch(source, /if childCount > 1 then/);
   assert.match(
     source,
     /on findSidebarGroup\(workspaceName\)[\s\S]*isMainGroup\(candidate\) is false[\s\S]*getWorkspaceRoute\(workspaceName, candidate\)/,

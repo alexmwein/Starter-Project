@@ -43,6 +43,7 @@ const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
 const SEND_EVENT_TIMESTAMP_SKEW_MS = 250;
+const SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
@@ -400,16 +401,25 @@ export async function reconcileExactUserMessage({
       timeoutMs: candidateTimeoutMs,
       attributionWindowMs,
     });
-  let match = await reconcile(timeoutMs);
+  const attributionDeadline = pressedAt + attributionWindowMs;
+  let attributionExpired = Date.now() > attributionDeadline;
+  let match = await reconcile(attributionExpired ? 0 : timeoutMs);
   if (match) return { state: 'delivered', match };
-  if (Date.now() > pressedAt + attributionWindowMs) {
-    return { state: 'failed' };
-  }
+  attributionExpired = Date.now() > attributionDeadline;
+  let rows;
   try {
-    const rows = database.listUserMessagesAfter(sessionId, afterRowId);
-    if (rows.length === 0) return { state: 'pending' };
+    rows = database.listUserMessagesAfter(sessionId, afterRowId);
   } catch {
-    return { state: 'pending' };
+    return { state: attributionExpired ? 'failed' : 'pending' };
+  }
+  if (rows.length === 0) {
+    if (!attributionExpired) return { state: 'pending' };
+    return {
+      state: 'failed',
+      ...(attributionWindowMs === SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+        ? { definitelyUnsent: true }
+        : {}),
+    };
   }
   match = await reconcile(0);
   return match
@@ -944,25 +954,80 @@ class IdempotencyStore {
               entry.promise = Promise.resolve(delivered);
               await this.#persist();
             }
-            return reconciliation.state;
+            return reconciliation;
           })
           .finally(() => {
             entry.reconciliationPromise = null;
           });
       }
-      const reconciliationState = await entry.reconciliationPromise;
-      if (reconciliationState === 'pending') {
+      const reconciliation = await entry.reconciliationPromise;
+      if (reconciliation.state === 'pending') {
         return { state: 'pending', phase: 'confirming' };
       }
-      if (reconciliationState === 'failed' && !entry.result.ok) {
-        // A failed reconciliation is conclusive: either its attribution
-        // window elapsed or another row made attribution unsafe. Do not scan
-        // the database again for this idempotency key.
-        delete entry.result.recovery;
+      if (reconciliation.state === 'failed' && !entry.result.ok) {
+        if (
+          reconciliation.definitelyUnsent === true &&
+          recovery.attributionWindowMs ===
+            SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+        ) {
+          // The full physical-input recovery window elapsed with no user row.
+          // That restores a safe retry without making the initial five-second
+          // confirmation attempt guess that a delayed row will never arrive.
+          entry.result = {
+            ok: false,
+            code: 'user_input_active',
+            safeToRetry: true,
+          };
+          entry.promise = Promise.resolve(entry.result);
+        } else {
+          // A failed reconciliation is conclusive, but an interfering or
+          // unreadable row cannot prove a retry boundary.
+          delete entry.result.recovery;
+        }
         await this.#persist();
       }
     }
     if (entry.result.ok) {
+      let lateRejection = null;
+      try {
+        if (
+          Number.isSafeInteger(entry.result.rowId) &&
+          entry.result.rowId > 0
+        ) {
+          lateRejection = database.findImmediateSendRejection?.(
+            sessionId,
+            {
+              id: entry.result.messageId || null,
+              rowId: entry.result.rowId,
+            },
+          );
+        }
+      } catch {
+        // An unreadable rejection check cannot revoke a proven row.
+      }
+      if (lateRejection?.code === 'conductor_turn_rejected') {
+        const messageId = entry.result.messageId || null;
+        const rowId = entry.result.rowId || null;
+        entry.result = {
+          ok: false,
+          code: lateRejection.code,
+          safeToRetry: false,
+          ...(messageId && Number.isSafeInteger(rowId)
+            ? { messageId, rowId }
+            : {}),
+        };
+        entry.promise = Promise.resolve(entry.result);
+        await this.#persist();
+        return {
+          state: 'failed',
+          code: entry.result.code,
+          retrySafe: false,
+          final: true,
+          ...(messageId && Number.isSafeInteger(rowId)
+            ? { messageId, rowId }
+            : {}),
+        };
+      }
       let deliveredMessageState = 'visible';
       try {
         if (
@@ -1708,6 +1773,8 @@ export function createPocketServer({
   });
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
+  const activeRequestTasks = new Set();
+  let acceptingMutations = true;
   let mutationQueue = Promise.resolve();
 
   function closePocketEventStreams() {
@@ -1728,12 +1795,55 @@ export function createPocketServer({
   }
 
   function serializeMutation(task) {
-    const pending = mutationQueue.then(task, task);
+    const run = () => {
+      if (!acceptingMutations) {
+        const error = new HttpError(503, 'relay_shutting_down');
+        // A queued send has not crossed the transport boundary. Marking the
+        // error lets the delivery ledger remove its pending entry so the same
+        // phone draft can retry safely after the relay returns.
+        error.deliveryDefinitelyUnsent = true;
+        throw error;
+      }
+      return task();
+    };
+    const pending = mutationQueue.then(run, run);
     mutationQueue = pending.then(
       () => undefined,
       () => undefined,
     );
     return pending;
+  }
+
+  function trackRequestTask(operation) {
+    const tracked = Promise.resolve(operation);
+    activeRequestTasks.add(tracked);
+    void tracked
+      .finally(() => activeRequestTasks.delete(tracked))
+      .catch(() => {});
+    return tracked;
+  }
+
+  async function drainPocketRequests(budgetMs) {
+    const deadline = Date.now() + Math.max(0, budgetMs);
+    while (activeRequestTasks.size > 0) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      let timeout;
+      const settled = await Promise.race([
+        Promise.allSettled([...activeRequestTasks]).then(() => true),
+        new Promise((resolve) => {
+          timeout = setTimeout(() => resolve(false), remaining);
+          timeout.unref?.();
+        }),
+      ]);
+      if (timeout) clearTimeout(timeout);
+      if (!settled) return activeRequestTasks.size === 0;
+    }
+    return true;
+  }
+
+  function beginPocketShutdown() {
+    acceptingMutations = false;
   }
 
   function localAttachmentWorkspacePaths() {
@@ -1742,6 +1852,39 @@ export function createPocketServer({
       return Array.isArray(values) ? values : [];
     } catch {
       return [];
+    }
+  }
+
+  function attachmentRetentionClaim(key) {
+    return deliveryLedgerProof(
+      configStore.value.csrfSecret,
+      'attachment-retention',
+      key,
+    );
+  }
+
+  async function releaseAttachmentsAfterFinalFailure(
+    key,
+    workspacePaths,
+    traceId = null,
+  ) {
+    if (
+      typeof attachmentManager.releaseAfterFinalFailure !== 'function'
+    ) {
+      return;
+    }
+    try {
+      await attachmentManager.releaseAfterFinalFailure(
+        attachmentRetentionClaim(key),
+        {
+          workspacePaths: [...new Set(workspacePaths.filter(Boolean))],
+        },
+      );
+    } catch {
+      recordAudit({
+        ...(traceId ? { traceId } : {}),
+        phase: 'attachment-final-release-failed',
+      });
     }
   }
 
@@ -1763,7 +1906,7 @@ export function createPocketServer({
       });
   });
 
-  const server = http.createServer(async (request, response) => {
+  const handlePocketRequest = async (request, response) => {
     const config = configStore.value;
     let requestPathname = null;
     let deliveryTransportStarted = false;
@@ -2247,10 +2390,21 @@ export function createPocketServer({
         const route = database.getSessionRoute(deliveryStatus[0]);
         if (!route) throw new HttpError(404, 'session_not_found');
         const key = `${auth.device.id}:${idempotencyKey(request)}`;
+        const delivery = await idempotency.status(key, route.id, database);
+        if (
+          delivery.state === 'failed' &&
+          delivery.final === true &&
+          typeof attachmentManager.releaseAfterFinalFailure === 'function'
+        ) {
+          await releaseAttachmentsAfterFinalFailure(key, [
+            route.workspacePath,
+            ...localAttachmentWorkspacePaths(),
+          ]);
+        }
         return sendJson(
           response,
           200,
-          { delivery: await idempotency.status(key, route.id, database) },
+          { delivery },
           config,
         );
       }
@@ -2312,6 +2466,7 @@ export function createPocketServer({
           attachments: selectedAttachments,
         });
         const traceId = randomUUID();
+        const retentionClaim = attachmentRetentionClaim(key);
         const sendStartedAt = Date.now();
         const clientRevision = clientShellRevision(request);
         recordAudit({
@@ -2378,6 +2533,7 @@ export function createPocketServer({
                       deviceId: auth.device.id,
                       sessionId: activeRoute.id,
                       workspacePath: attachmentWorkspace(activeRoute),
+                      retentionClaim,
                     },
                   );
                 } catch {
@@ -2394,6 +2550,7 @@ export function createPocketServer({
                     deviceId: auth.device.id,
                     sessionId: activeRoute.id,
                     workspacePath: attachmentWorkspace(activeRoute),
+                    retentionClaim,
                   },
                 );
                 attachmentsRetained = true;
@@ -2753,6 +2910,18 @@ export function createPocketServer({
                     : attributedTransportFailure
                       ? SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS
                     : SEND_ATTRIBUTION_WINDOW_MS;
+                const confirmationTimeoutMs =
+                  sendResult.code === 'send_interrupted'
+                    ? Math.max(
+                        0,
+                        Math.min(
+                          SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS,
+                          confirmationPressedAt +
+                            SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS -
+                            Date.now(),
+                        ),
+                      )
+                    : SEND_CONFIRMATION_TIMEOUT_MS;
                 await setDeliveryPhase('confirming');
                 const confirmed = await waitForExactUserMessage({
                   database,
@@ -2761,32 +2930,12 @@ export function createPocketServer({
                   exactContent: deliveryMessage,
                   pressedAt: confirmationPressedAt,
                   composerOwned: confirmationComposerOwned,
-                  timeoutMs:
-                    sendResult.code === 'send_interrupted'
-                      ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-                      : SEND_CONFIRMATION_TIMEOUT_MS,
+                  timeoutMs: confirmationTimeoutMs,
                   attributionWindowMs:
                     confirmationAttributionWindowMs,
                 });
                 if (!confirmed) {
                   if (sendResult.code === 'send_interrupted') {
-                    try {
-                      const rows = database.listUserMessagesAfter(
-                        activeRoute.id,
-                        attributionBaseline,
-                      );
-                      if (rows.length === 0) {
-                        const interruptedResult = {
-                          ok: false,
-                          code: 'user_input_active',
-                          safeToRetry: true,
-                        };
-                        await markDefinitelyUnsent();
-                        return interruptedResult;
-                      }
-                    } catch {
-                      // Any unreadable or interfering row keeps the result ambiguous.
-                    }
                     return {
                       ...sendNotConfirmedResult({
                         baselineCursor: attributionBaseline,
@@ -2849,6 +2998,13 @@ export function createPocketServer({
         );
         if (deliveryOperation.joined) deliveryTransportStarted = true;
         const result = await deliveryOperation.promise;
+        if (!result.ok && result.final === true) {
+          await releaseAttachmentsAfterFinalFailure(
+            key,
+            [attachmentWorkspacePath, ...localAttachmentWorkspacePaths()],
+            traceId,
+          );
+        }
         recordAudit({
           traceId,
           phase: 'complete',
@@ -2997,9 +3153,16 @@ export function createPocketServer({
         configStore.value,
       );
     }
+  };
+
+  const server = http.createServer((request, response) => {
+    const operation = handlePocketRequest(request, response);
+    void trackRequestTask(operation).catch(() => {});
   });
 
+  server.beginPocketShutdown = beginPocketShutdown;
   server.closePocketEventStreams = closePocketEventStreams;
+  server.drainPocketRequests = drainPocketRequests;
 
   server.on('close', () => {
     unsubscribe();

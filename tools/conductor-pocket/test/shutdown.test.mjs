@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import test from 'node:test';
 import { AccessibilityTransport } from '../src/accessibility.mjs';
+import { createConfig } from '../src/config.mjs';
+import { createPocketServer } from '../src/server.mjs';
 
 // A dying relay must never orphan an osascript child mid-type: the child
 // survives the parent, finishes the send, and nobody is left to record it.
@@ -17,26 +20,34 @@ test('an idle transport drains immediately and has nothing to kill', async () =>
   assert.equal(transport.killCurrentAutomation(), false);
 });
 
-test('shutdown gates exit on both server close and transport drain, and kills the child on every forced path', async () => {
+test('shutdown seals mutations and gates exit on every accepted request', async () => {
   const source = await fs.readFile(
     new URL('../src/cli.mjs', import.meta.url),
     'utf8',
   );
   const shutdownStart = source.indexOf('const shutdown = () => {');
   assert.ok(shutdownStart >= 0);
-  const block = source.slice(shutdownStart, shutdownStart + 1400);
+  const block = source.slice(shutdownStart, shutdownStart + 1700);
   // Both gates, checked in one place, so a phone that abandoned its
   // connection early cannot let the relay exit under a live automation.
-  assert.match(block, /if \(!serverClosed \|\| !transportDrained\) return/);
+  assert.match(
+    block,
+    /if \(!serverClosed \|\| !transportDrained \|\| !requestsDrained\) return/,
+  );
+  assert.match(block, /server\.beginPocketShutdown\(\);/);
   assert.match(
     block,
     /server\.closePocketEventStreams\?\.\(\);\s*server\.close\(/,
   );
   assert.match(block, /transport\s*\n?\s*\.drain\(SHUTDOWN_DRAIN_MS\)/);
+  assert.match(
+    block,
+    /server\s*\n?\s*\.drainPocketRequests\(SHUTDOWN_DRAIN_MS\)/,
+  );
   // The drain budget covers the 45s automation timeout plus confirmation,
   // and the force deadline sits above the drain, below launchd's SIGKILL.
-  assert.match(source, /const SHUTDOWN_DRAIN_MS = 50_000/);
-  assert.match(source, /const SHUTDOWN_FORCE_EXIT_MS = 55_000/);
+  assert.match(source, /const SHUTDOWN_DRAIN_MS = 55_000/);
+  assert.match(source, /const SHUTDOWN_FORCE_EXIT_MS = 60_000/);
   // Every path that gives up on the drain kills the child first.
   const forceExits = block.match(/killCurrentAutomation\(\)/g) || [];
   assert.ok(forceExits.length >= 3);
@@ -48,6 +59,160 @@ test('shutdown gates exit on both server close and transport drain, and kills th
   assert.doesNotMatch(block, /5_000/);
 });
 
+test('shutdown drains an active send and rejects a queued tab before it can act', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseTransport;
+  let transportStartedResolve;
+  const transportStarted = new Promise((resolve) => {
+    transportStartedResolve = resolve;
+  });
+  const transportGate = new Promise((resolve) => {
+    releaseTransport = resolve;
+  });
+  let closeTabCalls = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'shutdown-device' },
+          csrfToken: 'shutdown-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'shutdown-session',
+          repositoryName: 'Starter-Project',
+          workspaceId: 'shutdown-workspace-id',
+          workspaceName: 'Shutdown',
+          workspacePath: process.cwd(),
+          sandboxProvider: null,
+          title: 'Drain test',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+      listLocalWorkspacePaths() {
+        return [];
+      },
+    },
+    watcher: {
+      subscribe() {
+        return () => {};
+      },
+      stop() {},
+    },
+    attachmentManager: {
+      async sweepWorkspaces() {},
+      async resolveForSend() {
+        return [];
+      },
+      stop() {},
+    },
+    transport: {
+      async send() {
+        transportStartedResolve();
+        await transportGate;
+        return {
+          ok: false,
+          code: 'draft_conflict',
+          safeToRetry: true,
+          draftBase64: Buffer.from('Mac draft').toString('base64'),
+        };
+      },
+      async closeTab() {
+        closeTabCalls += 1;
+        return { ok: true, code: 'tab_closed' };
+      },
+    },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  context.after(
+    () =>
+      new Promise((resolve) => {
+        if (!server.listening) return resolve();
+        server.close(resolve);
+      }),
+  );
+  const port = server.address().port;
+  const responsePromise = new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify({ message: 'wait for me' }));
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/sessions/shutdown-session/messages',
+        method: 'POST',
+        headers: {
+          Host: '127.0.0.1:4317',
+          Origin: 'http://127.0.0.1:4317',
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+          'X-CSRF-Token': 'shutdown-csrf',
+          'Idempotency-Key': 'shutdown-drain-test-key',
+        },
+      },
+      (response) => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode));
+      },
+    );
+    request.on('error', reject);
+    request.end(body);
+  });
+
+  await transportStarted;
+  const tabResponsePromise = new Promise((resolve, reject) => {
+    const body = Buffer.from(
+      JSON.stringify({ action: 'close', confirm: true }),
+    );
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/sessions/shutdown-session/tab',
+        method: 'POST',
+        headers: {
+          Host: '127.0.0.1:4317',
+          Origin: 'http://127.0.0.1:4317',
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+          'X-CSRF-Token': 'shutdown-csrf',
+        },
+      },
+      (response) => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode));
+      },
+    );
+    request.on('error', reject);
+    request.end(body);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  server.beginPocketShutdown();
+  assert.equal(await server.drainPocketRequests(5), false);
+  releaseTransport();
+  assert.equal(await responsePromise, 409);
+  assert.equal(await tabResponsePromise, 503);
+  assert.equal(closeTabCalls, 0);
+  assert.equal(await server.drainPocketRequests(1_000), true);
+});
+
 test('the LaunchAgent tells launchd to outlast the force deadline', async () => {
   const source = await fs.readFile(
     new URL('../scripts/install-relay.mjs', import.meta.url),
@@ -55,7 +220,7 @@ test('the LaunchAgent tells launchd to outlast the force deadline', async () => 
   );
   assert.match(
     source,
-    /<key>ExitTimeOut<\/key>[\s\S]{0,400}<integer>60<\/integer>/,
+    /<key>ExitTimeOut<\/key>[\s\S]{0,400}<integer>65<\/integer>/,
   );
 });
 
@@ -68,7 +233,7 @@ test('every relay removal wait outlasts the protected shutdown window', async ()
   ]);
   assert.match(
     sidecar,
-    /export const RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS = 65_000;/,
+    /export const RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS = 70_000;/,
   );
   assert.equal(
     (

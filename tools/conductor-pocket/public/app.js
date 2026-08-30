@@ -1924,6 +1924,7 @@ function renderComposerAttachments() {
 }
 
 let cacheDatabasePromise;
+let cacheDatabaseConnection = null;
 let originRetired = localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
 const cachePurgeChannel =
   'BroadcastChannel' in window
@@ -1950,6 +1951,12 @@ async function runWithAppUpdatePaused(operation) {
   }
 }
 
+function invalidateCacheDatabaseConnection(database = null) {
+  if (database && cacheDatabaseConnection !== database) return;
+  cacheDatabaseConnection = null;
+  cacheDatabasePromise = null;
+}
+
 function cacheDatabase() {
   if (
     originRetired ||
@@ -1959,28 +1966,76 @@ function cacheDatabase() {
     return Promise.reject(new Error('origin_retired'));
   }
   if (!cacheDatabasePromise) {
-    cacheDatabasePromise = new Promise((resolve, reject) => {
+    let openingPromise;
+    openingPromise = new Promise((resolve, reject) => {
       const open = indexedDB.open('conductor-pocket-v1', 1);
       open.onupgradeneeded = () => {
         if (!open.result.objectStoreNames.contains('snapshots')) {
           open.result.createObjectStore('snapshots');
         }
       };
-      open.onsuccess = () => resolve(open.result);
-      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const database = open.result;
+        if (cacheDatabasePromise !== openingPromise) {
+          database.close();
+          reject(new Error('cache_open_cancelled'));
+          return;
+        }
+        cacheDatabaseConnection = database;
+        database.onclose = () =>
+          invalidateCacheDatabaseConnection(database);
+        database.onversionchange = () => {
+          database.close();
+          invalidateCacheDatabaseConnection(database);
+        };
+        resolve(database);
+      };
+      open.onerror = () => {
+        if (cacheDatabasePromise === openingPromise) {
+          invalidateCacheDatabaseConnection();
+        }
+        reject(open.error || new Error('cache_open_failed'));
+      };
     });
+    cacheDatabasePromise = openingPromise;
   }
   return cacheDatabasePromise;
 }
 
 async function closeCacheDatabase() {
+  const pending = cacheDatabasePromise;
+  cacheDatabasePromise = null;
+  cacheDatabaseConnection = null;
   try {
-    const database = await cacheDatabasePromise;
+    const database = await pending;
+    database.onclose = null;
+    database.onversionchange = null;
     database?.close();
   } catch {
     // A failed cache open has nothing to close.
   }
-  cacheDatabasePromise = null;
+}
+
+async function runCacheDatabaseRequired(operation) {
+  let lastError = new Error('cache_operation_failed');
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let database = null;
+    try {
+      database = await cacheDatabase();
+      return await operation(database);
+    } catch (error) {
+      lastError = error;
+      if (database && cacheDatabaseConnection === database) {
+        invalidateCacheDatabaseConnection(database);
+        try {
+          database.close();
+        } catch {
+          // The connection may already be closed.
+        }
+      }
+    }
+  }
+  throw lastError;
 }
 
 cachePurgeChannel?.addEventListener('message', (event) => {
@@ -2009,8 +2064,7 @@ async function cacheGet(key) {
 }
 
 async function cacheGetRequired(key) {
-  const database = await cacheDatabase();
-  return new Promise((resolve, reject) => {
+  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readonly');
     const requestValue = transaction.objectStore('snapshots').get(key);
     requestValue.onsuccess = () => resolve(requestValue.result);
@@ -2018,7 +2072,7 @@ async function cacheGetRequired(key) {
       reject(requestValue.error || new Error('cache_read_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_read_aborted'));
-  });
+  }));
 }
 
 async function cacheSet(key, value) {
@@ -2036,8 +2090,7 @@ async function cacheSet(key, value) {
 }
 
 async function mergeReadReceiptRequired(receipt) {
-  const database = await cacheDatabase();
-  return new Promise((resolve, reject) => {
+  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(READ_RECEIPTS_KEY);
@@ -2055,7 +2108,7 @@ async function mergeReadReceiptRequired(receipt) {
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  });
+  }));
 }
 
 async function restoreReadReceipts() {
@@ -2274,11 +2327,11 @@ function sanitizePendingDelivery(value) {
 async function mutatePendingDeliveriesRequired({
   upserts = [],
   removeIds = [],
+  releaseDraftClaimIds = [],
   deliveryKeyTransitions = [],
   deliveryStateTransitions = [],
 }) {
-  const database = await cacheDatabase();
-  return new Promise((resolve, reject) => {
+  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
@@ -2290,6 +2343,7 @@ async function mutatePendingDeliveriesRequired({
           type: 'mutate',
           upserts,
           removeIds,
+          releaseDraftClaimIds,
           deliveryKeyTransitions,
           deliveryStateTransitions,
         },
@@ -2303,7 +2357,7 @@ async function mutatePendingDeliveriesRequired({
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  });
+  }));
 }
 
 async function claimTerminalDeliveryActionRequired(
@@ -2314,8 +2368,7 @@ async function claimTerminalDeliveryActionRequired(
   if (!new Set(['retry', 'edit', 'delete']).has(action)) {
     throw new Error('delivery_action_invalid');
   }
-  const database = await cacheDatabase();
-  return new Promise((resolve, reject) => {
+  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
@@ -2327,6 +2380,8 @@ async function claimTerminalDeliveryActionRequired(
           type: 'claim-terminal',
           action,
           claimToken: action === 'edit' ? randomIdempotencyKey() : null,
+          nextDeliveryKey:
+            action === 'retry' ? randomIdempotencyKey() : null,
           payloadFingerprint,
           message,
         },
@@ -2341,12 +2396,11 @@ async function claimTerminalDeliveryActionRequired(
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  });
+  }));
 }
 
 async function transitionPendingDeliveryRequired(command) {
-  const database = await cacheDatabase();
-  return new Promise((resolve, reject) => {
+  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
@@ -2366,7 +2420,7 @@ async function transitionPendingDeliveryRequired(command) {
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  });
+  }));
 }
 
 function finalizeTerminalDeliveryEditRequired(message, payloadFingerprint) {
@@ -2703,6 +2757,7 @@ async function persistPendingDeliveries({
   required = false,
   upserts = [],
   removeIds = [],
+  releaseDraftClaimIds = [],
   deliveryKeyTransitions = [],
   deliveryStateTransitions = [],
 } = {}) {
@@ -2710,6 +2765,7 @@ async function persistPendingDeliveries({
     return await mutatePendingDeliveriesRequired({
       upserts,
       removeIds,
+      releaseDraftClaimIds,
       deliveryKeyTransitions,
       deliveryStateTransitions,
     });
@@ -6699,7 +6755,10 @@ async function claimConflictAction(message, action) {
     message.id,
     action,
     async () => {
-      if (!(await verifyTerminalDeliveryAction(message))) {
+      if (
+        message.errorCode !== 'draft_conflict' &&
+        !(await verifyTerminalDeliveryAction(message))
+      ) {
         closeOverlay();
         return null;
       }
@@ -7066,7 +7125,7 @@ function handleRuntimeError(error) {
   ) {
     renderExpiredSession();
   } else if (error.code === 'device_revoked') {
-    void purgeThenRenderSignedOut();
+    return purgeThenRenderSignedOut();
   } else if (error.status === 423 || error.code === 'device_locked') {
     renderLock();
   } else if (error.code === 'retirement_client_upgrade_required') {
@@ -7972,7 +8031,6 @@ function shieldApplication() {
   const hiddenAt = Date.now();
   state.visibilityEpoch += 1;
   state.hiddenAt = hiddenAt;
-  localStorage.setItem(HIDDEN_AT_KEY, String(hiddenAt));
   stopEvents();
   app.setAttribute('aria-hidden', 'true');
   if (!document.querySelector('#privacy-shield')) {
@@ -7984,16 +8042,21 @@ function shieldApplication() {
       }),
     );
   }
+  try {
+    localStorage.setItem(HIDDEN_AT_KEY, String(hiddenAt));
+  } catch {
+    // The in-memory timestamp still locks on resume, and the shield already protects the transcript.
+  }
 }
 
-// A visible page must never stay shielded. revealApplication bails early on
-// several legitimate races, and it awaits a network call before it reaches the
-// removal, so any of them can leave the overlay in place with no further event
-// coming to clear it. This is the backstop: if the document is visible and the
-// shield is still there shortly after, it goes. Cheap, idempotent, and it can
-// only ever remove an overlay that should not be showing.
+// A visible page must never stay shielded after resume authentication finishes.
+// revealApplication can bail on legitimate visibility races, leaving no event
+// to clear the overlay. This backstop retries the authenticated reveal, but it
+// never removes the shield itself or exposes a cached transcript early.
 const SHIELD_FAILSAFE_MS = 2_500;
 let shieldFailsafeTimer = null;
+let revealOperationsInFlight = 0;
+let revealApplicationPromise = null;
 
 function ensureNotShielded() {
   clearTimeout(shieldFailsafeTimer);
@@ -8001,77 +8064,102 @@ function ensureNotShielded() {
     if (document.hidden) return;
     const shield = document.querySelector('#privacy-shield');
     if (!shield) return;
-    shield.remove();
-    app.removeAttribute('aria-hidden');
-    // The stream is stopped while shielded, so a rescued page also needs its
-    // live data back or it would sit there stale and look broken instead.
-    startEvents();
-    transcriptRefresh.schedule();
-    metadataRefresh.schedule();
+    if (revealOperationsInFlight > 0) {
+      ensureNotShielded();
+      return;
+    }
+    // Never bypass the resume lock or auth touch. Retry that proof instead of
+    // exposing a cached transcript merely because WebKit took longer than the
+    // visual failsafe window.
+    void revealApplication().catch(() => ensureNotShielded());
   }, SHIELD_FAILSAFE_MS);
 }
 
 async function revealApplication() {
-  const revealEpoch = state.visibilityEpoch;
-  const persistedHiddenAt = Number(localStorage.getItem(HIDDEN_AT_KEY) || 0);
-  const hiddenAt = Math.max(state.hiddenAt || 0, persistedHiddenAt);
-  const awayTooLong = hiddenAt > 0 && Date.now() - hiddenAt >= AWAY_LOCK_MS;
-  localStorage.removeItem(HIDDEN_AT_KEY);
-  state.hiddenAt = null;
-
-  if (state.auth && state.shell) {
-    const trustedSession =
-      state.auth.reauthenticationMode === TAILSCALE_SESSION_MODE;
-    if (awayTooLong && !trustedSession) {
-      await request('/api/auth/lock', {
-        method: 'POST',
-        body: {},
-        csrf: true,
-        timeoutMs: RESUME_REQUEST_MS,
-      }).catch(() => {});
-      renderLock();
-    } else {
+  if (revealApplicationPromise) return revealApplicationPromise;
+  const operation = (async () => {
+    revealOperationsInFlight += 1;
+    try {
+      const revealEpoch = state.visibilityEpoch;
+      let persistedHiddenAt = 0;
       try {
-        const result = await request('/api/auth/touch', {
-          method: 'POST',
-          body: {},
-          csrf: true,
-          timeoutMs: RESUME_REQUEST_MS,
-        });
-        state.auth = { ...state.auth, ...result };
-        state.csrfToken = result.csrfToken || state.csrfToken;
-        if (
-          document.hidden ||
-          revealEpoch !== state.visibilityEpoch
-        ) {
-          return;
-        }
-        startEvents();
-        transcriptRefresh.schedule();
-        metadataRefresh.schedule();
-      } catch (error) {
-        if (
-          error.status === 401 ||
-          error.status === 423 ||
-          error.code === 'device_revoked'
-        ) {
-          handleRuntimeError(error);
+        persistedHiddenAt = Number(
+          localStorage.getItem(HIDDEN_AT_KEY) || 0,
+        );
+        localStorage.removeItem(HIDDEN_AT_KEY);
+      } catch {
+        // The in-memory timestamp remains authoritative for this page lifetime.
+      }
+      const hiddenAt = Math.max(state.hiddenAt || 0, persistedHiddenAt);
+      const awayTooLong =
+        hiddenAt > 0 && Date.now() - hiddenAt >= AWAY_LOCK_MS;
+      state.hiddenAt = null;
+
+      if (state.auth && state.shell) {
+        const trustedSession =
+          state.auth.reauthenticationMode === TAILSCALE_SESSION_MODE;
+        if (awayTooLong && !trustedSession) {
+          await request('/api/auth/lock', {
+            method: 'POST',
+            body: {},
+            csrf: true,
+            timeoutMs: RESUME_REQUEST_MS,
+          }).catch(() => {});
+          renderLock();
         } else {
-          renderConnectionGate(error.code);
+          try {
+            const result = await request('/api/auth/touch', {
+              method: 'POST',
+              body: {},
+              csrf: true,
+              timeoutMs: RESUME_REQUEST_MS,
+            });
+            state.auth = { ...state.auth, ...result };
+            state.csrfToken = result.csrfToken || state.csrfToken;
+            if (
+              document.hidden ||
+              revealEpoch !== state.visibilityEpoch
+            ) {
+              return;
+            }
+            startEvents();
+            transcriptRefresh.schedule();
+            metadataRefresh.schedule();
+          } catch (error) {
+            if (
+              error.status === 401 ||
+              error.status === 423 ||
+              error.code === 'device_revoked'
+            ) {
+              await handleRuntimeError(error);
+            } else {
+              renderConnectionGate(error.code);
+            }
+          }
         }
       }
+
+      if (
+        document.hidden ||
+        revealEpoch !== state.visibilityEpoch
+      ) {
+        return;
+      }
+      document.querySelector('#privacy-shield')?.remove();
+      app.removeAttribute('aria-hidden');
+      scheduleReadEvaluation();
+    } finally {
+      revealOperationsInFlight -= 1;
+    }
+  })();
+  revealApplicationPromise = operation;
+  try {
+    return await operation;
+  } finally {
+    if (revealApplicationPromise === operation) {
+      revealApplicationPromise = null;
     }
   }
-
-  if (
-    document.hidden ||
-    revealEpoch !== state.visibilityEpoch
-  ) {
-    return;
-  }
-  document.querySelector('#privacy-shield')?.remove();
-  app.removeAttribute('aria-hidden');
-  scheduleReadEvaluation();
 }
 
 function currentAppUpdateReloadIsSafe() {

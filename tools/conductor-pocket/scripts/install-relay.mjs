@@ -119,11 +119,11 @@ function relayLaunchAgentPlist({
        intentional shutdown. -->
   <true/>
   <key>ExitTimeOut</key>
-  <!-- Above the relay's own 55s force-exit deadline: a send's automation can
-       legitimately run ~50s, and launchd's default 20s SIGKILL would preempt
+  <!-- Above the relay's own 60s force-exit deadline: a send's automation can
+       legitimately run about 50s, and launchd's default 20s SIGKILL would preempt
        the graceful drain that keeps a dying relay from orphaning an
        osascript child mid-type. -->
-  <integer>60</integer>
+  <integer>65</integer>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>

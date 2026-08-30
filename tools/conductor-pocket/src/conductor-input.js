@@ -829,7 +829,7 @@ function inspectMainRootCandidate(element, rootPath) {
   };
 }
 
-function resolveMainRoot(rootElements) {
+function resolveMainRoot(rootElements, expectedRootPath = null) {
   const candidates = [];
   let inspectedCount = 0;
   const inspect = (element, rootPath) => {
@@ -842,16 +842,81 @@ function resolveMainRoot(rootElements) {
     return result;
   };
 
+  const inspectOptional = (element, rootPath) => {
+    try {
+      return inspect(element, rootPath);
+    } catch (error) {
+      if (error?.pocketCode === 'route_changed') return null;
+      throw error;
+    }
+  };
+
+  let expectedRootResult = null;
+  if (expectedRootPath !== null) {
+    if (
+      !Array.isArray(expectedRootPath) ||
+      expectedRootPath.length < 1 ||
+      expectedRootPath.length > 2 ||
+      !expectedRootPath.every(
+        (value) => Number.isSafeInteger(value) && value >= 0,
+      )
+    ) {
+      fail('route_changed', 'mainRootPath');
+    }
+    const expectedRootIndex = expectedRootPath[0];
+    const expectedRoot = rootElements[expectedRootIndex];
+    if (!expectedRoot) fail('route_changed', 'mainRootMissing');
+    expectedRootResult = inspect(expectedRoot, [expectedRootIndex]);
+    if (expectedRootPath.length === 1) {
+      if (!expectedRootResult.candidate) {
+        fail('route_changed', 'mainRootMoved');
+      }
+    } else {
+      const expectedChildIndex = expectedRootPath[1];
+      if (
+        expectedRootResult.roles[expectedChildIndex] !== 'AXGroup' ||
+        !expectedRootResult.elements[expectedChildIndex]
+      ) {
+        fail('route_changed', 'mainRootWrapperChanged');
+      }
+      const expectedNested = inspect(
+        expectedRootResult.elements[expectedChildIndex],
+        expectedRootPath,
+      );
+      if (!expectedNested.candidate) {
+        fail('route_changed', 'mainRootMoved');
+      }
+    }
+  }
+
   for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
-    const root = inspect(rootElements[rootIndex], [rootIndex]);
-    if (root.candidate || root.elements.length <= 1) continue;
+    const isExpectedRoot = expectedRootPath?.[0] === rootIndex;
+    const root = isExpectedRoot
+      ? expectedRootResult
+      : expectedRootPath === null
+        ? inspect(rootElements[rootIndex], [rootIndex])
+        : inspectOptional(rootElements[rootIndex], [rootIndex]);
+    if (!root) continue;
+    if (root.candidate || root.elements.length === 0) continue;
 
     // Conductor 0.83.1 moved the proven main group under one chrome wrapper.
     // Inspect only direct AXGroup children, with a global candidate budget.
     // Sidebar controls and unrelated leaf roots remain opaque.
     for (let childIndex = 0; childIndex < root.elements.length; childIndex += 1) {
       if (root.roles[childIndex] !== 'AXGroup') continue;
-      inspect(root.elements[childIndex], [rootIndex, childIndex]);
+      if (
+        expectedRootPath?.length === 2 &&
+        expectedRootPath[0] === rootIndex &&
+        expectedRootPath[1] === childIndex
+      ) {
+        continue;
+      }
+      const childPath = [rootIndex, childIndex];
+      if (expectedRootPath === null) {
+        inspect(root.elements[childIndex], childPath);
+      } else {
+        inspectOptional(root.elements[childIndex], childPath);
+      }
     }
   }
   if (candidates.length !== 1) fail('route_changed');
@@ -1072,7 +1137,7 @@ function assertRouteLease(process, lease) {
     },
     workspaceName: lease.workspaceName,
   });
-  const main = resolveMainRoot(rootElements);
+  const main = resolveMainRoot(rootElements, lease.mainRootPath);
   if (!sameRoutePath(main.rootPath, lease.mainRootPath)) {
     fail(
       'route_changed',
@@ -2133,11 +2198,19 @@ function waitForComposerSend(
 // the proven chunked path. The fast path can never become a new way to fail, and
 // nothing here presses anything: the exact-draft proof and the route proof still
 // run before the press exactly as before.
-function deliverWholeMessage(pid, message) {
+function deliverWholeMessage(pid, message, inputLease, expectedDraft) {
+  let wroteMessage = false;
   try {
-    const process = validateFocusedComposer(pid);
+    assertInputLease(inputLease);
+    const process = validateFocusedComposer(pid, expectedDraft);
     const focused = process.attributes.byName('AXFocusedUIElement').value();
+    assertInputLease(inputLease);
+    if (focusedDraft(process) !== expectedDraft) return false;
+    assertInputLease(inputLease);
+    if (focusedDraft(process) !== expectedDraft) return false;
     focused.value = message;
+    wroteMessage = true;
+    assertInputLease(inputLease);
     for (let attempt = 0; attempt < 25; attempt += 1) {
       if (focusedDraft(validateFocusedComposer(pid)) === message) return true;
       delay(0.02);
@@ -2145,12 +2218,21 @@ function deliverWholeMessage(pid, message) {
   } catch {
     // Fall back to chunked typing.
   }
-  try {
-    // Leave nothing half-written for the fallback to trip over.
-    const process = validateFocusedComposer(pid);
-    process.attributes.byName('AXFocusedUIElement').value().value = '';
-  } catch {
-    // The chunked path clears the composer itself.
+  if (wroteMessage) {
+    try {
+      // Clear only the exact value Pocket wrote while the same physical-input
+      // lease still holds. A transient read or newer Mac typing must survive.
+      assertInputLease(inputLease);
+      const process = validateFocusedComposer(pid, message);
+      const focused = process.attributes.byName('AXFocusedUIElement').value();
+      assertInputLease(inputLease);
+      if (focusedDraft(process) === message) {
+        assertInputLease(inputLease);
+        if (focusedDraft(process) === message) focused.value = '';
+      }
+    } catch {
+      // The chunked path will classify any remaining draft without erasing it.
+    }
   }
   return false;
 }
@@ -2249,7 +2331,7 @@ function typeAndSendMessage(pid) {
       if (replaceDraft && currentDraft !== expectedDraft) fail('draft_conflict');
       if (currentDraft === '') lastProvenPrefix = '';
 
-      if (deliverWholeMessage(pid, message)) {
+      if (deliverWholeMessage(pid, message, inputLease, currentDraft)) {
         lastProvenPrefix = message;
         exactDraftExposedAt = Date.now();
       } else {
