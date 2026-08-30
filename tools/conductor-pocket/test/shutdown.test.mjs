@@ -28,6 +28,10 @@ test('shutdown gates exit on both server close and transport drain, and kills th
   // Both gates, checked in one place, so a phone that abandoned its
   // connection early cannot let the relay exit under a live automation.
   assert.match(block, /if \(!serverClosed \|\| !transportDrained\) return/);
+  assert.match(
+    block,
+    /server\.closePocketEventStreams\?\.\(\);\s*server\.close\(/,
+  );
   assert.match(block, /transport\s*\n?\s*\.drain\(SHUTDOWN_DRAIN_MS\)/);
   // The drain budget covers the 45s automation timeout plus confirmation,
   // and the force deadline sits above the drain, below launchd's SIGKILL.
@@ -52,6 +56,35 @@ test('the LaunchAgent tells launchd to outlast the force deadline', async () => 
   assert.match(
     source,
     /<key>ExitTimeOut<\/key>[\s\S]{0,400}<integer>60<\/integer>/,
+  );
+});
+
+test('every relay removal wait outlasts the protected shutdown window', async () => {
+  const [sidecar, installer, verifier, cutover] = await Promise.all([
+    fs.readFile(new URL('../scripts/lib/sidecar.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../scripts/install-relay.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../scripts/verify-live.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../scripts/cutover-sidecar.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(
+    sidecar,
+    /export const RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS = 65_000;/,
+  );
+  assert.equal(
+    (
+      installer.match(
+        /waitForLaunchdRemoval\(label, RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS\)/g,
+      ) || []
+    ).length,
+    2,
+  );
+  assert.match(
+    verifier,
+    /waitForLaunchdRemoval\(\s*RELAY_LABEL,\s*RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,?\s*\)/,
+  );
+  assert.match(
+    cutover,
+    /waitForLaunchdRemoval\(\s*RELAY_LABEL,\s*RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,?\s*\)/,
   );
 });
 

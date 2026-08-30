@@ -24,6 +24,7 @@ export const SIDECAR_LAUNCH_AGENT_PATH = path.join(
   `${SIDECAR_LABEL}.plist`,
 );
 export const RELAY_LABEL = 'com.ovo.conductor-pocket';
+export const RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS = 65_000;
 export const RELAY_LAUNCH_AGENT_PATH = path.join(
   os.homedir(),
   'Library',

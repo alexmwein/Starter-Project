@@ -8,7 +8,12 @@ import { createDraftConflictFlow } from '../public/draft-conflict.js';
 // optimistic according to a script keyed by message text, which is how the
 // "then mine" ordering and its failure hold are locked.
 
-function harness({ outcomes = {}, persistFailsOnRequired = false } = {}) {
+function harness({
+  outcomes = {},
+  persistFailsOnRequired = false,
+  restoreComposerFails = false,
+  restoreAttachmentsFails = false,
+} = {}) {
   const log = [];
   const list = [];
   const flow = createDraftConflictFlow({
@@ -34,12 +39,14 @@ function harness({ outcomes = {}, persistFailsOnRequired = false } = {}) {
     },
     restoreComposer: (sessionId, text) => {
       log.push(['restore', sessionId, text]);
+      return !restoreComposerFails;
     },
     restoreAttachments: (entry) => {
       log.push(['restoreAttachments', entry.text]);
+      return !restoreAttachmentsFails;
     },
     persist: async (options) => {
-      log.push(['persist', options?.required === true]);
+      log.push(['persist', options]);
       if (persistFailsOnRequired && options?.required === true) {
         throw new Error('secure_delivery_storage_unavailable');
       }
@@ -58,6 +65,7 @@ function conflicted() {
     macDraft: 'the draft on the mac',
     delivery: 'failed',
     retrySafe: true,
+    definitelyUnsent: false,
   };
 }
 
@@ -73,6 +81,17 @@ test('replace and send delivers with the compare-and-swap fields', async () => {
   ]);
 });
 
+test('a failed replace persist sends nothing and keeps mine genuinely retryable', async () => {
+  const { flow, log } = harness({ persistFailsOnRequired: true });
+  const message = conflicted();
+
+  assert.equal(await flow.replaceAndSend(message), false);
+  assert.equal(log.some(([kind]) => kind === 'deliver'), false);
+  assert.equal(message.delivery, 'failed');
+  assert.equal(message.retrySafe, true);
+  assert.equal(message.definitelyUnsent, true);
+});
+
 test('send the Mac draft delivers its exact text and returns mine to the composer', async () => {
   const { flow, log, list } = harness();
   const message = conflicted();
@@ -82,9 +101,9 @@ test('send the Mac draft delivers its exact text and returns mine to the compose
     log.filter(([kind]) => kind !== 'render' && kind !== 'persist'),
     [
       ['insert', 'the draft on the mac'],
-      ['remove', 'my phone message'],
       ['restore', 'session-1', 'my phone message'],
       ['restoreAttachments', 'my phone message'],
+      ['remove', 'my phone message'],
       [
         'deliver',
         'the draft on the mac',
@@ -98,6 +117,19 @@ test('send the Mac draft delivers its exact text and returns mine to the compose
   );
   assert.equal(list.length, 1);
   assert.equal(list[0].text, 'the draft on the mac');
+  const durableMutation = log.find(([kind]) => kind === 'persist')?.[1];
+  assert.equal(durableMutation.required, true);
+  assert.deepEqual(
+    durableMutation.upserts.map((item) => item.text),
+    ['the draft on the mac'],
+  );
+  assert.deepEqual(durableMutation.removeIds, [message.id]);
+  const restoreAt = log.findIndex(([kind]) => kind === 'restore');
+  const persistAt = log.findIndex(([kind]) => kind === 'persist');
+  const removeAt = log.findIndex(
+    ([kind, text]) => kind === 'remove' && text === message.text,
+  );
+  assert.ok(restoreAt >= 0 && restoreAt < persistAt && persistAt < removeAt);
 });
 
 test('send the Mac draft goes through the swap branch so edge whitespace cannot loop', async () => {
@@ -144,6 +176,13 @@ test('send the Mac draft then mine delivers both in order once the first confirm
   );
   assert.equal(list[0].text, 'the draft on the mac');
   assert.equal(list[1].text, 'my phone message');
+  const durableMutation = log.find(([kind]) => kind === 'persist')?.[1];
+  assert.equal(durableMutation.required, true);
+  assert.deepEqual(
+    durableMutation.upserts.map((item) => item.text),
+    ['the draft on the mac', 'my phone message'],
+  );
+  assert.deepEqual(durableMutation.removeIds, []);
 });
 
 test('a Mac draft that does not confirm holds mine as a retryable failure', async () => {
@@ -157,6 +196,10 @@ test('a Mac draft that does not confirm holds mine as a retryable failure', asyn
   assert.equal(deliveries[0][1], 'the draft on the mac');
   assert.equal(message.delivery, 'failed');
   assert.equal(message.retrySafe, true);
+  assert.equal(message.definitelyUnsent, true);
+  const holdMutation = log.filter(([kind]) => kind === 'persist').at(-1)?.[1];
+  assert.equal(holdMutation.required, true);
+  assert.deepEqual(holdMutation.upserts, [message]);
   assert.ok(
     log.some(
       ([kind, text]) => kind === 'announce' && text.includes('your message is waiting'),
@@ -178,6 +221,39 @@ test('a failed required persist rolls the Mac draft attempt back and sends nothi
       ([kind, text]) => kind === 'announce' && text.includes('secure delivery storage'),
     ),
   );
+});
+
+test('send only Mac restores the phone draft before a failed tombstone persist', async () => {
+  const { flow, log, list } = harness({ persistFailsOnRequired: true });
+  const message = conflicted();
+  list.push(message);
+
+  assert.equal(await flow.sendMacDraft(message), null);
+  assert.deepEqual(list, [message]);
+  assert.equal(log.filter(([kind]) => kind === 'deliver').length, 0);
+  assert.ok(
+    log.findIndex(([kind]) => kind === 'restore') <
+      log.findIndex(([kind]) => kind === 'persist'),
+  );
+  assert.equal(message.definitelyUnsent, true);
+});
+
+test('send only Mac tombstones nothing when phone attachment recovery fails', async () => {
+  const { flow, log, list } = harness({ restoreAttachmentsFails: true });
+  const message = conflicted();
+  list.push(message);
+
+  assert.equal(await flow.sendMacDraft(message), null);
+  assert.deepEqual(list, [message]);
+  assert.equal(
+    log.some(
+      ([kind, options]) =>
+        kind === 'persist' && options.removeIds?.includes(message.id),
+    ),
+    false,
+  );
+  assert.equal(log.some(([kind]) => kind === 'deliver'), false);
+  assert.equal(message.definitelyUnsent, true);
 });
 
 test('an empty Mac draft is treated as a stale sheet and keeps mine safe', async () => {
@@ -220,19 +296,26 @@ test('the composer restore wiring merges with newer typing instead of overwritin
   const wiring = source.slice(wiringStart, wiringStart + 2600);
   assert.match(
     wiring,
-    /restoreComposer: \(sessionId, text\) => \{[\s\S]{0,600}current && current !== text[\s\S]{0,200}\$\{text\}\$\{text \? '\\n\\n' : ''\}\$\{current\}/,
+    /restoreComposer: \(sessionId, text\) => \{[\s\S]{0,600}mergeRecoveredDraftText\(text, current\)/,
   );
   assert.doesNotMatch(
     wiring,
     /restoreComposer: \(sessionId, text\) => \{\s*saveDraft\(sessionId, text\)/,
   );
+  assert.match(wiring, /const savedDraft = saveDraft\(sessionId, combined\)/);
+  assert.match(wiring, /if \(!savedDraft\) return false/);
+  assert.match(
+    wiring,
+    /restoreAttachments:[\s\S]{0,800}persistAttachmentDrafts\(\{[\s\S]{0,200}sessionId: optimistic\.sessionId,[\s\S]{0,200}items: mergedItems/,
+  );
+  assert.match(wiring, /if \(!attachmentsPersisted\) return false/);
 });
 
-test('keep the Mac draft restores the composer and removes the optimistic', () => {
+test('keep the Mac draft durably restores local state before tombstoning', async () => {
   const { flow, log, list } = harness();
   const message = conflicted();
   list.push(message);
-  flow.keepMacDraft(message);
+  await flow.keepMacDraft(message);
   assert.equal(log.filter(([kind]) => kind === 'deliver').length, 0);
   assert.deepEqual(
     log.filter(
@@ -246,4 +329,46 @@ test('keep the Mac draft restores the composer and removes the optimistic', () =
     ],
   );
   assert.equal(list.length, 0);
+  const persistAt = log.findIndex(([kind]) => kind === 'persist');
+  const restoreAt = log.findIndex(([kind]) => kind === 'restore');
+  assert.ok(restoreAt >= 0 && restoreAt < persistAt);
+  assert.deepEqual(log[persistAt][1], {
+    required: true,
+    upserts: [],
+    removeIds: [message.id],
+  });
+});
+
+test('a failed keep Mac persist leaves both the restored draft and notice visible', async () => {
+  const { flow, log, list } = harness({ persistFailsOnRequired: true });
+  const message = conflicted();
+  list.push(message);
+
+  assert.equal(await flow.keepMacDraft(message), false);
+  assert.deepEqual(list, [message]);
+  assert.equal(log.some(([kind]) => kind === 'restore'), true);
+  assert.equal(message.definitelyUnsent, true);
+  assert.ok(
+    log.some(
+      ([kind, text]) =>
+        kind === 'announce' && text.includes('secure delivery storage'),
+    ),
+  );
+});
+
+test('a failed keep Mac draft restore tombstones nothing', async () => {
+  const { flow, log, list } = harness({ restoreComposerFails: true });
+  const message = conflicted();
+  list.push(message);
+
+  assert.equal(await flow.keepMacDraft(message), false);
+  assert.deepEqual(list, [message]);
+  assert.equal(
+    log.some(
+      ([kind, options]) =>
+        kind === 'persist' && options.removeIds?.includes(message.id),
+    ),
+    false,
+  );
+  assert.equal(message.definitelyUnsent, true);
 });

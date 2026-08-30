@@ -221,6 +221,25 @@ test('chrome band does not pin the role Conductor happens to use', async () => {
   assert.equal(resolve(composerSendContext, main), main.composer);
 });
 
+test('an empty Untitled chat tolerates its twelve bounded context siblings', async () => {
+  const { composerSendContext, lastFailure } = await harness();
+
+  // The live empty-chat layout on 2026-08-27 placed twelve small siblings
+  // between the transcript boundary and the composer. Every sibling remains
+  // independently bounded, and the whole queued-edit walk still shares the
+  // fixed node budget.
+  const liveEmptyChat = makeMain({ siblings: 12 });
+  assert.equal(resolve(composerSendContext, liveEmptyChat), liveEmptyChat.composer);
+
+  // Tolerance stays finite. A thirteenth sibling is a new layout that needs a
+  // fresh proof instead of silently widening the send surface again.
+  assert.throws(
+    () => resolve(composerSendContext, makeMain({ siblings: 13 })),
+    /send_unavailable/,
+  );
+  assert.match(lastFailure().tag, /context-band=14/);
+});
+
 test('chrome band still fails closed on overflow and on containers', async () => {
   const { composerSendContext, lastFailure } = await harness();
 

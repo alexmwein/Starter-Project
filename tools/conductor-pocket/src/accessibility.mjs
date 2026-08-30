@@ -61,6 +61,31 @@ function validProjectName(value) {
   );
 }
 
+function normalizeWorkspaceHint(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const hint = {
+    containerIndex: value.containerIndex,
+    linkIndex: value.linkIndex,
+    sidebarChildCount: value.sidebarChildCount,
+    containerChildCount: value.containerChildCount,
+  };
+  if (
+    !Number.isSafeInteger(hint.containerIndex) ||
+    hint.containerIndex < 0 ||
+    !Number.isSafeInteger(hint.linkIndex) ||
+    hint.linkIndex < 0 ||
+    !Number.isSafeInteger(hint.sidebarChildCount) ||
+    hint.sidebarChildCount <= hint.containerIndex ||
+    !Number.isSafeInteger(hint.containerChildCount) ||
+    hint.containerChildCount <= hint.linkIndex
+  ) {
+    return null;
+  }
+  return hint;
+}
+
 export function parseResult(stdout) {
   const trimmed = stdout.trim();
   try {
@@ -110,6 +135,13 @@ export function parseResult(stdout) {
       Object.hasOwn(result, 'projectName')
     ) {
       throw new Error('Unexpected collapsed project name');
+    }
+    if (Object.hasOwn(result, 'workspaceHint')) {
+      const workspaceHint = normalizeWorkspaceHint(result.workspaceHint);
+      if (!result.ok || !workspaceHint) {
+        throw new Error('Invalid workspace hint');
+      }
+      result.workspaceHint = workspaceHint;
     }
     if (!result.ok && safeToRetryCodes.has(result.code)) {
       result.safeToRetry = true;
@@ -272,6 +304,7 @@ function attributeStructuredFailure(result, markerContext) {
 
 export class AccessibilityTransport {
   #queue = Promise.resolve();
+  #routeHints = new Map();
   #busy = 0;
   // A SET, not one slot. doctor() deliberately runs off the queue, so two runs
   // can overlap; with a single slot the fast doctor run nulled the field while
@@ -389,8 +422,11 @@ export class AccessibilityTransport {
   }
 
   send({
+    repositoryName = '',
+    workspaceId = '',
     workspaceName,
     projectName = '',
+    sessionId = '',
     sessionTitle,
     sessionOrdinal,
     message,
@@ -466,8 +502,11 @@ export class AccessibilityTransport {
     }
     return this.#enqueue({
       operation: 'send',
+      repositoryName,
+      workspaceId,
       workspaceName,
       projectName: normalizedProjectName,
+      sessionId,
       sessionTitle,
       sessionOrdinal,
       message: normalized,
@@ -480,8 +519,11 @@ export class AccessibilityTransport {
 
   async #run({
     operation,
+    repositoryName = '',
+    workspaceId = '',
     workspaceName = '',
     projectName = '',
+    sessionId = '',
     sessionTitle = '',
     sessionOrdinal = 1,
     message = '',
@@ -493,6 +535,17 @@ export class AccessibilityTransport {
     confirmClose = false,
     timeoutMs = 45_000,
   }) {
+    const routeHintKey =
+      workspaceName && (workspaceId || repositoryName)
+        ? JSON.stringify([
+            repositoryName,
+            workspaceId,
+            workspaceName,
+          ])
+        : null;
+    const workspaceHint = routeHintKey
+      ? this.#routeHints.get(routeHintKey) || null
+      : null;
     let pressMarkerDirectory = '';
     let pressMarkerPath = '';
     if (operation === 'send') {
@@ -528,6 +581,12 @@ export class AccessibilityTransport {
         env: {
           ...process.env,
           POCKET_OPERATION: operation,
+          POCKET_REPOSITORY_NAME: repositoryName,
+          POCKET_REPOSITORY_NAME_BASE64: Buffer.from(
+            repositoryName,
+            'utf8',
+          ).toString('base64'),
+          POCKET_WORKSPACE_ID: workspaceId,
           POCKET_WORKSPACE_NAME: workspaceName,
           POCKET_WORKSPACE_NAME_BASE64: Buffer.from(
             workspaceName,
@@ -537,7 +596,16 @@ export class AccessibilityTransport {
             projectName,
             'utf8',
           ).toString('base64'),
+          POCKET_WORKSPACE_HINT_CONTAINER_INDEX:
+            workspaceHint ? String(workspaceHint.containerIndex) : '',
+          POCKET_WORKSPACE_HINT_LINK_INDEX:
+            workspaceHint ? String(workspaceHint.linkIndex) : '',
+          POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT:
+            workspaceHint ? String(workspaceHint.sidebarChildCount) : '',
+          POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT:
+            workspaceHint ? String(workspaceHint.containerChildCount) : '',
           POCKET_SESSION_TITLE: sessionTitle,
+          POCKET_SESSION_ID: sessionId,
           POCKET_SESSION_TITLE_BASE64: Buffer.from(
             sessionTitle,
             'utf8',
@@ -581,11 +649,20 @@ export class AccessibilityTransport {
       this.#currentChildren.add(runChild);
       const { stdout } = await pending;
       const result = parseResult(stdout);
-      if (!pressMarkerPath) return result;
-      return attributeStructuredFailure(
-        result,
-        await pressMarkerContext(pressMarkerPath, attemptStartedAt),
-      );
+      const attributed = pressMarkerPath
+        ? attributeStructuredFailure(
+            result,
+            await pressMarkerContext(pressMarkerPath, attemptStartedAt),
+          )
+        : result;
+      if (routeHintKey && attributed.ok && attributed.workspaceHint) {
+        this.#routeHints.delete(routeHintKey);
+        this.#routeHints.set(routeHintKey, attributed.workspaceHint);
+        while (this.#routeHints.size > 256) {
+          this.#routeHints.delete(this.#routeHints.keys().next().value);
+        }
+      }
+      return attributed;
     } catch (error) {
       return mapAutomationError(
         error,

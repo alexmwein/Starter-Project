@@ -4,15 +4,27 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const ORIGIN = 'https://pocket.test';
-const PREVIOUS_CACHE = 'conductor-pocket-shell-v24';
-const CURRENT_CACHE = 'conductor-pocket-shell-v27';
+const SERVICE_WORKER_SOURCE = await fs.readFile(
+  new URL('../public/service-worker.js', import.meta.url),
+  'utf8',
+);
+const SHELL_REVISION = SERVICE_WORKER_SOURCE.match(
+  /const SHELL_REVISION = '([^']+)'/,
+)?.[1];
+assert.ok(SHELL_REVISION, 'service worker must declare its shell revision');
+const CURRENT_CACHE = `conductor-pocket-shell-${SHELL_REVISION}`;
+const PREVIOUS_CACHE = 'conductor-pocket-shell-previous-revision';
 
 function requestKey(request) {
   const value = typeof request === 'string' ? request : request.url;
   return new URL(value, ORIGIN).href;
 }
 
-function createCacheStorage({ fetchImpl, failInstall = false } = {}) {
+function createCacheStorage({
+  fetchImpl,
+  failInstall = false,
+  failedCacheDeletes = new Set(),
+} = {}) {
   const stores = new Map();
   const apiFor = (name) => {
     if (!stores.has(name)) stores.set(name, new Map());
@@ -45,23 +57,34 @@ function createCacheStorage({ fetchImpl, failInstall = false } = {}) {
       return [...stores.keys()];
     },
     async delete(name) {
+      if (failedCacheDeletes.has(name)) {
+        throw new Error(`cache_delete_failed:${name}`);
+      }
       return stores.delete(name);
     },
   };
 }
 
-async function loadWorker({ fetchImpl, failInstall = false } = {}) {
-  const source = await fs.readFile(
-    new URL('../public/service-worker.js', import.meta.url),
-    'utf8',
-  );
+async function loadWorker({
+  fetchImpl,
+  failInstall = false,
+  failedCacheDeletes = new Set(),
+  source = SERVICE_WORKER_SOURCE,
+} = {}) {
   const listeners = new Map();
-  const caches = createCacheStorage({ fetchImpl, failInstall });
+  const caches = createCacheStorage({
+    fetchImpl,
+    failInstall,
+    failedCacheDeletes,
+  });
   let skipWaitingCalls = 0;
+  let claimCalls = 0;
   const self = {
     location: { origin: ORIGIN },
     clients: {
-      async claim() {},
+      async claim() {
+        claimCalls += 1;
+      },
       async matchAll() {
         return [];
       },
@@ -84,7 +107,23 @@ async function loadWorker({ fetchImpl, failInstall = false } = {}) {
     Error,
     Promise,
   });
-  return { caches, listeners, skipWaitingCalls: () => skipWaitingCalls };
+  return {
+    caches,
+    listeners,
+    claimCalls: () => claimCalls,
+    skipWaitingCalls: () => skipWaitingCalls,
+  };
+}
+
+async function dispatchLifecycle(listener) {
+  let lifecyclePromise;
+  listener({
+    waitUntil(value) {
+      lifecyclePromise = Promise.resolve(value);
+    },
+  });
+  assert.ok(lifecyclePromise, 'worker should extend this lifecycle event');
+  return lifecyclePromise;
 }
 
 async function dispatchFetch(listener, request) {
@@ -116,7 +155,9 @@ test('an old worker serves its own document while a newer cache exists', async (
       headers: { 'Content-Type': 'text/html' },
     }),
   );
-  const newer = await worker.caches.open('conductor-pocket-shell-v28');
+  const newer = await worker.caches.open(
+    'conductor-pocket-shell-other-revision',
+  );
   await newer.put(
     '/index.html',
     new Response('<p>other-generation</p>', {
@@ -130,6 +171,104 @@ test('an old worker serves its own document while a newer cache exists', async (
   );
   assert.equal(await response.text(), '<p>current-generation</p>');
   assert.equal(networkCalls, 0);
+});
+
+test('shell revision mechanically selects the cache generation', async () => {
+  const worker = await loadWorker({
+    fetchImpl: async (request) => {
+      const pathname = new URL(request.url).pathname;
+      const contentType =
+        pathname === '/' || pathname === '/index.html'
+          ? 'text/html'
+          : pathname === '/app.css'
+            ? 'text/css'
+            : pathname.endsWith('.js')
+              ? 'text/javascript'
+              : 'application/octet-stream';
+      return new Response('shell', {
+        headers: { 'Content-Type': contentType },
+      });
+    },
+  });
+
+  await dispatchLifecycle(worker.listeners.get('install'));
+
+  assert.equal(worker.caches.stores.has(CURRENT_CACHE), true);
+  assert.equal(worker.skipWaitingCalls(), 1);
+});
+
+test('changing only the shell revision changes the selected cache', async () => {
+  const changedRevision = `${SHELL_REVISION}-mutation-test`;
+  const changedSource = SERVICE_WORKER_SOURCE.replace(
+    `const SHELL_REVISION = '${SHELL_REVISION}';`,
+    `const SHELL_REVISION = '${changedRevision}';`,
+  );
+  const worker = await loadWorker({
+    source: changedSource,
+    fetchImpl: async (request) => {
+      const pathname = new URL(request.url).pathname;
+      const contentType =
+        pathname === '/' || pathname === '/index.html'
+          ? 'text/html'
+          : pathname === '/app.css'
+            ? 'text/css'
+            : pathname.endsWith('.js')
+              ? 'text/javascript'
+              : 'application/octet-stream';
+      return new Response('shell', {
+        headers: { 'Content-Type': contentType },
+      });
+    },
+  });
+
+  await dispatchLifecycle(worker.listeners.get('install'));
+
+  assert.equal(
+    worker.caches.stores.has(
+      `conductor-pocket-shell-${changedRevision}`,
+    ),
+    true,
+  );
+});
+
+test('activation keeps the revision cache and removes only older Pocket caches', async () => {
+  const worker = await loadWorker({
+    fetchImpl: async () => {
+      throw new Error('activation_must_not_fetch');
+    },
+  });
+  await worker.caches.open(CURRENT_CACHE);
+  await worker.caches.open(PREVIOUS_CACHE);
+  await worker.caches.open('unrelated-app-cache');
+
+  await dispatchLifecycle(worker.listeners.get('activate'));
+
+  assert.equal(worker.caches.stores.has(CURRENT_CACHE), true);
+  assert.equal(worker.caches.stores.has(PREVIOUS_CACHE), false);
+  assert.equal(worker.caches.stores.has('unrelated-app-cache'), true);
+});
+
+test('activation claims clients when an old Pocket cache cannot be deleted', async () => {
+  const failedCache = 'conductor-pocket-shell-delete-fails';
+  const removableCache = 'conductor-pocket-shell-delete-succeeds';
+  const worker = await loadWorker({
+    failedCacheDeletes: new Set([failedCache]),
+    fetchImpl: async () => {
+      throw new Error('activation_must_not_fetch');
+    },
+  });
+  await worker.caches.open(CURRENT_CACHE);
+  await worker.caches.open(failedCache);
+  await worker.caches.open(removableCache);
+  await worker.caches.open('unrelated-app-cache');
+
+  await dispatchLifecycle(worker.listeners.get('activate'));
+
+  assert.equal(worker.claimCalls(), 1);
+  assert.equal(worker.caches.stores.has(CURRENT_CACHE), true);
+  assert.equal(worker.caches.stores.has(failedCache), true);
+  assert.equal(worker.caches.stores.has(removableCache), false);
+  assert.equal(worker.caches.stores.has('unrelated-app-cache'), true);
 });
 
 test('script and style requests reject cached or network HTML', async () => {

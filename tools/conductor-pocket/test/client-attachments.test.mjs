@@ -154,6 +154,11 @@ test('definite preflight failures stay visible and can be moved back to the edit
     'async function editFailedMessage',
     'async function persistPendingDeliveries',
   );
+  const recover = functionSource(
+    source,
+    'async function recoverClaimedFailedMessage',
+    'async function editFailedMessage',
+  );
   const delivery = functionSource(
     source,
     'async function deliverOptimistic',
@@ -169,12 +174,12 @@ test('definite preflight failures stay visible and can be moved back to the edit
     /await persistPendingDeliveries\(\{ upserts: \[optimistic\] \}\)/,
   );
   assert.doesNotMatch(markUnsent, /state\.optimistic = state\.optimistic\.filter/);
-  assert.match(edit, /state\.attachmentsBySession\.set/);
-  assert.match(edit, /saveDraft\(sessionId, combinedDraft\)/);
-  assert.match(edit, /state\.optimistic = state\.optimistic\.filter/);
+  assert.match(recover, /state\.attachmentsBySession\.set/);
+  assert.match(recover, /saveDraft\(sessionId, combinedDraft\)/);
+  assert.match(recover, /state\.optimistic = state\.optimistic\.filter/);
   assert.match(edit, /claimTerminalDeliveryActionRequired\(message, 'edit'\)/);
   assert.doesNotMatch(edit, /verifyTerminalDeliveryAction\(message\)/);
-  assert.doesNotMatch(edit, /deleteUploadedAttachment/);
+  assert.doesNotMatch(`${edit}\n${recover}`, /deleteUploadedAttachment/);
   assert.match(
     delivery,
     /error\.definitelyUnsent[\s\S]*markDefinitelyUnsent/,

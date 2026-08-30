@@ -202,6 +202,30 @@ function get(
   });
 }
 
+function openEventStream(port) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/events',
+        headers: { Host: '127.0.0.1:4317' },
+      },
+      (response) => {
+        response.once('data', (chunk) => {
+          resolve({
+            request,
+            response,
+            firstChunk: chunk.toString('utf8'),
+          });
+        });
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 function postJson(
   port,
   pathname,
@@ -569,6 +593,42 @@ test('a freshly rejected event stream emits a lock event for cached clients', as
     response.body,
     'event: locked\ndata: {"code":"device_locked"}\n\n',
   );
+});
+
+test('shutdown can close event streams before waiting for the HTTP server', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const server = createServer(config);
+  const port = await listen(server);
+  let stream;
+  context.after(async () => {
+    stream?.request.destroy();
+    stream?.response.destroy();
+    if (server.listening) await close(server);
+  });
+
+  stream = await openEventStream(port);
+  assert.match(stream.firstChunk, /event: ready/);
+  assert.equal(typeof server.closePocketEventStreams, 'function');
+
+  const streamEnded = new Promise((resolve) => {
+    stream.response.once('end', resolve);
+    stream.response.once('close', resolve);
+  });
+  server.closePocketEventStreams();
+  await streamEnded;
+
+  await Promise.race([
+    close(server),
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error('event_stream_blocked_server_close')),
+        500,
+      ).unref();
+    }),
+  ]);
 });
 
 test('connection probe reports the real relay version', async (context) => {
@@ -3511,6 +3571,472 @@ test('concurrent identical sends claim distinct post-cursor rows', async (contex
   );
 });
 
+test('a queued send refreshes its route after reaching the mutation queue', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let renamed = false;
+  let releaseFirst;
+  let firstStarted;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStartedPromise = new Promise((resolve) => {
+    firstStarted = resolve;
+  });
+  const routedTitles = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          repositoryName: 'Repo',
+          workspaceId: 'workspace-1',
+          workspaceName: 'Workspace',
+          title: renamed ? 'Renamed chat' : 'Untitled chat',
+          titleOrdinal: renamed ? 2 : 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send(route) {
+        routedTitles.push([route.sessionTitle, route.sessionOrdinal]);
+        if (routedTitles.length === 1) {
+          firstStarted();
+          await firstGate;
+        }
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = postMessage(port, {
+    idempotencyKey: 'route_refresh_first_key',
+    message: 'First',
+  });
+  await firstStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'route_refresh_second_key',
+    message: 'Second',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  renamed = true;
+  releaseFirst();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(routedTitles, [
+    ['Untitled chat', 1],
+    ['Renamed chat', 2],
+  ]);
+});
+
+test('tab controls cannot overtake an accepted queued send', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseFirst;
+  let firstStarted;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStartedPromise = new Promise((resolve) => {
+    firstStarted = resolve;
+  });
+  const sequence = [];
+  let routeTitle = 'Chat';
+  let tabTargetTitle = null;
+  const database = {
+    getSessionRoute() {
+      return {
+        id: 'test-session',
+        repositoryName: 'Repo',
+        workspaceId: 'workspace-1',
+        workspaceName: 'Workspace',
+        title: routeTitle,
+        titleOrdinal: 1,
+      };
+    },
+    getSessionMessageCursor() {
+      return 0;
+    },
+    listUserMessagesAfter() {
+      return [];
+    },
+    listSessions() {
+      return [{ id: 'test-session', title: 'Chat' }];
+    },
+  };
+  let sendCount = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database,
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sendCount += 1;
+        sequence.push(`send-${sendCount}`);
+        if (sendCount === 1) {
+          firstStarted();
+          await firstGate;
+        }
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+      async newTab(target) {
+        tabTargetTitle = target.sessionTitle;
+        sequence.push('new-tab');
+        return { ok: false, code: 'tab_not_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = postMessage(port, {
+    idempotencyKey: 'fifo_first_send_key',
+    message: 'First',
+  });
+  await firstStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'fifo_second_send_key',
+    message: 'Second',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const tab = postJson(
+    port,
+    '/api/sessions/test-session/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(sequence, ['send-1']);
+
+  routeTitle = 'Renamed chat';
+  releaseFirst();
+  await Promise.all([first, second, tab]);
+  assert.deepEqual(sequence, ['send-1', 'send-2', 'new-tab']);
+  assert.equal(tabTargetTitle, 'Renamed chat');
+});
+
+test('accepted sends reserve FIFO before delivery ledger persistence', async () => {
+  const source = await fs.readFile(
+    new URL('../src/server.mjs', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('const deliveryOperation = idempotency.run(');
+  const end = source.indexOf('if (deliveryOperation.joined)', start);
+  const block = source.slice(start, end);
+  assert.match(
+    block,
+    /idempotency\.run\([\s\S]*serializeMutation,\s*\)/,
+  );
+  assert.doesNotMatch(
+    block,
+    /\(setDeliveryPhase\)\s*=>\s*serializeMutation/,
+  );
+});
+
+test('a delayed delivery ledger write cannot let a tab overtake an accepted send', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-fifo-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  context.after(() => fs.rm(directory, { recursive: true, force: true }));
+  let releasePersist;
+  let persistStarted;
+  let blockFirstPersist = true;
+  const persistGate = new Promise((resolve) => {
+    releasePersist = resolve;
+  });
+  const persistStartedPromise = new Promise((resolve) => {
+    persistStarted = resolve;
+  });
+  const sequence = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          repositoryName: 'Repo',
+          workspaceId: 'workspace-1',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+      listSessions() {
+        return [{ id: 'test-session', title: 'Chat' }];
+      },
+    },
+    watcher: createWatcher(),
+    deliveryLedgerPath: path.join(directory, 'delivery-receipts.json'),
+    async beforeDeliveryLedgerPersist() {
+      if (!blockFirstPersist) return;
+      blockFirstPersist = false;
+      persistStarted();
+      await persistGate;
+    },
+    transport: {
+      async send() {
+        sequence.push('send');
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+      async newTab() {
+        sequence.push('tab');
+        return { ok: false, code: 'tab_not_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const send = postMessage(port, {
+    idempotencyKey: 'persist_fifo_send_key',
+    message: 'First accepted mutation',
+  });
+  await persistStartedPromise;
+  const tab = postJson(
+    port,
+    '/api/sessions/test-session/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(sequence, []);
+  releasePersist();
+  await Promise.all([send, tab]);
+  assert.deepEqual(sequence, ['send', 'tab']);
+});
+
+test('an immediate Conductor stale steer error is never reported as delivered', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+  const exact = {
+    id: 'rejected-user',
+    rowId: 1,
+    kind: 'user',
+    text: 'Continue the work',
+    createdAt: new Date(pressedAt + 100).toISOString(),
+    sentAt: new Date(pressedAt + 120).toISOString(),
+    turnId: 'stale-turn',
+  };
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          repositoryName: 'Repo',
+          workspaceId: 'workspace-1',
+          workspaceName: 'Workspace',
+          title: 'Stale chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [exact];
+      },
+      findImmediateSendRejection(_sessionId, match) {
+        assert.equal(match, exact);
+        return { code: 'conductor_turn_rejected', rowId: 2 };
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'stale_steer_rejection_key',
+    message: exact.text,
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      code: 'conductor_turn_rejected',
+      retrySafe: false,
+      final: true,
+      messageId: exact.id,
+      rowId: exact.rowId,
+    },
+  });
+});
+
+test('delivery status revokes a receipt after Conductor cancels its confirmed row', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+  const exact = {
+    id: 'confirmed-user',
+    rowId: 41,
+    kind: 'user',
+    text: 'Queue this work',
+    createdAt: new Date(pressedAt + 100).toISOString(),
+    sentAt: new Date(pressedAt + 120).toISOString(),
+    turnId: 'confirmed-turn',
+  };
+  let deliveryState = 'visible';
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          repositoryName: 'Repo',
+          workspaceId: 'workspace-1',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 40;
+      },
+      listUserMessagesAfter() {
+        return [exact];
+      },
+      getDeliveredMessageState(_sessionId, rowId) {
+        assert.equal(rowId, exact.rowId);
+        return deliveryState;
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const idempotencyKey = 'post_confirm_cancellation_key';
+
+  const sent = await postMessage(port, {
+    idempotencyKey,
+    message: exact.text,
+  });
+  assert.equal(sent.status, 200);
+  deliveryState = 'cancelled';
+  const status = await postDeliveryStatus(port, { idempotencyKey });
+  assert.deepEqual(JSON.parse(status.body), {
+    delivery: {
+      state: 'failed',
+      code: 'conductor_message_cancelled',
+      retrySafe: false,
+      final: true,
+      messageId: exact.id,
+      rowId: exact.rowId,
+    },
+  });
+});
+
 test('service worker handles only Pocket shell paths and Pocket-owned caches', async () => {
   const source = await fs.readFile(
     new URL('../public/service-worker.js', import.meta.url),
@@ -3984,7 +4510,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   const optimisticPush = source.indexOf('state.optimistic.push(optimistic)');
   const requiredPersistence = source.indexOf(
-    'await persistPendingDeliveries({',
+    'await claimDraftSendRequired(optimistic, draftRevision, payloadFingerprint)',
     optimisticPush,
   );
   const draftClear = source.indexOf("field.value = ''", requiredPersistence);
@@ -4105,7 +4631,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.doesNotMatch(restoreBlock, /discardTerminalUnconfirmed/);
   assert.match(
     source,
-    /function mutatePendingDeliveriesRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*store\.get\(PENDING_DELIVERIES_KEY\)[\s\S]*store\.put\(snapshot, PENDING_DELIVERIES_KEY\)/,
+    /function mutatePendingDeliveriesRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*store\.get\(PENDING_DELIVERIES_KEY\)[\s\S]*pendingDeliverySnapshotTransition[\s\S]*store\.put\(transition\.snapshot, PENDING_DELIVERIES_KEY\)/,
   );
   assert.match(source, /async function markDefinitelyUnsent/);
   assert.match(
@@ -4118,7 +4644,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /async function claimTerminalDeliveryActionRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*candidate\.deliveryAttempt === message\.deliveryAttempt[\s\S]*deliveryAttempt: candidate\.deliveryAttempt \+ 1/,
+    /async function claimTerminalDeliveryActionRequired[\s\S]*transaction\('snapshots', 'readwrite'\)[\s\S]*type: 'claim-terminal'[\s\S]*store\.put\(transition\.snapshot, PENDING_DELIVERIES_KEY\)/,
   );
   assert.match(
     source,
@@ -4137,7 +4663,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   assert.doesNotMatch(editBlock, /verifyTerminalDeliveryAction\(message\)/);
   assert.match(
     source,
-    /const messages = chronologicalTranscriptMessages\(\[/,
+    /const messages = stableTranscriptMessages\(/,
   );
   assert.match(
     source,
@@ -4145,7 +4671,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /definitelyUnsent \? 'failed' : 'unknown'/,
+    /definitelyUnsent \|\| knownTerminalFailure \? 'failed' : 'unknown'/,
   );
   assert.match(
     source,

@@ -4,6 +4,7 @@ import {
   activityLabel,
   buildFocusedTranscript,
   hasCurrentTerminalAgentError,
+  stableTranscriptMessages,
 } from '../public/transcript-focus.js';
 
 const user = (id, rowId, turnId) => ({
@@ -21,6 +22,40 @@ const assistant = (id, rowId, turnId, parentToolUseId = null) => ({
   text: id,
   turnId,
   parentToolUseId,
+});
+
+test('receipt identity keeps one stable user attempt during delivery settlement', () => {
+  const serverMessage = user('server-user-12', 12, 'turn-1');
+  const delivered = {
+    id: 'optimistic:delivered',
+    kind: 'optimistic',
+    delivery: 'delivered',
+    receiptMessageId: serverMessage.id,
+    text: serverMessage.text,
+  };
+  const rejected = {
+    ...delivered,
+    id: 'optimistic:rejected',
+    delivery: 'failed',
+    errorCode: 'conductor_turn_rejected',
+  };
+
+  assert.deepEqual(
+    stableTranscriptMessages([serverMessage], [delivered]),
+    [serverMessage],
+  );
+  assert.deepEqual(
+    stableTranscriptMessages([serverMessage], [rejected]),
+    [rejected],
+  );
+  const laterAssistant = assistant('later-answer', 13, 'turn-1');
+  assert.deepEqual(
+    stableTranscriptMessages(
+      [serverMessage, laterAssistant],
+      [rejected],
+    ),
+    [rejected, laterAssistant],
+  );
 });
 
 test('completed turns collapse progress and keep every final text block prominent', () => {
