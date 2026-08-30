@@ -39,6 +39,7 @@ const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
 // queued-edit scan happens after the transcript boundary. So it is budgeted
 // like its sibling band rather than pinned to the exact shape of one release.
 const MAX_PRE_TRANSCRIPT_CONTROLS = 8;
+const MAX_MAIN_ROOT_CANDIDATES = 32;
 const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8;
 const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
 const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
@@ -745,44 +746,73 @@ function sessionRadioTopology(tabGroup) {
   return topology;
 }
 
+function inspectMainRootCandidate(element, rootPath) {
+  const elements = routeElements(element);
+  // Two Apple Events instead of two per child. Same values, same checks.
+  const roles = bulkRead(
+    element,
+    elements,
+    (root) => root.uiElements.role(),
+    (child) => routeRole(child),
+  );
+  const descriptions = bulkRead(
+    element,
+    elements,
+    (root) => root.uiElements.description(),
+    (child) => routeDescription(child),
+  );
+  let composerCount = 0;
+  let tabGroupCount = 0;
+  let tabGroupIndex = -1;
+  for (let index = 0; index < elements.length; index += 1) {
+    if (roles[index] === 'AXTabGroup') {
+      tabGroupCount += 1;
+      tabGroupIndex = index;
+    }
+    if (descriptions[index] === 'composer') {
+      composerCount += 1;
+    }
+  }
+  return {
+    candidate:
+      tabGroupCount === 1 && composerCount === 1
+        ? {
+            descriptions,
+            elements,
+            roles,
+            rootIndex: rootPath[0],
+            rootPath: rootPath.slice(),
+            tabGroupIndex,
+          }
+        : null,
+    elements,
+    roles,
+  };
+}
+
 function resolveMainRoot(rootElements) {
   const candidates = [];
-  for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
-    const elements = routeElements(rootElements[rootIndex]);
-    // Two Apple Events instead of two per child. Same values, same checks.
-    const roles = bulkRead(
-      rootElements[rootIndex],
-      elements,
-      (root) => root.uiElements.role(),
-      (element) => routeRole(element),
-    );
-    const descriptions = bulkRead(
-      rootElements[rootIndex],
-      elements,
-      (root) => root.uiElements.description(),
-      (element) => routeDescription(element),
-    );
-    let composerCount = 0;
-    let tabGroupCount = 0;
-    let tabGroupIndex = -1;
-    for (let index = 0; index < elements.length; index += 1) {
-      if (roles[index] === 'AXTabGroup') {
-        tabGroupCount += 1;
-        tabGroupIndex = index;
-      }
-      if (descriptions[index] === 'composer') {
-        composerCount += 1;
-      }
+  let inspectedCount = 0;
+  const inspect = (element, rootPath) => {
+    inspectedCount += 1;
+    if (inspectedCount > MAX_MAIN_ROOT_CANDIDATES) {
+      fail('route_changed', 'mainRootCandidateBudget');
     }
-    if (tabGroupCount !== 1) continue;
-    if (composerCount === 1) {
-      candidates.push({
-        descriptions,
-        elements,
-        roles,
-        rootIndex,
-        tabGroupIndex,
-      });
+    const result = inspectMainRootCandidate(element, rootPath);
+    if (result.candidate) candidates.push(result.candidate);
+    return result;
+  };
+
+  for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
+    const root = inspect(rootElements[rootIndex], [rootIndex]);
+    if (root.candidate || root.elements.length <= 1) continue;
+
+    // Conductor 0.83.1 moved the proven main group under one chrome wrapper.
+    // Inspect only direct AXGroup children, with a global candidate budget.
+    // Sidebar controls and unrelated leaf roots remain opaque.
+    for (let childIndex = 0; childIndex < root.elements.length; childIndex += 1) {
+      if (root.roles[childIndex] !== 'AXGroup') continue;
+      inspect(root.elements[childIndex], [rootIndex, childIndex]);
     }
   }
   if (candidates.length !== 1) fail('route_changed');
@@ -911,6 +941,7 @@ function acquireRouteLease(process, target = routeTarget()) {
   return Object.freeze({
     mainChildCount: mainElements.length,
     mainRootIndex: main.rootIndex,
+    mainRootPath: Object.freeze(main.rootPath.slice()),
     rootCount: rootElements.length,
     sessionName,
     sessionOrdinal: target.sessionOrdinal,
@@ -946,6 +977,12 @@ function assertRouteLease(process, lease) {
     !Array.isArray(lease.workspacePath) ||
     !Array.isArray(lease.targetSessionPath) ||
     !Array.isArray(lease.sessionTopology) ||
+    !Array.isArray(lease.mainRootPath) ||
+    lease.mainRootPath.length < 1 ||
+    lease.mainRootPath.length > 2 ||
+    !lease.mainRootPath.every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
     !Number.isSafeInteger(lease.rootCount) ||
     lease.rootCount < 2 ||
     !Number.isSafeInteger(lease.mainRootIndex) ||
@@ -953,6 +990,7 @@ function assertRouteLease(process, lease) {
     !Number.isSafeInteger(lease.sidebarRootIndex) ||
     lease.sidebarRootIndex < 0 ||
     lease.mainRootIndex >= lease.rootCount ||
+    lease.mainRootPath[0] !== lease.mainRootIndex ||
     lease.sidebarRootIndex >= lease.rootCount ||
     lease.mainRootIndex === lease.sidebarRootIndex
   ) {
@@ -976,8 +1014,11 @@ function assertRouteLease(process, lease) {
     workspaceName: lease.workspaceName,
   });
   const main = resolveMainRoot(rootElements);
-  if (main.rootIndex !== lease.mainRootIndex) {
-    fail('route_changed', `mainRootIndex ${main.rootIndex}!=${lease.mainRootIndex}`);
+  if (!sameRoutePath(main.rootPath, lease.mainRootPath)) {
+    fail(
+      'route_changed',
+      `mainRootPath ${JSON.stringify(main.rootPath)}!=${JSON.stringify(lease.mainRootPath)}`,
+    );
   }
   const mainElements = main.elements;
   // Conductor's toolbar gains and loses chrome while a send is in flight, as git
