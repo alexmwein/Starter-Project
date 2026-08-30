@@ -144,6 +144,16 @@ const SEND_CONTROL_RECOVERY_WINDOW_MS = 6_000;
 const SEND_CONTROL_AUTHORITATIVE_DELAY_MS = 750;
 const SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS = 3_000;
 const SEND_CONTROL_CERTIFICATION_RESERVE_MS = 8_000;
+const PRE_COMPOSER_BUDGET_RESERVE_MS = 15_000;
+
+function assertPreComposerBudget(deadlineAt) {
+  if (
+    deadlineAt !== null &&
+    deadlineAt - Date.now() < PRE_COMPOSER_BUDGET_RESERVE_MS
+  ) {
+    fail('automation_budget_exhausted');
+  }
+}
 
 // Conductor re-renders its transcript continuously while an agent streams, so
 // an AX element is routinely replaced between the moment a walk enumerates it
@@ -475,7 +485,9 @@ function routeTarget() {
     environmentValue('POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT'),
     environmentValue('POCKET_WORKSPACE_CONTAINER_CHILD_COUNT'),
   ];
-  const hintProvided = hintValues.some((value) => value !== null);
+  const hintProvided = hintValues.some(
+    (value) => value !== null && value !== '',
+  );
   let workspaceHint = null;
   if (hintProvided) {
     if (hintValues.some((value) => value === null)) {
@@ -825,7 +837,9 @@ function acquireRouteLease(process, target = routeTarget()) {
   const sessionName = `Close chat ${target.sessionTitle}`;
   const main = resolveMainRoot(rootElements);
   const workspace = resolveWorkspaceRoot(rootElements, target, main.rootIndex);
-  if (main.rootIndex === workspace.rootIndex) fail('route_changed');
+  if (main.rootIndex === workspace.rootIndex) {
+    fail('route_changed', 'rootOverlap');
+  }
   const mainElements = main.elements;
   const tabGroupIndex = main.tabGroupIndex;
 
@@ -836,14 +850,20 @@ function acquireRouteLease(process, target = routeTarget()) {
     (entry) => entry.name === sessionName,
   );
   if (matchingSessions.length < target.sessionOrdinal) {
-    fail('route_changed');
+    fail(
+      'route_changed',
+      `ordinal ${matchingSessions.length}<${target.sessionOrdinal}`,
+    );
   }
   const targetSession = matchingSessions[target.sessionOrdinal - 1];
   if (
     !targetSession.selected ||
     sessionTopology.filter((entry) => entry.selected).length !== 1
   ) {
-    fail('route_changed');
+    fail(
+      'route_changed',
+      `initialSelected target=${Boolean(targetSession.selected)} count=${sessionTopology.filter((entry) => entry.selected).length}`,
+    );
   }
 
   return Object.freeze({
@@ -1292,7 +1312,7 @@ function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
   try {
     role = element.role();
   } catch {
-    fail('send_unavailable');
+    fail('composer_tree_transient', null, { transientRead: true });
   }
   if (role === 'AXStaticText') {
     let nameReadable = false;
@@ -1311,17 +1331,19 @@ function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
     } catch {
       // Fail below unless the name was independently readable.
     }
-    if (!nameReadable || !valueReadable) fail('send_unavailable');
+    if (!nameReadable || !valueReadable) {
+      fail('composer_tree_transient', null, { transientRead: true });
+    }
   }
 
   let children;
   try {
     children = element.uiElements();
   } catch {
-    fail('send_unavailable');
+    fail('composer_tree_transient', null, { transientRead: true });
   }
   if (!children || typeof children.length !== 'number') {
-    fail('send_unavailable');
+    fail('composer_tree_transient', null, { transientRead: true });
   }
   for (const child of children) {
     if (hasStaticTextInBoundedTree(child, expectedTexts, budget)) return true;
@@ -1519,29 +1541,32 @@ function composerSendContext(process) {
 let queuedEditProven = false;
 
 function assertNotQueuedEditMode(process) {
-  return withTransientReadRetry(() => {
-    const { composer, contextElements } = composerSendContext(process);
-    if (queuedEditProven) return composer;
-    const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
-    if (
-      contextElements.slice(0, -1).some((candidate) =>
+  return withTransientReadRetry(
+    () => {
+      const { composer, contextElements } = composerSendContext(process);
+      if (queuedEditProven) return composer;
+      const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
+      if (
+        contextElements.slice(0, -1).some((candidate) =>
+          hasStaticTextInBoundedTree(
+            candidate,
+            [QUEUED_EDIT_MARKER],
+            budget,
+          )
+        ) ||
         hasStaticTextInBoundedTree(
-          candidate,
-          [QUEUED_EDIT_MARKER],
+          composer,
+          [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
           budget,
         )
-      ) ||
-      hasStaticTextInBoundedTree(
-        composer,
-        [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
-        budget,
-      )
-    ) {
-      fail('send_unavailable');
-    }
-    queuedEditProven = true;
-    return composer;
-  });
+      ) {
+        fail('send_unavailable');
+      }
+      queuedEditProven = true;
+      return composer;
+    },
+    (error) => error?.pocketTransientRead === true,
+  );
 }
 
 function uniqueComposerDraft(process) {
@@ -2063,6 +2088,7 @@ function typeAndSendMessage(pid) {
     routeLease = acquireRouteLease(process);
     routeReadyAt = Date.now();
     assertNotQueuedEditMode(process);
+    assertPreComposerBudget(automationDeadline());
     process = validateFocusedComposer(pid);
     const draftReadStartedAt = Date.now();
     const currentDraft = focusedDraft(process);
@@ -2254,7 +2280,13 @@ function run(argv) {
     const refreshed = validateFocusedComposer(pid);
     assertRouteLease(refreshed, routeLease);
     validateFocusedComposer(pid);
-    return 'ready';
+    return [
+      'ready',
+      routeLease.workspacePath[0],
+      routeLease.workspacePath[1],
+      routeLease.sidebarChildCount,
+      routeLease.workspaceContainerChildCount,
+    ].join(':');
   }
   if (operation === 'input-check') {
     assertSessionUnlocked();

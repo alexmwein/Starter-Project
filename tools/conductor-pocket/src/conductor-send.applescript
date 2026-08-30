@@ -621,7 +621,12 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 			end try
 		end repeat
 	end tell
-	if (count of matchingRoutes) is not 1 or selectedWorkspaceCount is not 1 then return missing value
+	if (count of matchingRoutes) is not 1 then return missing value
+	if selectedWorkspaceCount is greater than 1 then return missing value
+	(* A neutral Dashboard or restored window can expose the exact sidebar with
+	no selected workspace. Repository identity makes that route unique and safe
+	to press. Keep the older fail-closed rule for unscoped callers. *)
+	if selectedWorkspaceCount is 0 and my targetRepositoryName is "" then return missing value
 	return item 1 of matchingRoutes
 end getWorkspaceRoute
 
@@ -814,7 +819,7 @@ on commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPi
 		-- helper actually throws; anything unrecognized still falls through.
 		-- deadline_exceeded is the helper bounding its own lifetime so the
 		-- transport kill can never orphan it mid-send.
-		repeat with knownCode in {"send_unavailable", "user_input_active", "route_changed", "composer_focus_changed", "draft_changed", "composer_update_failed", "invalid_encoding", "unicode_roundtrip_failed", "target_not_active", "deadline_exceeded"}
+		repeat with knownCode in {"send_unavailable", "automation_budget_exhausted", "composer_tree_transient", "user_input_active", "route_changed", "composer_focus_changed", "draft_changed", "composer_update_failed", "invalid_encoding", "unicode_roundtrip_failed", "target_not_active", "deadline_exceeded"}
 			if errorText contains knownCode then return "code:" & knownCode
 		end repeat
 		return "automation_failed"
@@ -838,6 +843,31 @@ on waitForInputIdle(inputScriptPath, conductorPid)
 	if helperResult is "busy" then return "busy"
 	return "input_helper_unavailable"
 end waitForInputIdle
+
+on selectedRouteHint(inputScriptPath, conductorPid)
+	try
+		set helperResult to do shell script "/usr/bin/env POCKET_WORKSPACE_HINT_CONTAINER_INDEX='' POCKET_WORKSPACE_HINT_LINK_INDEX='' POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT='' POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT='' POCKET_OPERATION=route-check /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+	on error
+		return missing value
+	end try
+	if helperResult does not start with "ready:" then return missing value
+	set originalDelimiters to AppleScript's text item delimiters
+	set AppleScript's text item delimiters to ":"
+	set routeParts to text items of helperResult
+	set AppleScript's text item delimiters to originalDelimiters
+	if (count of routeParts) is not 5 then return missing value
+	try
+		set containerIndex to item 2 of routeParts as integer
+		set linkIndex to item 3 of routeParts as integer
+		set sidebarChildCount to item 4 of routeParts as integer
+		set containerChildCount to item 5 of routeParts as integer
+		if containerIndex < 0 or linkIndex < 0 then return missing value
+		if sidebarChildCount <= containerIndex or containerChildCount <= linkIndex then return missing value
+		return {containerIndex, linkIndex, sidebarChildCount, containerChildCount}
+	on error
+		return missing value
+	end try
+end selectedRouteHint
 
 set operationMode to system attribute "POCKET_OPERATION"
 set inputScriptPath to system attribute "POCKET_INPUT_SCRIPT"
@@ -880,74 +910,21 @@ if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_act
 if inputReadiness is "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
 if inputReadiness is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
 
--- Conductor 0.81 introduced a Dashboard/Home screen and lands on it after an
--- update restart. On that screen no main group (tab strip + composer) exists,
--- so every send strands with nobody at the Mac to click a workspace. The
--- workspace links are still in the sidebar, just nested deeper than the
--- two-level route scan reads. When and only when the main group is absent,
--- deep-search for the workspace link, press it, and wait for the session view.
--- This runs after the input-idle and lock gates and before any route
--- resolution, so the readiness-before-route ordering is unchanged, and a
--- genuine absence still fails with the same codes it always did.
-if getMainGroup() is missing value then
-	set escaped to my escapeDashboard(workspaceName)
-	if escaped then
-		repeat with waitIndex from 1 to 40
-			if getMainGroup() is not missing value then exit repeat
-			delay 0.25
-		end repeat
-	end if
-end if
-
-set sidebarGroup to getSidebarGroup()
-if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
-set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
-if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
-set workspaceLink to item 1 of workspaceRoute
-set workspaceContainerIndex to item 2 of workspaceRoute
-set workspaceLinkIndex to item 3 of workspaceRoute
-set sidebarChildCount to item 4 of workspaceRoute
-set containerChildCount to item 5 of workspaceRoute
-tell application "System Events"
-	set workspaceClasses to value of attribute "AXDOMClassList" of workspaceLink
-	set routeAlreadySelected to false
-	if workspaceClasses contains "bg-sidebar-accent" then
-		set routeAlreadySelected to my sessionIsSelected(sessionTitle, sessionOrdinal)
-	else
-		if retryInputCounters is "" then perform action "AXPress" of workspaceLink
-	end if
-end tell
-
-if retryInputCounters is not "" and routeAlreadySelected is false then return "{\"ok\":false,\"code\":\"user_input_active\"}"
-
-set sessionFound to routeAlreadySelected
-if sessionFound is false then
-	repeat with waitIndex from 1 to 50
-		delay 0.1
-		tell application "System Events"
-			set matchedCount to 0
-			set sessionTabs to my getSessionTabs()
-			repeat with candidate in sessionTabs
-				try
-					set candidateName to name of candidate as text
-					if candidateName is ("Close chat " & sessionTitle) then
-						set matchedCount to matchedCount + 1
-						if matchedCount is sessionOrdinal then
-							if (value of candidate as boolean) is false then perform action "AXPress" of candidate
-							set sessionFound to true
-							exit repeat
-						end if
-					end if
-				end try
+set selectedHint to missing value
+if operationMode is "send" then set selectedHint to my selectedRouteHint(inputScriptPath, conductorPid)
+if selectedHint is missing value then
+	(* Conductor can land on Dashboard after a restart. When the exact route is
+	not already selected, recover through the full navigation and proof path. *)
+	if getMainGroup() is missing value then
+		set escaped to my escapeDashboard(workspaceName)
+		if escaped then
+			repeat with waitIndex from 1 to 40
+				if getMainGroup() is not missing value then exit repeat
+				delay 0.25
 			end repeat
-		end tell
-		if sessionFound then exit repeat
-	end repeat
-end if
+		end if
+	end if
 
-if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
-
-if routeAlreadySelected is false then
 	set sidebarGroup to getSidebarGroup()
 	if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
 	set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
@@ -957,28 +934,81 @@ if routeAlreadySelected is false then
 	set workspaceLinkIndex to item 3 of workspaceRoute
 	set sidebarChildCount to item 4 of workspaceRoute
 	set containerChildCount to item 5 of workspaceRoute
-end if
-
-set stableRouteChecks to 0
-if routeAlreadySelected is true and operationMode is "send" then
-	(* This exact workspace and ordinal were selected on the first read. The
-	JXA helper still proves the pinned route twice immediately before press,
-	so three more full outer tree walks add latency without adding authority. *)
-	set stableRouteChecks to 3
-else
-	set my heldMainGroup to getMainGroup()
-	repeat with waitIndex from 1 to 50
-		delay 0.1
-		if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
-			set stableRouteChecks to stableRouteChecks + 1
-			if stableRouteChecks is 3 then exit repeat
+	tell application "System Events"
+		set workspaceClasses to value of attribute "AXDOMClassList" of workspaceLink
+		set routeAlreadySelected to false
+		if workspaceClasses contains "bg-sidebar-accent" then
+			set routeAlreadySelected to my sessionIsSelected(sessionTitle, sessionOrdinal)
 		else
-			set stableRouteChecks to 0
+			if retryInputCounters is "" then perform action "AXPress" of workspaceLink
 		end if
-	end repeat
-	set my heldMainGroup to missing value
+	end tell
+
+	if retryInputCounters is not "" and routeAlreadySelected is false then return "{\"ok\":false,\"code\":\"user_input_active\"}"
+
+	set sessionFound to routeAlreadySelected
+	if sessionFound is false then
+		repeat with waitIndex from 1 to 50
+			delay 0.1
+			tell application "System Events"
+				set matchedCount to 0
+				set sessionTabs to my getSessionTabs()
+				repeat with candidate in sessionTabs
+					try
+						set candidateName to name of candidate as text
+						if candidateName is ("Close chat " & sessionTitle) then
+							set matchedCount to matchedCount + 1
+							if matchedCount is sessionOrdinal then
+								if (value of candidate as boolean) is false then perform action "AXPress" of candidate
+								set sessionFound to true
+								exit repeat
+							end if
+						end if
+					end try
+				end repeat
+			end tell
+			if sessionFound then exit repeat
+		end repeat
+	end if
+
+	if sessionFound is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+
+	if routeAlreadySelected is false then
+		set sidebarGroup to getSidebarGroup()
+		if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
+		set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
+		if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
+		set workspaceLink to item 1 of workspaceRoute
+		set workspaceContainerIndex to item 2 of workspaceRoute
+		set workspaceLinkIndex to item 3 of workspaceRoute
+		set sidebarChildCount to item 4 of workspaceRoute
+		set containerChildCount to item 5 of workspaceRoute
+	end if
+
+	set stableRouteChecks to 0
+	if routeAlreadySelected is true and operationMode is "send" then
+		(* The inner helper proves the pinned route again immediately before press. *)
+		set stableRouteChecks to 3
+	else
+		set my heldMainGroup to getMainGroup()
+		repeat with waitIndex from 1 to 50
+			delay 0.1
+			if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
+				set stableRouteChecks to stableRouteChecks + 1
+				if stableRouteChecks is 3 then exit repeat
+			else
+				set stableRouteChecks to 0
+			end if
+		end repeat
+		set my heldMainGroup to missing value
+	end if
+	if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+else
+	set workspaceContainerIndex to item 1 of selectedHint
+	set workspaceLinkIndex to item 2 of selectedHint
+	set sidebarChildCount to item 3 of selectedHint
+	set containerChildCount to item 4 of selectedHint
 end if
-if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 set my heldMainGroup to missing value
 
 -- Control operations run HERE, after the route is proven and before any
@@ -1214,8 +1244,10 @@ tell application "System Events"
 	end considering
 end tell
 
-if my workspaceLinkIsSelected(workspaceLink, workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
-if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+if selectedHint is missing value then
+	if my workspaceLinkIsSelected(workspaceLink, workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
+	if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+end if
 set my heldMainGroup to missing value
 
 set commitResult to my commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)

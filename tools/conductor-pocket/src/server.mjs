@@ -47,13 +47,15 @@ const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
-const SEND_AUTOMATION_RETRY_BUDGET_MS = 45_000;
+const SEND_AUTOMATION_RETRY_BUDGET_MS = 60_000;
 const DELIVERY_PHASES = new Set(['queued', 'automating', 'confirming']);
 const DELIVERY_LEDGER_VERSION = 1;
 const DELIVERY_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DELIVERY_LEDGER_MAX_ENTRIES = 2048;
 const DELIVERY_LEDGER_MAX_BYTES = 4 * 1024 * 1024;
 const TRANSIENT_PRE_COMPOSER_CODES = new Set([
+  'automation_budget_exhausted',
+  'composer_tree_transient',
   'workspace_list_unavailable',
   'workspace_not_visible',
   'session_not_visible',

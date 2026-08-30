@@ -1261,11 +1261,6 @@ button:active {
 }
 
 @media (max-width: 420px) {
-  .message.user:has(.message-meta.terminal) {
-    width: 92%;
-    max-width: 92%;
-  }
-
   .message-meta.terminal {
     row-gap: 2px;
   }

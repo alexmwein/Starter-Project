@@ -16,7 +16,9 @@ const PRESS_MARKER_MAX_BYTES = 64;
 const PRESS_MARKER_PREFIX = 'conductor-pocket-press-';
 const safeToRetryCodes = new Set([
   'accessibility_disabled',
+  'automation_budget_exhausted',
   'composer_changed_pre_send',
+  'composer_tree_transient',
   'composer_unavailable',
   'conductor_not_running',
   'conductor_window_unavailable',

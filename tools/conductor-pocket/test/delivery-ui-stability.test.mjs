@@ -136,6 +136,10 @@ test('delivery labels cannot resize a short user bubble', async () => {
   assert.match(message, /flex-direction:\s*column/);
   assert.match(message, /align-items:\s*flex-end/);
   assert.match(content, /max-width:\s*100%/);
+  assert.doesNotMatch(
+    css,
+    /\.message\.user:has\(\.message-meta\.terminal\)\s*\{[^}]*\bwidth:/,
+  );
 });
 
 test('the keyboard inset is subtracted from the shell exactly once', async () => {

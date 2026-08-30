@@ -533,6 +533,201 @@ test('the final route lease uses the same workspace label policy as navigation',
   }
 });
 
+test('empty route hint fields mean no hint instead of a broken route', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const values = new Map([
+    ['POCKET_REPOSITORY_NAME', 'growth-operating'],
+    ['POCKET_WORKSPACE_NAME', 'daemon'],
+    ['POCKET_SESSION_TITLE', 'pocket conductor'],
+    ['POCKET_SESSION_ORDINAL', '1'],
+    ['POCKET_WORKSPACE_CONTAINER_INDEX', ''],
+    ['POCKET_WORKSPACE_LINK_INDEX', ''],
+    ['POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT', ''],
+    ['POCKET_WORKSPACE_CONTAINER_CHILD_COUNT', ''],
+  ]);
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __values: values,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+environmentValue = (name) => globalThis.__values.has(name)
+  ? globalThis.__values.get(name)
+  : null;
+globalThis.__targetWithoutHint = routeTarget();`,
+    sandbox,
+  );
+
+  assert.equal(sandbox.__targetWithoutHint.repositoryName, 'growth-operating');
+  assert.equal(sandbox.__targetWithoutHint.workspaceName, 'daemon');
+  assert.equal(sandbox.__targetWithoutHint.sessionTitle, 'pocket conductor');
+  assert.equal(sandbox.__targetWithoutHint.sessionOrdinal, 1);
+  assert.equal(sandbox.__targetWithoutHint.workspaceHint, null);
+});
+
+test('selected route fast path returns an exact reusable workspace hint', async () => {
+  const [source, inputHelper] = await Promise.all([
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    inputHelper,
+    /operation === 'route-check'[\s\S]*routeLease\.workspacePath\[0\][\s\S]*routeLease\.workspacePath\[1\][\s\S]*routeLease\.sidebarChildCount[\s\S]*routeLease\.workspaceContainerChildCount/,
+  );
+  assert.match(source, /on selectedRouteHint\(inputScriptPath, conductorPid\)/);
+  const readiness = source.indexOf('set inputReadiness to my waitForInputIdle');
+  const fastPath = source.indexOf('set selectedHint to my selectedRouteHint');
+  const sidebarScan = source.indexOf('set sidebarGroup to getSidebarGroup()');
+  assert.ok(readiness >= 0 && fastPath > readiness && sidebarScan > fastPath);
+  assert.match(
+    source,
+    /if operationMode is "send" then[\s\S]*selectedRouteHint[\s\S]*if selectedHint is missing value then[\s\S]*getSidebarGroup\(\)/,
+  );
+});
+
+test('repository scoped navigation can recover when no workspace is selected', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const routeStart = source.indexOf('on getWorkspaceRoute(workspaceName, sidebarGroup)');
+  const routeEnd = source.indexOf('end getWorkspaceRoute', routeStart);
+  const route = source.slice(routeStart, routeEnd);
+
+  assert.match(route, /if \(count of matchingRoutes\) is not 1 then return missing value/);
+  assert.match(route, /if selectedWorkspaceCount is greater than 1 then return missing value/);
+  assert.match(
+    route,
+    /if selectedWorkspaceCount is 0 and my targetRepositoryName is "" then return missing value/,
+  );
+  assert.doesNotMatch(route, /selectedWorkspaceCount is not 1/);
+});
+
+test('queued edit tree read failures have a retryable pre-composer code', async () => {
+  const [source, transportSource, serverSource, appleScript] = await Promise.all([
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/server.mjs', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+  ]);
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+globalThis.__scanQueuedEditTree = hasStaticTextInBoundedTree;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () =>
+      sandbox.__scanQueuedEditTree(
+        { role() { throw new Error('AX node replaced'); } },
+        ['Editing queued message'],
+        { remaining: 4 },
+      ),
+    (error) =>
+      error?.pocketCode === 'composer_tree_transient' &&
+      error?.pocketTransientRead === true,
+  );
+  const queuedStart = source.indexOf('function assertNotQueuedEditMode');
+  const queuedEnd = source.indexOf('\n}', queuedStart);
+  assert.match(
+    source.slice(queuedStart, queuedEnd),
+    /error\?\.pocketTransientRead === true/,
+  );
+  assert.match(
+    transportSource,
+    /safeToRetryCodes = new Set\(\[[\s\S]*'composer_tree_transient'/,
+  );
+  assert.match(
+    serverSource,
+    /TRANSIENT_PRE_COMPOSER_CODES = new Set\(\[[\s\S]*'composer_tree_transient'/,
+  );
+  assert.match(
+    appleScript,
+    /knownCode in \{[^}]*"composer_tree_transient"/,
+  );
+});
+
+test('a slow navigation retries before exposing the phone draft', async () => {
+  const [source, transportSource, serverSource, appleScript] = await Promise.all([
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/server.mjs', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+  ]);
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 1_000,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+globalThis.__assertPreComposerBudget = assertPreComposerBudget;`,
+    sandbox,
+  );
+
+  assert.doesNotThrow(() => sandbox.__assertPreComposerBudget(null));
+  assert.doesNotThrow(() => sandbox.__assertPreComposerBudget(16_000));
+  assert.throws(
+    () => sandbox.__assertPreComposerBudget(15_999),
+    (error) => error?.pocketCode === 'automation_budget_exhausted',
+  );
+
+  const sendStart = source.indexOf('function typeAndSendMessage');
+  const sendBody = source.slice(sendStart, source.indexOf('\n}\n', sendStart));
+  const queuedProof = sendBody.indexOf('assertNotQueuedEditMode(process)');
+  const budgetProof = sendBody.indexOf('assertPreComposerBudget(');
+  const firstDraftRead = sendBody.indexOf('focusedDraft(process)');
+  assert.ok(queuedProof >= 0 && budgetProof > queuedProof);
+  assert.ok(firstDraftRead > budgetProof);
+  assert.match(
+    transportSource,
+    /safeToRetryCodes = new Set\(\[[\s\S]*'automation_budget_exhausted'/,
+  );
+  assert.match(
+    serverSource,
+    /SEND_AUTOMATION_RETRY_BUDGET_MS = 60_000/,
+  );
+  assert.match(
+    serverSource,
+    /TRANSIENT_PRE_COMPOSER_CODES = new Set\(\[[\s\S]*'automation_budget_exhausted'/,
+  );
+  assert.match(
+    appleScript,
+    /knownCode in \{[^}]*"automation_budget_exhausted"/,
+  );
+});
+
 test('repository-scoped routing distinguishes duplicate workspace names', async () => {
   const source = await fs.readFile(
     new URL('../src/conductor-input.js', import.meta.url),
@@ -781,7 +976,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function hasStaticTextInBoundedTree[\s\S]*budget\.remaining <= 0[\s\S]*role = element\.role\(\)[\s\S]*role === 'AXStaticText'[\s\S]*!nameReadable \|\| !valueReadable[\s\S]*fail\('send_unavailable'\)[\s\S]*hasStaticTextInBoundedTree\(child, expectedTexts, budget\)[\s\S]*function assertNotQueuedEditMode[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*contextElements\.slice\(0, -1\)\.some\([\s\S]*\[QUEUED_EDIT_MARKER\][\s\S]*hasStaticTextInBoundedTree\(\s*composer,\s*\[QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER\][\s\S]*fail\('send_unavailable'\)/,
+    /function hasStaticTextInBoundedTree[\s\S]*budget\.remaining <= 0[\s\S]*role = element\.role\(\)[\s\S]*role === 'AXStaticText'[\s\S]*!nameReadable \|\| !valueReadable[\s\S]*fail\('composer_tree_transient',[\s\S]*transientRead: true[\s\S]*hasStaticTextInBoundedTree\(child, expectedTexts, budget\)[\s\S]*function assertNotQueuedEditMode[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*contextElements\.slice\(0, -1\)\.some\([\s\S]*\[QUEUED_EDIT_MARKER\][\s\S]*hasStaticTextInBoundedTree\(\s*composer,\s*\[QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER\][\s\S]*fail\('send_unavailable'\)/,
   );
   assert.doesNotMatch(
     inputHelper,
@@ -908,7 +1103,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     source,
-    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*if \(count of matchingRoutes\) is not 1 or selectedWorkspaceCount is not 1 then return missing value/,
+    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*if \(count of matchingRoutes\) is not 1 then return missing value[\s\S]*selectedWorkspaceCount is greater than 1[\s\S]*selectedWorkspaceCount is 0 and my targetRepositoryName is ""/,
   );
   const initialWorkspaceLookup = source.indexOf(
     'set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)',
@@ -1424,7 +1619,11 @@ globalThis.__routeLeaseTest = {
     state.webArea = makeGuardTree({ directMarker }).webArea;
     assert.throws(
       () => assertNotQueuedEditMode(process),
-      (error) => error?.pocketCode === 'send_unavailable',
+      (error) =>
+        error?.pocketCode ===
+        (directMarker === 'unreadable-value'
+          ? 'composer_tree_transient'
+          : 'send_unavailable'),
     );
   }
 
@@ -1698,7 +1897,7 @@ test('a transient accessibility read is retried instead of aborting the send', a
   );
   assert.match(
     queuedEditMode.slice(0, queuedEditMode.indexOf('\n}\n')),
-    /withTransientReadRetry\(\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES/,
+    /withTransientReadRetry\([\s\S]*\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*error\?\.pocketTransientRead === true/,
   );
   const exactWait = inputHelper.slice(
     inputHelper.indexOf('function waitForExactDraft'),
