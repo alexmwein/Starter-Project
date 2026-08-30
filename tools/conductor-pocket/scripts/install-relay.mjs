@@ -11,10 +11,18 @@ import {
 } from '../src/constants.mjs';
 import { withOperationLock } from '../src/operation-lock.mjs';
 import {
+  RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
   bootoutIfLoaded,
+  launchdArguments,
+  launchdNotFound,
   waitForLaunchdRemoval,
   writePrivateFile,
 } from './lib/sidecar.mjs';
+import {
+  pruneStableRuntimes,
+  rollbackPlistForLoadedRelay,
+  runtimeForLoadedLaunchdJob,
+} from './lib/runtime-retention.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,6 +82,57 @@ function xml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
+}
+
+function relayLaunchAgentPlist({
+  interpreterPath,
+  cliPath,
+  runtimeDirectory,
+  relayConfigPath,
+  stdoutPath,
+  stderrPath,
+}) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(interpreterPath)}</string>
+    <string>--no-warnings=ExperimentalWarning</string>
+    <string>${xml(cliPath)}</string>
+    <string>serve</string>
+    <string>--config</string>
+    <string>${xml(relayConfigPath)}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${xml(runtimeDirectory)}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <!-- Unconditional: with SuccessfulExit=false, a clean SIGTERM (exit 0)
+       left the relay permanently down until a manual kickstart, and the
+       phone cannot even report why. Deliberate stops go through launchctl
+       bootout, which unloads the job entirely, so this never fights an
+       intentional shutdown. -->
+  <true/>
+  <key>ExitTimeOut</key>
+  <!-- Above the relay's own 60s force-exit deadline: a send's automation can
+       legitimately run about 50s, and launchd's default 20s SIGKILL would preempt
+       the graceful drain that keeps a dying relay from orphaning an
+       osascript child mid-type. -->
+  <integer>65</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${xml(stdoutPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xml(stderrPath)}</string>
+</dict>
+</plist>
+`;
 }
 
 async function run(executable, argumentsList, options = {}) {
@@ -213,52 +272,56 @@ async function install() {
   const dataDirectory = path.dirname(configPath);
   await fs.mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   await fs.chmod(dataDirectory, 0o700);
+  const runtimeParent = path.join(dataDirectory, 'runtimes');
   const runtimeDirectory = await installStableRuntime(dataDirectory);
   const stdoutPath = path.join(dataDirectory, 'relay.out.log');
   const stderrPath = path.join(dataDirectory, 'relay.err.log');
   const cliPath = path.join(runtimeDirectory, 'src', 'cli.mjs');
   const interpreterPath = await resolveInterpreterPath();
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${label}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${xml(interpreterPath)}</string>
-    <string>--no-warnings=ExperimentalWarning</string>
-    <string>${xml(cliPath)}</string>
-    <string>serve</string>
-    <string>--config</string>
-    <string>${xml(configPath)}</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${xml(runtimeDirectory)}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <!-- Unconditional: with SuccessfulExit=false, a clean SIGTERM (exit 0)
-       left the relay permanently down until a manual kickstart, and the
-       phone cannot even report why. Deliberate stops go through launchctl
-       bootout, which unloads the job entirely, so this never fights an
-       intentional shutdown. -->
-  <true/>
-  <key>ExitTimeOut</key>
-  <!-- Above the relay's own 55s force-exit deadline: a send's automation can
-       legitimately run ~50s, and launchd's default 20s SIGKILL would preempt
-       the graceful drain that keeps a dying relay from orphaning an
-       osascript child mid-type. -->
-  <integer>60</integer>
-  <key>ProcessType</key>
-  <string>Background</string>
-  <key>StandardOutPath</key>
-  <string>${xml(stdoutPath)}</string>
-  <key>StandardErrorPath</key>
-  <string>${xml(stderrPath)}</string>
-</dict>
-</plist>
-`;
+  const plist = relayLaunchAgentPlist({
+    interpreterPath,
+    cliPath,
+    runtimeDirectory,
+    relayConfigPath: configPath,
+    stdoutPath,
+    stderrPath,
+  });
+  let previousLoadedRuntimeDirectory = null;
+  let previousLoadedPlist = null;
+  let previousLoadedRuntimeKnown = true;
+  let previousJobWasLoadedAtSnapshot = false;
+  try {
+    const { stdout } = await run('/bin/launchctl', [
+      'print',
+      `gui/${process.getuid()}/${label}`,
+    ]);
+    const workingDirectory = /^\s*working directory = (.+)$/m.exec(
+      stdout,
+    )?.[1]?.trim();
+    const loadedArguments = launchdArguments(stdout);
+    previousLoadedRuntimeDirectory = await runtimeForLoadedLaunchdJob(
+      runtimeParent,
+      loadedArguments,
+      { configPath, workingDirectory },
+    );
+    previousLoadedPlist = relayLaunchAgentPlist({
+      interpreterPath: loadedArguments[0],
+      cliPath: loadedArguments[2],
+      runtimeDirectory: previousLoadedRuntimeDirectory,
+      relayConfigPath: loadedArguments[5],
+      stdoutPath,
+      stderrPath,
+    });
+    previousJobWasLoadedAtSnapshot = true;
+  } catch (error) {
+    if (!launchdNotFound(error)) {
+      previousLoadedRuntimeKnown = false;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[install-relay] loaded rollback runtime is unknown: ${message}`,
+      );
+    }
+  }
   let previousPlist = null;
   try {
     previousPlist = await fs.readFile(launchAgentPath, 'utf8');
@@ -267,11 +330,23 @@ async function install() {
   }
   let previousJobWasLoaded = false;
   let plistReplaced = false;
+  if (!previousLoadedRuntimeKnown) {
+    throw new Error('Refusing to replace an unverified loaded relay');
+  }
   try {
     await writePrivateFile(launchAgentPath, plist);
     plistReplaced = true;
     previousJobWasLoaded = await bootoutIfLoaded(label);
-    await waitForLaunchdRemoval(label);
+    if (
+      previousLoadedRuntimeKnown &&
+      previousJobWasLoaded !== previousJobWasLoadedAtSnapshot
+    ) {
+      previousLoadedRuntimeKnown = false;
+      console.warn(
+        '[install-relay] loaded relay changed during cutover; runtime retention will be skipped',
+      );
+    }
+    await waitForLaunchdRemoval(label, RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS);
     await run('/bin/launchctl', [
       'bootstrap',
       `gui/${process.getuid()}`,
@@ -282,8 +357,13 @@ async function install() {
     if (!plistReplaced) throw primaryError;
     try {
       await bootoutIfLoaded(label);
-      await waitForLaunchdRemoval(label);
-      if (previousPlist == null) {
+      await waitForLaunchdRemoval(label, RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS);
+      const rollbackPlist = rollbackPlistForLoadedRelay({
+        previousJobWasLoaded,
+        previousLoadedPlist,
+        previousPlist,
+      });
+      if (rollbackPlist == null) {
         await fs.unlink(launchAgentPath).catch((error) => {
           if (error?.code !== 'ENOENT') throw error;
         });
@@ -291,7 +371,7 @@ async function install() {
           throw new Error('The prior relay job had no restorable LaunchAgent');
         }
       } else {
-        await writePrivateFile(launchAgentPath, previousPlist);
+        await writePrivateFile(launchAgentPath, rollbackPlist);
         if (previousJobWasLoaded) {
           await run('/bin/launchctl', [
             'bootstrap',
@@ -312,6 +392,25 @@ async function install() {
       );
     }
     throw primaryError;
+  }
+
+  try {
+    if (!previousLoadedRuntimeKnown) {
+      throw new Error('prior rollback runtime could not be verified');
+    }
+    const retention = await pruneStableRuntimes(
+      runtimeParent,
+      runtimeDirectory,
+      { rollbackRuntime: previousLoadedRuntimeDirectory },
+    );
+    if (retention.removed.length > 0) {
+      process.stdout.write(
+        `[install-relay] removed ${retention.removed.length} retired runtime directories\n`,
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[install-relay] runtime retention skipped: ${message}`);
   }
 
   process.stdout.write(`Conductor Pocket relay installed.

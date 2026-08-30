@@ -436,6 +436,10 @@ test('workspace routes use the visible Conductor name instead of the folder code
     'visible workspace name',
   );
   assert.equal(
+    database.listRecentSessions(1)[0].repositoryName,
+    'Quickstart',
+  );
+  assert.equal(
     database.getSessionRoute('session-1').workspaceName,
     'visible workspace name',
   );
@@ -445,6 +449,100 @@ test('workspace routes use the visible Conductor name instead of the folder code
   );
   assert.equal(database.listLocalWorkspacePaths().length, 1);
   assert.equal(path.isAbsolute(database.listLocalWorkspacePaths()[0]), true);
+});
+
+test('send confirmation associates an immediate stale steer rejection with its user row', async (context) => {
+  const { database, insert } = await createConfirmationFixture(context);
+  insert.run(
+    'rejected-user',
+    'session-1',
+    'user',
+    'Continue the work',
+    '2026-01-01T00:00:01Z',
+    '2026-01-01T00:00:01Z',
+    null,
+  );
+  insert.run(
+    'rejected-error',
+    'session-1',
+    'assistant',
+    JSON.stringify({
+      type: 'error',
+      content:
+        'Cannot steer: no active turn. Start a turn with runStreamed() first.',
+    }),
+    '2026-01-01T00:00:01.100Z',
+    '2026-01-01T00:00:01.100Z',
+    null,
+  );
+  const match = database.findExactUserMessageAfter(
+    'session-1',
+    0,
+    'Continue the work',
+  );
+  assert.deepEqual(
+    database.findImmediateSendRejection('session-1', match),
+    {
+      code: 'conductor_turn_rejected',
+      rowId: match.rowId + 1,
+    },
+  );
+
+  insert.run(
+    'next-user',
+    'session-1',
+    'user',
+    'New turn',
+    '2026-01-01T00:00:02Z',
+    '2026-01-01T00:00:02Z',
+    null,
+  );
+  insert.run(
+    'later-error',
+    'session-1',
+    'assistant',
+    JSON.stringify({ type: 'error', content: 'Cannot steer: no active turn.' }),
+    '2026-01-01T00:00:02.100Z',
+    '2026-01-01T00:00:02.100Z',
+    null,
+  );
+  assert.equal(
+    database.findImmediateSendRejection('session-1', match)?.rowId,
+    match.rowId + 1,
+  );
+});
+
+test('confirmed delivery state distinguishes a visible row from later cancellation', async (context) => {
+  const { database, insert, writable } = await createConfirmationFixture(context);
+  insert.run(
+    'delivery-user',
+    'session-1',
+    'user',
+    'Send once',
+    '2026-01-01T00:00:01Z',
+    '2026-01-01T00:00:01Z',
+    null,
+  );
+  const match = database.findExactUserMessageAfter(
+    'session-1',
+    0,
+    'Send once',
+  );
+  assert.equal(
+    database.getDeliveredMessageState('session-1', match.rowId),
+    'visible',
+  );
+  writable
+    .prepare('UPDATE session_messages SET cancelled_at = ? WHERE rowid = ?')
+    .run('2026-01-01T00:00:02Z', match.rowId);
+  assert.equal(
+    database.getDeliveredMessageState('session-1', match.rowId),
+    'cancelled',
+  );
+  assert.equal(
+    database.getDeliveredMessageState('session-1', match.rowId + 100),
+    'missing',
+  );
 });
 
 test('unread heads bind completion status and match the focused visible response', async (context) => {

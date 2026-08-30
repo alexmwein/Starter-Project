@@ -33,14 +33,70 @@ export function createDraftConflictFlow({
   render,
   announce,
 }) {
+  function markPhoneMessageHeld(message) {
+    message.delivery = 'failed';
+    message.deliveryPhase = null;
+    message.retrySafe = true;
+    message.definitelyUnsent = true;
+    message.deliveryRecoveryExhausted = true;
+    message.errorCode = 'mac_draft_not_confirmed';
+  }
+
+  async function persistPhoneMessageHeld(message) {
+    markPhoneMessageHeld(message);
+    try {
+      await persist({
+        required: true,
+        upserts: [message],
+        removeIds: [],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function restorePhoneDraftRequired(message) {
+    let composerRestored = false;
+    let attachmentsRestored = false;
+    try {
+      composerRestored =
+        (await restoreComposer(message.sessionId, message.text)) === true;
+      if (composerRestored) {
+        attachmentsRestored =
+          (await restoreAttachments(message)) === true;
+      }
+    } catch {
+      composerRestored = false;
+      attachmentsRestored = false;
+    }
+    if (composerRestored && attachmentsRestored) return true;
+    await persistPhoneMessageHeld(message);
+    render();
+    announce('Nothing was sent because the phone draft could not be saved safely.');
+    return false;
+  }
+
   async function replaceAndSend(message) {
     message.delivery = 'delivering';
-    await persist().catch(() => undefined);
+    try {
+      await persist({
+        required: true,
+        upserts: [message],
+        removeIds: [],
+      });
+    } catch {
+      await persistPhoneMessageHeld(message);
+      render();
+      announce('Nothing was sent because secure delivery storage was unavailable.');
+      return false;
+    }
     render();
     await deliver(message, {
       replaceDraft: true,
       expectedMacDraft: message.macDraft,
     });
+    return true;
   }
 
   // Shared by "send the Mac draft" and "send it, then mine". Returns the Mac
@@ -52,8 +108,9 @@ export function createDraftConflictFlow({
       // stale sheet, and a whitespace-only draft would trim server-side to an
       // empty message the relay rejects. Neither can send; put the phone
       // message back where it is safe.
-      keepMacDraft(message);
-      announce('The Mac composer has nothing to send. Your message is back in the draft.');
+      if (await keepMacDraft(message)) {
+        announce('The Mac composer has nothing to send. Your message is back in the draft.');
+      }
       return null;
     }
     const macOptimistic = makeOptimistic(message.sessionId, macText);
@@ -64,25 +121,31 @@ export function createDraftConflictFlow({
     insertBefore(macOptimistic, message);
     if (thenPhone) {
       message.delivery = 'delivering';
-    } else {
-      remove(message);
-      restoreComposer(message.sessionId, message.text);
-      restoreAttachments(message);
+    } else if (!(await restorePhoneDraftRequired(message))) {
+      remove(macOptimistic);
+      return null;
     }
     try {
-      await persist({ required: true });
+      await persist({
+        required: true,
+        upserts: thenPhone
+          ? [macOptimistic, message]
+          : [macOptimistic],
+        removeIds: thenPhone ? [] : [message.id],
+        releaseDraftClaimIds: thenPhone ? [] : [message.id],
+      });
     } catch {
       // Secure delivery storage refused the new entry, so the Mac draft send
       // cannot be tracked. Roll the attempt back completely rather than fire
       // an untracked send.
       remove(macOptimistic);
-      if (thenPhone) {
-        message.delivery = 'failed';
-        message.retrySafe = true;
-      }
+      await persistPhoneMessageHeld(message);
       render();
       announce('Nothing was sent because secure delivery storage was unavailable.');
       return null;
+    }
+    if (!thenPhone) {
+      remove(message);
     }
     render();
     // Delivered through the compare-and-swap branch, not the exact-match one:
@@ -106,22 +169,35 @@ export function createDraftConflictFlow({
         // retryable failure; sending it now would race whatever state the
         // composer is in, and the Mac draft's own failure handling (retry,
         // or a fresh conflict sheet) is already on screen.
-        message.delivery = 'failed';
-        message.retrySafe = true;
-        await persist().catch(() => undefined);
+        const heldDurably = await persistPhoneMessageHeld(message);
         render();
-        announce('The Mac draft did not confirm, so your message is waiting. Retry it once the Mac draft settles.');
+        announce(
+          heldDurably
+            ? 'The Mac draft did not confirm, so your message is waiting. Retry it once the Mac draft settles.'
+            : 'The Mac draft did not confirm. Your message is still visible, but secure delivery storage is unavailable.',
+        );
       }
     }
     return macOptimistic;
   }
 
-  function keepMacDraft(message) {
-    restoreComposer(message.sessionId, message.text);
-    restoreAttachments(message);
+  async function keepMacDraft(message) {
+    if (!(await restorePhoneDraftRequired(message))) return false;
+    try {
+      await persist({
+        required: true,
+        upserts: [],
+        removeIds: [message.id],
+      });
+    } catch {
+      await persistPhoneMessageHeld(message);
+      render();
+      announce('Nothing changed because secure delivery storage was unavailable.');
+      return false;
+    }
     remove(message);
-    void persist();
     render();
+    return true;
   }
 
   return { replaceAndSend, sendMacDraft, keepMacDraft };

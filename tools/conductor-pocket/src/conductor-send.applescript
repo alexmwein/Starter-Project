@@ -11,6 +11,12 @@ property cachedWorkspaceName : missing value
 property cachedWorkspaceGroup : missing value
 property cachedWorkspaceRoute : missing value
 property projectExpansionAttempted : false
+property maxMainRootCandidates : 32
+property targetRepositoryName : ""
+property workspaceHintContainerIndex : ""
+property workspaceHintLinkIndex : ""
+property workspaceHintSidebarChildCount : ""
+property workspaceHintContainerChildCount : ""
 
 on clearWorkspaceRouteCache()
 	set my cachedWorkspaceName to missing value
@@ -81,6 +87,19 @@ on workspaceMatches(workspaceName, candidateName)
 	return false
 end workspaceMatches
 
+on repositoryHeaderMatches(repositoryName, candidateName)
+	if repositoryName is "" then return true
+	set headerSuffix to " Repo settings New workspace"
+	if candidateName does not end with headerSuffix then return false
+	set labelLength to (length of candidateName) - (length of headerSuffix)
+	if labelLength < 1 then return false
+	set repositoryLabel to text 1 thru labelLength of candidateName
+	if repositoryLabel is repositoryName then return true
+	if repositoryLabel is (repositoryName & " " & repositoryName) then return true
+	if repositoryLabel is ("💀 " & repositoryName) then return true
+	return false
+end repositoryHeaderMatches
+
 on draftConflict(existingDraft)
 	set encodedDraft to do shell script "/usr/bin/printf %s " & quoted form of existingDraft & " | /usr/bin/base64 | /usr/bin/tr -d '\\n'"
 	return "{\"ok\":false,\"code\":\"draft_conflict\",\"draftBase64\":\"" & encodedDraft & "\"}"
@@ -112,7 +131,7 @@ on getWebArea()
 end getWebArea
 
 on getSidebarGroup()
-	return my findSidebarGroup(my workspaceName)
+	return my findSidebarGroupWithRetry(my workspaceName)
 end getSidebarGroup
 
 -- A collapsed project removes all of its workspace AXLinks, which makes the
@@ -183,6 +202,50 @@ on isMainGroup(candidate)
 	return tabGroupCount is 1 and composerCount is 1
 end isMainGroup
 
+on mainGroupCandidates(rootElements)
+	set matchingGroups to {}
+	set inspectedCount to count of rootElements
+	if inspectedCount > my maxMainRootCandidates then return {}
+	tell application "System Events"
+		repeat with candidate in rootElements
+			if my isMainGroup(candidate) then
+				copy candidate to end of matchingGroups
+			else
+				try
+					set candidateElements to UI elements of candidate
+				on error
+					set candidateElements to {}
+				end try
+				set childCount to count of candidateElements
+				if childCount > 0 then
+					set bulkRoles to missing value
+					try
+						set candidateRoles to role of UI elements of candidate
+						if (count of candidateRoles) is childCount then set bulkRoles to candidateRoles
+					end try
+					repeat with childIndex from 1 to childCount
+						set childRole to ""
+						if bulkRoles is not missing value then
+							set childRole to item childIndex of bulkRoles
+						else
+							try
+								set childRole to role of item childIndex of candidateElements as text
+							end try
+						end if
+						if childRole is "AXGroup" then
+							set inspectedCount to inspectedCount + 1
+							if inspectedCount > my maxMainRootCandidates then return {}
+							set nestedCandidate to item childIndex of candidateElements
+							if my isMainGroup(nestedCandidate) then copy nestedCandidate to end of matchingGroups
+						end if
+					end repeat
+				end if
+			end if
+		end repeat
+	end tell
+	return matchingGroups
+end mainGroupCandidates
+
 on findSidebarGroup(workspaceName)
 	my clearWorkspaceRouteCache()
 	set webArea to getWebArea()
@@ -196,11 +259,16 @@ on findSidebarGroup(workspaceName)
 			return missing value
 		end try
 		repeat with candidate in rootElements
-			if my isMainGroup(candidate) is false then
-				set workspaceRoute to my getWorkspaceRoute(workspaceName, candidate)
-				if workspaceRoute is not missing value then
-					copy candidate to end of matchingGroups
-					copy workspaceRoute to end of matchingRoutes
+			if my heldMainGroup is not missing value and candidate is my heldMainGroup then
+				(* The unique main group was already resolved for this navigation phase. *)
+			else if my isMainGroup(candidate) is false then
+				set candidateRootList to {candidate}
+				if (count of my mainGroupCandidates(candidateRootList)) is 0 then
+					set workspaceRoute to my getWorkspaceRoute(workspaceName, candidate)
+					if workspaceRoute is not missing value then
+						copy candidate to end of matchingGroups
+						copy workspaceRoute to end of matchingRoutes
+					end if
 				end if
 			end if
 		end repeat
@@ -215,23 +283,35 @@ on findSidebarGroup(workspaceName)
 	return item 1 of matchingGroups
 end findSidebarGroup
 
+-- Conductor rebuilds the Electron accessibility tree while chats and projects
+-- update. One read can therefore see no unique sidebar even though the next
+-- read is healthy. This wrapper retries only that read-only scan. It never
+-- presses a route or changes the Mac, and the full route proof still runs
+-- after it returns.
+on findSidebarGroupWithRetry(workspaceName)
+	repeat with attemptIndex from 1 to 3
+		set sidebarGroup to my findSidebarGroup(workspaceName)
+		if sidebarGroup is not missing value then return sidebarGroup
+		if attemptIndex is less than 3 then delay 0.15
+	end repeat
+	return missing value
+end findSidebarGroupWithRetry
+
 on getMainGroup()
 	if my heldMainGroup is not missing value then return my heldMainGroup
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
-	set matchingGroups to {}
 	tell application "System Events"
 		try
 			set rootElements to UI elements of webArea
 		on error
 			return missing value
 		end try
-		repeat with candidate in rootElements
-			if my isMainGroup(candidate) then copy candidate to end of matchingGroups
-		end repeat
 	end tell
+	set matchingGroups to my mainGroupCandidates(rootElements)
 	if (count of matchingGroups) is not 1 then return missing value
-	return item 1 of matchingGroups
+	set my heldMainGroup to item 1 of matchingGroups
+	return my heldMainGroup
 end getMainGroup
 
 -- Bounded deep search for the workspace's sidebar link, used ONLY to escape
@@ -455,15 +535,63 @@ on composerControls()
 	return {}
 end composerControls
 
-on inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
+on inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, repositoryMatches, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
 	if candidateRole is not "AXLink" then return {0, missing value}
 	set selectedIncrement to 0
 	if candidateClasses contains "bg-sidebar-accent" then set selectedIncrement to 1
+	if repositoryMatches is false then return {selectedIncrement, missing value}
 	if my workspaceMatches(workspaceName, candidateName) is false then return {selectedIncrement, missing value}
 	set containerOffset to containerIndex - 1
 	set linkOffset to linkIndex - 1
 	return {selectedIncrement, {candidate, containerOffset, linkOffset, sidebarChildCount, containerChildCount}}
 end inspectWorkspaceCandidate
+
+on workspaceLinkBelongsToRepository(workspaceElements, linkIndex, repositoryName)
+	if repositoryName is "" then return true
+	if linkIndex <= 1 then return false
+	repeat with reverseOffset from 1 to (linkIndex - 1)
+		set headerIndex to linkIndex - reverseOffset
+		set candidate to item headerIndex of workspaceElements
+		tell application "System Events"
+			try
+				if (role of candidate as text) is "AXButton" then
+					set candidateName to name of candidate as text
+					if candidateName ends with " Repo settings New workspace" then return my repositoryHeaderMatches(repositoryName, candidateName)
+				end if
+			end try
+		end tell
+	end repeat
+	return false
+end workspaceLinkBelongsToRepository
+
+on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)
+	if my workspaceHintContainerIndex is "" or my workspaceHintLinkIndex is "" or my workspaceHintSidebarChildCount is "" or my workspaceHintContainerChildCount is "" then return missing value
+	try
+		set containerIndex to (my workspaceHintContainerIndex as integer) + 1
+		set linkIndex to (my workspaceHintLinkIndex as integer) + 1
+		set expectedSidebarChildCount to my workspaceHintSidebarChildCount as integer
+		set expectedContainerChildCount to my workspaceHintContainerChildCount as integer
+		if containerIndex < 1 or linkIndex < 1 then return missing value
+		tell application "System Events"
+			set sidebarElements to UI elements of sidebarGroup
+			if (count of sidebarElements) is not expectedSidebarChildCount then return missing value
+			if containerIndex > (count of sidebarElements) then return missing value
+			set workspaceContainer to item containerIndex of sidebarElements
+			set workspaceElements to UI elements of workspaceContainer
+			if (count of workspaceElements) is not expectedContainerChildCount then return missing value
+			if linkIndex > (count of workspaceElements) then return missing value
+			set candidate to item linkIndex of workspaceElements
+			if (role of candidate as text) is not "AXLink" then return missing value
+			if my workspaceMatches(workspaceName, (name of candidate as text)) is false then return missing value
+			if my workspaceLinkBelongsToRepository(workspaceElements, linkIndex, my targetRepositoryName) is false then return missing value
+			set candidateClasses to value of attribute "AXDOMClassList" of candidate
+			if candidateClasses does not contain "bg-sidebar-accent" then return missing value
+		end tell
+		return {candidate, containerIndex - 1, linkIndex - 1, expectedSidebarChildCount, expectedContainerChildCount}
+	on error
+		return missing value
+	end try
+end getWorkspaceRouteFromHint
 
 on getWorkspaceRoute(workspaceName, sidebarGroup)
 	if sidebarGroup is missing value then return missing value
@@ -477,6 +605,8 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 		end if
 		my clearWorkspaceRouteCache()
 	end if
+	set hintedRoute to my getWorkspaceRouteFromHint(workspaceName, sidebarGroup)
+	if hintedRoute is not missing value then return hintedRoute
 	set matchingRoutes to {}
 	set selectedWorkspaceCount to 0
 	tell application "System Events"
@@ -493,6 +623,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 				set containerChildCount to count of workspaceElements
 				set containerRoutes to {}
 				set containerSelectedCount to 0
+				set currentRepositoryMatches to my targetRepositoryName is ""
 				set bulkReady to false
 				try
 					set candidateRoles to role of UI elements of workspaceContainer
@@ -506,8 +637,9 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 							set candidate to item linkIndex of workspaceElements
 							set candidateRole to item linkIndex of candidateRoles as text
 							set candidateName to item linkIndex of candidateNames as text
+							if candidateRole is "AXButton" and candidateName ends with " Repo settings New workspace" then set currentRepositoryMatches to my repositoryHeaderMatches(my targetRepositoryName, candidateName)
 							set candidateClasses to item linkIndex of candidateClassLists
-							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
+							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, currentRepositoryMatches, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
 							set containerSelectedCount to containerSelectedCount + (item 1 of candidateResult)
 							if item 2 of candidateResult is not missing value then copy item 2 of candidateResult to end of containerRoutes
 						on error
@@ -519,13 +651,17 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 				if bulkReady is false then
 					set containerRoutes to {}
 					set containerSelectedCount to 0
+					set currentRepositoryMatches to my targetRepositoryName is ""
 					repeat with linkIndex from 1 to containerChildCount
 						set candidate to item linkIndex of workspaceElements
 						set candidateRole to role of candidate as text
-						if candidateRole is "AXLink" then
+						if candidateRole is "AXButton" then
+							set candidateName to name of candidate as text
+							if candidateName ends with " Repo settings New workspace" then set currentRepositoryMatches to my repositoryHeaderMatches(my targetRepositoryName, candidateName)
+						else if candidateRole is "AXLink" then
 							set candidateClasses to value of attribute "AXDOMClassList" of candidate
 							set candidateName to name of candidate as text
-							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
+							set candidateResult to my inspectWorkspaceCandidate(workspaceName, candidate, candidateRole, candidateName, candidateClasses, currentRepositoryMatches, containerIndex, linkIndex, sidebarChildCount, containerChildCount)
 							set containerSelectedCount to containerSelectedCount + (item 1 of candidateResult)
 							if item 2 of candidateResult is not missing value then copy item 2 of candidateResult to end of containerRoutes
 						end if
@@ -778,21 +914,15 @@ if operationMode is "doctor" then
 	if textArea is missing value then
 		return "{\"ok\":false,\"code\":\"composer_unavailable\"}"
 	end if
-	tell application "System Events"
-		tell process "Conductor" to set frontmost to true
-		set focused of textArea to true
-	end tell
-	try
-		set helperResult to do shell script "/usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
-	on error errorText
-		if errorText contains "session_locked" then return "{\"ok\":false,\"code\":\"session_locked\"}"
-		return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
-	end try
-	if helperResult is not "ready" then return "{\"ok\":false,\"code\":\"input_helper_unavailable\"}"
 	return "{\"ok\":true,\"code\":\"ready\"}"
 end if
 
 set workspaceName to my decodeBase64(system attribute "POCKET_WORKSPACE_NAME_BASE64")
+set my targetRepositoryName to my decodeBase64(system attribute "POCKET_REPOSITORY_NAME_BASE64")
+set my workspaceHintContainerIndex to system attribute "POCKET_WORKSPACE_HINT_CONTAINER_INDEX"
+set my workspaceHintLinkIndex to system attribute "POCKET_WORKSPACE_HINT_LINK_INDEX"
+set my workspaceHintSidebarChildCount to system attribute "POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT"
+set my workspaceHintContainerChildCount to system attribute "POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT"
 set sessionTitle to my decodeBase64(system attribute "POCKET_SESSION_TITLE_BASE64")
 set sessionOrdinal to (system attribute "POCKET_SESSION_ORDINAL") as integer
 set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")
@@ -931,6 +1061,7 @@ else
 	set my heldMainGroup to missing value
 end if
 if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+set my heldMainGroup to missing value
 
 -- Control operations run HERE, after the route is proven and before any
 -- send-specific logic, so they act on exactly the workspace and session the
@@ -1167,6 +1298,7 @@ end tell
 
 if my workspaceLinkIsSelected(workspaceLink, workspaceName) is false then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 if my sessionIsSelected(sessionTitle, sessionOrdinal) is false then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
+set my heldMainGroup to missing value
 
 set commitResult to my commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPid, workspaceContainerIndex, workspaceLinkIndex, sidebarChildCount, containerChildCount)
 if commitResult is "draft_conflict" then
@@ -1179,7 +1311,7 @@ if commitResult is "draft_conflict" then
 end if
 if commitResult starts with "pressed:" then
 	set pressedAt to text 9 thru -1 of commitResult
-	return "{\"ok\":true,\"code\":\"sent\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"
+	return "{\"ok\":true,\"code\":\"sent\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true,\"workspaceHint\":{\"containerIndex\":" & (workspaceContainerIndex as text) & ",\"linkIndex\":" & (workspaceLinkIndex as text) & ",\"sidebarChildCount\":" & (sidebarChildCount as text) & ",\"containerChildCount\":" & (containerChildCount as text) & "}}"
 else if commitResult starts with "ambiguous:" then
 	set pressedAt to text 11 thru -1 of commitResult
 	return "{\"ok\":false,\"code\":\"send_not_confirmed\",\"pressedAt\":" & pressedAt & ",\"composerOwned\":true}"

@@ -69,3 +69,32 @@ test('every module app.js imports is in the server allowlist', async () => {
     );
   }
 });
+
+test('usage state ships as a revisioned checked shell module', async () => {
+  const revision = swSource.match(
+    /const SHELL_REVISION = '([^']+)'/,
+  )?.[1];
+  assert.ok(revision);
+  assert.ok(
+    swSource.includes(`'/usage-state.js?v=${revision}'`),
+    'service worker shell must cache the revisioned usage state module',
+  );
+  assert.ok(
+    indexSource.includes(
+      `rel="modulepreload" href="/usage-state.js?v=${revision}"`,
+    ),
+    'index must preload the matching usage state revision',
+  );
+  assert.ok(
+    serverSource.includes("'/usage-state.js'"),
+    'server allowlist must serve the usage state module',
+  );
+  const packageSource = await fs.readFile(
+    new URL('../package.json', import.meta.url),
+    'utf8',
+  );
+  assert.ok(
+    packageSource.includes('node --check public/usage-state.js'),
+    'package check must syntax-check the usage state module',
+  );
+});

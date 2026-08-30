@@ -31,6 +31,7 @@ import {
 } from './lib/cutover.mjs';
 import {
   RELAY_LABEL,
+  RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
   SIDECAR_DIRECTORY,
   assertRelayLaunchProfile,
   assertSidecarLaunchProfile,
@@ -193,7 +194,10 @@ async function cutover() {
         }),
       stopRelay: async () => {
         await bootoutIfLoaded(RELAY_LABEL);
-        await waitForLaunchdRemoval(RELAY_LABEL);
+        await waitForLaunchdRemoval(
+          RELAY_LABEL,
+          RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
+        );
         await waitForRelayShutdown({
           port: config.port,
           expectedPid: relayProfile.pid,

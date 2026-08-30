@@ -1,22 +1,23 @@
-const SHELL_REVISION = '0.2.0-pocket-selfheal-20260829';
-const CACHE = 'conductor-pocket-shell-v27';
+const SHELL_REVISION = '0.2.0-pocket-0831-20260830';
+const CACHE = `conductor-pocket-shell-${SHELL_REVISION}`;
 const SHELL = [
   '/',
   '/index.html',
-  '/app.css?v=0.2.0-pocket-selfheal-20260829',
-  '/app.js?v=0.2.0-pocket-selfheal-20260829',
-  '/bootstrap-recovery.js?v=0.2.0-pocket-selfheal-20260829',
-  '/delivery-receipts.js?v=0.2.0-pocket-selfheal-20260829',
-  '/draft-conflict.js?v=0.2.0-pocket-selfheal-20260829',
-  '/app-update.js?v=0.2.0-pocket-selfheal-20260829',
-  '/http.js?v=0.2.0-pocket-selfheal-20260829',
-  '/session-lifecycle.js?v=0.2.0-pocket-selfheal-20260829',
-  '/image-attachments.js?v=0.2.0-pocket-selfheal-20260829',
-  '/live-refresh.js?v=0.2.0-pocket-selfheal-20260829',
-  '/read-state.js?v=0.2.0-pocket-selfheal-20260829',
-  '/rich-text.js?v=0.2.0-pocket-selfheal-20260829',
-  '/transcript-focus.js?v=0.2.0-pocket-selfheal-20260829',
-  '/swipe-navigation.js?v=0.2.0-pocket-selfheal-20260829',
+  '/app.css?v=0.2.0-pocket-0831-20260830',
+  '/app.js?v=0.2.0-pocket-0831-20260830',
+  '/bootstrap-recovery.js?v=0.2.0-pocket-0831-20260830',
+  '/delivery-receipts.js?v=0.2.0-pocket-0831-20260830',
+  '/draft-conflict.js?v=0.2.0-pocket-0831-20260830',
+  '/usage-state.js?v=0.2.0-pocket-0831-20260830',
+  '/app-update.js?v=0.2.0-pocket-0831-20260830',
+  '/http.js?v=0.2.0-pocket-0831-20260830',
+  '/session-lifecycle.js?v=0.2.0-pocket-0831-20260830',
+  '/image-attachments.js?v=0.2.0-pocket-0831-20260830',
+  '/live-refresh.js?v=0.2.0-pocket-0831-20260830',
+  '/read-state.js?v=0.2.0-pocket-0831-20260830',
+  '/rich-text.js?v=0.2.0-pocket-0831-20260830',
+  '/transcript-focus.js?v=0.2.0-pocket-0831-20260830',
+  '/swipe-navigation.js?v=0.2.0-pocket-0831-20260830',
   '/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -28,6 +29,7 @@ const SHELL_PATHS = new Set([
   '/bootstrap-recovery.js',
   '/delivery-receipts.js',
   '/draft-conflict.js',
+  '/usage-state.js',
   '/app-update.js',
   '/http.js',
   '/session-lifecycle.js',
@@ -46,6 +48,7 @@ const SHELL_ASSET_PATHS = new Set([
   '/bootstrap-recovery.js',
   '/delivery-receipts.js',
   '/draft-conflict.js',
+  '/usage-state.js',
   '/app-update.js',
   '/http.js',
   '/session-lifecycle.js',
@@ -159,7 +162,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      await Promise.all(
+      await Promise.allSettled(
         keys
           .filter(
             (key) =>

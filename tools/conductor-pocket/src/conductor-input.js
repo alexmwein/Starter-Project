@@ -17,7 +17,6 @@ const COMPOSER_CLASSES = [
   'ProseMirror',
   'composer-tiptap-editor',
 ];
-const SEND_POSITION_CLASS = 'ml-1';
 const SEND_ACTIVE_CLASSES = [
   'bg-foreground',
   'hover:bg-foreground/80',
@@ -39,7 +38,8 @@ const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
 // queued-edit scan happens after the transcript boundary. So it is budgeted
 // like its sibling band rather than pinned to the exact shape of one release.
 const MAX_PRE_TRANSCRIPT_CONTROLS = 8;
-const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8;
+const MAX_MAIN_ROOT_CANDIDATES = 32;
+const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 12;
 const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
 const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
 const MAX_MESSAGE_BYTES = 16 * 1024;
@@ -109,9 +109,10 @@ function recordDiagnostic(entry) {
   }
 }
 
-function fail(code, tag = null) {
+function fail(code, tag = null, { transientRead = false } = {}) {
   const error = new Error(code);
   error.pocketCode = code;
+  if (transientRead) error.pocketTransientRead = true;
   lastFailure = {
     code,
     tag,
@@ -140,6 +141,10 @@ function assertDeadline(deadlineAt) {
 
 const TRANSIENT_READ_ATTEMPTS = 5;
 const TRANSIENT_READ_DELAY_SECONDS = 0.05;
+const SEND_CONTROL_RECOVERY_WINDOW_MS = 6_000;
+const SEND_CONTROL_AUTHORITATIVE_DELAY_MS = 750;
+const SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS = 3_000;
+const SEND_CONTROL_CERTIFICATION_RESERVE_MS = 8_000;
 
 // Conductor re-renders its transcript continuously while an agent streams, so
 // an AX element is routinely replaced between the moment a walk enumerates it
@@ -156,12 +161,12 @@ const TRANSIENT_READ_DELAY_SECONDS = 0.05;
 // wrap read-only inspection with it. assertInputLease and assertSessionUnlocked
 // are deliberately excluded: those report real physical-input and lock state,
 // and retrying them would erase the signal they exist to carry.
-function withTransientReadRetry(readOnlyCheck) {
+function withTransientReadRetry(readOnlyCheck, shouldRetry = () => true) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return readOnlyCheck();
     } catch (error) {
-      if (attempt >= TRANSIENT_READ_ATTEMPTS) throw error;
+      if (!shouldRetry(error) || attempt >= TRANSIENT_READ_ATTEMPTS) throw error;
       delay(TRANSIENT_READ_DELAY_SECONDS);
     }
   }
@@ -234,18 +239,51 @@ function encodeBase64(value) {
 function workspaceMatches(workspaceName, candidateName) {
   return (
     candidateName === workspaceName ||
-    candidateName.startsWith(`${workspaceName} +`)
-  );
-}
-
-function workspaceNameAppearsInRoute(workspaceName, candidateName) {
-  return (
-    workspaceMatches(workspaceName, candidateName) ||
+    candidateName.startsWith(`${workspaceName} +`) ||
     candidateName.startsWith(`${workspaceName} -`) ||
     candidateName.endsWith(`/${workspaceName}`) ||
     candidateName.includes(`/${workspaceName} +`) ||
     candidateName.includes(`/${workspaceName} -`)
   );
+}
+
+function workspaceNameAppearsInRoute(workspaceName, candidateName) {
+  return workspaceMatches(workspaceName, candidateName);
+}
+
+const PROJECT_HEADER_SUFFIX = ' Repo settings New workspace';
+
+function repositoryHeaderMatches(repositoryName, candidateName) {
+  if (
+    typeof repositoryName !== 'string' ||
+    repositoryName.length === 0 ||
+    typeof candidateName !== 'string' ||
+    !candidateName.endsWith(PROJECT_HEADER_SUFFIX)
+  ) {
+    return false;
+  }
+  const label = candidateName.slice(0, -PROJECT_HEADER_SUFFIX.length);
+  return (
+    label === repositoryName ||
+    label === `${repositoryName} ${repositoryName}` ||
+    label === `💀 ${repositoryName}`
+  );
+}
+
+function workspaceBelongsToRepository(
+  containerElements,
+  workspaceIndex,
+  repositoryName,
+) {
+  if (!repositoryName) return true;
+  for (let index = workspaceIndex - 1; index >= 0; index -= 1) {
+    const candidate = containerElements[index];
+    if (routeRole(candidate) !== 'AXButton') continue;
+    const candidateName = routeName(candidate);
+    if (!candidateName.endsWith(PROJECT_HEADER_SUFFIX)) continue;
+    return repositoryHeaderMatches(repositoryName, candidateName);
+  }
+  return false;
 }
 
 // Conductor exposes both project states as AXButton rows. A collapsed title is
@@ -533,6 +571,7 @@ function routeElements(element) {
 }
 
 function routeTarget() {
+  const repositoryName = environmentValue('POCKET_REPOSITORY_NAME') || '';
   const workspaceName = environmentValue('POCKET_WORKSPACE_NAME');
   const sessionTitle = environmentValue('POCKET_SESSION_TITLE');
   const sessionOrdinal = Number(environmentValue('POCKET_SESSION_ORDINAL'));
@@ -583,6 +622,7 @@ function routeTarget() {
     };
   }
   return {
+    repositoryName,
     sessionOrdinal,
     sessionTitle,
     workspaceHint,
@@ -745,44 +785,138 @@ function sessionRadioTopology(tabGroup) {
   return topology;
 }
 
-function resolveMainRoot(rootElements) {
+function inspectMainRootCandidate(element, rootPath) {
+  const elements = routeElements(element);
+  // Two Apple Events instead of two per child. Same values, same checks.
+  const roles = bulkRead(
+    element,
+    elements,
+    (root) => root.uiElements.role(),
+    (child) => routeRole(child),
+  );
+  const descriptions = bulkRead(
+    element,
+    elements,
+    (root) => root.uiElements.description(),
+    (child) => routeDescription(child),
+  );
+  let composerCount = 0;
+  let tabGroupCount = 0;
+  let tabGroupIndex = -1;
+  for (let index = 0; index < elements.length; index += 1) {
+    if (roles[index] === 'AXTabGroup') {
+      tabGroupCount += 1;
+      tabGroupIndex = index;
+    }
+    if (descriptions[index] === 'composer') {
+      composerCount += 1;
+    }
+  }
+  return {
+    candidate:
+      tabGroupCount === 1 && composerCount === 1
+        ? {
+            descriptions,
+            elements,
+            roles,
+            rootIndex: rootPath[0],
+            rootPath: rootPath.slice(),
+            tabGroupIndex,
+          }
+        : null,
+    elements,
+    roles,
+  };
+}
+
+function resolveMainRoot(rootElements, expectedRootPath = null) {
   const candidates = [];
-  for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
-    const elements = routeElements(rootElements[rootIndex]);
-    // Two Apple Events instead of two per child. Same values, same checks.
-    const roles = bulkRead(
-      rootElements[rootIndex],
-      elements,
-      (root) => root.uiElements.role(),
-      (element) => routeRole(element),
-    );
-    const descriptions = bulkRead(
-      rootElements[rootIndex],
-      elements,
-      (root) => root.uiElements.description(),
-      (element) => routeDescription(element),
-    );
-    let composerCount = 0;
-    let tabGroupCount = 0;
-    let tabGroupIndex = -1;
-    for (let index = 0; index < elements.length; index += 1) {
-      if (roles[index] === 'AXTabGroup') {
-        tabGroupCount += 1;
-        tabGroupIndex = index;
+  let inspectedCount = 0;
+  const inspect = (element, rootPath) => {
+    inspectedCount += 1;
+    if (inspectedCount > MAX_MAIN_ROOT_CANDIDATES) {
+      fail('route_changed', 'mainRootCandidateBudget');
+    }
+    const result = inspectMainRootCandidate(element, rootPath);
+    if (result.candidate) candidates.push(result.candidate);
+    return result;
+  };
+
+  const inspectOptional = (element, rootPath) => {
+    try {
+      return inspect(element, rootPath);
+    } catch (error) {
+      if (error?.pocketCode === 'route_changed') return null;
+      throw error;
+    }
+  };
+
+  let expectedRootResult = null;
+  if (expectedRootPath !== null) {
+    if (
+      !Array.isArray(expectedRootPath) ||
+      expectedRootPath.length < 1 ||
+      expectedRootPath.length > 2 ||
+      !expectedRootPath.every(
+        (value) => Number.isSafeInteger(value) && value >= 0,
+      )
+    ) {
+      fail('route_changed', 'mainRootPath');
+    }
+    const expectedRootIndex = expectedRootPath[0];
+    const expectedRoot = rootElements[expectedRootIndex];
+    if (!expectedRoot) fail('route_changed', 'mainRootMissing');
+    expectedRootResult = inspect(expectedRoot, [expectedRootIndex]);
+    if (expectedRootPath.length === 1) {
+      if (!expectedRootResult.candidate) {
+        fail('route_changed', 'mainRootMoved');
       }
-      if (descriptions[index] === 'composer') {
-        composerCount += 1;
+    } else {
+      const expectedChildIndex = expectedRootPath[1];
+      if (
+        expectedRootResult.roles[expectedChildIndex] !== 'AXGroup' ||
+        !expectedRootResult.elements[expectedChildIndex]
+      ) {
+        fail('route_changed', 'mainRootWrapperChanged');
+      }
+      const expectedNested = inspect(
+        expectedRootResult.elements[expectedChildIndex],
+        expectedRootPath,
+      );
+      if (!expectedNested.candidate) {
+        fail('route_changed', 'mainRootMoved');
       }
     }
-    if (tabGroupCount !== 1) continue;
-    if (composerCount === 1) {
-      candidates.push({
-        descriptions,
-        elements,
-        roles,
-        rootIndex,
-        tabGroupIndex,
-      });
+  }
+
+  for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
+    const isExpectedRoot = expectedRootPath?.[0] === rootIndex;
+    const root = isExpectedRoot
+      ? expectedRootResult
+      : expectedRootPath === null
+        ? inspect(rootElements[rootIndex], [rootIndex])
+        : inspectOptional(rootElements[rootIndex], [rootIndex]);
+    if (!root) continue;
+    if (root.candidate || root.elements.length === 0) continue;
+
+    // Conductor 0.83.1 moved the proven main group under one chrome wrapper.
+    // Inspect only direct AXGroup children, with a global candidate budget.
+    // Sidebar controls and unrelated leaf roots remain opaque.
+    for (let childIndex = 0; childIndex < root.elements.length; childIndex += 1) {
+      if (root.roles[childIndex] !== 'AXGroup') continue;
+      if (
+        expectedRootPath?.length === 2 &&
+        expectedRootPath[0] === rootIndex &&
+        expectedRootPath[1] === childIndex
+      ) {
+        continue;
+      }
+      const childPath = [rootIndex, childIndex];
+      if (expectedRootPath === null) {
+        inspect(root.elements[childIndex], childPath);
+      } else {
+        inspectOptional(root.elements[childIndex], childPath);
+      }
     }
   }
   if (candidates.length !== 1) fail('route_changed');
@@ -816,6 +950,11 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
         links.length !== containerChildCount ||
         !link ||
         routeRole(link) !== 'AXLink' ||
+        !workspaceBelongsToRepository(
+          links,
+          path[1],
+          target.repositoryName,
+        ) ||
         !workspaceMatches(target.workspaceName, routeName(link))
       ) {
         continue;
@@ -848,6 +987,15 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
         for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
           const link = links[linkIndex];
           if (routeRole(link) !== 'AXLink') continue;
+          if (
+            !workspaceBelongsToRepository(
+              links,
+              linkIndex,
+              target.repositoryName,
+            )
+          ) {
+            continue;
+          }
           if (!workspaceMatches(target.workspaceName, routeName(link))) continue;
           const classes = routeClasses(link);
           rootMatches.push({
@@ -911,6 +1059,7 @@ function acquireRouteLease(process, target = routeTarget()) {
   return Object.freeze({
     mainChildCount: mainElements.length,
     mainRootIndex: main.rootIndex,
+    mainRootPath: Object.freeze(main.rootPath.slice()),
     rootCount: rootElements.length,
     sessionName,
     sessionOrdinal: target.sessionOrdinal,
@@ -927,6 +1076,10 @@ function acquireRouteLease(process, target = routeTarget()) {
     tabGroupIndex,
     targetSessionPath: Object.freeze(targetSession.path.slice()),
     workspaceContainerChildCount: workspace.containerChildCount,
+    repositoryName:
+      typeof target.repositoryName === 'string'
+        ? target.repositoryName
+        : '',
     workspaceName: target.workspaceName,
     workspacePath: Object.freeze(workspace.path.slice()),
   });
@@ -942,10 +1095,17 @@ function sameRoutePath(left, right) {
 function assertRouteLease(process, lease) {
   if (
     !lease ||
+    typeof lease.repositoryName !== 'string' ||
     typeof lease.workspaceName !== 'string' ||
     !Array.isArray(lease.workspacePath) ||
     !Array.isArray(lease.targetSessionPath) ||
     !Array.isArray(lease.sessionTopology) ||
+    !Array.isArray(lease.mainRootPath) ||
+    lease.mainRootPath.length < 1 ||
+    lease.mainRootPath.length > 2 ||
+    !lease.mainRootPath.every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
     !Number.isSafeInteger(lease.rootCount) ||
     lease.rootCount < 2 ||
     !Number.isSafeInteger(lease.mainRootIndex) ||
@@ -953,6 +1113,7 @@ function assertRouteLease(process, lease) {
     !Number.isSafeInteger(lease.sidebarRootIndex) ||
     lease.sidebarRootIndex < 0 ||
     lease.mainRootIndex >= lease.rootCount ||
+    lease.mainRootPath[0] !== lease.mainRootIndex ||
     lease.sidebarRootIndex >= lease.rootCount ||
     lease.mainRootIndex === lease.sidebarRootIndex
   ) {
@@ -968,6 +1129,7 @@ function assertRouteLease(process, lease) {
     fail('route_changed', 'rootHandleMissing');
   }
   resolveWorkspaceRoot([sidebarRoot], {
+    repositoryName: lease.repositoryName,
     workspaceHint: {
       containerChildCount: lease.workspaceContainerChildCount,
       path: lease.workspacePath,
@@ -975,9 +1137,12 @@ function assertRouteLease(process, lease) {
     },
     workspaceName: lease.workspaceName,
   });
-  const main = resolveMainRoot(rootElements);
-  if (main.rootIndex !== lease.mainRootIndex) {
-    fail('route_changed', `mainRootIndex ${main.rootIndex}!=${lease.mainRootIndex}`);
+  const main = resolveMainRoot(rootElements, lease.mainRootPath);
+  if (!sameRoutePath(main.rootPath, lease.mainRootPath)) {
+    fail(
+      'route_changed',
+      `mainRootPath ${JSON.stringify(main.rootPath)}!=${JSON.stringify(lease.mainRootPath)}`,
+    );
   }
   const mainElements = main.elements;
   // Conductor's toolbar gains and loses chrome while a send is in flight, as git
@@ -1106,7 +1271,11 @@ function validateFocusedComposer(pid, expectedDraft = null) {
       .byName('AXDOMClassList')
       .value();
   } catch {
-    fail('composer_focus_changed');
+    // A focused AX node can be replaced between these two attribute reads while
+    // Conductor re-renders. Mark only that bridge failure as retryable. A real
+    // role, class, draft, lock, process or route mismatch remains unmarked and
+    // therefore still fails on its first readiness sample.
+    fail('composer_focus_changed', null, { transientRead: true });
   }
   if (
     focusedElement.role() !== 'AXTextArea' ||
@@ -1729,7 +1898,6 @@ function isComposerSendButton(candidate, preceding, requireSpeechAnchor = true) 
       candidate.role() === 'AXButton' &&
       candidate.enabled() === true &&
       Array.isArray(classes) &&
-      classes.includes(SEND_POSITION_CLASS) &&
       SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
       NON_SEND_CLASSES.every((name) => !classes.includes(name)) &&
       (!requireSpeechAnchor || isSpeechControl(preceding)) &&
@@ -1793,10 +1961,11 @@ function resolveComposerSend(process, expectedDraft) {
     // delivered draft failing with `buttons=0` until the deadline. The anchor
     // still runs first so it keeps working the moment the label returns; the
     // fallback drops ONLY the label requirement and keeps every discriminating
-    // condition (position class, active classes, none of the disabled-state
-    // classes, enabled, exactly one press action), and it is accepted ONLY
-    // when it identifies exactly one candidate, so ambiguity still fails
-    // closed rather than pressing a guess.
+    // condition (active classes, none of the disabled-state classes, enabled,
+    // exactly one press action), and it is accepted ONLY when it identifies
+    // exactly one candidate, so ambiguity still fails closed rather than
+    // pressing a guess. Conductor 0.83 removed the old ml-1 layout class from
+    // this control, so layout is deliberately not part of the identity proof.
     buttons = composerElements.filter((candidate, index) =>
       isComposerSendButton(candidate, composerElements[index - 1], false),
     );
@@ -1854,26 +2023,59 @@ function waitForExactDraft(pid, expectedDraft, routeLease) {
 // bulk-reads the class lists of its children in a SINGLE Apple Event, so the
 // probe costs a handful of round trips instead of a full walk.
 //
-// It is deliberately NOT a proof: a true result only ends the wait, and the
-// caller then runs the complete resolveComposerSend plus route proof at the
-// decision point before anything is pressed. A false negative just costs one
-// more 20ms poll.
+// It is deliberately NOT a proof: a true result only ends the cheap wait, and
+// the caller then runs the complete resolveComposerSend plus route proof at the
+// decision point before anything is pressed. A false streak receives a bounded
+// authoritative read in waitForComposerSend.
 function sendControlLikelyReady(pid, expectedDraft) {
+  let process;
   try {
-    const process = validateFocusedComposer(pid, expectedDraft);
+    process = withTransientReadRetry(
+      () => validateFocusedComposer(pid, expectedDraft),
+      (error) => error?.pocketTransientRead === true,
+    );
+  } catch (error) {
+    // Structured validation failures carry safety and recovery meaning. Do
+    // not flatten draft, lock, route or target failures into 250 more polls.
+    // An unstructured AX bridge throw can still be retried by the next cheap
+    // sample without authorizing a press.
+    if (typeof error?.pocketCode === 'string') throw error;
+    return false;
+  }
+  try {
     const focused = process.attributes.byName('AXFocusedUIElement').value();
     const composer = focused.attributes.byName('AXParent').value();
     const children = childElements(composer);
     if (children.length === 0) return false;
-    const classGroups = tryBulk(composer, children.length, (group) =>
+    let classGroups = tryBulk(composer, children.length, (group) =>
       group.uiElements.attributes.byName('AXDOMClassList').value(),
     );
-    if (!classGroups) return true;
+    if (!classGroups) {
+      // Some Accessibility bridges cannot construct the bulk specifier even
+      // though the same attribute remains readable on each child. Keep that
+      // case cheap and local to the composer. An unreadable child contributes
+      // no match, so an incomplete probe can never authorize the expensive
+      // decision-point proof on every poll.
+      let complete = true;
+      classGroups = children.map((child) => {
+        try {
+          const classes = child.attributes
+            .byName('AXDOMClassList')
+            .value();
+          if (Array.isArray(classes)) return classes;
+        } catch {
+          // Mark the snapshot incomplete below.
+        }
+        complete = false;
+        return null;
+      });
+      if (!complete) return false;
+    }
+    if (classGroups.some((classes) => !Array.isArray(classes))) return false;
     let matches = 0;
     for (const classes of classGroups) {
       if (!Array.isArray(classes)) continue;
       if (
-        classes.includes(SEND_POSITION_CLASS) &&
         SEND_ACTIVE_CLASSES.every((name) => classes.includes(name)) &&
         NON_SEND_CLASSES.every((name) => !classes.includes(name))
       ) {
@@ -1882,8 +2084,9 @@ function sendControlLikelyReady(pid, expectedDraft) {
     }
     return matches === 1;
   } catch {
-    // Unreadable is not evidence of absence; let the full check decide.
-    return true;
+    // A later poll can retry a transient read. Only a positive class match is
+    // allowed to spend the full resolver and advance to its decision proof.
+    return false;
   }
 }
 
@@ -1897,37 +2100,79 @@ function waitForComposerSend(
   // multiplied into 250 iterations x 5 transient retries x a full route walk:
   // minutes of spinning, and one orphaned helper was observed still running
   // 2.5 minutes after the transport gave up at 45s. The poll now reads only
-  // the focused composer and the Send control (~100ms), and the full route
-  // complete Send resolution runs once when the button is actually present.
+  // the focused composer and the Send control (~100ms). A rate limited full
+  // Send resolution recovers an incomplete cheap Accessibility snapshot.
   // The caller then performs its two pinned route proofs immediately before
   // the press. Repeating one of those proofs here only produced a result that
   // the caller discarded, at a measured cost of about two seconds.
   const deadlineAt = automationDeadline();
+  const waitStartedAt = Date.now();
+  const recoveryDeadlineAt = Math.min(
+    waitStartedAt + SEND_CONTROL_RECOVERY_WINDOW_MS,
+    deadlineAt === null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(
+          waitStartedAt,
+          deadlineAt - SEND_CONTROL_CERTIFICATION_RESERVE_MS,
+        ),
+  );
+  let nextAuthoritativeAt =
+    waitStartedAt + SEND_CONTROL_AUTHORITATIVE_DELAY_MS;
   // Each iteration's send_unavailable is swallowed by design (the button may
   // simply not be ready yet), which meant a loop that died of exhaustion or
   // deadline reported nothing about WHY no iteration ever succeeded. Carry the
   // last swallowed failure into the terminal one.
   let lastSwallowed = null;
   for (let attempt = 0; attempt < 250; attempt += 1) {
-    if (deadlineAt !== null && Date.now() >= deadlineAt) {
+    const sampledAt = Date.now();
+    if (deadlineAt !== null && sampledAt >= deadlineAt) {
       fail(
         'deadline_exceeded',
         `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
       );
     }
+    if (lastSwallowed && sampledAt >= recoveryDeadlineAt) {
+      fail(
+        'send_unavailable',
+        `press-wait recovery; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
     assertInputLease(inputLease);
-    if (sendControlLikelyReady(pid, expectedDraft)) {
+    const likelyReady = sendControlLikelyReady(pid, expectedDraft);
+    const afterProbeAt = Date.now();
+    if (deadlineAt !== null && afterProbeAt >= deadlineAt) {
+      fail(
+        'deadline_exceeded',
+        `press-wait; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
+    if (!likelyReady && afterProbeAt >= recoveryDeadlineAt) {
+      fail(
+        'send_unavailable',
+        `press-wait recovery; last inner: ${lastSwallowed ? `${lastSwallowed.tag || ''} via ${lastSwallowed.via}` : 'none recorded'}`,
+      );
+    }
+    const authoritativeDue = afterProbeAt >= nextAuthoritativeAt;
+    const firstLikelyResolution = likelyReady && lastSwallowed === null;
+    if (firstLikelyResolution || authoritativeDue) {
       try {
-        return withTransientReadRetry(() => {
-          const process = validateFocusedComposer(pid, expectedDraft);
-          return resolveComposerSend(process, expectedDraft);
-        });
+        return withTransientReadRetry(
+          () => {
+            const process = validateFocusedComposer(pid, expectedDraft);
+            return resolveComposerSend(process, expectedDraft);
+          },
+          (error) => error?.pocketTransientRead === true,
+        );
       } catch (error) {
         // The probe is a hint, not a proof. When the full check disagrees the
         // control simply is not ready yet, so keep polling exactly as before
         // rather than turning a cheap false positive into a failed send.
         if (error?.pocketCode !== 'send_unavailable') throw error;
         lastSwallowed = lastFailure;
+        // Schedule from the end of the authoritative read. A slow AX walk must
+        // not make the next expensive read immediately overdue.
+        nextAuthoritativeAt =
+          Date.now() + SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS;
       }
     }
     delay(0.02);
@@ -1953,11 +2198,19 @@ function waitForComposerSend(
 // the proven chunked path. The fast path can never become a new way to fail, and
 // nothing here presses anything: the exact-draft proof and the route proof still
 // run before the press exactly as before.
-function deliverWholeMessage(pid, message) {
+function deliverWholeMessage(pid, message, inputLease, expectedDraft) {
+  let wroteMessage = false;
   try {
-    const process = validateFocusedComposer(pid);
+    assertInputLease(inputLease);
+    const process = validateFocusedComposer(pid, expectedDraft);
     const focused = process.attributes.byName('AXFocusedUIElement').value();
+    assertInputLease(inputLease);
+    if (focusedDraft(process) !== expectedDraft) return false;
+    assertInputLease(inputLease);
+    if (focusedDraft(process) !== expectedDraft) return false;
     focused.value = message;
+    wroteMessage = true;
+    assertInputLease(inputLease);
     for (let attempt = 0; attempt < 25; attempt += 1) {
       if (focusedDraft(validateFocusedComposer(pid)) === message) return true;
       delay(0.02);
@@ -1965,14 +2218,55 @@ function deliverWholeMessage(pid, message) {
   } catch {
     // Fall back to chunked typing.
   }
-  try {
-    // Leave nothing half-written for the fallback to trip over.
-    const process = validateFocusedComposer(pid);
-    process.attributes.byName('AXFocusedUIElement').value().value = '';
-  } catch {
-    // The chunked path clears the composer itself.
+  if (wroteMessage) {
+    try {
+      // Clear only the exact value Pocket wrote while the same physical-input
+      // lease still holds. A transient read or newer Mac typing must survive.
+      assertInputLease(inputLease);
+      const process = validateFocusedComposer(pid, message);
+      const focused = process.attributes.byName('AXFocusedUIElement').value();
+      assertInputLease(inputLease);
+      if (focusedDraft(process) === message) {
+        assertInputLease(inputLease);
+        if (focusedDraft(process) === message) focused.value = '';
+      }
+    } catch {
+      // The chunked path will classify any remaining draft without erasing it.
+    }
   }
   return false;
+}
+
+function sendPhaseTimings({
+  attemptStartedAt,
+  helperStartedAt,
+  routeReadyAt,
+  draftReadyAt,
+  sendReadyAt,
+  pressInvokedAt,
+  completedAt,
+}) {
+  const elapsed = (startedAt, finishedAt) => {
+    if (!Number.isSafeInteger(startedAt) || startedAt <= 0) return null;
+    const phaseFinishedAt =
+      Number.isSafeInteger(finishedAt) && finishedAt > 0
+        ? finishedAt
+        : completedAt;
+    return Math.max(0, phaseFinishedAt - startedAt);
+  };
+  return {
+    outerNavigationMs: Math.max(0, helperStartedAt - attemptStartedAt),
+    routeAcquireMs: elapsed(helperStartedAt, routeReadyAt),
+    draftReadyMs:
+      routeReadyAt > 0 ? elapsed(routeReadyAt, draftReadyAt) : null,
+    sendReadyMs:
+      draftReadyAt > 0 ? elapsed(draftReadyAt, sendReadyAt) : null,
+    finalProofMs:
+      sendReadyAt > 0 ? elapsed(sendReadyAt, pressInvokedAt) : null,
+    postPressChecksMs:
+      pressInvokedAt > 0 ? elapsed(pressInvokedAt, completedAt) : null,
+    totalMs: Math.max(0, completedAt - attemptStartedAt),
+  };
 }
 
 function typeAndSendMessage(pid) {
@@ -2037,7 +2331,7 @@ function typeAndSendMessage(pid) {
       if (replaceDraft && currentDraft !== expectedDraft) fail('draft_conflict');
       if (currentDraft === '') lastProvenPrefix = '';
 
-      if (deliverWholeMessage(pid, message)) {
+      if (deliverWholeMessage(pid, message, inputLease, currentDraft)) {
         lastProvenPrefix = message;
         exactDraftExposedAt = Date.now();
       } else {
@@ -2085,8 +2379,6 @@ function typeAndSendMessage(pid) {
     sendReadyAt = Date.now();
     delay(0.02);
     process = validateFocusedComposer(pid, message);
-    assertRouteLease(process, routeLease);
-    process = validateFocusedComposer(pid, message);
     const sendButton = resolveComposerSend(process, message);
     const pressAction = resolveComposerPressAction(sendButton);
     assertRouteLease(process, routeLease);
@@ -2106,15 +2398,15 @@ function typeAndSendMessage(pid) {
       at: new Date().toISOString(),
       attemptStartedAt,
       outcome: 'pressed',
-      timings: {
-        outerNavigationMs: Math.max(0, helperStartedAt - attemptStartedAt),
-        routeAcquireMs: Math.max(0, routeReadyAt - helperStartedAt),
-        draftReadyMs: Math.max(0, draftReadyAt - routeReadyAt),
-        sendReadyMs: Math.max(0, sendReadyAt - draftReadyAt),
-        finalProofMs: Math.max(0, pressInvokedAt - sendReadyAt),
-        postPressChecksMs: Math.max(0, completedAt - pressInvokedAt),
-        totalMs: Math.max(0, completedAt - attemptStartedAt),
-      },
+      timings: sendPhaseTimings({
+        attemptStartedAt,
+        helperStartedAt,
+        routeReadyAt,
+        draftReadyAt,
+        sendReadyAt,
+        pressInvokedAt,
+        completedAt,
+      }),
     });
     return `pressed:${pressInvokedAt}`;
   } catch (error) {
@@ -2131,6 +2423,7 @@ function typeAndSendMessage(pid) {
     // attemptStartedAt joins this row to the relay's traceId in relay.out.log,
     // so a send_not_confirmed there can be resolved to the assertion that
     // actually broke rather than the phase that swallowed it.
+    const completedAt = Date.now();
     recordDiagnostic({
       at: new Date().toISOString(),
       attemptStartedAt,
@@ -2140,6 +2433,15 @@ function typeAndSendMessage(pid) {
       provenPrefixLength:
         typeof lastProvenPrefix === 'string' ? lastProvenPrefix.length : null,
       messageLength: message.length,
+      timings: sendPhaseTimings({
+        attemptStartedAt,
+        helperStartedAt,
+        routeReadyAt,
+        draftReadyAt,
+        sendReadyAt,
+        pressInvokedAt,
+        completedAt,
+      }),
     });
     let inputInterrupted = error?.pocketCode === 'user_input_active';
     if (!inputInterrupted && inputLease) {

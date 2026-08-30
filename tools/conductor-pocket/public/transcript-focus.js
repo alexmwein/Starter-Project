@@ -1,6 +1,63 @@
 const ACTIVITY_KINDS = new Set(['assistant', 'tool']);
 const HIDDEN_KINDS = new Set(['status', 'tool-result', 'turn-result']);
 
+export function stableTranscriptMessages(serverMessages, pendingMessages) {
+  const serverIds = new Set(serverMessages.map((message) => message?.id));
+  const failedByReceiptId = new Map(
+    pendingMessages
+      .filter(
+        (message) =>
+          message?.delivery === 'failed' &&
+          typeof message.receiptMessageId === 'string' &&
+          message.receiptMessageId.length > 0,
+      )
+      .map((message) => [message.receiptMessageId, message]),
+  );
+  const replacedPendingIds = new Set();
+  const visibleServer = serverMessages.map((message) => {
+    const replacement = failedByReceiptId.get(message?.id);
+    if (!replacement) return message;
+    replacedPendingIds.add(replacement.id);
+    return replacement;
+  });
+  const visiblePending = pendingMessages.filter(
+    (message) =>
+      !replacedPendingIds.has(message?.id) &&
+      !(
+        message?.delivery === 'delivered' &&
+        typeof message.receiptMessageId === 'string' &&
+        serverIds.has(message.receiptMessageId)
+      ),
+  );
+  return [...visibleServer, ...visiblePending];
+}
+
+export function reconciledTranscriptMessageIds(messages, reconciled) {
+  const receiptRows = new Set(
+    reconciled
+      .map((message) => message?.receiptRowId)
+      .filter((rowId) => Number.isSafeInteger(rowId)),
+  );
+  return messages
+    .filter((message) => receiptRows.has(Number(message?.rowId)))
+    .map((message) => String(message.id));
+}
+
+export function transcriptRefreshShouldWait(
+  incomingMessages,
+  pendingMessages,
+  sessionId,
+) {
+  if (!incomingMessages.some((message) => message?.kind === 'user')) {
+    return false;
+  }
+  return pendingMessages.some(
+    (message) =>
+      message?.sessionId === sessionId &&
+      ['delivering', 'confirming'].includes(message.delivery),
+  );
+}
+
 function isRootMessage(message) {
   return !message.parentToolUseId;
 }

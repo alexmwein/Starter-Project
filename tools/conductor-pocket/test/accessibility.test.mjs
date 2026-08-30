@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import vm from 'node:vm';
 import {
   AccessibilityTransport,
+  innerAutomationDeadlineAt,
   mapAutomationError,
   parseResult,
 } from '../src/accessibility.mjs';
@@ -59,6 +60,29 @@ test('accessibility transport rejects invalid messages before UI automation', as
       message: '\ud800',
     }),
     { ok: false, code: 'message_invalid', safeToRetry: true },
+  );
+});
+
+test('the nested JXA deadline always expires before its outer transport timeout', () => {
+  const now = 1_785_093_000_000;
+  for (const timeoutMs of [1_000, 1_001, 4_999, 5_000, 45_000]) {
+    const innerDeadline = innerAutomationDeadlineAt(now, timeoutMs);
+    assert.ok(innerDeadline > now);
+    assert.ok(
+      innerDeadline < now + timeoutMs,
+      `inner deadline ${innerDeadline - now} must precede ${timeoutMs}`,
+    );
+  }
+  assert.equal(innerAutomationDeadlineAt(now, 45_000), now + 40_000);
+});
+
+test('the release check compiles the AppleScript automation entrypoint', async () => {
+  const packageJson = JSON.parse(
+    await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  );
+  assert.match(
+    packageJson.scripts.check,
+    /\/usr\/bin\/osacompile -o \/dev\/null src\/conductor-send\.applescript/,
   );
 });
 
@@ -405,6 +429,46 @@ test('the workspace matcher accepts owner-prefixed sidebar titles', async () => 
   assert.ok(block.includes('contains ("/" & workspaceName & " +")'));
 });
 
+test('route hint handlers read script properties instead of undefined run variables', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const propertyNames = [
+    'targetRepositoryName',
+    'workspaceHintContainerIndex',
+    'workspaceHintLinkIndex',
+    'workspaceHintSidebarChildCount',
+    'workspaceHintContainerChildCount',
+  ];
+  const properties = propertyNames.map((name) => {
+    const match = source.match(new RegExp(`^property ${name} : .*?$`, 'm'));
+    assert.ok(match, `${name} must be a script property`);
+    return match[0];
+  });
+  const handlerStart = source.indexOf(
+    'on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)',
+  );
+  const handlerEnd =
+    source.indexOf('end getWorkspaceRouteFromHint', handlerStart) +
+    'end getWorkspaceRouteFromHint'.length;
+  const handler = source.slice(handlerStart, handlerEnd);
+  const { stdout } = await execFileAsync(
+    '/usr/bin/osascript',
+    [
+      '-e',
+      `${properties.join('\n')}\n${handler}\nreturn my getWorkspaceRouteFromHint("Workspace", missing value) is missing value`,
+    ],
+    { timeout: 20_000 },
+  );
+  assert.equal(stdout.trim(), 'true');
+  assert.match(handler, /my targetRepositoryName/);
+  for (const name of propertyNames.slice(1)) {
+    assert.match(handler, new RegExp(`my ${name}`));
+  }
+  assert.match(source, /set my targetRepositoryName to my decodeBase64/);
+});
+
 test('workspace matching routes every diff-badge label Conductor renders', async () => {
   // Executes the real handler text rather than asserting it contains a
   // string. Labels observed live in the sidebar on 2026-08-16: "the plan",
@@ -454,6 +518,182 @@ test('workspace matching routes every diff-badge label Conductor renders', async
       `workspaceMatches(${base}, ${candidate}) should be ${expected}`,
     );
   });
+});
+
+test('the final route lease uses the same workspace label policy as navigation', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}\nglobalThis.__workspaceMatches = workspaceMatches;`,
+    sandbox,
+  );
+  const cases = [
+    ['daemon', 'daemon', true],
+    ['daemon', 'daemon +3.7k -165', true],
+    ['daemon', 'daemon -165', true],
+    ['daemon', 'Owner/daemon', true],
+    ['daemon', 'Owner/daemon +8', true],
+    ['daemon', 'Owner/daemon -165', true],
+    ['daemon', 'daemon two', false],
+    ['daemon', 'daemonics +8', false],
+    ['plan', 'the plan', false],
+  ];
+  for (const [base, candidate, expected] of cases) {
+    assert.equal(
+      sandbox.__workspaceMatches(base, candidate),
+      expected,
+      `${base} must match ${candidate}: ${expected}`,
+    );
+  }
+});
+
+test('repository-scoped routing distinguishes duplicate workspace names', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}\nglobalThis.__repoRoute = { repositoryHeaderMatches, workspaceBelongsToRepository };`,
+    sandbox,
+  );
+  const element = (role, name) => ({ role: () => role, name: () => name });
+  const elements = [
+    element('AXButton', 'alpha alpha Repo settings New workspace'),
+    element('AXLink', 'Shared'),
+    element('AXButton', 'beta beta Repo settings New workspace'),
+    element('AXLink', 'Shared'),
+  ];
+  assert.equal(
+    sandbox.__repoRoute.repositoryHeaderMatches(
+      'alpha',
+      'alpha alpha Repo settings New workspace',
+    ),
+    true,
+  );
+  assert.equal(
+    sandbox.__repoRoute.repositoryHeaderMatches(
+      'alpha',
+      'beta alpha beta alpha Repo settings New workspace',
+    ),
+    false,
+  );
+  assert.equal(
+    sandbox.__repoRoute.workspaceBelongsToRepository(elements, 1, 'alpha'),
+    true,
+  );
+  assert.equal(
+    sandbox.__repoRoute.workspaceBelongsToRepository(elements, 1, 'beta'),
+    false,
+  );
+  assert.equal(
+    sandbox.__repoRoute.workspaceBelongsToRepository(elements, 3, 'beta'),
+    true,
+  );
+});
+
+test('navigation scopes workspace links to the exact Conductor project block', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('on repositoryHeaderMatches');
+  const end = source.indexOf('end repositoryHeaderMatches', start);
+  const handler = source.slice(
+    start,
+    end + 'end repositoryHeaderMatches'.length,
+  );
+  const probes = [
+    ['growth-operating', 'growth-operating growth-operating Repo settings New workspace', true],
+    ['lucas-domain', '💀 lucas-domain Repo settings New workspace', true],
+    ['homework', 'growth-operating growth-operating Repo settings New workspace', false],
+    ['foo', 'bar foo bar foo Repo settings New workspace', false],
+  ].map(([repository, candidate]) =>
+    `(my repositoryHeaderMatches(${JSON.stringify(repository)}, ${JSON.stringify(candidate)}) as text)`,
+  ).join(' & "," & ');
+  const { stdout } = await execFileAsync(
+    '/usr/bin/osascript',
+    ['-e', `${handler}\nreturn ${probes}`],
+    { timeout: 20_000 },
+  );
+  assert.deepEqual(stdout.trim().split(','), ['true', 'true', 'false', 'false']);
+  assert.match(
+    source,
+    /currentRepositoryMatches[\s\S]*inspectWorkspaceCandidate\([\s\S]*currentRepositoryMatches/,
+  );
+});
+
+test('verified workspace hints are strict and retained for the next operation', async () => {
+  assert.deepEqual(
+    parseResult(JSON.stringify({
+      ok: true,
+      code: 'sent',
+      pressedAt: 123,
+      composerOwned: true,
+      workspaceHint: {
+        containerIndex: 15,
+        linkIndex: 5,
+        sidebarChildCount: 20,
+        containerChildCount: 13,
+      },
+    })).workspaceHint,
+    {
+      containerIndex: 15,
+      linkIndex: 5,
+      sidebarChildCount: 20,
+      containerChildCount: 13,
+    },
+  );
+  assert.deepEqual(
+    parseResult(JSON.stringify({
+      ok: true,
+      code: 'sent',
+      pressedAt: 123,
+      composerOwned: true,
+      workspaceHint: {
+        containerIndex: 15,
+        linkIndex: 99,
+        sidebarChildCount: 20,
+        containerChildCount: 13,
+      },
+    })),
+    { ok: false, code: 'automation_invalid_response' },
+  );
+  const transport = await fs.readFile(
+    new URL('../src/accessibility.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(transport, /#routeHints = new Map\(\)/);
+  assert.match(
+    transport,
+    /POCKET_WORKSPACE_HINT_CONTAINER_INDEX:[\s\S]*POCKET_WORKSPACE_HINT_LINK_INDEX/,
+  );
+  const script = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  assert.match(script, /on getWorkspaceRouteFromHint\(/);
+  assert.match(
+    script,
+    /getWorkspaceRouteFromHint\([\s\S]*if hintedRoute is not missing value then return hintedRoute/,
+  );
 });
 
 test('a typed pocket code in osascript stderr survives instead of collapsing to automation_failed', () => {
@@ -510,7 +750,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   ]);
   assert.match(
     inputHelper,
-    /const SEND_POSITION_CLASS = 'ml-1'[\s\S]*const SEND_ACTIVE_CLASSES = \[[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
+    /const SEND_ACTIVE_CLASSES = \[[\s\S]*'bg-foreground'[\s\S]*'hover:bg-foreground\/80'/,
   );
   assert.match(
     inputHelper,
@@ -526,8 +766,9 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function isComposerSendButton[\s\S]*classes\.includes\(SEND_POSITION_CLASS\)[\s\S]*SEND_ACTIVE_CLASSES\.every[\s\S]*NON_SEND_CLASSES\.every[\s\S]*isSpeechControl\(preceding\)[\s\S]*pressActions\.length === 1/,
+    /function isComposerSendButton[\s\S]*SEND_ACTIVE_CLASSES\.every[\s\S]*NON_SEND_CLASSES\.every[\s\S]*isSpeechControl\(preceding\)[\s\S]*pressActions\.length === 1/,
   );
+  assert.doesNotMatch(inputHelper, /SEND_POSITION_CLASS/);
   assert.match(
     inputHelper,
     /QUEUED_EDIT_MARKER = 'Editing queued message'/,
@@ -545,7 +786,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 8/,
+    /const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 12/,
   );
   assert.match(
     inputHelper,
@@ -591,7 +832,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.doesNotMatch(composerWait, /assertRouteLease/);
   assert.match(
     inputHelper,
-    /routeLease = acquireRouteLease\(process\)[\s\S]*assertNotQueuedEditMode\(process\)[\s\S]*waitForComposerSend\(pid, message, inputLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*assertRouteLease\(process, routeLease\)[\s\S]*resolveComposerSend\(process, message\)/,
+    /routeLease = acquireRouteLease\(process\)[\s\S]*assertNotQueuedEditMode\(process\)[\s\S]*waitForComposerSend\(pid, message, inputLease\)[\s\S]*validateFocusedComposer\(pid, message\)[\s\S]*resolveComposerSend\(process, message\)[\s\S]*resolveComposerPressAction\(sendButton\)[\s\S]*assertRouteLease\(process, routeLease\)/,
   );
   const finalResolve = inputHelper.lastIndexOf(
     'const sendButton = resolveComposerSend(process, message);',
@@ -612,7 +853,16 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     'pressAction.perform();',
     pressBoundary,
   );
+  const preResolveProof = inputHelper.lastIndexOf(
+    'assertRouteLease(process, routeLease);',
+    finalResolve,
+  );
   assert.ok(finalResolve >= 0);
+  assert.ok(
+    preResolveProof < inputHelper.indexOf(
+      'waitForComposerSend(pid, message, inputLease);',
+    ),
+  );
   assert.ok(finalActionResolve > finalResolve);
   assert.ok(pressBoundary > finalActionResolve);
   assert.ok(finalRouteProof > finalResolve);
@@ -627,7 +877,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.equal(
     (finalSendBoundary.match(/assertRouteLease\(process, routeLease\);/g) || [])
       .length,
-    2,
+    1,
   );
   assert.doesNotMatch(inputHelper, /validateRoute\(/);
   assert.match(inputHelper, /exactDraftExposedAt = draftReadStartedAt/);
@@ -779,6 +1029,22 @@ test('Conductor 0.80 send-control policy accepts send/queue and rejects stop tra
     'hover:bg-foreground/80',
   ];
   assert.equal(sandbox.__isComposerSendButton(candidate(active), speech), true);
+  const conductor083Active = [
+    'inline-flex',
+    'h-6',
+    'w-6',
+    'justify-center',
+    'bg-foreground',
+    'hover:bg-foreground/80',
+  ];
+  assert.equal(
+    sandbox.__isComposerSendButton(
+      candidate(conductor083Active),
+      null,
+      false,
+    ),
+    true,
+  );
   const pressAction = { name: () => 'AXPress', perform() {} };
   assert.equal(
     sandbox.__resolveComposerPressAction({ actions: () => [pressAction] }),
@@ -796,7 +1062,7 @@ test('Conductor 0.80 send-control policy accepts send/queue and rejects stop tra
   assert.equal(sandbox.__isComposerSendButton(candidate(active), speech), true);
   assert.equal(
     sandbox.__isComposerSendButton(
-      candidate(['ml-1', 'border', 'border-border', 'hover:bg-muted']),
+      candidate(['border', 'border-border', 'hover:bg-muted']),
       speech,
     ),
     false,
@@ -1315,6 +1581,91 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
 });
 
+test('whole-message AX delivery never overwrites or clears a newer Mac draft', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __composerValue: '',
+    __leaseValid: true,
+    __readFailureAfterWrite: false,
+    __writes: [],
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+const fixtureFocused = {};
+Object.defineProperty(fixtureFocused, 'value', {
+  get() { return globalThis.__composerValue; },
+  set(value) {
+    globalThis.__composerValue = value;
+    globalThis.__writes.push(value);
+  },
+});
+const fixtureProcess = {
+  attributes: {
+    byName() {
+      return { value: () => fixtureFocused };
+    },
+  },
+};
+validateFocusedComposer = (_pid, expectedDraft) => {
+  if (
+    globalThis.__readFailureAfterWrite &&
+    globalThis.__writes.length > 0
+  ) {
+    globalThis.__composerValue = 'new Mac text';
+    throw new Error('transient AX read');
+  }
+  if (
+    typeof expectedDraft === 'string' &&
+    globalThis.__composerValue !== expectedDraft
+  ) fail('draft_changed');
+  return fixtureProcess;
+};
+focusedDraft = () => globalThis.__composerValue;
+assertInputLease = () => {
+  if (!globalThis.__leaseValid) fail('user_input_active');
+};
+delay = () => {};
+globalThis.__deliverWholeMessage = deliverWholeMessage;`,
+    sandbox,
+  );
+
+  sandbox.__composerValue = 'new Mac text';
+  assert.equal(
+    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
+    false,
+  );
+  assert.equal(sandbox.__composerValue, 'new Mac text');
+  assert.deepEqual(sandbox.__writes, []);
+
+  sandbox.__composerValue = '';
+  sandbox.__leaseValid = false;
+  assert.equal(
+    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
+    false,
+  );
+  assert.equal(sandbox.__composerValue, '');
+  assert.deepEqual(sandbox.__writes, []);
+
+  sandbox.__leaseValid = true;
+  sandbox.__readFailureAfterWrite = true;
+  assert.equal(
+    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
+    false,
+  );
+  assert.equal(sandbox.__composerValue, 'new Mac text');
+  assert.deepEqual(sandbox.__writes, ['phone text']);
+});
+
 test('Pocket makes code and primary replies directly copyable on iPhone', async () => {
   const [application, styles] = await Promise.all([
     fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
@@ -1510,7 +1861,7 @@ test('the send path does not re-derive work it already has', async () => {
   // about a second of every send.
   assert.match(
     inputHelper,
-    /candidates\.push\(\{[\s\S]*descriptions,[\s\S]*roles,[\s\S]*\}\)/,
+    /candidate:[\s\S]*descriptions,[\s\S]*roles,[\s\S]*rootPath:/,
   );
   const context = inputHelper.slice(
     inputHelper.indexOf('function composerSendContext'),
@@ -1547,9 +1898,12 @@ test('the send path does not re-derive work it already has', async () => {
     new URL('../src/conductor-send.applescript', import.meta.url),
     'utf8',
   );
+  const workspaceRouteStart = sendScript.indexOf(
+    'on getWorkspaceRoute(workspaceName, sidebarGroup)',
+  );
   const workspaceRoute = sendScript.slice(
-    sendScript.indexOf('on getWorkspaceRoute'),
-    sendScript.indexOf('end getWorkspaceRoute'),
+    workspaceRouteStart,
+    sendScript.indexOf('end getWorkspaceRoute', workspaceRouteStart),
   );
   assert.match(workspaceRoute, /role of UI elements of workspaceContainer/);
   assert.match(workspaceRoute, /name of UI elements of workspaceContainer/);
@@ -1566,6 +1920,23 @@ test('the send path does not re-derive work it already has', async () => {
   assert.match(sessionTabs, /role of UI elements of mainGroup/);
   assert.match(sessionTabs, /role of UI elements of tabGroup/);
   assert.match(sessionTabs, /role of tabGroupChild as text/);
+
+  const mainGroup = sendScript.slice(
+    sendScript.indexOf('on getMainGroup()'),
+    sendScript.indexOf('end getMainGroup'),
+  );
+  assert.match(
+    mainGroup,
+    /set my heldMainGroup to item 1 of matchingGroups/,
+  );
+  assert.match(
+    sendScript,
+    /if stableRouteChecks is not 3 then return[\s\S]*set my heldMainGroup to missing value[\s\S]*set textArea to missing value/,
+  );
+  assert.match(
+    sendScript,
+    /sessionIsSelected\(sessionTitle, sessionOrdinal\) is false then return[\s\S]*set my heldMainGroup to missing value[\s\S]*commitAndPressMessage/,
+  );
 
   const selectedSession = sendScript.slice(
     sendScript.indexOf('on sessionIsSelected'),
@@ -1587,7 +1958,11 @@ test('the send path does not re-derive work it already has', async () => {
   // Send timing rows identify phases without recording message content.
   assert.match(
     inputHelper,
-    /outcome: 'pressed'[\s\S]*timings: \{[\s\S]*outerNavigationMs[\s\S]*sendReadyMs[\s\S]*finalProofMs[\s\S]*totalMs/,
+    /function sendPhaseTimings[\s\S]*outerNavigationMs[\s\S]*sendReadyMs[\s\S]*finalProofMs[\s\S]*totalMs/,
+  );
+  assert.match(
+    inputHelper,
+    /outcome: 'pressed'[\s\S]*timings: sendPhaseTimings\(/,
   );
 
   // The queued-edit scan is proven once per attempt, and only the scan: the
@@ -1604,6 +1979,541 @@ test('the send path does not re-derive work it already has', async () => {
     queuedBody.indexOf('composerSendContext(process)') <
       queuedBody.indexOf('if (queuedEditProven)'),
   );
+});
+
+test('failed send diagnostics include content-free phase timings', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = Object.assign(
+    () => ({
+      dataUsingEncoding() {
+        return { length: 7 };
+      },
+    }),
+    { NSUTF8StringEncoding: 4 },
+  );
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __diagnosticRows: [],
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+decodeBase64Environment = (name) => name === 'POCKET_MESSAGE_BASE64' ? 'private' : '';
+environmentValue = (name) => name === 'POCKET_ATTEMPT_STARTED_AT' ? String(Date.now() - 25) : null;
+prepareInput = () => ({ clearEvents: [], operations: [] });
+expectedInputCounters = () => null;
+acquireInputLease = () => fail('route_changed', 'fixture');
+recordDiagnostic = (entry) => globalThis.__diagnosticRows.push(entry);
+globalThis.__typeAndSendMessageForDiagnostics = typeAndSendMessage;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__typeAndSendMessageForDiagnostics(123),
+    (error) => error?.pocketCode === 'route_changed',
+  );
+  assert.equal(sandbox.__diagnosticRows.length, 1);
+  const [row] = sandbox.__diagnosticRows;
+  assert.deepEqual(
+    Object.keys(row.timings),
+    [
+      'outerNavigationMs',
+      'routeAcquireMs',
+      'draftReadyMs',
+      'sendReadyMs',
+      'finalProofMs',
+      'postPressChecksMs',
+      'totalMs',
+    ],
+  );
+  assert.equal(typeof row.timings.outerNavigationMs, 'number');
+  assert.equal(typeof row.timings.routeAcquireMs, 'number');
+  assert.equal(row.timings.draftReadyMs, null);
+  assert.equal(row.timings.sendReadyMs, null);
+  assert.equal(row.timings.finalProofMs, null);
+  assert.equal(row.timings.postPressChecksMs, null);
+  assert.equal(typeof row.timings.totalMs, 'number');
+  assert.equal('message' in row, false);
+  assert.equal(JSON.stringify(row).includes('private'), false);
+});
+
+test('send readiness falls back to cheap child class reads without authorizing an unreadable probe', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __probeProcess: null,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+validateFocusedComposer = () => globalThis.__probeProcess;
+globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
+    sandbox,
+  );
+
+  const activeClasses = [
+    'ml-1',
+    'bg-foreground',
+    'hover:bg-foreground/80',
+  ];
+  let childClassReads = 0;
+  const child = {
+    attributes: {
+      byName() {
+        return {
+          value() {
+            childClassReads += 1;
+            return activeClasses;
+          },
+        };
+      },
+    },
+  };
+  let composerChildren = [child];
+  const composer = {
+    uiElements() {
+      return composerChildren;
+    },
+  };
+  const focused = {
+    attributes: {
+      byName(name) {
+        assert.equal(name, 'AXParent');
+        return { value: () => composer };
+      },
+    },
+  };
+  sandbox.__probeProcess = {
+    attributes: {
+      byName(name) {
+        assert.equal(name, 'AXFocusedUIElement');
+        return { value: () => focused };
+      },
+    },
+  };
+
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
+  assert.equal(childClassReads, 1);
+
+  const conductor083Child = {
+    attributes: {
+      byName: () => ({
+        value: () => [
+          'inline-flex',
+          'h-6',
+          'w-6',
+          'bg-foreground',
+          'hover:bg-foreground/80',
+        ],
+      }),
+    },
+  };
+  composerChildren = [conductor083Child];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
+
+  composerChildren = [conductor083Child, conductor083Child];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+
+  composerChildren = [child];
+
+  const unreadableChild = {
+    attributes: {
+      byName: () => ({
+        value() {
+          childClassReads += 1;
+          throw new Error('child class unreadable');
+        },
+      }),
+    },
+  };
+  composerChildren = [child, unreadableChild];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+
+  composerChildren = [unreadableChild];
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+
+  composerChildren = [child, unreadableChild];
+  composer.uiElements.attributes = {
+    byName: () => ({ value: () => [activeClasses, null] }),
+  };
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), false);
+});
+
+test('authoritative send resolution recovers a false cheap readiness streak', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __cheapReads: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__cheapReads += 1;
+  globalThis.__now += 300;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  return { kind: 'authoritative-send' };
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  const result = sandbox.__waitForComposerSend(123, 'draft', {});
+  assert.equal(result.kind, 'authoritative-send');
+  assert.ok(sandbox.__cheapReads > 0);
+  assert.equal(sandbox.__fullReads, 1);
+  assert.ok(sandbox.__now < 40_000);
+});
+
+test('a real send control stall leaves time for certified recovery', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 500;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  fail('send_unavailable', 'fixture missing control');
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.ok(sandbox.__now < 40_000);
+  assert.ok(sandbox.__fullReads > 0);
+  assert.ok(sandbox.__fullReads <= 8);
+});
+
+test('authoritative send fallback propagates a changed draft immediately', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 500;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => fail('draft_changed', 'fixture changed draft');
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'draft_changed',
+  );
+  assert.ok(sandbox.__now < 40_000);
+});
+
+test('an expensive cheap probe cannot start authoritative work past the deadline', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = () => {};
+sendControlLikelyReady = () => {
+  globalThis.__now = 40_001;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  return { kind: 'late-send' };
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'deadline_exceeded',
+  );
+  assert.equal(sandbox.__fullReads, 0);
+});
+
+test('cheap and authoritative disagreement cannot create a structural hot loop', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 0,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 20;
+  return true;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  fail('send_unavailable', 'fixture disagreement');
+};
+withTransientReadRetry = (readOnlyCheck) => readOnlyCheck();
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.ok(sandbox.__fullReads > 0);
+  assert.ok(sandbox.__fullReads <= 8);
+});
+
+test('one slow semantic resolver failure leaves time for retry certification', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 25_000,
+    __fullReads: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+automationDeadline = () => 40_000;
+assertInputLease = () => {};
+delay = (seconds) => { globalThis.__now += Math.ceil(seconds * 1_000); };
+sendControlLikelyReady = () => {
+  globalThis.__now += 800;
+  return false;
+};
+validateFocusedComposer = () => ({});
+resolveComposerSend = () => {
+  globalThis.__fullReads += 1;
+  globalThis.__now += 3_000;
+  fail('send_unavailable', 'buttons=0');
+};
+globalThis.__waitForComposerSend = waitForComposerSend;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__waitForComposerSend(123, 'draft', {}),
+    (error) => error?.pocketCode === 'send_unavailable',
+  );
+  assert.ok(sandbox.__now <= 32_000, `stopped at ${sandbox.__now}`);
+  assert.equal(sandbox.__fullReads, 1);
+});
+
+test('send readiness propagates structured validation failures immediately', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+validateFocusedComposer = () => fail('draft_changed', 'fixture');
+globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () => sandbox.__sendControlLikelyReady(123, 'draft'),
+    (error) => error?.pocketCode === 'draft_changed',
+  );
+  vm.runInContext(
+    `validateFocusedComposer = () => fail('session_locked', 'fixture');`,
+    sandbox,
+  );
+  assert.throws(
+    () => sandbox.__sendControlLikelyReady(123, 'draft'),
+    (error) => error?.pocketCode === 'session_locked',
+  );
+});
+
+test('send readiness retries a transient focused composer AX read', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const dollar = new Proxy(() => null, { get: () => 0 });
+  const sandbox = {
+    $: dollar,
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __focusedReads: 0,
+    __retryDelays: 0,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+const __activeClasses = [
+  'ml-1',
+  'bg-foreground',
+  'hover:bg-foreground/80',
+];
+const __sendChild = {
+  attributes: {
+    byName: () => ({ value: () => __activeClasses }),
+  },
+};
+const __composer = {
+  uiElements: () => [__sendChild],
+};
+const __focused = {
+  role: () => 'AXTextArea',
+  value: () => 'draft',
+  attributes: {
+    byName(name) {
+      if (name === 'AXDOMClassList') return { value: () => COMPOSER_CLASSES };
+      if (name === 'AXParent') return { value: () => __composer };
+      throw new Error('unexpected focused attribute');
+    },
+  },
+};
+const __process = {
+  attributes: {
+    byName(name) {
+      if (name !== 'AXFocusedUIElement') throw new Error('unexpected process attribute');
+      return {
+        value() {
+          globalThis.__focusedReads += 1;
+          if (globalThis.__focusedReads < 3) throw new Error('stale AX node');
+          return __focused;
+        },
+      };
+    },
+  },
+};
+delay = () => { globalThis.__retryDelays += 1; };
+validatedConductorProcess = () => __process;
+globalThis.__sendControlLikelyReady = sendControlLikelyReady;`,
+    sandbox,
+  );
+
+  assert.equal(sandbox.__sendControlLikelyReady(123, 'draft'), true);
+  assert.equal(sandbox.__focusedReads, 4);
+  assert.equal(sandbox.__retryDelays, 2);
 });
 
 test('a missing Conductor window is recovered before the send gives up', async () => {
@@ -1632,6 +2542,38 @@ test('a missing Conductor window is recovered before the send gives up', async (
   assert.match(handler, /set recoveryDeadline to \(current date\) \+ 6/);
   assert.match(handler, /repeat while \(current date\) < recoveryDeadline/);
   assert.doesNotMatch(handler, /repeat with waitIndex from 1 to 30/);
+});
+
+test('connection diagnostics never change Mac focus or race the send composer', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('if operationMode is "doctor" then');
+  const end = source.indexOf('end if', start) + 'end if'.length;
+  const doctor = source.slice(start, end);
+  assert.match(doctor, /set textArea to getTextArea\(\)/);
+  assert.doesNotMatch(doctor, /set frontmost|set focused|type-and-send/);
+  assert.doesNotMatch(doctor, /osascript -l JavaScript/);
+});
+
+test('a transient workspace tree render is retried before routing fails', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const retryStart = source.indexOf('on findSidebarGroupWithRetry(workspaceName)');
+  const retryEnd = source.indexOf('end findSidebarGroupWithRetry', retryStart);
+  const retryBody = source.slice(retryStart, retryEnd);
+
+  assert.ok(retryStart > 0, 'the workspace scan must have a retry wrapper');
+  assert.match(retryBody, /repeat with attemptIndex from 1 to 3/);
+  assert.match(retryBody, /my findSidebarGroup\(workspaceName\)/);
+  assert.match(retryBody, /delay 0\.15/);
+  assert.match(
+    source,
+    /on getSidebarGroup\(\)[\s\S]{0,120}my findSidebarGroupWithRetry\(my workspaceName\)/,
+  );
 });
 
 test('a windowless Conductor tells the operator the only thing that works', async () => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 async function applicationSource() {
   return fs.readFile(
@@ -16,6 +17,132 @@ function functionSource(source, name, nextName) {
   assert.ok(end > start, `${nextName} must follow ${name}`);
   return source.slice(start, end);
 }
+
+function createRevealHarness(source, {
+  hiddenAt,
+  request,
+  handleRuntimeError = () => undefined,
+}) {
+  let shieldPresent = true;
+  let shieldRemovals = 0;
+  let appReveals = 0;
+  let storedHiddenAt = String(hiddenAt);
+  const sandbox = {
+    app: {
+      removeAttribute() {
+        appReveals += 1;
+      },
+    },
+    document: {
+      hidden: false,
+      querySelector() {
+        if (!shieldPresent) return null;
+        return {
+          remove() {
+            shieldPresent = false;
+            shieldRemovals += 1;
+          },
+        };
+      },
+    },
+    handleRuntimeError,
+    localStorage: {
+      getItem() {
+        return storedHiddenAt;
+      },
+      removeItem() {
+        storedHiddenAt = null;
+      },
+    },
+    metadataRefresh: { schedule() {} },
+    renderConnectionGate() {},
+    renderLock() {},
+    request,
+    scheduleReadEvaluation() {},
+    startEvents() {},
+    state: {
+      auth: { reauthenticationMode: 'strict' },
+      hiddenAt,
+      shell: {},
+      visibilityEpoch: 1,
+    },
+    transcriptRefresh: { schedule() {} },
+  };
+  vm.createContext(sandbox);
+  const reveal = functionSource(
+    source,
+    'async function revealApplication',
+    'function currentAppUpdateReloadIsSafe',
+  );
+  vm.runInContext(
+    `const HIDDEN_AT_KEY = 'hidden';
+const AWAY_LOCK_MS = 1_000;
+const TAILSCALE_SESSION_MODE = 'tailscale-session';
+const RESUME_REQUEST_MS = 6_000;
+let revealOperationsInFlight = 0;
+let revealApplicationPromise = null;
+${reveal}
+globalThis.__revealApplication = revealApplication;`,
+    sandbox,
+  );
+  return {
+    revealApplication: sandbox.__revealApplication,
+    result() {
+      return { appReveals, shieldRemovals, shieldPresent };
+    },
+  };
+}
+
+test('transient IndexedDB failures and closed handles reopen without a reload', async () => {
+  const source = await applicationSource();
+  const start = source.indexOf('function invalidateCacheDatabaseConnection');
+  const end = source.indexOf("cachePurgeChannel?.addEventListener", start);
+  assert.ok(start >= 0, 'cache invalidation helper must exist');
+  assert.ok(end > start, 'cache connection helpers must stay together');
+
+  const openRequests = [];
+  const sandbox = {
+    Error,
+    indexedDB: {
+      open() {
+        const request = {};
+        openRequests.push(request);
+        return request;
+      },
+    },
+    localStorage: { getItem: () => null },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `let cacheDatabasePromise = null;
+let cacheDatabaseConnection = null;
+let originRetired = false;
+const ORIGIN_RETIRED_KEY = 'retired';
+${source.slice(start, end)}
+globalThis.__cacheDatabase = cacheDatabase;`,
+    sandbox,
+  );
+
+  const failed = sandbox.__cacheDatabase();
+  openRequests[0].error = new Error('transient open failure');
+  openRequests[0].onerror();
+  await assert.rejects(failed, /transient open failure/);
+
+  const recovered = sandbox.__cacheDatabase();
+  assert.equal(openRequests.length, 2);
+  const firstDatabase = { close() {} };
+  openRequests[1].result = firstDatabase;
+  openRequests[1].onsuccess();
+  assert.equal(await recovered, firstDatabase);
+
+  firstDatabase.onclose();
+  const reopened = sandbox.__cacheDatabase();
+  assert.equal(openRequests.length, 3);
+  const secondDatabase = { close() {} };
+  openRequests[2].result = secondDatabase;
+  openRequests[2].onsuccess();
+  assert.equal(await reopened, secondDatabase);
+});
 
 test('warm chat navigation paints before cache or network work', async () => {
   const source = await applicationSource();
@@ -190,7 +317,7 @@ test('closing a chat is never an inline second tap', async () => {
   assert.doesNotMatch(js, /is-armed/);
 });
 
-test('chat strip status costs nothing extra and never animates', async () => {
+test('chat strip separates working from finished unread with no extra work', async () => {
   const [js, css] = await Promise.all([
     fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
     fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
@@ -203,12 +330,53 @@ test('chat strip status costs nothing extra and never animates', async () => {
   assert.doesNotMatch(body, /fetch\(|setInterval\(|request\(/);
   // idle must render nothing, or a dot stops meaning anything.
   assert.doesNotMatch(js, /STRIP_STATUS = \{[\s\S]*\bidle:/);
-  // The strip's dots must not inherit the pulsing .status-dot animation.
-  const dot = css.slice(css.indexOf('.chip-dot {'));
-  assert.doesNotMatch(dot.slice(0, dot.indexOf('}')), /animation/);
+  // Working owns the indicator until it finishes. Only then can the existing
+  // effective unread count become the static ready-to-read number.
+  assert.match(body, /unreadCount: sessionUnreadCount\(session\)/);
+  assert.match(body, /const unread = !state_ && unreadCount > 0;/);
+  assert.match(body, /className: 'chip-unread'/);
+  assert.match(body, /text: cappedCount\(unreadCount\)/);
+  assert.match(body, /reply ready, \$\{unreadCount\} unread/);
+  // The render key includes effective unread state so a durable read receipt
+  // removes the number without waiting for unrelated session metadata.
+  assert.match(body, /sessionUnreadCount\(session\)/);
+  assert.match(
+    js,
+    /readReceiptChannel\?\.postMessage[\s\S]*renderChatStrip\(\)[\s\S]*readReceiptChannel\?\.addEventListener[\s\S]*renderChatStrip\(\)/,
+  );
+  // One compositor-friendly opacity pulse is the only motion. It has no JS
+  // timer and Reduced Motion explicitly disables it.
+  assert.match(css, /\.chip-dot\.is-working \{[\s\S]*animation: working-pulse/);
+  assert.match(
+    css,
+    /\.chat-chip\.is-active \.chip-dot\.is-working \{[\s\S]*color: var\(--on-copper\)/,
+    'the current working chat must not paint its dot into the active chip background',
+  );
+  assert.match(css, /\.chip-unread \{/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.chip-dot\.is-working[\s\S]*animation: none !important/,
+  );
   assert.doesNotMatch(body, /status-dot/);
   // The meaning has to reach screen readers, not just sighted users.
-  assert.match(body, /aria-label.*state_\.label|state_ \? `\$\{session\.title\}, \$\{state_\.label\}`/);
+  assert.match(body, /aria-label[\s\S]*state_\.label[\s\S]*reply ready/);
+});
+
+test('cross-repository chat controls always show repository and workspace context', async () => {
+  const js = await applicationSource();
+  assert.match(js, /function sessionLocationLabel\(session\)/);
+  assert.match(
+    js,
+    /session\.repositoryName[\s\S]*session\.workspaceName/,
+  );
+  assert.match(
+    js,
+    /if \(workspace\) workspace\.textContent = sessionLocationLabel\(session\)/,
+  );
+  assert.match(
+    js,
+    /const subtitleText = crossWorkspace[\s\S]*sessionLocationLabel\(session\)/,
+  );
 });
 
 test('the header reports the current chat’s state, including waiting', async () => {
@@ -236,15 +404,111 @@ test('the app can never be left blank, and reading position survives a render', 
   // left the privacy shield over the app until it was force-quit.
   assert.doesNotMatch(js, /if \(!appUpdateCoordinator\?\.foreground\(\)\) revealApplication\(\)/);
   assert.match(js, /appUpdateCoordinator\?\.foreground\(\);\s*\n\s*revealApplication\(\);/);
-  // A visible page with a shield over it must self-correct.
+  // A visible page with a shield over it must retry the authenticated reveal.
+  // The failsafe must never expose a transcript while that request is pending.
   assert.match(js, /function ensureNotShielded\(\)/);
-  assert.match(js, /#privacy-shield'\)[\s\S]*shield\.remove\(\)/);
-  // A rescued page needs its stream back or it sits stale and looks broken.
-  const fn = js.slice(js.indexOf('function ensureNotShielded()'));
-  assert.match(fn.slice(0, fn.indexOf('\n}\n')), /startEvents\(\)/);
-  // The transcript is fully rebuilt each render, so an unpinned reader must be
-  // restored to the same distance from the end.
-  assert.match(js, /transcriptScroll\.scrollHeight -\s*\n\s*transcriptScroll\.clientHeight -\s*\n\s*distanceBefore/);
+  const failsafe = functionSource(
+    js,
+    'function ensureNotShielded',
+    'async function revealApplication',
+  );
+  assert.match(failsafe, /revealOperationsInFlight > 0/);
+  assert.match(failsafe, /revealApplication\(\)\.catch/);
+  assert.doesNotMatch(failsafe, /shield\.remove\(\)/);
+  const reveal = functionSource(
+    js,
+    'async function revealApplication',
+    'function currentAppUpdateReloadIsSafe',
+  );
+  assert.match(reveal, /revealOperationsInFlight \+= 1;[\s\S]*try \{/);
+  assert.match(
+    reveal,
+    /finally \{[\s\S]*revealOperationsInFlight -= 1;/,
+  );
+  // The transcript is fully rebuilt each render. New rows belong below an
+  // unpinned reader, so the exact visible reading position must stay put.
+  assert.match(js, /const scrollTopBefore = transcriptScroll\.scrollTop/);
+  assert.match(
+    js,
+    /transcriptScroll\.scrollTop = Math\.max\(0, scrollTopBefore\)/,
+  );
+});
+
+test('the privacy shield fails closed when WebKit storage is unavailable', async () => {
+  const source = await applicationSource();
+  const shield = functionSource(
+    source,
+    'function shieldApplication',
+    'function ensureNotShielded',
+  );
+  const stopEventsAt = shield.indexOf('stopEvents();');
+  const hideAt = shield.indexOf("app.setAttribute('aria-hidden', 'true')");
+  const insertAt = shield.indexOf("id: 'privacy-shield'");
+  const storageAt = shield.indexOf('localStorage.setItem');
+  assert.ok(stopEventsAt >= 0 && stopEventsAt < storageAt);
+  assert.ok(hideAt >= 0 && hideAt < storageAt);
+  assert.ok(insertAt >= 0 && insertAt < storageAt);
+  assert.match(
+    shield,
+    /try \{[\s\S]*localStorage\.setItem[\s\S]*\} catch \{[\s\S]*shield already protects/,
+  );
+});
+
+test('resume reveal is single-flight and waits for revoked-device purge', async () => {
+  const source = await applicationSource();
+  let releaseLock;
+  const lockGate = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+  const requests = [];
+  const singleFlight = createRevealHarness(source, {
+    hiddenAt: Date.now() - 2_000,
+    request(pathname) {
+      requests.push(pathname);
+      return pathname === '/api/auth/lock'
+        ? lockGate
+        : Promise.resolve({});
+    },
+  });
+
+  const firstReveal = singleFlight.revealApplication();
+  const secondReveal = singleFlight.revealApplication();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(requests, ['/api/auth/lock']);
+  assert.deepEqual(singleFlight.result(), {
+    appReveals: 0,
+    shieldRemovals: 0,
+    shieldPresent: true,
+  });
+  releaseLock({});
+  await Promise.all([firstReveal, secondReveal]);
+  assert.equal(singleFlight.result().shieldRemovals, 1);
+
+  let releasePurge;
+  const purgeGate = new Promise((resolve) => {
+    releasePurge = resolve;
+  });
+  const revoked = createRevealHarness(source, {
+    hiddenAt: Date.now(),
+    request() {
+      return Promise.reject({ status: 401, code: 'device_revoked' });
+    },
+    handleRuntimeError() {
+      return purgeGate;
+    },
+  });
+  const revokedReveal = revoked.revealApplication();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(revoked.result(), {
+    appReveals: 0,
+    shieldRemovals: 0,
+    shieldPresent: true,
+  });
+  releasePurge();
+  await revokedReveal;
+  assert.equal(revoked.result().shieldRemovals, 1);
 });
 
 test('feedback reaches a sighted user, and retry never fails silently', async () => {
@@ -286,6 +550,76 @@ test('feedback reaches a sighted user, and retry never fails silently', async ()
   assert.match(createBody, /if \(chatCreationInFlight\) return null;/);
   assert.match(createBody, /aria-busy/);
 })
+
+test('new chat uses the selected repository even when no chat is open', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const createStart = js.indexOf('async function runCreateChat(');
+  const createEnd = js.indexOf('\n}\n', createStart);
+  const createBody = js.slice(createStart, createEnd);
+
+  assert.match(createBody, /await loadSessions\(workspaceId\)/);
+  assert.match(createBody, /sessionsFor\(workspaceId\)/);
+  assert.match(
+    createBody,
+    /runTabAction\('new', \{ sessionId: anchorSessionId \}\)/,
+  );
+});
+
+test('checking delivery exposes a safe way back to terminal actions', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(js, /async function stopCheckingDelivery\(message\)/);
+  assert.match(
+    js,
+    /message\.delivery === 'confirming'[\s\S]{0,500}text: 'Stop checking'/,
+  );
+  assert.match(
+    js,
+    /type: 'stop-check'[\s\S]{0,800}applyAuthoritativePendingDelivery/,
+  );
+});
+
+test('a rejected stale steer is terminal and never shown as delivery unknown', async () => {
+  const js = await applicationSource();
+  assert.match(
+    js,
+    /conductor_turn_rejected: 'Conductor rejected this message because the chat no longer has an active turn\.'/,
+  );
+  assert.match(js, /error\.final = payload\.error\?\.final === true/);
+  assert.match(
+    js,
+    /else if \(error\.final === true\)[\s\S]*delivery = 'failed'[\s\S]*deliveryRecoveryExhausted = true/,
+  );
+  assert.match(
+    js,
+    /message\.errorCode === 'conductor_turn_rejected'[\s\S]*'Rejected'/,
+  );
+});
+
+test('a canceled confirmed row stays actionable instead of disappearing', async () => {
+  const js = await applicationSource();
+  assert.match(
+    js,
+    /conductor_message_cancelled: 'Conductor canceled this message after it entered the chat\.'/,
+  );
+  assert.match(
+    js,
+    /knownTerminalFailure =[\s\S]*conductor_message_cancelled/,
+  );
+  assert.match(
+    js,
+    /receiptMessageId:[\s\S]*value\.receiptMessageId/,
+  );
+  assert.match(
+    js,
+    /function reconcileOptimistic[\s\S]*result\.missing[\s\S]*verifyMissingDeliveryReceipt/,
+  );
+});
 
 test('the composer growing a line does not move the transcript under the reader', async () => {
   const js = await fs.readFile(
@@ -412,6 +746,41 @@ test('the composer growing corrects scroll in the same frame it paints', async (
   assert.match(body, /!wasPinned\) return;/);
 })
 
+test('the composer shrinking after send stays pinned in the same frame', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('let lastComposerHeight = 0;');
+  assert.ok(start > 0, 'composer height tracking must exist');
+  const body = js.slice(start, js.indexOf('observer.observe(root);', start));
+
+  assert.doesNotMatch(
+    body,
+    /delta\s*<=\s*0/,
+    'a send collapse must re-pin before the smaller dock is painted',
+  );
+  assert.match(body, /if \(!scroller \|\| !wasPinned\) return;/);
+  assert.match(body, /scroller\.scrollTop = scroller\.scrollHeight;/);
+})
+
+test('the next message can queue before the prior delivery finishes', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('async function sendCurrentMessage');
+  const end = js.indexOf('function restoredAttachmentItems', start);
+  const body = js.slice(start, end);
+  const release = body.lastIndexOf('state.sendInFlight.delete(sessionId);');
+  const delivery = body.indexOf(
+    'await deliverOptimistic(optimistic, { deliveryIdentityPersisted: true });',
+  );
+
+  assert.ok(release >= 0, 'the composer send gate must be released');
+  assert.ok(delivery > release, 'delivery must begin after the composer is released');
+})
+
 test('no scroll correction is ever deferred a frame', async () => {
   // The house rule, because this class of bug came back four separate times:
   // a corrective scroll must be written in the SAME frame as the mutation that
@@ -458,12 +827,14 @@ test('account usage is reachable when nothing is wrong', async () => {
   );
   assert.match(js, /'aria-label': 'Connection and account usage'/);
 
-  // Rendered from a cache with an in-flight guard, or reading it from the
-  // header would loop: fetch, store, render, fetch.
-  assert.match(js, /let seatUsageInFlight = false;/);
+  // One promise owns the cache, request coalescing, and freshness window. A
+  // force tap during the first read joins that request instead of claiming
+  // usage is unavailable.
+  assert.match(js, /const seatUsageReader = createUsageReader\(\{/);
   const refreshStart = js.indexOf('async function refreshSeatUsage(');
   const refreshBody = js.slice(refreshStart, js.indexOf('\n}\n', refreshStart));
-  assert.match(refreshBody, /if \(seatUsageInFlight\) return seatUsageCache;/);
+  assert.match(refreshBody, /seatUsageReader\.read\(\{ force \}\)/);
+  assert.match(js, /return activeGptUsage\(seatUsageCache\);/);
 
   // Both windows feed the glanceable number, because either alone can stop a
   // turn and a seat routinely sits near zero on one while the other is spent.
@@ -490,20 +861,20 @@ test('leaving a chat and coming back keeps the reading position', async () => {
   // app writes scroll could fix it, because the app was not doing the
   // resetting. This was the jump that survived every other fix.
   assert.match(css, /\.panel \{[\s\S]*?display: none;/);
-  assert.match(js, /let transcriptHiddenAnchor = null;/);
+  assert.match(js, /let transcriptHiddenScrollTop = null;/);
 
   const updateStart = js.indexOf('function updateRoutePanels()');
   assert.ok(updateStart > 0, 'updateRoutePanels must exist');
   const updateBody = js.slice(updateStart, js.indexOf('\n}\n', updateStart));
 
   // Captured BEFORE the class flips, or the position is already gone.
-  const capture = updateBody.indexOf('transcriptHiddenAnchor =\n');
+  const capture = updateBody.indexOf('transcriptHiddenScrollTop = scroller.scrollTop');
   const flip = updateBody.indexOf("classList.toggle('is-active', view === 'transcript')");
   assert.ok(capture > 0 && flip > 0 && capture < flip, 'anchor must be captured before the panel is hidden');
 
-  // Anchored to the end, so messages arriving while away do not move it.
-  assert.match(updateBody, /scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop/);
-  assert.match(updateBody, /scroller\.scrollTop = Math\.max\(0, restored\)/);
+  // New rows append below the reader, so returning keeps the exact visible
+  // reading position instead of pulling the transcript toward the end.
+  assert.match(updateBody, /scroller\.scrollTop = Math\.max\(0, transcriptHiddenScrollTop\)/);
   // Same-frame, like every other correction in this file.
   assert.doesNotMatch(updateBody, /requestAnimationFrame\(/);
 })
@@ -568,9 +939,10 @@ test('the phone UI holds still: keyboard, list rebuilds, sheets, offline churn',
 })
 
 test('all-account usage is a visible phone control inside every chat', async () => {
-  const [js, css] = await Promise.all([
+  const [js, css, usageState] = await Promise.all([
     fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
     fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/usage-state.js', import.meta.url), 'utf8'),
   ]);
 
   // Usage first landed behind the Chats sheet. A control that has to be
@@ -597,11 +969,13 @@ test('all-account usage is a visible phone control inside every chat', async () 
   assert.match(js, /usage\.providers/);
   assert.match(js, /usage-provider-heading/);
   assert.match(js, /provider\.available/);
+  assert.match(js, /usageAccountStatus\(account\)/);
   assert.match(
-    js,
+    usageState,
     /if \(account\.stale && parts\.length > 0\) parts\.push\('cached'\)/,
     'an account without usage must say No data yet, not only cached',
   );
+  assert.match(usageState, /account\.needsLogin[\s\S]*Needs sign-in/);
 
   // And the Workspaces header entry point stays.
   assert.match(js, /'aria-label': 'Connection and account usage'/);
@@ -723,8 +1097,23 @@ test('chat switching keeps the shell mounted and transitions only its content', 
   );
   assert.match(transcript, /renderTranscriptPlaceholder/);
   assert.match(transcript, /!transcriptSessionChanged/);
-  assert.match(css, /@keyframes chat-content-out \{[\s\S]*?opacity:[\s\S]*?transform:/);
-  assert.match(css, /@keyframes chat-content-in \{[\s\S]*?opacity:[\s\S]*?transform:/);
+  const chatContentOut = css.slice(
+    css.indexOf('@keyframes chat-content-out'),
+    css.indexOf('@keyframes chat-content-in'),
+  );
+  const chatContentIn = css.slice(
+    css.indexOf('@keyframes chat-content-in'),
+    css.indexOf('@keyframes sheet-in'),
+  );
+  assert.match(chatContentOut, /opacity:/);
+  assert.match(chatContentIn, /opacity:/);
+  assert.doesNotMatch(chatContentOut, /transform:/);
+  assert.doesNotMatch(chatContentIn, /transform:/);
+  assert.match(
+    css,
+    /\.data-row:active,\s*\n\.chat-chip:active \{\s*\n\s*transform: none;/,
+    'large navigation targets must not shrink under the finger',
+  );
 
   const strip = functionSource(js, 'function renderChatStrip', 'function renderTranscript');
   assert.match(strip, /const renderKey = JSON\.stringify/);
