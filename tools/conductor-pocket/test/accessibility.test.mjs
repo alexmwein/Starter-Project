@@ -896,6 +896,44 @@ test('outer route acquisition stops before consuming the complete send attempt',
   );
 });
 
+test('an unset JXA environment value normalizes to null', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const environmentValueSource = source.match(
+    /function environmentValue\(name\) \{[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(environmentValueSource);
+
+  const script = [
+    'ObjC.import("Foundation");',
+    environmentValueSource,
+    'JSON.stringify({',
+    '  value: environmentValue("POCKET_ROUTE_DEADLINE_AT"),',
+    '  type: typeof environmentValue("POCKET_ROUTE_DEADLINE_AT"),',
+    '});',
+  ].join('\n');
+  const { stdout } = await execFileAsync(
+    '/usr/bin/env',
+    [
+      '-u',
+      'POCKET_ROUTE_DEADLINE_AT',
+      '/usr/bin/osascript',
+      '-l',
+      'JavaScript',
+      '-e',
+      script,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  assert.deepEqual(JSON.parse(stdout), {
+    value: null,
+    type: 'object',
+  });
+});
+
 test('repository-scoped routing distinguishes duplicate workspace names', async () => {
   const source = await fs.readFile(
     new URL('../src/conductor-input.js', import.meta.url),

@@ -201,7 +201,9 @@ function withTransientReadRetry(readOnlyCheck, shouldRetry = () => true) {
 
 function environmentValue(name) {
   const value = $.NSProcessInfo.processInfo.environment.objectForKey(name);
-  return value ? ObjC.unwrap(value) : null;
+  if (!value) return null;
+  const unwrapped = ObjC.unwrap(value);
+  return unwrapped === undefined || unwrapped === null ? null : unwrapped;
 }
 
 function recordPressProvenance(attemptStartedAt, pressedAt) {
