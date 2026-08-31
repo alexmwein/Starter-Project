@@ -1329,6 +1329,195 @@ test('a seventeen second composer tree transient still gets one complete retry',
   assert.equal(calls[1].timeoutMs, 45_000);
 });
 
+test('two certified composer redraws recover inside the original send budget', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  const rows = [];
+  const calls = [];
+  const audit = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      audit.push(event);
+    },
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send(options) {
+        calls.push(options);
+        if (calls.length === 1) {
+          automationTime += 29_000;
+          return {
+            ok: false,
+            code: 'composer_unavailable',
+            safeToRetry: true,
+          };
+        }
+        if (calls.length === 2) {
+          automationTime += 16_000;
+          return {
+            ok: false,
+            code: 'composer_tree_transient',
+            safeToRetry: true,
+          };
+        }
+        automationTime += 23_000;
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'double-redraw-retry-row',
+          rowId: 11,
+          text: 'Recover through both redraws',
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'double_composer_redraw_retry_key',
+    message: 'Recover through both redraws',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].timeoutMs, 45_000);
+  assert.equal(calls[2].timeoutMs, 30_000);
+  assert.deepEqual(
+    audit
+      .filter((event) => event.phase === 'transport')
+      .map((event) => [event.attempt, event.code]),
+    [
+      [1, 'composer_unavailable'],
+      [2, 'composer_tree_transient'],
+      [3, 'sent'],
+    ],
+  );
+});
+
+test('a new user row blocks the final composer redraw recovery attempt', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  let sends = 0;
+  const rows = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        if (sends === 1) {
+          automationTime += 20_000;
+          return {
+            ok: false,
+            code: 'composer_unavailable',
+            safeToRetry: true,
+          };
+        }
+        automationTime += 16_000;
+        rows.push({
+          id: 'outside-user-row',
+          rowId: 11,
+          text: 'Someone used Conductor directly',
+          createdAt: new Date().toISOString(),
+          sentAt: new Date().toISOString(),
+        });
+        return {
+          ok: false,
+          code: 'composer_tree_transient',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'blocked_final_composer_redraw_retry_key',
+    message: 'Do not send after another user row appears',
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(sends, 2);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
 test('a transient route failure retries only with one complete transport reserve', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -3334,7 +3523,9 @@ test('an interrupted pre-send attempt is retryable only after Conductor stays un
     definitelyUnsent: true,
   });
   assert.equal(retry.status, 503);
-  assert.equal(sends, 3);
+  // The same-key retry receives the full bounded composer recovery policy:
+  // its initial attempt plus two certified pre-composer retries.
+  assert.equal(sends, 4);
 });
 
 test('a cleared composer without an exact database row is never reported delivered', async (context) => {

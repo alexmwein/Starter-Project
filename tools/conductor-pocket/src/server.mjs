@@ -49,6 +49,8 @@ const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
 const SEND_AUTOMATION_RETRY_BUDGET_MS = 75_000;
 const SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS = 45_000;
+const SEND_AUTOMATION_FINAL_RETRY_MINIMUM_MS = 25_000;
+const SEND_AUTOMATION_MAX_PRE_COMPOSER_ATTEMPTS = 3;
 const DELIVERY_PHASES = new Set(['queued', 'automating', 'confirming']);
 const DELIVERY_LEDGER_VERSION = 1;
 const DELIVERY_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -2853,90 +2855,92 @@ export function createPocketServer({
                   expectedMacDraft,
                 });
                 recordTransport(sendResult, transportAttempt);
-                if (
+                while (
                   !sendResult.ok &&
-                  TRANSIENT_PRE_COMPOSER_CODES.has(sendResult.code)
+                  TRANSIENT_PRE_COMPOSER_CODES.has(sendResult.code) &&
+                  transportAttempt <
+                    SEND_AUTOMATION_MAX_PRE_COMPOSER_ATTEMPTS
                 ) {
                   certifiedPreSend = true;
+                  const requiredRetryReserve =
+                    transportAttempt === 1
+                      ? SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
+                      : SEND_AUTOMATION_FINAL_RETRY_MINIMUM_MS;
                   const remainingBeforeRetry =
                     automationDeadline - automationNow();
+                  if (remainingBeforeRetry < requiredRetryReserve) break;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  security.assertOrigin(request);
+                  const retryAuth = security.session(request, {
+                    requireUnlocked: true,
+                    requireCsrf: true,
+                    touch: false,
+                  });
+                  if (retryAuth.device.id !== auth.device.id) {
+                    throw new HttpError(401, 'device_revoked');
+                  }
+                  const retryRoute = database.getSessionRoute(activeRoute.id);
                   if (
-                    remainingBeforeRetry >=
-                    SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
+                    !sameSessionRoute(activeRoute, retryRoute, {
+                      attachments: selectedAttachments.length > 0,
+                    })
                   ) {
-                    await new Promise((resolve) => setTimeout(resolve, 100));
-                    security.assertOrigin(request);
-                    const retryAuth = security.session(request, {
-                      requireUnlocked: true,
-                      requireCsrf: true,
-                      touch: false,
-                    });
-                    if (retryAuth.device.id !== auth.device.id) {
-                      throw new HttpError(401, 'device_revoked');
+                    sendResult = definitelyUnsentResult(
+                      'session_route_changed',
+                    );
+                  } else {
+                    const retryBeforeRowId =
+                      database.getSessionMessageCursor(activeRoute.id);
+                    let retryBoundary = 'unreadable';
+                    try {
+                      const cursorValid =
+                        Number.isSafeInteger(retryBeforeRowId) &&
+                        retryBeforeRowId >= beforeRowId;
+                      if (cursorValid) {
+                        retryBoundary = database.listUserMessagesAfter(
+                          activeRoute.id,
+                          beforeRowId,
+                        ).length === 0
+                          ? 'clear'
+                          : 'blocked';
+                      }
+                    } catch {
+                      // A database read failure cannot prove a safe retry boundary.
                     }
-                    const retryRoute = database.getSessionRoute(activeRoute.id);
-                    if (
-                      !sameSessionRoute(activeRoute, retryRoute, {
-                        attachments: selectedAttachments.length > 0,
-                      })
-                    ) {
+                    const remainingRetryMs =
+                      automationDeadline - automationNow();
+                    if (retryBoundary === 'blocked') {
                       sendResult = definitelyUnsentResult(
-                        'session_route_changed',
+                        'user_input_active',
                       );
+                    } else if (retryBoundary !== 'clear') {
+                      break;
+                    } else if (remainingRetryMs < requiredRetryReserve) {
+                      break;
                     } else {
-                      const retryBeforeRowId =
-                        database.getSessionMessageCursor(activeRoute.id);
-                      let retryBoundary = 'unreadable';
-                      try {
-                        const cursorValid =
-                          Number.isSafeInteger(retryBeforeRowId) &&
-                          retryBeforeRowId >= beforeRowId;
-                        if (cursorValid) {
-                          retryBoundary = database.listUserMessagesAfter(
-                            activeRoute.id,
-                            beforeRowId,
-                          ).length === 0
-                            ? 'clear'
-                            : 'blocked';
-                        }
-                      } catch {
-                        // A database read failure cannot prove a safe retry boundary.
-                      }
-                      const remainingRetryMs =
-                        automationDeadline - automationNow();
-                      if (retryBoundary === 'blocked') {
-                        sendResult = definitelyUnsentResult(
-                          'user_input_active',
-                        );
-                      } else if (retryBoundary !== 'clear') {
-                        // Keep the original structured pre-composer failure.
-                      } else if (
-                        remainingRetryMs <
-                        SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
-                      ) {
-                        // Keep the original structured pre-composer failure.
-                      } else {
-                        attributionBaseline = retryBeforeRowId;
-                        transportAttempt += 1;
-                        // The structured failure certifies only the completed
-                        // attempt. Once another transport starts, its outcome
-                        // must be treated as ambiguous until independently
-                        // certified or confirmed from the database.
-                        certifiedPreSend = false;
-                        sendResult = await transport.send({
-                          repositoryName: retryRoute.repositoryName,
-                          workspaceId: retryRoute.workspaceId,
-                          workspaceName: retryRoute.workspaceName,
-                          sessionId: retryRoute.id,
-                          sessionTitle: retryRoute.title,
-                          sessionOrdinal: retryRoute.titleOrdinal,
-                          message: deliveryMessage,
-                          replaceDraft,
-                          expectedMacDraft,
-                          timeoutMs: Math.min(45_000, remainingRetryMs),
-                        });
-                        recordTransport(sendResult, transportAttempt);
-                      }
+                      attributionBaseline = retryBeforeRowId;
+                      transportAttempt += 1;
+                      // The structured failure certifies only the completed
+                      // attempt. Once another transport starts, its outcome
+                      // must be treated as ambiguous until independently
+                      // certified or confirmed from the database.
+                      certifiedPreSend = false;
+                      sendResult = await transport.send({
+                        repositoryName: retryRoute.repositoryName,
+                        workspaceId: retryRoute.workspaceId,
+                        workspaceName: retryRoute.workspaceName,
+                        sessionId: retryRoute.id,
+                        sessionTitle: retryRoute.title,
+                        sessionOrdinal: retryRoute.titleOrdinal,
+                        message: deliveryMessage,
+                        replaceDraft,
+                        expectedMacDraft,
+                        timeoutMs: Math.min(
+                          SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS,
+                          remainingRetryMs,
+                        ),
+                      });
+                      recordTransport(sendResult, transportAttempt);
                     }
                   }
                 }
