@@ -155,6 +155,24 @@ function assertPreComposerBudget(deadlineAt) {
   }
 }
 
+function assertRouteAcquisitionDeadline() {
+  let rawDeadline = null;
+  try {
+    rawDeadline = environmentValue('POCKET_ROUTE_DEADLINE_AT');
+  } catch {
+    return;
+  }
+  if (rawDeadline === null) return;
+  const deadlineAt = Number(rawDeadline);
+  if (
+    !Number.isSafeInteger(deadlineAt) ||
+    deadlineAt <= 0 ||
+    Date.now() >= deadlineAt
+  ) {
+    fail('automation_budget_exhausted');
+  }
+}
+
 // Conductor re-renders its transcript continuously while an agent streams, so
 // an AX element is routinely replaced between the moment a walk enumerates it
 // and the moment an attribute is read off it. Those reads throw, and every
@@ -286,6 +304,7 @@ function workspaceBelongsToRepository(
 ) {
   if (!repositoryName) return true;
   for (let index = workspaceIndex - 1; index >= 0; index -= 1) {
+    assertRouteAcquisitionDeadline();
     const candidate = containerElements[index];
     if (routeRole(candidate) !== 'AXButton') continue;
     const candidateName = routeName(candidate);
@@ -610,6 +629,7 @@ function routeSelected(element) {
 }
 
 function sessionRadioTopology(tabGroup) {
+  assertRouteAcquisitionDeadline();
   const topology = [];
   const tabChildren = routeElements(tabGroup);
   // Six Apple Events for the whole tab strip instead of three per tab plus
@@ -634,6 +654,7 @@ function sessionRadioTopology(tabGroup) {
     childIndex < tabChildren.length;
     childIndex += 1
   ) {
+    assertRouteAcquisitionDeadline();
     if (roles[childIndex] === 'AXRadioButton') {
       const tabChild = tabChildren[childIndex];
       topology.push({
@@ -664,6 +685,7 @@ function sessionRadioTopology(tabGroup) {
       nestedIndex < childRoles.length;
       nestedIndex += 1
     ) {
+      assertRouteAcquisitionDeadline();
       if (childRoles[nestedIndex] !== 'AXRadioButton') continue;
       if ((!childNames || !childSelections) && nestedElements === null) {
         nestedElements = nestedChildrenOf(childIndex);
@@ -684,6 +706,7 @@ function sessionRadioTopology(tabGroup) {
 function resolveMainRoot(rootElements) {
   const candidates = [];
   for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
+    assertRouteAcquisitionDeadline();
     const elements = routeElements(rootElements[rootIndex]);
     // Two Apple Events instead of two per child. Same values, same checks.
     const roles = bulkRead(
@@ -741,6 +764,7 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
       rootIndex < rootElements.length;
       rootIndex += 1
     ) {
+      assertRouteAcquisitionDeadline();
       if (rootIndex === excludedRootIndex) continue;
       const sidebarElements = routeElements(rootElements[rootIndex]);
       if (sidebarElements.length !== sidebarChildCount) continue;
@@ -777,6 +801,7 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
       rootIndex < rootElements.length;
       rootIndex += 1
     ) {
+      assertRouteAcquisitionDeadline();
       if (rootIndex === excludedRootIndex) continue;
       const sidebarElements = routeElements(rootElements[rootIndex]);
       const rootMatches = [];
@@ -785,8 +810,10 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
         containerIndex < sidebarElements.length;
         containerIndex += 1
       ) {
+        assertRouteAcquisitionDeadline();
         const links = routeElements(sidebarElements[containerIndex]);
         for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+          assertRouteAcquisitionDeadline();
           const link = links[linkIndex];
           if (routeRole(link) !== 'AXLink') continue;
           if (
@@ -833,9 +860,12 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
 }
 
 function acquireRouteLease(process, target = routeTarget()) {
+  assertRouteAcquisitionDeadline();
   const rootElements = webAreaRootElements(process);
   const sessionName = `Close chat ${target.sessionTitle}`;
+  assertRouteAcquisitionDeadline();
   const main = resolveMainRoot(rootElements);
+  assertRouteAcquisitionDeadline();
   const workspace = resolveWorkspaceRoot(rootElements, target, main.rootIndex);
   if (main.rootIndex === workspace.rootIndex) {
     fail('route_changed', 'rootOverlap');
@@ -846,6 +876,7 @@ function acquireRouteLease(process, target = routeTarget()) {
   const sessionTopology = sessionRadioTopology(
     mainElements[tabGroupIndex],
   );
+  assertRouteAcquisitionDeadline();
   const matchingSessions = sessionTopology.filter(
     (entry) => entry.name === sessionName,
   );
@@ -2157,8 +2188,8 @@ function typeAndSendMessage(pid) {
     // phantom send the operator would then duplicate by retrying.
     assertDeadline(automationDeadline());
     pressInvokedAt = Date.now();
-    pressAction.perform();
     recordPressProvenance(attemptStartedAt, pressInvokedAt);
+    pressAction.perform();
     assertSessionUnlocked();
     assertInputLease(inputLease);
     const completedAt = Date.now();

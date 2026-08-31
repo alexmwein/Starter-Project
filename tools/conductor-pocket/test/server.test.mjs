@@ -272,6 +272,7 @@ function postMessage(
     message = 'Test message',
     replaceDraft,
     expectedMacDraft,
+    attachments,
     headers = {},
   },
 ) {
@@ -280,6 +281,7 @@ function postMessage(
   if (typeof expectedMacDraft === 'string') {
     payload.expectedMacDraft = expectedMacDraft;
   }
+  if (Array.isArray(attachments)) payload.attachments = attachments;
   const body = JSON.stringify(payload);
   return new Promise((resolve, reject) => {
     const request = http.request(
@@ -1191,6 +1193,74 @@ test('a transient route lookup retries once inside the original send boundary', 
     ),
     true,
   );
+});
+
+test('a transient route failure retries only with one complete transport reserve', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        automationTime += 20_000;
+        return {
+          ok: false,
+          code: 'workspace_list_unavailable',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'incomplete_retry_reserve_key',
+    message: 'Do not start a doomed retry',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'workspace_list_unavailable',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
 });
 
 test('collapsed project failures skip automatic retry and preserve the project name', async (context) => {
@@ -2136,7 +2206,7 @@ test('a delivered receipt remains authoritative after a relay restart', async ()
   }
 });
 
-test('delivery-ledger retention is week-long, bounded, and newest-first', async () => {
+test('delivery-ledger retention is week-long, bounded, and never evicts a receipt', async () => {
   const source = await fs.readFile(
     new URL('../src/server.mjs', import.meta.url),
     'utf8',
@@ -2147,14 +2217,13 @@ test('delivery-ledger retention is week-long, bounded, and newest-first', async 
   );
   assert.match(source, /DELIVERY_LEDGER_MAX_ENTRIES = 2048/);
   assert.match(source, /DELIVERY_LEDGER_MAX_BYTES = 4 \* 1024 \* 1024/);
-  assert.match(
-    source,
-    /#makeRoomFor\(entryKey\)[\s\S]*reusesBinding = this\.#bindings\.has\(entryKey\)[\s\S]*reusesBinding \|\|[\s\S]*key !== entryKey[\s\S]*sort\(\(left, right\) => left\[1\]\.expiresAt - right\[1\]\.expiresAt\)/,
+  const makeRoom = source.slice(
+    source.indexOf('  #makeRoomFor(entryKey)'),
+    source.indexOf('  #sessionProof(sessionId)'),
   );
-  assert.match(
-    source,
-    /entries\.sort\(\(left, right\) => right\.expiresAt - left\.expiresAt\)[\s\S]*entries\.slice\(0, DELIVERY_LEDGER_MAX_ENTRIES\)/,
-  );
+  assert.doesNotMatch(makeRoom, /this\.#entries\.delete/);
+  assert.match(makeRoom, /throw new HttpError\(503, 'delivery_queue_full'\)/);
+  assert.doesNotMatch(source, /entries\.slice\(0, DELIVERY_LEDGER_MAX_ENTRIES\)/);
 });
 
 test('an idempotency key remains bound to the exact send body across safe retries', async (context) => {
@@ -3626,8 +3695,7 @@ test('a queued send refreshes its route after reaching the mutation queue', asyn
         }
         return {
           ok: false,
-          code: 'accessibility_disabled',
-          safeToRetry: true,
+          code: 'automation_failed',
         };
       },
     },
@@ -3653,6 +3721,447 @@ test('a queued send refreshes its route after reaching the mutation queue', asyn
     ['Untitled chat', 1],
     ['Renamed chat', 2],
   ]);
+});
+
+test('same-session queued work stops after a definitely-unsent predecessor', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseFirst;
+  let firstStarted;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStartedPromise = new Promise((resolve) => {
+    firstStarted = resolve;
+  });
+  let secondAccepted;
+  let accepted = 0;
+  const secondAcceptedPromise = new Promise((resolve) => {
+    secondAccepted = resolve;
+  });
+  const rows = [];
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 0;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      if (event.phase !== 'accepted') return;
+      accepted += 1;
+      if (accepted === 2) secondAccepted();
+    },
+    transport: {
+      async send({ message }) {
+        sends += 1;
+        if (sends === 1) {
+          firstStarted();
+          await firstGate;
+          return {
+            ok: false,
+            code: 'accessibility_disabled',
+            safeToRetry: true,
+          };
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        const rowId = rows.length + 1;
+        rows.push({
+          id: `causal-row-${rowId}`,
+          rowId,
+          text: message,
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = postMessage(port, {
+    idempotencyKey: 'causal_first_key',
+    message: 'First must land first',
+  });
+  await firstStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'causal_second_key',
+    message: 'Second must not overtake',
+  });
+  await secondAcceptedPromise;
+  releaseFirst();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+  assert.equal(firstResponse.status, 503);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(secondResponse.body).error, {
+    code: 'predecessor_failed',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+
+  const prematureSecondRetry = await postMessage(port, {
+    idempotencyKey: 'causal_second_key',
+    message: 'Second must not overtake',
+  });
+  assert.equal(prematureSecondRetry.status, 409);
+  assert.equal(sends, 1);
+
+  const firstRetry = await postMessage(port, {
+    idempotencyKey: 'causal_first_key',
+    message: 'First must land first',
+  });
+  assert.equal(firstRetry.status, 200);
+  assert.equal(sends, 2);
+
+  const secondRetry = await postMessage(port, {
+    idempotencyKey: 'causal_second_key',
+    message: 'Second must not overtake',
+  });
+  assert.equal(secondRetry.status, 200);
+  assert.equal(sends, 3);
+});
+
+test('a new key can supersede an abandoned definitely-unsent chain', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return sends === 1
+          ? {
+              ok: false,
+              code: 'accessibility_disabled',
+              safeToRetry: true,
+            }
+          : { ok: false, code: 'automation_failed' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const abandoned = await postMessage(port, {
+    idempotencyKey: 'abandoned_chain_key',
+    message: 'Abandoned text',
+  });
+  assert.equal(abandoned.status, 503);
+
+  const replacement = await postMessage(port, {
+    idempotencyKey: 'replacement_chain_key',
+    message: 'Edited replacement text',
+  });
+  assert.equal(replacement.status, 502);
+  assert.equal(sends, 2);
+});
+
+test('same-session intake is durable and ordered through attachment resolution', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-intake-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  const deliveryLedgerPath = path.join(directory, 'delivery-receipts.json');
+  let releaseFirstResolution;
+  let firstResolutionStarted;
+  const firstResolutionGate = new Promise((resolve) => {
+    releaseFirstResolution = resolve;
+  });
+  const firstResolutionStartedPromise = new Promise((resolve) => {
+    firstResolutionStarted = resolve;
+  });
+  let secondRequestAuthenticated;
+  const secondRequestAuthenticatedPromise = new Promise((resolve) => {
+    secondRequestAuthenticated = resolve;
+  });
+  let authenticationCalls = 0;
+  const sentMessages = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session(request) {
+        if (/\/messages$/.test(request.url || '')) {
+          authenticationCalls += 1;
+          if (authenticationCalls === 2) secondRequestAuthenticated();
+        }
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          workspacePath: '/tmp/conductor-pocket-intake-workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    deliveryLedgerPath,
+    attachmentManager: {
+      async resolveForSend(ids) {
+        if (ids.includes('slow-first')) {
+          firstResolutionStarted();
+          await firstResolutionGate;
+        }
+        return [];
+      },
+    },
+    transport: {
+      async send({ message }) {
+        sentMessages.push(message);
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(async () => {
+    releaseFirstResolution();
+    await close(server);
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const first = postMessage(port, {
+    idempotencyKey: 'slow_intake_first_key',
+    message: 'First through intake',
+    attachments: ['slow-first'],
+  });
+  await Promise.race([
+    firstResolutionStartedPromise,
+    first.then((response) => {
+      throw new Error(
+        `first request ended before resolution: ${response.status} ${response.body}`,
+      );
+    }),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error('first resolution did not start')),
+        500,
+      ),
+    ),
+  ]);
+  const intakeStatus = JSON.parse(
+    (
+      await postDeliveryStatus(port, {
+        idempotencyKey: 'slow_intake_first_key',
+      })
+    ).body,
+  ).delivery;
+  assert.deepEqual(intakeStatus, {
+    state: 'pending',
+    phase: 'queued',
+  });
+  const durableIntake = JSON.parse(
+    await fs.readFile(deliveryLedgerPath, 'utf8'),
+  );
+  assert.deepEqual(
+    durableIntake.entries.map(({ state, phase }) => ({ state, phase })),
+    [{ state: 'pending', phase: 'queued' }],
+  );
+  const second = postMessage(port, {
+    idempotencyKey: 'slow_intake_second_key',
+    message: 'Second through intake',
+  });
+  await Promise.race([
+    secondRequestAuthenticatedPromise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error('second request was not accepted')),
+        500,
+      ),
+    ),
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const sentBeforeFirstResolution = [...sentMessages];
+  releaseFirstResolution();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+  assert.deepEqual(sentBeforeFirstResolution, []);
+  assert.equal(firstResponse.status, 503);
+  assert.equal(secondResponse.status, 409);
+  assert.deepEqual(sentMessages, ['First through intake']);
+});
+
+test('a pretransport queue exception blocks an accepted follower', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releasePreparation;
+  let preparationStarted;
+  const preparationGate = new Promise((resolve) => {
+    releasePreparation = resolve;
+  });
+  const preparationStartedPromise = new Promise((resolve) => {
+    preparationStarted = resolve;
+  });
+  let secondAccepted;
+  let accepted = 0;
+  const secondAcceptedPromise = new Promise((resolve) => {
+    secondAccepted = resolve;
+  });
+  let resolutions = 0;
+  let cursorReads = 0;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        cursorReads += 1;
+        if (cursorReads === 1) throw new Error('cursor unavailable');
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      if (event.phase !== 'accepted') return;
+      accepted += 1;
+      if (accepted === 2) secondAccepted();
+    },
+    attachmentManager: {
+      async resolveForSend() {
+        resolutions += 1;
+        if (resolutions === 1) {
+          preparationStarted();
+          await preparationGate;
+        }
+        return [];
+      },
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        return { ok: false, code: 'automation_failed' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(async () => {
+    releasePreparation();
+    await close(server);
+  });
+
+  const first = postMessage(port, {
+    idempotencyKey: 'pretransport_exception_first_key',
+    message: 'First fails before transport',
+  });
+  await preparationStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'pretransport_exception_second_key',
+    message: 'Second cannot overtake',
+  });
+  await secondAcceptedPromise;
+  releasePreparation();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+  assert.equal(firstResponse.status, 500);
+  assert.equal(JSON.parse(firstResponse.body).error.definitelyUnsent, true);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(sends, 0);
 });
 
 test('tab controls cannot overtake an accepted queued send', async (context) => {
@@ -3717,8 +4226,7 @@ test('tab controls cannot overtake an accepted queued send', async (context) => 
         }
         return {
           ok: false,
-          code: 'accessibility_disabled',
-          safeToRetry: true,
+          code: 'automation_failed',
         };
       },
       async newTab(target) {
@@ -3767,7 +4275,7 @@ test('accepted sends reserve FIFO before delivery ledger persistence', async () 
   const block = source.slice(start, end);
   assert.match(
     block,
-    /idempotency\.run\([\s\S]*serializeMutation,\s*\)/,
+    /idempotency\.run\([\s\S]*serializeSendMutation\(route\.id, key, async \(precomputedResult\) =>/,
   );
   assert.doesNotMatch(
     block,
@@ -3869,6 +4377,108 @@ test('a delayed delivery ledger write cannot let a tab overtake an accepted send
   assert.deepEqual(sequence, []);
   releasePersist();
   await Promise.all([send, tab]);
+  assert.deepEqual(sequence, ['send', 'tab']);
+});
+
+test('the mutation slot stays held until a safe result is durable', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-result-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  let releaseResultPersist;
+  let resultPersistStarted;
+  const resultPersistGate = new Promise((resolve) => {
+    releaseResultPersist = resolve;
+  });
+  const resultPersistStartedPromise = new Promise((resolve) => {
+    resultPersistStarted = resolve;
+  });
+  let persistCalls = 0;
+  const sequence = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          repositoryName: 'Repo',
+          workspaceId: 'workspace-1',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+      listSessions() {
+        return [{ id: 'test-session', title: 'Chat' }];
+      },
+    },
+    watcher: createWatcher(),
+    deliveryLedgerPath: path.join(directory, 'delivery-receipts.json'),
+    async beforeDeliveryLedgerPersist() {
+      persistCalls += 1;
+      if (persistCalls !== 3) return;
+      resultPersistStarted();
+      await resultPersistGate;
+    },
+    transport: {
+      async send() {
+        sequence.push('send');
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+      async newTab() {
+        sequence.push('tab');
+        return { ok: false, code: 'tab_not_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(async () => {
+    releaseResultPersist();
+    await close(server);
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const send = postMessage(port, {
+    idempotencyKey: 'durable_result_slot_key',
+    message: 'Persist before releasing the slot',
+  });
+  await resultPersistStartedPromise;
+  const tab = postJson(
+    port,
+    '/api/sessions/test-session/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const sequenceBeforeDurableResult = [...sequence];
+  releaseResultPersist();
+  await Promise.all([send, tab]);
+
+  assert.deepEqual(sequenceBeforeDurableResult, ['send']);
   assert.deepEqual(sequence, ['send', 'tab']);
 });
 

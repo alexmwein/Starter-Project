@@ -15,6 +15,22 @@ property workspaceHintContainerIndex : ""
 property workspaceHintLinkIndex : ""
 property workspaceHintSidebarChildCount : ""
 property workspaceHintContainerChildCount : ""
+property routeDeadline : missing value
+property routeDeadlineAt : ""
+property routeBudgetDidExpire : false
+
+on routeBudgetExpired()
+	if my routeDeadline is missing value then return false
+	if (current date) is greater than or equal to my routeDeadline then
+		set my routeBudgetDidExpire to true
+		return true
+	end if
+	return false
+end routeBudgetExpired
+
+on routeBudgetFailure()
+	return "{\"ok\":false,\"code\":\"automation_budget_exhausted\"}"
+end routeBudgetFailure
 
 on clearWorkspaceRouteCache()
 	set my cachedWorkspaceName to missing value
@@ -173,12 +189,14 @@ on isMainGroup(candidate)
 		end try
 		if bulkRoles is not missing value then
 			repeat with bulkIndex from 1 to childCount
+				if my routeBudgetExpired() then return false
 				if (item bulkIndex of bulkRoles) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
 				if (item bulkIndex of bulkDescriptions) is "composer" then set composerCount to composerCount + 1
 				if tabGroupCount > 1 or composerCount > 1 then return false
 			end repeat
 		else
 			repeat with childElement in candidateElements
+				if my routeBudgetExpired() then return false
 				try
 					if (role of childElement as text) is "AXTabGroup" then set tabGroupCount to tabGroupCount + 1
 				end try
@@ -204,6 +222,7 @@ on findSidebarGroup(workspaceName)
 			return missing value
 		end try
 		repeat with candidate in rootElements
+			if my routeBudgetExpired() then return missing value
 			if my heldMainGroup is not missing value and candidate is my heldMainGroup then
 				(* The unique main group was already resolved for this navigation phase. *)
 			else if my isMainGroup(candidate) is false then
@@ -232,6 +251,7 @@ end findSidebarGroup
 -- after it returns.
 on findSidebarGroupWithRetry(workspaceName)
 	repeat with attemptIndex from 1 to 3
+		if my routeBudgetExpired() then return missing value
 		set sidebarGroup to my findSidebarGroup(workspaceName)
 		if sidebarGroup is not missing value then return sidebarGroup
 		if attemptIndex is less than 3 then delay 0.15
@@ -251,6 +271,7 @@ on getMainGroup()
 			return missing value
 		end try
 		repeat with candidate in rootElements
+			if my routeBudgetExpired() then return missing value
 			if my isMainGroup(candidate) then copy candidate to end of matchingGroups
 		end repeat
 	end tell
@@ -265,6 +286,7 @@ end getMainGroup
 -- exactly what a human click on the sidebar entry does, and everything after
 -- it still goes through the full route proof.
 on deepPressWorkspaceLink(el, workspaceName, depthLeft, budget)
+	if my routeBudgetExpired() then return false
 	if depthLeft is 0 then return false
 	set remaining to item 1 of budget
 	if remaining is 0 then return false
@@ -511,6 +533,7 @@ end workspaceLinkBelongsToRepository
 
 on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)
 	if my workspaceHintContainerIndex is "" or my workspaceHintLinkIndex is "" or my workspaceHintSidebarChildCount is "" or my workspaceHintContainerChildCount is "" then return missing value
+	if my routeBudgetExpired() then return missing value
 	try
 		set containerIndex to (my workspaceHintContainerIndex as integer) + 1
 		set linkIndex to (my workspaceHintLinkIndex as integer) + 1
@@ -539,6 +562,7 @@ on getWorkspaceRouteFromHint(workspaceName, sidebarGroup)
 end getWorkspaceRouteFromHint
 
 on getWorkspaceRoute(workspaceName, sidebarGroup)
+	if my routeBudgetExpired() then return missing value
 	if sidebarGroup is missing value then return missing value
 	set cachedName to my cachedWorkspaceName
 	set cachedGroup to my cachedWorkspaceGroup
@@ -562,6 +586,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 		end try
 		set sidebarChildCount to count of sidebarElements
 		repeat with containerIndex from 1 to sidebarChildCount
+			if my routeBudgetExpired() then return missing value
 			set workspaceContainer to item containerIndex of sidebarElements
 			try
 				set workspaceElements to UI elements of workspaceContainer
@@ -578,6 +603,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 				end try
 				if bulkReady then
 					repeat with linkIndex from 1 to containerChildCount
+						if my routeBudgetExpired() then return missing value
 						try
 							set candidate to item linkIndex of workspaceElements
 							set candidateRole to item linkIndex of candidateRoles as text
@@ -598,6 +624,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 					set containerSelectedCount to 0
 					set currentRepositoryMatches to my targetRepositoryName is ""
 					repeat with linkIndex from 1 to containerChildCount
+						if my routeBudgetExpired() then return missing value
 						set candidate to item linkIndex of workspaceElements
 						set candidateRole to role of candidate as text
 						if candidateRole is "AXButton" then
@@ -631,6 +658,7 @@ on getWorkspaceRoute(workspaceName, sidebarGroup)
 end getWorkspaceRoute
 
 on getSessionTabs()
+	if my routeBudgetExpired() then return {}
 	set mainGroup to getMainGroup()
 	if mainGroup is missing value then return {}
 	tell application "System Events"
@@ -644,6 +672,7 @@ on getSessionTabs()
 			end try
 			set tabGroup to missing value
 			repeat with mainIndex from 1 to mainCount
+				if my routeBudgetExpired() then return {}
 				set candidate to item mainIndex of mainElements
 				if mainRoles is not missing value then
 					set candidateRole to item mainIndex of mainRoles as text
@@ -669,6 +698,7 @@ on getSessionTabs()
 			end try
 			set sessionTabs to {}
 			repeat with childIndex from 1 to childCount
+				if my routeBudgetExpired() then return {}
 				set tabGroupChild to item childIndex of tabGroupChildren
 				if childRoles is not missing value then
 					set childRole to item childIndex of childRoles as text
@@ -690,6 +720,7 @@ on getSessionTabs()
 							if (count of candidateNestedRoles) is nestedCount then set nestedRoles to candidateNestedRoles
 						end try
 						repeat with nestedIndex from 1 to nestedCount
+							if my routeBudgetExpired() then return {}
 							set tabGroupElement to item nestedIndex of tabGroupElements
 							if nestedRoles is not missing value then
 								set nestedRole to item nestedIndex of nestedRoles as text
@@ -744,6 +775,7 @@ on getTextArea()
 end getTextArea
 
 on workspaceLinkIsSelected(workspaceLink, workspaceName)
+	if my routeBudgetExpired() then return false
 	if workspaceLink is missing value then return false
 	tell application "System Events"
 		try
@@ -758,6 +790,7 @@ on workspaceLinkIsSelected(workspaceLink, workspaceName)
 end workspaceLinkIsSelected
 
 on sessionIsSelected(sessionTitle, sessionOrdinal)
+	if my routeBudgetExpired() then return false
 	tell application "System Events"
 		set sessionTabs to my getSessionTabs()
 		set tabCount to count of sessionTabs
@@ -771,6 +804,7 @@ on sessionIsSelected(sessionTitle, sessionOrdinal)
 				set normalizedTabNames to {}
 				set normalizedTabValues to {}
 				repeat with tabIndex from 1 to tabCount
+					if my routeBudgetExpired() then return false
 					set normalizedTabName to item tabIndex of candidateTabNames as text
 					set normalizedTabValue to item tabIndex of candidateTabValues as boolean
 					set end of normalizedTabNames to normalizedTabName
@@ -782,6 +816,7 @@ on sessionIsSelected(sessionTitle, sessionOrdinal)
 		end try
 		if tabNames is not missing value then
 			repeat with tabIndex from 1 to tabCount
+				if my routeBudgetExpired() then return false
 				if (item tabIndex of tabNames as text) is ("Close chat " & sessionTitle) then
 					set matchedCount to matchedCount + 1
 					if matchedCount is sessionOrdinal then return item tabIndex of tabValues as boolean
@@ -790,6 +825,7 @@ on sessionIsSelected(sessionTitle, sessionOrdinal)
 			return false
 		end if
 		repeat with candidate in sessionTabs
+			if my routeBudgetExpired() then return false
 			try
 				if (name of candidate as text) is ("Close chat " & sessionTitle) then
 					set matchedCount to matchedCount + 1
@@ -809,7 +845,7 @@ on commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPi
 	delay 0.05
 	set routeEnvironment to "POCKET_WORKSPACE_CONTAINER_INDEX=" & (workspaceContainerIndex as text) & " POCKET_WORKSPACE_LINK_INDEX=" & (workspaceLinkIndex as text) & " POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT=" & (sidebarChildCount as text) & " POCKET_WORKSPACE_CONTAINER_CHILD_COUNT=" & (containerChildCount as text)
 	try
-		set helperResult to do shell script "/usr/bin/env " & routeEnvironment & " POCKET_PRESS_MARKER_PATH=" & quoted form of pressMarkerPath & " POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+		set helperResult to do shell script "/usr/bin/env -u POCKET_ROUTE_DEADLINE_AT " & routeEnvironment & " POCKET_PRESS_MARKER_PATH=" & quoted form of pressMarkerPath & " POCKET_OPERATION=type-and-send /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error errorText
 		if errorText contains "draft_conflict" then return "draft_conflict"
 		if errorText contains "session_locked" then return "session_locked"
@@ -845,8 +881,9 @@ on waitForInputIdle(inputScriptPath, conductorPid)
 end waitForInputIdle
 
 on selectedRouteHint(inputScriptPath, conductorPid)
+	if my routeBudgetExpired() then return missing value
 	try
-		set helperResult to do shell script "/usr/bin/env POCKET_WORKSPACE_HINT_CONTAINER_INDEX='' POCKET_WORKSPACE_HINT_LINK_INDEX='' POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT='' POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT='' POCKET_OPERATION=route-check /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
+		set helperResult to do shell script "/usr/bin/env POCKET_ROUTE_DEADLINE_AT=" & quoted form of my routeDeadlineAt & " POCKET_WORKSPACE_HINT_CONTAINER_INDEX='' POCKET_WORKSPACE_HINT_LINK_INDEX='' POCKET_WORKSPACE_HINT_SIDEBAR_CHILD_COUNT='' POCKET_WORKSPACE_HINT_CONTAINER_CHILD_COUNT='' POCKET_OPERATION=route-check /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
 	on error
 		return missing value
 	end try
@@ -872,6 +909,8 @@ end selectedRouteHint
 set operationMode to system attribute "POCKET_OPERATION"
 set inputScriptPath to system attribute "POCKET_INPUT_SCRIPT"
 set pressMarkerPath to system attribute "POCKET_PRESS_MARKER_PATH"
+set my routeDeadlineAt to system attribute "POCKET_ROUTE_DEADLINE_AT"
+if operationMode is "send" then set my routeDeadline to (current date) + 12
 
 tell application "System Events"
 	if UI elements enabled is false then return "{\"ok\":false,\"code\":\"accessibility_disabled\"}"
@@ -912,13 +951,17 @@ if inputReadiness is not "ready" then return "{\"ok\":false,\"code\":\"input_hel
 
 set selectedHint to missing value
 if operationMode is "send" then set selectedHint to my selectedRouteHint(inputScriptPath, conductorPid)
+if my routeBudgetDidExpire then return my routeBudgetFailure()
 if selectedHint is missing value then
 	(* Conductor can land on Dashboard after a restart. When the exact route is
 	not already selected, recover through the full navigation and proof path. *)
 	if getMainGroup() is missing value then
+		if my routeBudgetExpired() then return my routeBudgetFailure()
 		set escaped to my escapeDashboard(workspaceName)
+		if my routeBudgetDidExpire then return my routeBudgetFailure()
 		if escaped then
 			repeat with waitIndex from 1 to 40
+				if my routeBudgetExpired() then return my routeBudgetFailure()
 				if getMainGroup() is not missing value then exit repeat
 				delay 0.25
 			end repeat
@@ -926,8 +969,10 @@ if selectedHint is missing value then
 	end if
 
 	set sidebarGroup to getSidebarGroup()
+	if my routeBudgetDidExpire then return my routeBudgetFailure()
 	if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
 	set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
+	if my routeBudgetDidExpire then return my routeBudgetFailure()
 	if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 	set workspaceLink to item 1 of workspaceRoute
 	set workspaceContainerIndex to item 2 of workspaceRoute
@@ -949,6 +994,7 @@ if selectedHint is missing value then
 	set sessionFound to routeAlreadySelected
 	if sessionFound is false then
 		repeat with waitIndex from 1 to 50
+			if my routeBudgetExpired() then return my routeBudgetFailure()
 			delay 0.1
 			tell application "System Events"
 				set matchedCount to 0
@@ -975,8 +1021,10 @@ if selectedHint is missing value then
 
 	if routeAlreadySelected is false then
 		set sidebarGroup to getSidebarGroup()
+		if my routeBudgetDidExpire then return my routeBudgetFailure()
 		if sidebarGroup is missing value then return my workspaceListFailure(inputScriptPath, conductorPid)
 		set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)
+		if my routeBudgetDidExpire then return my routeBudgetFailure()
 		if workspaceRoute is missing value then return "{\"ok\":false,\"code\":\"workspace_not_visible\"}"
 		set workspaceLink to item 1 of workspaceRoute
 		set workspaceContainerIndex to item 2 of workspaceRoute
@@ -992,6 +1040,7 @@ if selectedHint is missing value then
 	else
 		set my heldMainGroup to getMainGroup()
 		repeat with waitIndex from 1 to 50
+			if my routeBudgetExpired() then return my routeBudgetFailure()
 			delay 0.1
 			if my workspaceLinkIsSelected(workspaceLink, workspaceName) and my sessionIsSelected(sessionTitle, sessionOrdinal) then
 				set stableRouteChecks to stableRouteChecks + 1
@@ -1002,6 +1051,7 @@ if selectedHint is missing value then
 		end repeat
 		set my heldMainGroup to missing value
 	end if
+	if my routeBudgetExpired() then return my routeBudgetFailure()
 	if stableRouteChecks is not 3 then return "{\"ok\":false,\"code\":\"session_not_visible\"}"
 else
 	set workspaceContainerIndex to item 1 of selectedHint

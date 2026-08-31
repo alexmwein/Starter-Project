@@ -48,6 +48,7 @@ const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
 const SEND_AUTOMATION_RETRY_BUDGET_MS = 60_000;
+const SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS = 45_000;
 const DELIVERY_PHASES = new Set(['queued', 'automating', 'confirming']);
 const DELIVERY_LEDGER_VERSION = 1;
 const DELIVERY_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -130,6 +131,7 @@ const errorStatuses = new Map([
   ['send_failed', 502],
   ['user_input_active', 409],
   ['send_not_confirmed', 502],
+  ['predecessor_failed', 409],
   ['automation_timeout', 504],
   ['automation_failed', 502],
   ['automation_invalid_response', 502],
@@ -819,17 +821,18 @@ class IdempotencyStore {
     // tombstone and invite a duplicate press.
     this.#entries.set(entryKey, entry);
     const durablePending = this.#persist();
-    const taskPromise = schedule(() =>
-      durablePending.then(() => task(setPhase)),
-    );
-    const promise = taskPromise.then(
-      async (result) => {
+    const promise = schedule(async (precomputedResult) => {
+      await durablePending;
+      try {
+        const result =
+          precomputedResult === undefined
+            ? await task(setPhase)
+            : precomputedResult;
         entry.state = 'resolved';
         entry.result = result;
         await this.#persist();
         return result;
-      },
-      async (error) => {
+      } catch (error) {
         if (error?.deliveryDefinitelyUnsent === true) {
           const current = this.#entries.get(entryKey);
           if (current === entry) this.#entries.delete(entryKey);
@@ -846,8 +849,8 @@ class IdempotencyStore {
         };
         await this.#persist();
         throw error;
-      },
-    );
+      }
+    });
     entry.promise = promise;
     return { promise, joined: false };
   }
@@ -1052,32 +1055,23 @@ class IdempotencyStore {
 
   #makeRoomFor(entryKey) {
     const reusesBinding = this.#bindings.has(entryKey);
+    if (this.#entries.has(entryKey)) return;
+    if (this.#entries.size >= DELIVERY_LEDGER_MAX_ENTRIES) {
+      throw new HttpError(503, 'delivery_queue_full');
+    }
     if (
-      this.#entries.has(entryKey) ||
-      (this.#entries.size < DELIVERY_LEDGER_MAX_ENTRIES &&
-        (reusesBinding ||
-          this.#bindings.size < DELIVERY_LEDGER_MAX_ENTRIES))
+      reusesBinding ||
+      this.#bindings.size < DELIVERY_LEDGER_MAX_ENTRIES
     ) {
       return;
     }
-    const evictable = [...this.#bindings.entries()]
+    const unusedBinding = [...this.#bindings.entries()]
       .filter(
-        ([key]) =>
-          key !== entryKey &&
-          this.#entries.get(key)?.state !== 'pending',
+        ([key]) => key !== entryKey && !this.#entries.has(key),
       )
-      .sort((left, right) => left[1].expiresAt - right[1].expiresAt);
-    for (const [key] of evictable) {
-      this.#entries.delete(key);
-      this.#bindings.delete(key);
-      if (
-        this.#entries.size < DELIVERY_LEDGER_MAX_ENTRIES &&
-        this.#bindings.size < DELIVERY_LEDGER_MAX_ENTRIES
-      ) {
-        return;
-      }
-    }
-    throw new HttpError(503, 'delivery_queue_full');
+      .sort((left, right) => left[1].expiresAt - right[1].expiresAt)[0];
+    if (!unusedBinding) throw new HttpError(503, 'delivery_queue_full');
+    this.#bindings.delete(unusedBinding[0]);
   }
 
   #sessionProof(sessionId) {
@@ -1220,10 +1214,9 @@ class IdempotencyStore {
         });
       }
       entries.sort((left, right) => right.expiresAt - left.expiresAt);
-      const retainedEntries = entries.slice(0, DELIVERY_LEDGER_MAX_ENTRIES);
       const body = `${JSON.stringify({
         version: DELIVERY_LEDGER_VERSION,
-        entries: retainedEntries,
+        entries,
       })}\n`;
       if (Buffer.byteLength(body, 'utf8') > DELIVERY_LEDGER_MAX_BYTES) {
         throw new Error('Delivery ledger exceeds its size limit');
@@ -1271,18 +1264,18 @@ class IdempotencyStore {
   }
 }
 
-function sendFingerprint({
+function sendIntakeFingerprint({
   message,
   replaceDraft,
   expectedMacDraft,
-  attachments = [],
+  attachmentIds,
 }) {
   return sha256(
     JSON.stringify([
       message,
       replaceDraft,
       expectedMacDraft,
-      attachments.map(({ id, digest }) => [id, digest]),
+      attachmentIds,
     ]),
   );
 }
@@ -1697,6 +1690,7 @@ export function createPocketServer({
   deliveryLedgerPath = null,
   usageReader = readAccountUsage,
   beforeDeliveryLedgerPersist = null,
+  automationNow = Date.now,
 }) {
   const idempotency = new IdempotencyStore({
     ledgerPath: deliveryLedgerPath,
@@ -1706,6 +1700,8 @@ export function createPocketServer({
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
   let mutationQueue = Promise.resolve();
+  const sessionSendBlockers = new Map();
+  const sessionSendTails = new Map();
 
   function closePocketEventStreams() {
     for (const client of clients) client.end();
@@ -1730,6 +1726,109 @@ export function createPocketServer({
       () => undefined,
       () => undefined,
     );
+    return pending;
+  }
+
+  function serializeSendMutation(sessionId, key, task) {
+    const predecessor =
+      sessionSendTails.get(sessionId)?.outcome ||
+      Promise.resolve({ blockerKey: null });
+    const pending = serializeMutation(async () => {
+      const predecessorOutcome = await predecessor;
+      if (predecessorOutcome.blockerKey) {
+        let blocker = sessionSendBlockers.get(sessionId);
+        if (blocker?.key !== predecessorOutcome.blockerKey) {
+          blocker = {
+            key: predecessorOutcome.blockerKey,
+            followers: new Set(),
+          };
+          sessionSendBlockers.set(sessionId, blocker);
+        }
+        blocker.followers.add(key);
+        return task({
+          ok: false,
+          code: 'predecessor_failed',
+          safeToRetry: true,
+        });
+      }
+      const blocker = sessionSendBlockers.get(sessionId);
+      if (blocker && blocker.key !== key) {
+        if (blocker.followers.has(key)) {
+          return task({
+            ok: false,
+            code: 'predecessor_failed',
+            safeToRetry: true,
+          });
+        }
+        // A new key submitted after the failed queue has settled is an
+        // explicit replacement. This gives an abandoned or edited draft a
+        // liveness path without letting an already accepted follower jump
+        // over its predecessor.
+        sessionSendBlockers.delete(sessionId);
+      }
+      try {
+        const result = await task();
+        if (
+          result?.ok !== true &&
+          result?.safeToRetry === true &&
+          result.code !== 'predecessor_failed'
+        ) {
+          const current = sessionSendBlockers.get(sessionId);
+          sessionSendBlockers.set(
+            sessionId,
+            current?.key === key
+              ? current
+              : { key, followers: new Set() },
+          );
+        } else if (sessionSendBlockers.get(sessionId)?.key === key) {
+          sessionSendBlockers.delete(sessionId);
+        }
+        return result;
+      } catch (error) {
+        if (error?.deliveryDefinitelyUnsent === true) {
+          const current = sessionSendBlockers.get(sessionId);
+          sessionSendBlockers.set(
+            sessionId,
+            current?.key === key
+              ? current
+              : { key, followers: new Set() },
+          );
+        } else if (sessionSendBlockers.get(sessionId)?.key === key) {
+          sessionSendBlockers.delete(sessionId);
+        }
+        throw error;
+      }
+    });
+    const outcome = pending.then(
+      (result) => {
+        const blocker = sessionSendBlockers.get(sessionId);
+        if (
+          result?.code === 'predecessor_failed' &&
+          blocker?.followers.has(key)
+        ) {
+          return { blockerKey: blocker.key };
+        }
+        if (
+          result?.ok !== true &&
+          result?.safeToRetry === true &&
+          result.code !== 'predecessor_failed'
+        ) {
+          return { blockerKey: key };
+        }
+        return { blockerKey: null };
+      },
+      (error) => ({
+        blockerKey:
+          error?.deliveryDefinitelyUnsent === true ? key : null,
+      }),
+    );
+    const tail = { outcome };
+    sessionSendTails.set(sessionId, tail);
+    void outcome.finally(() => {
+      if (sessionSendTails.get(sessionId) === tail) {
+        sessionSendTails.delete(sessionId);
+      }
+    });
     return pending;
   }
 
@@ -2238,50 +2337,64 @@ export function createPocketServer({
         }
         const attachmentIds =
           body.attachments == null ? [] : body.attachments;
-        const attachmentWorkspacePath =
-          Array.isArray(attachmentIds) && attachmentIds.length > 0
-            ? attachmentWorkspace(route)
-            : route.workspacePath;
-        const selectedAttachments =
-          await attachmentManager.resolveForSend(
-            attachmentIds,
-            {
-              deviceId: auth.device.id,
-              sessionId: route.id,
-              workspacePath: attachmentWorkspacePath,
-            },
-          );
-        const deliveryMessage = composeAttachmentMessage(
-          normalizedMessage,
-          selectedAttachments,
-        );
-        if (Buffer.byteLength(deliveryMessage, 'utf8') > MAX_MESSAGE_BYTES) {
-          throw new HttpError(413, 'message_too_large');
-        }
         const replaceDraft = body.replaceDraft === true;
         const expectedMacDraft =
           typeof body.expectedMacDraft === 'string'
             ? normalizeText(body.expectedMacDraft)
             : null;
-        const fingerprint = sendFingerprint({
-          message: deliveryMessage,
+        const fingerprint = sendIntakeFingerprint({
+          message: normalizedMessage,
           replaceDraft,
           expectedMacDraft,
-          attachments: selectedAttachments,
+          attachmentIds,
         });
         const traceId = randomUUID();
         const sendStartedAt = Date.now();
         const clientRevision = clientShellRevision(request);
-        recordAudit({
-          traceId,
-          phase: 'accepted',
-          clientRevision,
-        });
         const deliveryOperation = idempotency.run(
           key,
           route.id,
           fingerprint,
           async (setDeliveryPhase) => {
+              let selectedAttachments;
+              let deliveryMessage;
+              try {
+                const attachmentWorkspacePath =
+                  Array.isArray(attachmentIds) && attachmentIds.length > 0
+                    ? attachmentWorkspace(route)
+                    : route.workspacePath;
+                selectedAttachments =
+                  await attachmentManager.resolveForSend(
+                    attachmentIds,
+                    {
+                      deviceId: auth.device.id,
+                      sessionId: route.id,
+                      workspacePath: attachmentWorkspacePath,
+                    },
+                  );
+                deliveryMessage = composeAttachmentMessage(
+                  normalizedMessage,
+                  selectedAttachments,
+                );
+                if (
+                  Buffer.byteLength(deliveryMessage, 'utf8') >
+                  MAX_MESSAGE_BYTES
+                ) {
+                  return {
+                    ok: false,
+                    code: 'message_too_large',
+                    safeToRetry: true,
+                  };
+                }
+              } catch (error) {
+                const markedError =
+                  error &&
+                  (typeof error === 'object' || typeof error === 'function')
+                    ? error
+                    : asHttpError(error);
+                markedError.deliveryDefinitelyUnsent = true;
+                throw markedError;
+              }
               await setDeliveryPhase('automating');
               recordAudit({
                 traceId,
@@ -2359,7 +2472,7 @@ export function createPocketServer({
               let certifiedPreSend = false;
               try {
                 const automationDeadline =
-                  Date.now() + SEND_AUTOMATION_RETRY_BUDGET_MS;
+                  automationNow() + SEND_AUTOMATION_RETRY_BUDGET_MS;
                 let attributionBaseline = beforeRowId;
                 let transportAttempt = 1;
                 const recordTransport = (sendResult, attempt) => {
@@ -2402,8 +2515,11 @@ export function createPocketServer({
                 ) {
                   certifiedPreSend = true;
                   const remainingBeforeRetry =
-                    automationDeadline - Date.now();
-                  if (remainingBeforeRetry >= 1_000) {
+                    automationDeadline - automationNow();
+                  if (
+                    remainingBeforeRetry >=
+                    SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
+                  ) {
                     await new Promise((resolve) => setTimeout(resolve, 100));
                     security.assertOrigin(request);
                     const retryAuth = security.session(request, {
@@ -2443,14 +2559,17 @@ export function createPocketServer({
                         // A database read failure cannot prove a safe retry boundary.
                       }
                       const remainingRetryMs =
-                        automationDeadline - Date.now();
+                        automationDeadline - automationNow();
                       if (retryBoundary === 'blocked') {
                         sendResult = definitelyUnsentResult(
                           'user_input_active',
                         );
                       } else if (retryBoundary !== 'clear') {
                         // Keep the original structured pre-composer failure.
-                      } else if (remainingRetryMs < 1_000) {
+                      } else if (
+                        remainingRetryMs <
+                        SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
+                      ) {
                         // Keep the original structured pre-composer failure.
                       } else {
                         attributionBaseline = retryBeforeRowId;
@@ -2493,8 +2612,11 @@ export function createPocketServer({
                   } else {
                     certifiedPreSend = true;
                     const retryTimeoutMs =
-                      automationDeadline - Date.now();
-                    if (retryTimeoutMs < 1_000) {
+                      automationDeadline - automationNow();
+                    if (
+                      retryTimeoutMs <
+                      SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
+                    ) {
                       sendResult = definitelyUnsentResult(
                         'composer_changed_pre_send',
                       );
@@ -2587,8 +2709,11 @@ export function createPocketServer({
                               );
                             } else {
                               const remainingRetryMs =
-                                automationDeadline - Date.now();
-                              if (remainingRetryMs < 1_000) {
+                                automationDeadline - automationNow();
+                              if (
+                                remainingRetryMs <
+                                SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
+                              ) {
                                 sendResult =
                                   definitelyUnsentResult(
                                     'composer_changed_pre_send',
@@ -2799,8 +2924,28 @@ export function createPocketServer({
                 throw error;
               }
           },
-          serializeMutation,
+          (operation) =>
+            serializeSendMutation(route.id, key, async (precomputedResult) => {
+              try {
+                return await operation(precomputedResult);
+              } catch (error) {
+                if (deliveryTransportStarted) throw error;
+                deliveryDefinitelyUnsent = true;
+                const markedError =
+                  error &&
+                  (typeof error === 'object' || typeof error === 'function')
+                    ? error
+                    : asHttpError(error);
+                markedError.deliveryDefinitelyUnsent = true;
+                throw markedError;
+              }
+            }),
         );
+        recordAudit({
+          traceId,
+          phase: 'accepted',
+          clientRevision,
+        });
         if (deliveryOperation.joined) deliveryTransportStarted = true;
         const result = await deliveryOperation.promise;
         recordAudit({

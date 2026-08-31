@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import vm from 'node:vm';
+import * as accessibilityModule from '../src/accessibility.mjs';
 import {
   AccessibilityTransport,
   mapAutomationError,
@@ -11,6 +12,94 @@ import {
 } from '../src/accessibility.mjs';
 
 const execFileAsync = promisify(execFile);
+
+test('a send launches Conductor at most once before one bounded route retry', async () => {
+  assert.equal(
+    typeof accessibilityModule.runWithSingleConductorLaunch,
+    'function',
+  );
+  let now = 1_000;
+  let launches = 0;
+  const runBudgets = [];
+  const result = await accessibilityModule.runWithSingleConductorLaunch({
+    timeoutMs: 30_000,
+    now: () => now,
+    async run(remainingMs) {
+      runBudgets.push(remainingMs);
+      now += 250;
+      return runBudgets.length === 1
+        ? { ok: false, code: 'conductor_not_running', safeToRetry: true }
+        : { ok: true, code: 'sent' };
+    },
+    async launch() {
+      launches += 1;
+      now += 500;
+    },
+    async wait(delayMs) {
+      now += delayMs;
+    },
+    startupWaitMs: 1_000,
+  });
+
+  assert.deepEqual(result, { ok: true, code: 'sent' });
+  assert.equal(launches, 1);
+  assert.equal(runBudgets.length, 2);
+  assert.equal(runBudgets[0], 30_000);
+  assert.ok(runBudgets[1] >= 17_000 && runBudgets[1] < runBudgets[0]);
+
+  let shortRuns = 0;
+  let shortLaunches = 0;
+  const shortResult = await accessibilityModule.runWithSingleConductorLaunch({
+    timeoutMs: 20_000,
+    now: () => 5_000,
+    async run() {
+      shortRuns += 1;
+      return shortRuns === 1
+        ? {
+            ok: false,
+            code: 'conductor_not_running',
+            safeToRetry: true,
+          }
+        : { ok: true, code: 'sent' };
+    },
+    async launch() {
+      shortLaunches += 1;
+    },
+    async wait() {},
+    startupWaitMs: 1_500,
+  });
+  assert.deepEqual(shortResult, {
+    ok: false,
+    code: 'conductor_not_running',
+    safeToRetry: true,
+  });
+  assert.equal(shortRuns, 1);
+  assert.equal(shortLaunches, 0);
+
+  const source = await fs.readFile(
+    new URL('../src/accessibility.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /send\([\s\S]*recoverConductor: true/,
+  );
+  for (const method of [
+    'listControls',
+    'openControlMenu',
+    'chooseControlMenuItem',
+    'newTab',
+    'closeTab',
+  ]) {
+    const start = source.indexOf(`  ${method}(`);
+    const end = source.indexOf('\n  }', start);
+    assert.match(
+      source.slice(start, end),
+      /recoverConductor: true/,
+      `${method} must share the bounded one-launch recovery`,
+    );
+  }
+});
 
 test('accessibility transport rejects invalid messages before UI automation', async () => {
   const transport = new AccessibilityTransport();
@@ -380,7 +469,7 @@ test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after eac
   );
   assert.match(
     inputHelper,
-    /const pressAction = resolveComposerPressAction\(sendButton\);[\s\S]*pressInvokedAt = Date\.now\(\);\s*pressAction\.perform\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);/,
+    /const pressAction = resolveComposerPressAction\(sendButton\);[\s\S]*pressInvokedAt = Date\.now\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);\s*pressAction\.perform\(\);/,
   );
   const markerWriter = inputHelper.slice(
     inputHelper.indexOf('function recordPressProvenance'),
@@ -728,6 +817,85 @@ globalThis.__assertPreComposerBudget = assertPreComposerBudget;`,
   );
 });
 
+test('outer route acquisition stops before consuming the complete send attempt', async () => {
+  const [transport, inputHelper, appleScript] = await Promise.all([
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+  ]);
+
+  assert.match(
+    transport,
+    /const ROUTE_ACQUISITION_TIMEOUT_MS = 12_000/,
+  );
+  assert.match(
+    transport,
+    /POCKET_ROUTE_DEADLINE_AT: String\(\s*attemptStartedAt \+ ROUTE_ACQUISITION_TIMEOUT_MS/,
+  );
+  assert.match(
+    inputHelper,
+    /function assertRouteAcquisitionDeadline[\s\S]*POCKET_ROUTE_DEADLINE_AT[\s\S]*fail\('automation_budget_exhausted'\)/,
+  );
+  const routeLease = inputHelper.slice(
+    inputHelper.indexOf('function acquireRouteLease'),
+    inputHelper.indexOf('function assertRouteLease'),
+  );
+  assert.match(routeLease, /assertRouteAcquisitionDeadline\(\)/);
+  assert.match(
+    appleScript,
+    /on routeBudgetExpired\(\)[\s\S]*routeDeadline[\s\S]*current date[\s\S]*end routeBudgetExpired/,
+  );
+  assert.match(
+    appleScript,
+    /repeat with attemptIndex from 1 to 3[\s\S]*routeBudgetExpired\(\)/,
+  );
+  assert.match(
+    appleScript,
+    /repeat with waitIndex from 1 to 50[\s\S]*routeBudgetExpired\(\)/,
+  );
+  assert.match(
+    appleScript,
+    /routeBudgetDidExpire[\s\S]*return "\{\\"ok\\":false,\\"code\\":\\"automation_budget_exhausted\\"\}"/,
+  );
+  const selectedHint = appleScript.slice(
+    appleScript.indexOf('on selectedRouteHint'),
+    appleScript.indexOf('end selectedRouteHint'),
+  );
+  const commitHelper = appleScript.slice(
+    appleScript.indexOf('on commitAndPressMessage'),
+    appleScript.indexOf('end commitAndPressMessage'),
+  );
+  assert.match(selectedHint, /POCKET_ROUTE_DEADLINE_AT=/);
+  const deadlineUnset = commitHelper.match(
+    /\/usr\/bin\/env -u POCKET_ROUTE_DEADLINE_AT/,
+  );
+  assert.ok(
+    deadlineUnset,
+    'the inner prepress proof must clear the inherited outer route deadline',
+  );
+  const [unsetCommand, ...unsetArguments] = deadlineUnset[0].split(' ');
+  await assert.rejects(
+    execFileAsync(
+      unsetCommand,
+      [
+        ...unsetArguments,
+        '/usr/bin/printenv',
+        'POCKET_ROUTE_DEADLINE_AT',
+      ],
+      {
+        env: {
+          ...process.env,
+          POCKET_ROUTE_DEADLINE_AT: '1',
+        },
+      },
+    ),
+    (error) => error.code === 1 && error.stdout === '',
+  );
+});
+
 test('repository-scoped routing distinguishes duplicate workspace names', async () => {
   const source = await fs.readFile(
     new URL('../src/conductor-input.js', import.meta.url),
@@ -1024,6 +1192,10 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     'pressAction.perform();',
     pressBoundary,
   );
+  const pressIntent = inputHelper.indexOf(
+    'recordPressProvenance(attemptStartedAt, pressInvokedAt);',
+    pressBoundary,
+  );
   const preResolveProof = inputHelper.lastIndexOf(
     'assertRouteLease(process, routeLease);',
     finalResolve,
@@ -1038,6 +1210,8 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.ok(pressBoundary > finalActionResolve);
   assert.ok(finalRouteProof > finalResolve);
   assert.ok(finalPress > pressBoundary);
+  assert.ok(pressIntent > pressBoundary);
+  assert.ok(pressIntent < finalPress);
   const finalSendBoundary = inputHelper.slice(
     inputHelper.lastIndexOf(
       'waitForComposerSend(pid, message, inputLease);',
@@ -1748,7 +1922,7 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   );
   assert.match(
     inputHelper,
-    /resolveComposerPressAction\(sendButton\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*pressAction\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
+    /resolveComposerPressAction\(sendButton\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*recordPressProvenance\(attemptStartedAt, pressInvokedAt\)[\s\S]*pressAction\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
   );
   assert.match(appleScript, /session_locked/);
 

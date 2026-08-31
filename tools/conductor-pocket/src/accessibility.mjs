@@ -14,6 +14,11 @@ const inputScriptPath = fileURLToPath(new URL('./conductor-input.js', import.met
 const PHYSICAL_INPUT_COUNTER_COUNT = 16;
 const PRESS_MARKER_MAX_BYTES = 64;
 const PRESS_MARKER_PREFIX = 'conductor-pocket-press-';
+const ROUTE_ACQUISITION_TIMEOUT_MS = 12_000;
+const CONDUCTOR_LAUNCH_TIMEOUT_MS = 5_000;
+const CONDUCTOR_STARTUP_WAIT_MS = 1_500;
+const CONDUCTOR_RECOVERY_RUN_MINIMUM_MS =
+  ROUTE_ACQUISITION_TIMEOUT_MS + 5_000;
 const safeToRetryCodes = new Set([
   'accessibility_disabled',
   'automation_budget_exhausted',
@@ -49,6 +54,55 @@ function byteLength(value) {
 
 function safeToRetry(code) {
   return { ok: false, code, safeToRetry: true };
+}
+
+function wait(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function launchConductorApplication() {
+  await execFileAsync('/usr/bin/open', ['-a', 'Conductor'], {
+    timeout: CONDUCTOR_LAUNCH_TIMEOUT_MS,
+    maxBuffer: 16 * 1024,
+  });
+}
+
+export async function runWithSingleConductorLaunch({
+  run,
+  launch,
+  wait: waitForStartup,
+  now,
+  timeoutMs,
+  startupWaitMs = CONDUCTOR_STARTUP_WAIT_MS,
+}) {
+  const deadline = now() + timeoutMs;
+  const first = await run(timeoutMs);
+  if (first?.code !== 'conductor_not_running') return first;
+  if (
+    deadline - now() <
+    CONDUCTOR_LAUNCH_TIMEOUT_MS +
+      startupWaitMs +
+      CONDUCTOR_RECOVERY_RUN_MINIMUM_MS
+  ) {
+    return first;
+  }
+  try {
+    await launch();
+  } catch {
+    return first;
+  }
+  const remainingBeforeWait = deadline - now();
+  const boundedWaitMs = Math.min(
+    startupWaitMs,
+    Math.max(
+      0,
+      remainingBeforeWait - CONDUCTOR_RECOVERY_RUN_MINIMUM_MS,
+    ),
+  );
+  if (boundedWaitMs > 0) await waitForStartup(boundedWaitMs);
+  const remainingMs = deadline - now();
+  if (remainingMs < CONDUCTOR_RECOVERY_RUN_MINIMUM_MS) return first;
+  return run(remainingMs);
 }
 
 function validProjectName(value) {
@@ -308,12 +362,22 @@ export class AccessibilityTransport {
   #queue = Promise.resolve();
   #routeHints = new Map();
   #busy = 0;
+  #launchConductor;
+  #wait;
   // A SET, not one slot. doctor() deliberately runs off the queue, so two runs
   // can overlap; with a single slot the fast doctor run nulled the field while
   // a 45s send was still typing, and killCurrentAutomation then found nothing
   // and returned false. Shutdown's forced-exit path therefore orphaned exactly
   // the child the mechanism exists to kill.
   #currentChildren = new Set();
+
+  constructor({
+    launchConductor = launchConductorApplication,
+    wait: waitForStartup = wait,
+  } = {}) {
+    this.#launchConductor = launchConductor;
+    this.#wait = waitForStartup;
+  }
 
   doctor() {
     return this.#run({ operation: 'doctor' });
@@ -331,8 +395,24 @@ export class AccessibilityTransport {
   // doctor() stays off the queue deliberately: it takes no route, presses
   // nothing, and answers the connection endpoint, which must not block behind
   // a 45s send.
-  #enqueue(args) {
-    const task = () => this.#run(args);
+  #enqueue(args, { recoverConductor = false } = {}) {
+    const task = recoverConductor
+      ? () =>
+          runWithSingleConductorLaunch({
+            run: (remainingMs) =>
+              this.#run({
+                ...args,
+                timeoutMs: Math.min(
+                  args.timeoutMs || 45_000,
+                  remainingMs,
+                ),
+              }),
+            launch: this.#launchConductor,
+            wait: this.#wait,
+            now: Date.now,
+            timeoutMs: args.timeoutMs || 45_000,
+          })
+      : () => this.#run(args);
     this.#queue = this.#queue.then(task, task);
     return this.#queue;
   }
@@ -340,29 +420,44 @@ export class AccessibilityTransport {
   // Control operations reuse the send path's navigation, so each one acts on
   // exactly the workspace and session named.
   listControls(route) {
-    return this.#enqueue({ ...route, operation: 'list-controls' });
+    return this.#enqueue(
+      { ...route, operation: 'list-controls' },
+      { recoverConductor: true },
+    );
   }
 
   openControlMenu(route, controlLabel) {
-    return this.#enqueue({ ...route, operation: 'menu-open', controlLabel });
+    return this.#enqueue(
+      { ...route, operation: 'menu-open', controlLabel },
+      { recoverConductor: true },
+    );
   }
 
   chooseControlMenuItem(route, controlLabel, menuItem) {
-    return this.#enqueue({
-      ...route,
-      operation: 'menu-choose',
-      controlLabel,
-      menuItem,
-    });
+    return this.#enqueue(
+      {
+        ...route,
+        operation: 'menu-choose',
+        controlLabel,
+        menuItem,
+      },
+      { recoverConductor: true },
+    );
   }
 
   newTab(route) {
-    return this.#enqueue({ ...route, operation: 'tab-new' });
+    return this.#enqueue(
+      { ...route, operation: 'tab-new' },
+      { recoverConductor: true },
+    );
   }
 
   // Irreversible. confirmClose must be explicitly true or the script refuses.
   closeTab(route, { confirmClose = false } = {}) {
-    return this.#enqueue({ ...route, operation: 'tab-close', confirmClose });
+    return this.#enqueue(
+      { ...route, operation: 'tab-close', confirmClose },
+      { recoverConductor: true },
+    );
   }
 
   // True while an osascript run is in flight. Shutdown uses this pair to
@@ -493,20 +588,23 @@ export class AccessibilityTransport {
         code: 'automation_invalid_response',
       });
     }
-    return this.#enqueue({
-      operation: 'send',
-      repositoryName,
-      workspaceId,
-      workspaceName,
-      sessionId,
-      sessionTitle,
-      sessionOrdinal,
-      message: normalized,
-      replaceDraft,
-      expectedMacDraft: normalizedExpectedDraft || '',
-      expectedInputCounters: expectedInputCounters || '',
-      timeoutMs,
-    });
+    return this.#enqueue(
+      {
+        operation: 'send',
+        repositoryName,
+        workspaceId,
+        workspaceName,
+        sessionId,
+        sessionTitle,
+        sessionOrdinal,
+        message: normalized,
+        replaceDraft,
+        expectedMacDraft: normalizedExpectedDraft || '',
+        expectedInputCounters: expectedInputCounters || '',
+        timeoutMs,
+      },
+      { recoverConductor: true },
+    );
   }
 
   async #run({
@@ -615,6 +713,9 @@ export class AccessibilityTransport {
           // script refuses unless this exact token is present.
           POCKET_CONFIRM_CLOSE: confirmClose === true ? 'yes' : 'no',
           POCKET_ATTEMPT_STARTED_AT: String(attemptStartedAt),
+          POCKET_ROUTE_DEADLINE_AT: String(
+            attemptStartedAt + ROUTE_ACQUISITION_TIMEOUT_MS,
+          ),
           // The execFile timeout kills the OUTER osascript; the inner JXA
           // helper it spawned survives as an orphan. One was observed still
           // walking the tree 2.5 minutes after the transport had already
