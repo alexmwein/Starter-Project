@@ -730,6 +730,31 @@ export function terminalDeliveryActionDisposition(delivery) {
   return 'unverified';
 }
 
+export async function runDefinitelyUnsentRetry({
+  message,
+  canRetry,
+  claim,
+  apply,
+  deliver,
+}) {
+  if (
+    typeof canRetry !== 'function' ||
+    typeof claim !== 'function' ||
+    typeof apply !== 'function' ||
+    typeof deliver !== 'function'
+  ) {
+    throw new TypeError('invalid_delivery_retry');
+  }
+  if (!canRetry(message)) {
+    return { status: 'not-retryable', message: null };
+  }
+  const claimed = await claim(message);
+  if (!claimed) return { status: 'conflict', message: null };
+  apply(claimed);
+  deliver(claimed);
+  return { status: 'started', message: claimed };
+}
+
 export function createDeliveryActionCoordinator({
   onChange = () => {},
 } = {}) {
@@ -737,6 +762,14 @@ export function createDeliveryActionCoordinator({
     throw new TypeError('invalid_delivery_action_change_handler');
   }
   const active = new Map();
+  const notify = (key, action) => {
+    try {
+      onChange(key, action);
+    } catch {
+      // Busy-state presentation is advisory. It must never block the action
+      // or leave its cross-tap coordinator permanently occupied.
+    }
+  };
   return {
     current(key) {
       return active.get(key) || null;
@@ -753,12 +786,12 @@ export function createDeliveryActionCoordinator({
       }
       if (active.has(key)) return { started: false, value: null };
       active.set(key, action);
-      onChange(key, action);
+      notify(key, action);
       try {
         return { started: true, value: await operation() };
       } finally {
         active.delete(key);
-        onChange(key, null);
+        notify(key, null);
       }
     },
   };

@@ -10,6 +10,7 @@ import {
   readDeliveryStatusResponse,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
+  runDefinitelyUnsentRetry,
   terminalDeliveryActionDisposition,
 } from '../public/delivery-receipts.js';
 
@@ -58,6 +59,46 @@ test('a terminal tombstone stops a stale Pocket window from resurrecting a delet
   assert.deepEqual(staleRecovery?.snapshot?.messages, []);
   assert.equal(staleRecovery?.snapshot?.version, 2);
   assert.equal(staleRecovery?.snapshot?.tombstones?.length, 1);
+});
+
+test('a certified unsent retry claims locally and posts the same delivery without a status preflight', async () => {
+  const message = persistedMessage({
+    errorCode: 'automation_budget_exhausted',
+  });
+  const calls = [];
+  const claimed = {
+    ...message,
+    delivery: 'delivering',
+    deliveryAttempt: 2,
+    retrySafe: false,
+    definitelyUnsent: false,
+  };
+
+  const result = await runDefinitelyUnsentRetry({
+    message,
+    canRetry(candidate) {
+      calls.push(['can-retry', candidate.activeDeliveryKey]);
+      return candidate.retrySafe === true && candidate.definitelyUnsent === true;
+    },
+    async claim(candidate) {
+      calls.push(['claim', candidate.activeDeliveryKey]);
+      return claimed;
+    },
+    apply(candidate) {
+      calls.push(['apply', candidate.activeDeliveryKey]);
+    },
+    deliver(candidate) {
+      calls.push(['post', candidate.activeDeliveryKey]);
+    },
+  });
+
+  assert.deepEqual(result, { status: 'started', message: claimed });
+  assert.deepEqual(calls, [
+    ['can-retry', message.activeDeliveryKey],
+    ['claim', message.activeDeliveryKey],
+    ['apply', message.activeDeliveryKey],
+    ['post', message.activeDeliveryKey],
+  ]);
 });
 
 test('stopping a delivery check leaves one actionable notice without rearming recovery', () => {
@@ -1175,6 +1216,24 @@ test('rapid terminal action taps run one operation and expose its busy label', a
   ]);
 });
 
+test('a terminal action still runs and releases when its busy-state render fails', async () => {
+  let operationCalls = 0;
+  const coordinator = createDeliveryActionCoordinator({
+    onChange() {
+      throw new Error('test_render_failed');
+    },
+  });
+
+  const result = await coordinator.run('optimistic-1', 'retry', async () => {
+    operationCalls += 1;
+    return 'posted';
+  });
+
+  assert.deepEqual(result, { started: true, value: 'posted' });
+  assert.equal(operationCalls, 1);
+  assert.equal(coordinator.current('optimistic-1'), null);
+});
+
 test('inconclusive delivery statuses remain recoverable through slow receipt checks', () => {
   let inconclusiveChecks = 0;
   for (let attempt = 1; attempt <= 8; attempt += 1) {
@@ -1603,8 +1662,17 @@ test('failed terminal verification reaches one visible action path', async () =>
   const retryEnd = js.indexOf('async function claimConflictAction', retryStart);
   const retry = js.slice(retryStart, retryEnd);
   assert.match(retry, /deliveryActionCoordinator\.run\(/);
-  assert.match(retry, /claimTerminalDeliveryActionRequired\(message, 'retry'\)/);
+  assert.match(retry, /runDefinitelyUnsentRetry\(\{/);
+  assert.match(
+    retry,
+    /claimTerminalDeliveryActionRequired\(candidate, 'retry'\)/,
+  );
   assert.match(retry, /void deliverOptimistic\(message/);
+  assert.doesNotMatch(
+    retry,
+    /verifyTerminalDeliveryAction\(message\)/,
+    'a certified unsent Retry must use the same-key authoritative POST directly',
+  );
 
   const checkStart = js.indexOf('async function checkDeliveryNow(message)');
   const checkEnd = js.indexOf('function checkDelivery(message', checkStart);
