@@ -23,6 +23,7 @@ export function captureScrollAnchor(scroller, { pinThreshold = 48 } = {}) {
   return {
     pinned: distance < pinThreshold,
     scrollTop,
+    viewportTop: Number(scroller?.getBoundingClientRect?.().top) || 0,
   };
 }
 
@@ -34,9 +35,14 @@ export function restoreScrollAnchor(
   const scrollHeight = Math.max(0, Number(scroller?.scrollHeight) || 0);
   const clientHeight = Math.max(0, Number(scroller?.clientHeight) || 0);
   const maximum = Math.max(0, scrollHeight - clientHeight);
+  const viewportTop = Number(scroller?.getBoundingClientRect?.().top) || 0;
+  const viewportDelta = viewportTop - (Number(anchor?.viewportTop) || 0);
   scroller.scrollTop = anchor?.pinned
     ? maximum
-    : Math.min(maximum, Math.max(0, Number(anchor?.scrollTop) || 0));
+    : Math.min(
+        maximum,
+        Math.max(0, (Number(anchor?.scrollTop) || 0) + viewportDelta),
+      );
   const distance = Math.max(
     0,
     scrollHeight - clientHeight - (Number(scroller.scrollTop) || 0),
@@ -45,6 +51,45 @@ export function restoreScrollAnchor(
     latestVisible: distance >= latestThreshold,
     distance,
   };
+}
+
+export function captureHorizontalScrollAnchor(
+  strip,
+  children,
+  { preferred = null, manual = false } = {},
+) {
+  const stripRect = strip?.getBoundingClientRect?.();
+  const candidates = Array.from(children || []).filter(Boolean);
+  const visible = stripRect
+    ? candidates.find((child) => {
+        const rect = child.getBoundingClientRect?.();
+        return rect && rect.right > stripRect.left && rect.left < stripRect.right;
+      })
+    : null;
+  const element = manual ? visible || preferred : preferred || visible;
+  if (!element) return null;
+  return {
+    element,
+    offsetLeft: Number(element.offsetLeft) || 0,
+    scrollLeft: Math.max(0, Number(strip?.scrollLeft) || 0),
+  };
+}
+
+export function restoreHorizontalScrollAnchor(strip, anchor) {
+  if (!strip || !anchor?.element) return null;
+  const maximum = Math.max(
+    0,
+    (Number(strip.scrollWidth) || 0) - (Number(strip.clientWidth) || 0),
+  );
+  const offsetDelta =
+    (Number(anchor.element.offsetLeft) || 0) -
+    (Number(anchor.offsetLeft) || 0);
+  const next = Math.max(
+    0,
+    Math.min(maximum, (Number(anchor.scrollLeft) || 0) + offsetDelta),
+  );
+  strip.scrollLeft = next;
+  return next;
 }
 
 export function transcriptMessageRenderIdentity(

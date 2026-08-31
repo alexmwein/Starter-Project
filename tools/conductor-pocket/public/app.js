@@ -60,10 +60,12 @@ import {
 import {
   activityLabel,
   buildFocusedTranscript,
+  captureHorizontalScrollAnchor,
   captureScrollAnchor,
   hasCurrentTerminalAgentError,
   reconcileMountedChildren,
   reconciledTranscriptMessageIds,
+  restoreHorizontalScrollAnchor,
   restoreScrollAnchor,
   stableTranscriptMessages,
   transcriptMessageRenderIdentity,
@@ -3109,6 +3111,11 @@ function ensureShell() {
     className: 'chat-strip',
     'aria-label': 'Switch chat',
   });
+  for (const eventName of ['touchstart', 'pointerdown', 'wheel']) {
+    chatStrip.addEventListener(eventName, () => {
+      chatStripMovedByHand = true;
+    }, { passive: true });
+  }
   transcriptPanel.append(
     transcriptNav.root,
     chatStrip,
@@ -4516,6 +4523,7 @@ const supportsFieldSizing =
   CSS.supports('field-sizing', 'content');
 
 let lastCentredSessionId = null;
+let chatStripMovedByHand = false;
 let chatStripOwner = null;
 let newChatStripChip = null;
 const chatStripChips = new Map();
@@ -4692,6 +4700,14 @@ function renderChatStrip() {
   const previousActiveSessionId = previousActive?.dataset.sessionId || null;
   const previousActiveOffset = previousActive?.offsetLeft ?? null;
   const previousScrollLeft = strip.scrollLeft;
+  const manualScrollAnchor = captureHorizontalScrollAnchor(
+    strip,
+    [...strip.children].filter((child) => child !== newChatStripChip),
+    {
+      preferred: previousActive,
+      manual: chatStripMovedByHand,
+    },
+  );
   const currentSessionIds = new Set(sessions.map((session) => session.id));
   for (const sessionId of chatStripChips.keys()) {
     if (!currentSessionIds.has(sessionId)) chatStripChips.delete(sessionId);
@@ -4792,15 +4808,20 @@ function renderChatStrip() {
     previousActiveSessionId === state.route.sessionId &&
     previousActiveOffset !== null
   ) {
-    const anchored =
-      previousScrollLeft + activeChip.offsetLeft - previousActiveOffset;
-    const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
-    const nextScrollLeft = Math.max(0, Math.min(maximum, anchored));
-    if (Math.abs(strip.scrollLeft - nextScrollLeft) > 0.5) {
-      strip.scrollLeft = nextScrollLeft;
+    if (chatStripMovedByHand && manualScrollAnchor) {
+      restoreHorizontalScrollAnchor(strip, manualScrollAnchor);
+    } else {
+      const anchored =
+        previousScrollLeft + activeChip.offsetLeft - previousActiveOffset;
+      const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
+      const nextScrollLeft = Math.max(0, Math.min(maximum, anchored));
+      if (Math.abs(strip.scrollLeft - nextScrollLeft) > 0.5) {
+        strip.scrollLeft = nextScrollLeft;
+      }
     }
     lastCentredSessionId = state.route.sessionId;
   } else if (activeChip && lastCentredSessionId !== state.route.sessionId) {
+    chatStripMovedByHand = false;
     lastCentredSessionId = state.route.sessionId;
     const centred =
       activeChip.offsetLeft - (strip.clientWidth - activeChip.offsetWidth) / 2;

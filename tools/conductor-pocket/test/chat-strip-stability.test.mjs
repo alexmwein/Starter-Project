@@ -80,3 +80,42 @@ test('background activity follows newest order without replacing chat buttons', 
   );
   assert.deepEqual(Array.from(changed, (item) => item.id), ['d', 'a', 'c']);
 });
+
+test('manual strip scrolling anchors the visible chip instead of an offscreen selection', async () => {
+  const module = await import('../public/transcript-focus.js');
+  assert.equal(typeof module.captureHorizontalScrollAnchor, 'function');
+  assert.equal(typeof module.restoreHorizontalScrollAnchor, 'function');
+
+  const strip = {
+    scrollLeft: 700,
+    clientWidth: 390,
+    scrollWidth: 1_300,
+    getBoundingClientRect() {
+      return { left: 0, right: this.clientWidth };
+    },
+  };
+  const chip = (id, offsetLeft, left, right) => ({
+    id,
+    offsetLeft,
+    getBoundingClientRect() {
+      return { left, right };
+    },
+  });
+  const offscreenActive = chip('active', 100, -600, -480);
+  const visible = chip('visible', 720, 20, 120);
+  const trailing = chip('trailing', 830, 130, 250);
+  const anchor = module.captureHorizontalScrollAnchor(
+    strip,
+    [offscreenActive, visible, trailing],
+    { preferred: offscreenActive, manual: true },
+  );
+
+  visible.offsetLeft = 905;
+  strip.scrollWidth = 1_500;
+  module.restoreHorizontalScrollAnchor(strip, anchor);
+  assert.equal(
+    strip.scrollLeft,
+    885,
+    'the same visible chip must keep its screen coordinate after reordering',
+  );
+});

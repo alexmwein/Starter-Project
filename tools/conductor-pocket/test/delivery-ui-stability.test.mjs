@@ -90,11 +90,20 @@ test('banner layout changes preserve the bottom or the reader and expose Latest'
     scrollHeight: 1_000,
     clientHeight: 500,
     scrollTop: 260,
+    viewportTop: 120,
+    getBoundingClientRect() {
+      return { top: this.viewportTop };
+    },
   };
   const readingAnchor = transcriptFocus.captureScrollAnchor(reading);
   reading.clientHeight = 440;
+  reading.viewportTop = 180;
   const readingResult = transcriptFocus.restoreScrollAnchor(reading, readingAnchor);
-  assert.equal(reading.scrollTop, 260);
+  assert.equal(
+    reading.scrollTop,
+    320,
+    'an outside banner must not move the same transcript content on screen',
+  );
   assert.equal(readingResult.latestVisible, true);
 });
 
