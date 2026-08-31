@@ -241,6 +241,88 @@ function recordPressProvenance(attemptStartedAt, pressedAt) {
   }
 }
 
+function prepressMarkerPath(name, suffix) {
+  const markerPath = environmentValue(name);
+  if (markerPath === null) return null;
+  if (
+    typeof markerPath !== 'string' ||
+    !markerPath.startsWith('/') ||
+    markerPath.length > 4096 ||
+    markerPath.includes('\0') ||
+    !markerPath.endsWith(suffix)
+  ) {
+    fail('input_helper_unavailable');
+  }
+  return markerPath;
+}
+
+function writePrepressReady(markerPath, attemptStartedAt) {
+  const value = `${attemptStartedAt}\n`;
+  const data = $(value).dataUsingEncoding($.NSUTF8StringEncoding);
+  const fileManager = $.NSFileManager.defaultManager;
+  if (
+    !data ||
+    Number(data.length) > 128 ||
+    fileManager.fileExistsAtPath($(markerPath)) ||
+    !fileManager.createFileAtPathContentsAttributes(
+      $(markerPath),
+      data,
+      $.NSDictionary.dictionary,
+    )
+  ) {
+    fail('input_helper_unavailable');
+  }
+}
+
+function readPrepressDecision(markerPath) {
+  const data = $.NSData.dataWithContentsOfFile($(markerPath));
+  if (!data || Number(data.length) > 128) return null;
+  const value = $.NSString.alloc.initWithDataEncoding(
+    data,
+    $.NSUTF8StringEncoding,
+  );
+  return value ? ObjC.unwrap(value) : null;
+}
+
+function waitForPrepressAuthorization(
+  pid,
+  inputLease,
+  routeLease,
+  attemptStartedAt,
+) {
+  const readyPath = prepressMarkerPath(
+    'POCKET_PREPRESS_READY_PATH',
+    '/prepress-ready',
+  );
+  const decisionPath = prepressMarkerPath(
+    'POCKET_PREPRESS_DECISION_PATH',
+    '/prepress-decision',
+  );
+  if (readyPath === null && decisionPath === null) return;
+  if (readyPath === null || decisionPath === null) {
+    fail('input_helper_unavailable');
+  }
+  const heldDraft = focusedDraft(validateFocusedComposer(pid));
+  writePrepressReady(readyPath, attemptStartedAt);
+  while (true) {
+    assertDeadline(automationDeadline());
+    assertInputLease(inputLease);
+    assertSessionUnlocked();
+    const process = validateFocusedComposer(pid, heldDraft);
+    assertRouteLease(process, routeLease);
+    if ($.NSFileManager.defaultManager.fileExistsAtPath($(decisionPath))) {
+      const decision = readPrepressDecision(decisionPath);
+      if (decision === 'allow\n') return;
+      const denied = /^deny:([a-z][a-z0-9_]{0,63})\n$/.exec(
+        decision || '',
+      );
+      if (denied) fail(denied[1]);
+      fail('input_helper_unavailable');
+    }
+    delay(0.02);
+  }
+}
+
 function decodeBase64Environment(name) {
   const encoded = environmentValue(name);
   if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
@@ -2125,6 +2207,12 @@ function typeAndSendMessage(pid) {
     process = validateFocusedComposer(pid);
     const draftReadStartedAt = Date.now();
     const currentDraft = focusedDraft(process);
+    waitForPrepressAuthorization(
+      pid,
+      inputLease,
+      routeLease,
+      attemptStartedAt,
+    );
     if (currentDraft === message) {
       exactDraftExposedAt = draftReadStartedAt;
     } else {

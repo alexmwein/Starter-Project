@@ -37,6 +37,10 @@ import {
   pocketRootState,
   runningTailscaleIdentity,
 } from './tailscale-config.mjs';
+import {
+  SHUTDOWN_DRAIN_MS,
+  SHUTDOWN_FORCE_EXIT_MS,
+} from './timing.mjs';
 
 const execFileAsync = promisify(execFile);
 process.umask(0o077);
@@ -698,8 +702,6 @@ async function serve(options) {
   // the full automation worst case, and any forced path kills the child
   // first. The LaunchAgent's ExitTimeOut is set above the force deadline so
   // launchd's own SIGKILL cannot preempt this sequence.
-  const SHUTDOWN_DRAIN_MS = 50_000;
-  const SHUTDOWN_FORCE_EXIT_MS = 55_000;
   const shutdown = () => {
     let serverClosed = false;
     let transportDrained = false;

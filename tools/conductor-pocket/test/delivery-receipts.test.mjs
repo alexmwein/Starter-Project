@@ -9,6 +9,7 @@ import {
   deliveryStatusIsTerminal,
   extendDeliveryRecoveryDeadline,
   readDeliveryStatusResponse,
+  rearmDeliveryRecovery,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
   runDefinitelyUnsentRetry,
@@ -1265,7 +1266,7 @@ test('inconclusive delivery statuses remain recoverable through slow receipt che
   );
 });
 
-test('automatic recovery re-arms legacy exhausted ambiguous notices', () => {
+test('an exhausted recovery waits for one explicit rearm event', () => {
   assert.equal(
     deliveryNeedsAutomaticRecovery({ delivery: 'delivering' }),
     true,
@@ -1288,8 +1289,18 @@ test('automatic recovery re-arms legacy exhausted ambiguous notices', () => {
       deliveryRecoveryExhausted: true,
       errorCode: 'delivery_unknown',
     }),
-    true,
+    false,
   );
+  const exhausted = {
+    delivery: 'failed',
+    definitelyUnsent: false,
+    deliveryRecoveryExhausted: true,
+    errorCode: 'delivery_unknown',
+  };
+  assert.equal(rearmDeliveryRecovery(exhausted), true);
+  assert.equal(exhausted.deliveryRecoveryExhausted, false);
+  assert.equal(deliveryNeedsAutomaticRecovery(exhausted), true);
+  assert.equal(rearmDeliveryRecovery(exhausted), false);
   assert.equal(
     deliveryNeedsAutomaticRecovery({
       delivery: 'failed',

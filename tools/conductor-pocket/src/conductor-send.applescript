@@ -855,7 +855,7 @@ on commitAndPressMessage(textArea, inputScriptPath, pressMarkerPath, conductorPi
 		-- helper actually throws; anything unrecognized still falls through.
 		-- deadline_exceeded is the helper bounding its own lifetime so the
 		-- transport kill can never orphan it mid-send.
-		repeat with knownCode in {"send_unavailable", "automation_budget_exhausted", "composer_tree_transient", "user_input_active", "route_changed", "composer_focus_changed", "draft_changed", "composer_update_failed", "invalid_encoding", "unicode_roundtrip_failed", "target_not_active", "deadline_exceeded"}
+		repeat with knownCode in {"send_unavailable", "automation_budget_exhausted", "composer_tree_transient", "user_input_active", "session_route_changed", "device_revoked", "route_changed", "composer_focus_changed", "draft_changed", "composer_update_failed", "invalid_encoding", "unicode_roundtrip_failed", "target_not_active", "deadline_exceeded"}
 			if errorText contains knownCode then return "code:" & knownCode
 		end repeat
 		return "automation_failed"

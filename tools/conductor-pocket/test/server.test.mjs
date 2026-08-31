@@ -1434,6 +1434,79 @@ test('two certified composer redraws recover inside the original send budget', a
   );
 });
 
+test('the third composer certificate cannot start a fourth transport', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        automationTime += 1_000;
+        if (sends < 3) {
+          return {
+            ok: false,
+            code: sends === 1
+              ? 'composer_unavailable'
+              : 'composer_tree_transient',
+            safeToRetry: true,
+          };
+        }
+        return composerRetryResult('Do not run attempt');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'three_attempt_hard_cap_key',
+    message: 'Do not run attempt four',
+  });
+
+  assert.equal(sends, 3);
+  assert.equal(response.status, 502);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'composer_changed_pre_send',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
 test('a new user row blocks the final composer redraw recovery attempt', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -1511,6 +1584,73 @@ test('a new user row blocks the final composer redraw recovery attempt', async (
 
   assert.equal(response.status, 409);
   assert.equal(sends, 2);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
+test('the held prepress lease rechecks the database before authorization', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const rows = [];
+  let transportCalls = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send(options) {
+        transportCalls += 1;
+        rows.push({
+          id: 'manual-row-during-prepress',
+          rowId: 11,
+          text: 'Mac operator sent another message',
+          createdAt: new Date().toISOString(),
+          sentAt: new Date().toISOString(),
+        });
+        return options.beforeAuthorize();
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'held_prepress_database_recheck_key',
+    message: 'Do not duplicate me',
+  });
+
+  assert.equal(transportCalls, 1);
+  assert.equal(response.status, 409);
   assert.deepEqual(JSON.parse(response.body).error, {
     code: 'user_input_active',
     retrySafe: true,
@@ -4179,6 +4319,97 @@ test('same-session queued work stops after a definitely-unsent predecessor', asy
   assert.equal(sends, 3);
 });
 
+test('device revocation waits for an earlier accepted send to finish', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseSend;
+  let markSendStarted;
+  let revokeCalls = 0;
+  const sendGate = new Promise((resolve) => {
+    releaseSend = resolve;
+  });
+  const sendStarted = new Promise((resolve) => {
+    markSendStarted = resolve;
+  });
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+      async revokeDevice() {
+        revokeCalls += 1;
+        return { currentDevice: false };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        markSendStarted();
+        await sendGate;
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const send = postMessage(port, {
+    idempotencyKey: 'revoke_barrier_send_key',
+    message: 'Finish before revocation',
+  });
+  await sendStarted;
+  let revokeSettled = false;
+  const revoke = postJson(
+    port,
+    '/api/devices/other-device/revoke',
+    { clientVersion: SHELL_REVISION, localPurgeCompleted: true },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  ).then((value) => {
+    revokeSettled = true;
+    return value;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const revokeCallsWhileSendActive = revokeCalls;
+  const revokeSettledWhileSendActive = revokeSettled;
+
+  releaseSend();
+  await send;
+  const revokeResponse = await revoke;
+  assert.equal(revokeCallsWhileSendActive, 0);
+  assert.equal(revokeSettledWhileSendActive, false);
+  assert.equal(revokeResponse.status, 200);
+  assert.equal(revokeCalls, 1);
+});
+
 test('a new key can supersede an abandoned definitely-unsent chain', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -4771,7 +5002,7 @@ test('the mutation slot stays held until a safe result is durable', async (conte
     deliveryLedgerPath: path.join(directory, 'delivery-receipts.json'),
     async beforeDeliveryLedgerPersist() {
       persistCalls += 1;
-      if (persistCalls !== 3) return;
+      if (persistCalls !== 4) return;
       resultPersistStarted();
       await resultPersistGate;
     },

@@ -8,11 +8,6 @@ const RECOVERY_TERMINAL_AUTH_CODES = new Set([
   'device_revoked',
   'device_session_expired',
 ]);
-const LEGACY_INCONCLUSIVE_RECOVERY_CODES = new Set([
-  'delivery_confirmation_timeout',
-  'delivery_status_invalid_response',
-  'delivery_unknown',
-]);
 const AUTHORITATIVE_POST_RECEIPT_FAILURE_CODES = new Set([
   'conductor_message_cancelled',
   'conductor_turn_rejected',
@@ -913,13 +908,25 @@ export function deliveryNeedsAutomaticRecovery(message) {
   return (
     message?.definitelyUnsent !== true &&
     !RECOVERY_TERMINAL_AUTH_CODES.has(message?.errorCode) &&
-    (message?.deliveryRecoveryExhausted !== true ||
-      LEGACY_INCONCLUSIVE_RECOVERY_CODES.has(message?.errorCode)) &&
+    message?.deliveryRecoveryExhausted !== true &&
     (message?.delivery === 'delivering' ||
       message?.delivery === 'confirming' ||
       (message?.delivery === 'failed' &&
         message.definitelyUnsent !== true))
   );
+}
+
+export function rearmDeliveryRecovery(message) {
+  if (
+    message?.deliveryRecoveryExhausted !== true ||
+    message?.definitelyUnsent === true ||
+    RECOVERY_TERMINAL_AUTH_CODES.has(message?.errorCode) ||
+    !['delivering', 'confirming', 'failed'].includes(message?.delivery)
+  ) {
+    return false;
+  }
+  message.deliveryRecoveryExhausted = false;
+  return true;
 }
 
 export function receiptReachedTranscript(

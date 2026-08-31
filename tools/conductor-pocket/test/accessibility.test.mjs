@@ -7,11 +7,59 @@ import vm from 'node:vm';
 import * as accessibilityModule from '../src/accessibility.mjs';
 import {
   AccessibilityTransport,
+  coordinatePrepressAuthorization,
   mapAutomationError,
   parseResult,
 } from '../src/accessibility.mjs';
 
 const execFileAsync = promisify(execFile);
+
+test('prepress authorization waits for the held helper lease and writes one decision', async () => {
+  let readyReads = 0;
+  let authorizeCalls = 0;
+  const decisions = [];
+  const result = await coordinatePrepressAuthorization({
+    attemptStartedAt: 1_000,
+    async readReady() {
+      readyReads += 1;
+      return readyReads < 3 ? '' : '1000\n';
+    },
+    async writeDecision(value) {
+      decisions.push(value);
+    },
+    async authorize() {
+      authorizeCalls += 1;
+      return { ok: false, code: 'user_input_active', safeToRetry: true };
+    },
+    isSettled: () => false,
+    now: () => 1_000,
+    wait: async () => {},
+    deadlineAt: 2_000,
+  });
+
+  assert.equal(readyReads, 3);
+  assert.equal(authorizeCalls, 1);
+  assert.deepEqual(decisions, ['deny:user_input_active\n']);
+  assert.deepEqual(result, {
+    ok: false,
+    code: 'user_input_active',
+    safeToRetry: true,
+  });
+});
+
+test('the helper waits for server authorization before changing the composer', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('function typeAndSendMessage(pid)');
+  const end = source.indexOf('\nfunction ', start + 20);
+  const block = source.slice(start, end);
+  const authorization = block.indexOf('waitForPrepressAuthorization(');
+  assert.ok(authorization > 0);
+  assert.ok(authorization < block.indexOf('deliverWholeMessage(pid, message)'));
+  assert.ok(authorization < block.indexOf('postToConductor('));
+});
 
 test('a send launches Conductor at most once before one bounded route retry', async () => {
   assert.equal(
@@ -473,7 +521,7 @@ test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after eac
   );
   const markerWriter = inputHelper.slice(
     inputHelper.indexOf('function recordPressProvenance'),
-    inputHelper.indexOf('function decodeBase64Environment'),
+    inputHelper.indexOf('function prepressMarkerPath'),
   );
   assert.doesNotMatch(markerWriter, /message|draft|base64/i);
 });
@@ -760,10 +808,11 @@ globalThis.__scanQueuedEditTree = hasStaticTextInBoundedTree;`,
 });
 
 test('a slow navigation retries before exposing the phone draft', async () => {
-  const [source, transportSource, serverSource, appleScript] = await Promise.all([
+  const [source, transportSource, serverSource, timingSource, appleScript] = await Promise.all([
     fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
     fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
     fs.readFile(new URL('../src/server.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/timing.mjs', import.meta.url), 'utf8'),
     fs.readFile(
       new URL('../src/conductor-send.applescript', import.meta.url),
       'utf8',
@@ -804,7 +853,7 @@ globalThis.__assertPreComposerBudget = assertPreComposerBudget;`,
     /safeToRetryCodes = new Set\(\[[\s\S]*'automation_budget_exhausted'/,
   );
   assert.match(
-    serverSource,
+    timingSource,
     /SEND_AUTOMATION_RETRY_BUDGET_MS = 75_000/,
   );
   assert.match(

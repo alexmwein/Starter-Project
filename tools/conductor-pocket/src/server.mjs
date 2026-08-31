@@ -37,9 +37,12 @@ import {
 import { configRevision, getVerificationCode } from './config.mjs';
 import { normalizeText, sha256 } from './encoding.mjs';
 import { HttpError, asHttpError } from './errors.mjs';
+import {
+  SEND_AUTOMATION_RETRY_BUDGET_MS,
+  SEND_CONFIRMATION_TIMEOUT_MS,
+} from './timing.mjs';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
-const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
 const SEND_EVENT_TIMESTAMP_SKEW_MS = 250;
@@ -47,11 +50,15 @@ const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
 const SEND_DELIVERY_RECOVERY_TIMEOUT_MS = 1_000;
-const SEND_AUTOMATION_RETRY_BUDGET_MS = 75_000;
 const SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS = 45_000;
 const SEND_AUTOMATION_FINAL_RETRY_MINIMUM_MS = 25_000;
 const SEND_AUTOMATION_MAX_PRE_COMPOSER_ATTEMPTS = 3;
-const DELIVERY_PHASES = new Set(['queued', 'automating', 'confirming']);
+const DELIVERY_PHASES = new Set([
+  'queued',
+  'preparing',
+  'automating',
+  'confirming',
+]);
 const DELIVERY_LEDGER_VERSION = 1;
 const DELIVERY_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DELIVERY_LEDGER_MAX_ENTRIES = 2048;
@@ -118,6 +125,7 @@ const staticFiles = new Map([
 const errorStatuses = new Map([
   ['draft_conflict', 409],
   ['draft_recheck_required', 409],
+  ['device_revoked', 401],
   ['message_empty', 400],
   ['message_invalid', 400],
   ['message_too_large', 413],
@@ -1139,7 +1147,8 @@ class IdempotencyStore {
         continue;
       }
       const pending = record.state === 'pending';
-      const queuedBeforeTransport = pending && record.phase === 'queued';
+      const queuedBeforeTransport =
+        pending && ['queued', 'preparing'].includes(record.phase);
       const result = pending
         ? queuedBeforeTransport
           ? {
@@ -2741,7 +2750,7 @@ export function createPocketServer({
                 markedError.deliveryDefinitelyUnsent = true;
                 throw markedError;
               }
-              await setDeliveryPhase('automating');
+              await setDeliveryPhase('preparing');
               recordAudit({
                 traceId,
                 phase: 'automation-started',
@@ -2842,7 +2851,72 @@ export function createPocketServer({
                       : {}),
                   });
                 };
-                deliveryTransportStarted = true;
+                const prepressAuthorization = (attemptRoute) => {
+                  let decided = false;
+                  return async () => {
+                    if (decided) {
+                      return {
+                        ok: false,
+                        code: 'automation_invalid_response',
+                      };
+                    }
+                    decided = true;
+                    security.assertOrigin(request);
+                    const authorizationAuth = security.session(request, {
+                      requireUnlocked: true,
+                      requireCsrf: true,
+                      touch: false,
+                    });
+                    if (authorizationAuth.device.id !== auth.device.id) {
+                      return { ok: false, code: 'device_revoked' };
+                    }
+                    const authorizationRoute =
+                      database.getSessionRoute(activeRoute.id);
+                    if (
+                      !sameSessionRoute(activeRoute, authorizationRoute, {
+                        attachments: selectedAttachments.length > 0,
+                      }) ||
+                      !sameSessionRoute(attemptRoute, authorizationRoute, {
+                        attachments: selectedAttachments.length > 0,
+                      })
+                    ) {
+                      certifiedPreSend = true;
+                      return definitelyUnsentResult(
+                        'session_route_changed',
+                      );
+                    }
+                    let authorizationCursor;
+                    let boundaryClear = false;
+                    try {
+                      authorizationCursor =
+                        database.getSessionMessageCursor(activeRoute.id);
+                      boundaryClear =
+                        Number.isSafeInteger(authorizationCursor) &&
+                        authorizationCursor >= beforeRowId &&
+                        database.listUserMessagesAfter(
+                          activeRoute.id,
+                          beforeRowId,
+                        ).length === 0;
+                    } catch {
+                      // An unreadable boundary cannot authorize a press.
+                    }
+                    if (!boundaryClear) {
+                      certifiedPreSend = true;
+                      return definitelyUnsentResult('user_input_active');
+                    }
+                    attributionBaseline = authorizationCursor;
+                    await setDeliveryPhase('automating');
+                    deliveryTransportStarted = true;
+                    certifiedPreSend = false;
+                    return { ok: true, code: 'authorized' };
+                  };
+                };
+                const prepareLegacyTransport = async () => {
+                  if (transport.supportsPrepressAuthorization === true) return;
+                  await setDeliveryPhase('automating');
+                  deliveryTransportStarted = true;
+                };
+                await prepareLegacyTransport();
                 let sendResult = await transport.send({
                   repositoryName: activeRoute.repositoryName,
                   workspaceId: activeRoute.workspaceId,
@@ -2853,6 +2927,7 @@ export function createPocketServer({
                   message: deliveryMessage,
                   replaceDraft,
                   expectedMacDraft,
+                  beforeAuthorize: prepressAuthorization(activeRoute),
                 });
                 recordTransport(sendResult, transportAttempt);
                 while (
@@ -2862,6 +2937,7 @@ export function createPocketServer({
                     SEND_AUTOMATION_MAX_PRE_COMPOSER_ATTEMPTS
                 ) {
                   certifiedPreSend = true;
+                  await setDeliveryPhase('preparing');
                   const requiredRetryReserve =
                     transportAttempt === 1
                       ? SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS
@@ -2925,6 +3001,7 @@ export function createPocketServer({
                       // must be treated as ambiguous until independently
                       // certified or confirmed from the database.
                       certifiedPreSend = false;
+                      await prepareLegacyTransport();
                       sendResult = await transport.send({
                         repositoryName: retryRoute.repositoryName,
                         workspaceId: retryRoute.workspaceId,
@@ -2935,6 +3012,7 @@ export function createPocketServer({
                         message: deliveryMessage,
                         replaceDraft,
                         expectedMacDraft,
+                        beforeAuthorize: prepressAuthorization(retryRoute),
                         timeoutMs: Math.min(
                           SEND_AUTOMATION_ATTEMPT_TIMEOUT_MS,
                           remainingRetryMs,
@@ -2948,6 +3026,15 @@ export function createPocketServer({
                   !sendResult.ok &&
                   sendResult.code === 'composer_changed_pre_send'
                 ) {
+                  if (
+                    transportAttempt >=
+                    SEND_AUTOMATION_MAX_PRE_COMPOSER_ATTEMPTS
+                  ) {
+                    certifiedPreSend = true;
+                    sendResult = definitelyUnsentResult(
+                      'composer_changed_pre_send',
+                    );
+                  } else {
                   const certificate = parseComposerRetryCertificate(
                     sendResult,
                     deliveryMessage,
@@ -3073,6 +3160,7 @@ export function createPocketServer({
                                 // boundary. Do not let a later exception mark a
                                 // started retry as definitely unsent.
                                 certifiedPreSend = false;
+                                await prepareLegacyTransport();
                                 sendResult = await transport.send({
                                   repositoryName:
                                     finalRetryRoute.repositoryName,
@@ -3091,6 +3179,8 @@ export function createPocketServer({
                                     certificate.draft,
                                   expectedInputCounters:
                                     certificate.inputCounters,
+                                  beforeAuthorize:
+                                    prepressAuthorization(finalRetryRoute),
                                   timeoutMs: Math.min(
                                     45_000,
                                     remainingRetryMs,
@@ -3107,6 +3197,7 @@ export function createPocketServer({
                         }
                       }
                     }
+                  }
                   }
                 }
                 if (
@@ -3384,21 +3475,24 @@ export function createPocketServer({
       );
       if (request.method === 'POST' && revokeDevice) {
         const body = await readJson(request);
-        const result = await security.revokeDevice(
-          request,
-          revokeDevice[0],
-          {
-            clientVersion: body.clientVersion,
-            localPurgeCompleted: body.localPurgeCompleted,
-          },
-        );
-        try {
-          await attachmentManager.purgeDevice?.(revokeDevice[0], {
-            workspacePaths: localAttachmentWorkspacePaths(),
-          });
-        } catch {
-          recordAudit({ phase: 'attachment-device-purge-failed' });
-        }
+        const result = await serializeMutation(async () => {
+          const revoked = await security.revokeDevice(
+            request,
+            revokeDevice[0],
+            {
+              clientVersion: body.clientVersion,
+              localPurgeCompleted: body.localPurgeCompleted,
+            },
+          );
+          try {
+            await attachmentManager.purgeDevice?.(revokeDevice[0], {
+              workspacePaths: localAttachmentWorkspacePaths(),
+            });
+          } catch {
+            recordAudit({ phase: 'attachment-device-purge-failed' });
+          }
+          return revoked;
+        });
         return sendJson(
           response,
           200,

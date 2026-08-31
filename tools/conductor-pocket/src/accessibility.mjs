@@ -13,6 +13,7 @@ const scriptPath = fileURLToPath(new URL('./conductor-send.applescript', import.
 const inputScriptPath = fileURLToPath(new URL('./conductor-input.js', import.meta.url));
 const PHYSICAL_INPUT_COUNTER_COUNT = 16;
 const PRESS_MARKER_MAX_BYTES = 64;
+const PREPRESS_MARKER_MAX_BYTES = 128;
 const PRESS_MARKER_PREFIX = 'conductor-pocket-press-';
 const ROUTE_ACQUISITION_TIMEOUT_MS = 12_000;
 const CONDUCTOR_LAUNCH_TIMEOUT_MS = 5_000;
@@ -30,6 +31,7 @@ const safeToRetryCodes = new Set([
   'draft_conflict',
   'input_helper_unavailable',
   'session_locked',
+  'session_route_changed',
   'send_unavailable',
   'session_not_visible',
   'user_input_active',
@@ -58,6 +60,61 @@ function safeToRetry(code) {
 
 function wait(delayMs) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+export async function coordinatePrepressAuthorization({
+  attemptStartedAt,
+  readReady,
+  writeDecision,
+  authorize,
+  isSettled,
+  now = Date.now,
+  wait: waitForReady = wait,
+  deadlineAt,
+}) {
+  if (
+    !Number.isSafeInteger(attemptStartedAt) ||
+    attemptStartedAt <= 0 ||
+    !Number.isSafeInteger(deadlineAt) ||
+    deadlineAt <= attemptStartedAt ||
+    typeof readReady !== 'function' ||
+    typeof writeDecision !== 'function' ||
+    typeof authorize !== 'function' ||
+    typeof isSettled !== 'function'
+  ) {
+    throw new TypeError('invalid_prepress_authorization');
+  }
+  const expectedReady = `${attemptStartedAt}\n`;
+  while (!isSettled() && now() < deadlineAt) {
+    if ((await readReady()) === expectedReady) {
+      let result;
+      try {
+        result = await authorize();
+      } catch (error) {
+        result = {
+          ok: false,
+          code:
+            typeof error?.code === 'string'
+              ? error.code
+              : 'automation_failed',
+        };
+      }
+      const code =
+        typeof result?.code === 'string' &&
+        /^[a-z][a-z0-9_]{0,63}$/.test(result.code)
+          ? result.code
+          : 'automation_invalid_response';
+      const decision = result?.ok === true
+        ? 'allow\n'
+        : `deny:${code}\n`;
+      await writeDecision(decision);
+      return result?.ok === true
+        ? { ok: true, code: 'authorized' }
+        : { ...result, ok: false, code };
+    }
+    await waitForReady(10);
+  }
+  return null;
 }
 
 async function launchConductorApplication() {
@@ -327,6 +384,48 @@ async function readPressMarker(markerPath) {
   }
 }
 
+async function readPrepressMarker(markerPath) {
+  let handle;
+  try {
+    handle = await open(
+      markerPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > PREPRESS_MARKER_MAX_BYTES) {
+      return '';
+    }
+    return await handle.readFile('utf8');
+  } catch {
+    return '';
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function writePrepressDecision(markerPath, value) {
+  if (
+    typeof value !== 'string' ||
+    Buffer.byteLength(value, 'utf8') > PREPRESS_MARKER_MAX_BYTES
+  ) {
+    throw new Error('invalid_prepress_decision');
+  }
+  const handle = await open(
+    markerPath,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_EXCL |
+      fsConstants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    await handle.writeFile(value, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function pressMarkerContext(markerPath, attemptStartedAt) {
   const markerContent = await readPressMarker(markerPath);
   return {
@@ -377,6 +476,10 @@ export class AccessibilityTransport {
   } = {}) {
     this.#launchConductor = launchConductor;
     this.#wait = waitForStartup;
+  }
+
+  get supportsPrepressAuthorization() {
+    return true;
   }
 
   doctor() {
@@ -529,6 +632,7 @@ export class AccessibilityTransport {
     replaceDraft = false,
     expectedMacDraft,
     expectedInputCounters = null,
+    beforeAuthorize = null,
     timeoutMs = 45_000,
   }) {
     const normalized = normalizeText(message);
@@ -579,6 +683,15 @@ export class AccessibilityTransport {
       });
     }
     if (
+      beforeAuthorize !== null &&
+      typeof beforeAuthorize !== 'function'
+    ) {
+      return Promise.resolve({
+        ok: false,
+        code: 'automation_invalid_response',
+      });
+    }
+    if (
       !Number.isSafeInteger(timeoutMs) ||
       timeoutMs < 1_000 ||
       timeoutMs > 45_000
@@ -601,6 +714,7 @@ export class AccessibilityTransport {
         replaceDraft,
         expectedMacDraft: normalizedExpectedDraft || '',
         expectedInputCounters: expectedInputCounters || '',
+        beforeAuthorize,
         timeoutMs,
       },
       { recoverConductor: true },
@@ -619,6 +733,7 @@ export class AccessibilityTransport {
     replaceDraft = false,
     expectedMacDraft = '',
     expectedInputCounters = '',
+    beforeAuthorize = null,
     controlLabel = '',
     menuItem = '',
     confirmClose = false,
@@ -637,6 +752,8 @@ export class AccessibilityTransport {
       : null;
     let pressMarkerDirectory = '';
     let pressMarkerPath = '';
+    let prepressReadyPath = '';
+    let prepressDecisionPath = '';
     if (operation === 'send') {
       try {
         pressMarkerDirectory = await mkdtemp(
@@ -644,6 +761,13 @@ export class AccessibilityTransport {
         );
         await chmod(pressMarkerDirectory, 0o700);
         pressMarkerPath = join(pressMarkerDirectory, 'pressed-at');
+        if (typeof beforeAuthorize === 'function') {
+          prepressReadyPath = join(pressMarkerDirectory, 'prepress-ready');
+          prepressDecisionPath = join(
+            pressMarkerDirectory,
+            'prepress-decision',
+          );
+        }
       } catch {
         if (pressMarkerDirectory) {
           await rm(pressMarkerDirectory, {
@@ -701,6 +825,8 @@ export class AccessibilityTransport {
           ),
           POCKET_INPUT_SCRIPT: inputScriptPath,
           POCKET_PRESS_MARKER_PATH: pressMarkerPath,
+          POCKET_PREPRESS_READY_PATH: prepressReadyPath,
+          POCKET_PREPRESS_DECISION_PATH: prepressDecisionPath,
           POCKET_REPLACE_DRAFT: replaceDraft ? 'true' : 'false',
           POCKET_CONTROL_LABEL_BASE64: Buffer.from(
             controlLabel,
@@ -735,7 +861,29 @@ export class AccessibilityTransport {
       });
       runChild = pending.child;
       this.#currentChildren.add(runChild);
-      const { stdout } = await pending;
+      let runSettled = false;
+      void pending.then(
+        () => {
+          runSettled = true;
+        },
+        () => {
+          runSettled = true;
+        },
+      );
+      const authorization =
+        typeof beforeAuthorize === 'function'
+          ? coordinatePrepressAuthorization({
+              attemptStartedAt,
+              readReady: () => readPrepressMarker(prepressReadyPath),
+              writeDecision: (value) =>
+                writePrepressDecision(prepressDecisionPath, value),
+              authorize: beforeAuthorize,
+              isSettled: () => runSettled,
+              deadlineAt:
+                attemptStartedAt + Math.max(timeoutMs - 1_000, 1_000),
+            })
+          : Promise.resolve(null);
+      const [{ stdout }] = await Promise.all([pending, authorization]);
       const result = parseResult(stdout);
       const attributed = pressMarkerPath
         ? attributeStructuredFailure(

@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
 import { AccessibilityTransport } from '../src/accessibility.mjs';
+import {
+  RELAY_EXIT_TIMEOUT_SECONDS,
+  RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
+  SHUTDOWN_DRAIN_MS,
+  SHUTDOWN_FORCE_EXIT_MS,
+} from '../src/timing.mjs';
 
 // A dying relay must never orphan an osascript child mid-type: the child
 // survives the parent, finishes the send, and nobody is left to record it.
@@ -35,8 +41,9 @@ test('shutdown gates exit on both server close and transport drain, and kills th
   assert.match(block, /transport\s*\n?\s*\.drain\(SHUTDOWN_DRAIN_MS\)/);
   // The drain budget covers the 45s automation timeout plus confirmation,
   // and the force deadline sits above the drain, below launchd's SIGKILL.
-  assert.match(source, /const SHUTDOWN_DRAIN_MS = 50_000/);
-  assert.match(source, /const SHUTDOWN_FORCE_EXIT_MS = 55_000/);
+  assert.equal(SHUTDOWN_DRAIN_MS, 85_000);
+  assert.equal(SHUTDOWN_FORCE_EXIT_MS, 90_000);
+  assert.match(source, /from '.\/timing\.mjs'/);
   // Every path that gives up on the drain kills the child first.
   const forceExits = block.match(/killCurrentAutomation\(\)/g) || [];
   assert.ok(forceExits.length >= 3);
@@ -55,8 +62,9 @@ test('the LaunchAgent tells launchd to outlast the force deadline', async () => 
   );
   assert.match(
     source,
-    /<key>ExitTimeOut<\/key>[\s\S]{0,400}<integer>60<\/integer>/,
+    /<key>ExitTimeOut<\/key>[\s\S]{0,400}<integer>\$\{RELAY_EXIT_TIMEOUT_SECONDS\}<\/integer>/,
   );
+  assert.equal(RELAY_EXIT_TIMEOUT_SECONDS, 95);
 });
 
 test('every relay removal wait outlasts the protected shutdown window', async () => {
@@ -66,10 +74,8 @@ test('every relay removal wait outlasts the protected shutdown window', async ()
     fs.readFile(new URL('../scripts/verify-live.mjs', import.meta.url), 'utf8'),
     fs.readFile(new URL('../scripts/cutover-sidecar.mjs', import.meta.url), 'utf8'),
   ]);
-  assert.match(
-    sidecar,
-    /export const RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS = 65_000;/,
-  );
+  assert.equal(RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS, 100_000);
+  assert.match(sidecar, /from '..\/..\/src\/timing\.mjs'/);
   assert.equal(
     (
       installer.match(
@@ -100,7 +106,10 @@ test('the transport records its child while a run is in flight', async () => {
   assert.match(source, /#currentChildren = new Set\(\)/);
   assert.match(source, /runChild = pending\.child;/);
   assert.match(source, /this\.#currentChildren\.add\(runChild\)/);
-  assert.match(source, /const \{ stdout \} = await pending/);
+  assert.match(
+    source,
+    /const \[\{ stdout \}\] = await Promise\.all\(\[pending, authorization\]\)/,
+  );
   // The finally block removes only THIS run's child, so a settled run cannot be
   // mistaken for an in-flight one and a concurrent run is not un-tracked.
   assert.match(

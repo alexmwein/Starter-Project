@@ -948,3 +948,14 @@ test('phone panels and transient controls move without animating layout', async 
     assert.doesNotMatch(transition, /\b(?:height|width|top|right|bottom|left|margin|padding)\b/);
   }
 });
+
+test('a blocked follower explains which earlier action is required', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    js,
+    /predecessor_failed:\s*'An earlier message in this chat needs Retry, Edit, or Delete first\.'/,
+  );
+});
