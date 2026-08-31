@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 import { fetchJson } from '../public/http.js';
 import {
   applyConnectionAvailability,
@@ -37,6 +38,53 @@ test('the request timeout remains active while a response body stalls', async ()
       error?.message === 'request_timeout',
   );
   assert.equal(receivedSignal.aborted, true);
+});
+
+test('New Chat has a bounded request and always releases its busy control', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /const TAB_ACTION_REQUEST_MS = \d[\d_]*;/);
+  const tabStart = source.indexOf('async function runTabAction(');
+  const tabEnd = source.indexOf('function currentWorkspaceName', tabStart);
+  assert.match(
+    source.slice(tabStart, tabEnd),
+    /timeoutMs: TAB_ACTION_REQUEST_MS/,
+  );
+
+  const creationStart = source.indexOf('async function createChat(');
+  const creationEnd = source.indexOf('async function runCreateChat', creationStart);
+  const creationSource = source.slice(creationStart, creationEnd);
+  const announcements = [];
+  const timeout = new Error('request_timeout');
+  timeout.name = 'TimeoutError';
+  const context = vm.createContext({
+    announce: (message) => announcements.push(message),
+    runCreateChat: async () => {
+      throw timeout;
+    },
+  });
+  vm.runInContext(
+    `let chatCreationInFlight = false; ${creationSource}; globalThis.createChat = createChat;`,
+    context,
+  );
+  const attributes = new Map();
+  const control = {
+    disabled: false,
+    setAttribute(name, value) {
+      attributes.set(name, value);
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+  };
+
+  const result = await context.createChat({ control });
+  assert.equal(result, null);
+  assert.equal(control.disabled, false);
+  assert.equal(attributes.has('aria-busy'), false);
+  assert.match(announcements.at(-1), /stopped waiting|could not create/i);
 });
 
 test('a stopped refresh generation cannot block or clobber the next one', async () => {

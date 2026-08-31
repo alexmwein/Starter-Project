@@ -52,7 +52,7 @@ test('newest order changes keep the selected chat at the same screen position', 
   assert.match(body, /lastCentredSessionId !== state\.route\.sessionId/);
 });
 
-test('background activity updates never reorder mounted chat buttons', async () => {
+test('background activity follows newest order without replacing chat buttons', async () => {
   const js = await source('app.js');
   const start = js.indexOf('function stableChatStripSessions(');
   assert.notEqual(start, -1, 'missing stableChatStripSessions');
@@ -72,11 +72,11 @@ test('background activity updates never reorder mounted chat buttons', async () 
     [session('b'), session('a'), session('c')],
     initial.map((item) => item.id),
   );
-  assert.deepEqual(Array.from(refreshed, (item) => item.id), ['a', 'b', 'c']);
+  assert.deepEqual(Array.from(refreshed, (item) => item.id), ['b', 'a', 'c']);
 
   const changed = stableChatStripSessions(
     [session('d'), session('a'), session('c')],
     refreshed.map((item) => item.id),
   );
-  assert.deepEqual(Array.from(changed, (item) => item.id), ['a', 'c', 'd']);
+  assert.deepEqual(Array.from(changed, (item) => item.id), ['d', 'a', 'c']);
 });

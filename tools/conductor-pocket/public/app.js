@@ -60,10 +60,16 @@ import {
 import {
   activityLabel,
   buildFocusedTranscript,
+  captureScrollAnchor,
   hasCurrentTerminalAgentError,
+  reconcileMountedChildren,
   reconciledTranscriptMessageIds,
+  restoreScrollAnchor,
   stableTranscriptMessages,
+  transcriptMessageRenderIdentity,
   transcriptRefreshShouldWait,
+  visibleQueuedRowIds,
+  visibleQueuedRowRefreshKey,
 } from './transcript-focus.js?v=0.2.0-retry-recovery-20260830';
 import {
   isRecentChatsSwipe,
@@ -84,6 +90,10 @@ const RESUME_REQUEST_MS = 6 * 1000;
 const LIVE_REFRESH_DEBOUNCE_MS = 100;
 const METADATA_REFRESH_DEBOUNCE_MS = 800;
 const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
+const INITIAL_STREAM_RESTART_MS = 10_000;
+const QUEUED_ROW_REFRESH_DELAY_MS = 800;
+const QUEUED_ROW_REFRESH_MAX_ATTEMPTS = 3;
+const TAB_ACTION_REQUEST_MS = 60_000;
 // Spacing between attempts to rebuild a dead event stream. Long enough that a
 // relay that is genuinely down is not hammered once per second, short enough
 // that a dropped stream recovers before it is worth reaching for the app
@@ -101,6 +111,7 @@ const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
 const CLIENT_VERSION = '0.2.0';
 const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
 const CACHE_PURGE_CHANNEL = 'conductor-pocket-cache-purge-v1';
+const SHARED_STATE_CHANNEL = 'conductor-pocket-shared-state-v1';
 const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
 const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DRAFTS_KEY = 'cp:drafts:v1';
@@ -134,6 +145,7 @@ const state = {
   lastHeartbeat: 0,
   connectionProbe: null,
   eventSource: null,
+  initialStreamTimer: null,
   heartbeatTimer: null,
   activityTimer: null,
   workspaces: [],
@@ -190,6 +202,70 @@ const deliveryActionCoordinator = createDeliveryActionCoordinator({
 });
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
+let queuedRowRefresh = null;
+
+function stopVisibleQueuedRowRefresh() {
+  if (queuedRowRefresh?.timer) clearTimeout(queuedRowRefresh.timer);
+  queuedRowRefresh = null;
+}
+
+function scheduleQueuedRowRefreshAttempt(task) {
+  if (
+    queuedRowRefresh !== task ||
+    task.running ||
+    task.timer ||
+    task.attempts >= QUEUED_ROW_REFRESH_MAX_ATTEMPTS
+  ) {
+    return;
+  }
+  task.timer = setTimeout(async () => {
+    task.timer = null;
+    if (
+      queuedRowRefresh !== task ||
+      state.route.sessionId !== task.sessionId ||
+      document.hidden
+    ) {
+      return;
+    }
+    task.running = true;
+    task.attempts += 1;
+    try {
+      await refreshMessages(task.sessionId, {
+        full: true,
+        timeoutMs: LIVE_REFRESH_REQUEST_MS,
+      });
+    } finally {
+      task.running = false;
+      if (queuedRowRefresh === task) scheduleQueuedRowRefreshAttempt(task);
+    }
+  }, QUEUED_ROW_REFRESH_DELAY_MS);
+}
+
+function scheduleVisibleQueuedRowRefresh(messages) {
+  const sessionId = state.route.sessionId;
+  const key = visibleQueuedRowRefreshKey(messages);
+  if (!sessionId || !key) {
+    stopVisibleQueuedRowRefresh();
+    return;
+  }
+  if (
+    queuedRowRefresh?.sessionId === sessionId &&
+    queuedRowRefresh.key === key
+  ) {
+    scheduleQueuedRowRefreshAttempt(queuedRowRefresh);
+    return;
+  }
+  stopVisibleQueuedRowRefresh();
+  queuedRowRefresh = {
+    sessionId,
+    key,
+    rowIds: visibleQueuedRowIds(messages),
+    attempts: 0,
+    running: false,
+    timer: null,
+  };
+  scheduleQueuedRowRefreshAttempt(queuedRowRefresh);
+}
 
 function resetSessionMessageState() {
   state.sessionOpenController?.abort();
@@ -199,6 +275,7 @@ function resetSessionMessageState() {
   state.cursorsBySession.clear();
   state.messageBaselinesBySession.clear();
   state.messageLiveEpochBySession.clear();
+  stopVisibleQueuedRowRefresh();
   cancelReadTracking();
 }
 
@@ -1429,6 +1506,7 @@ function persistAttachmentDrafts({
       if (ready.length > 0) saved[sessionId] = ready;
     }
     localStorage.setItem(ATTACHMENT_DRAFTS_KEY, JSON.stringify(saved));
+    broadcastSharedStateInvalidation('attachment-drafts-invalidated');
     return true;
   } catch {
     return false;
@@ -1862,9 +1940,58 @@ const readReceiptChannel =
   'BroadcastChannel' in window
     ? new BroadcastChannel(READ_RECEIPTS_CHANNEL)
     : null;
+const sharedStateChannel =
+  'BroadcastChannel' in window
+    ? new BroadcastChannel(SHARED_STATE_CHANNEL)
+    : null;
 let getServiceWorkerRegistration = null;
 let appUpdateCoordinator = null;
 let appUpdateSensitiveOperations = 0;
+
+function broadcastSharedStateInvalidation(type) {
+  sharedStateChannel?.postMessage({ type });
+}
+
+function syncAttachmentDraftsFromAuthority(
+  authoritativeDrafts = loadAttachmentDrafts(),
+) {
+  const mergedDrafts = new Map();
+  const sessionIds = new Set([
+    ...state.attachmentsBySession.keys(),
+    ...authoritativeDrafts.keys(),
+  ]);
+  for (const sessionId of sessionIds) {
+    const current = state.attachmentsBySession.get(sessionId) || [];
+    const authoritative = authoritativeDrafts.get(sessionId) || [];
+    const authoritativeById = new Map(
+      authoritative.map((item) => [item.id, item]),
+    );
+    const consumed = new Set();
+    const merged = [];
+    for (const item of current) {
+      if (item.state !== 'ready' && item.restored !== true) {
+        merged.push(item);
+        continue;
+      }
+      const saved = authoritativeById.get(item.id);
+      if (!saved || consumed.has(item.id)) continue;
+      Object.assign(item, saved);
+      merged.push(item);
+      consumed.add(item.id);
+    }
+    for (const item of authoritative) {
+      if (consumed.has(item.id)) continue;
+      merged.push(item);
+      consumed.add(item.id);
+    }
+    if (merged.length > 0) mergedDrafts.set(sessionId, merged);
+  }
+  state.attachmentsBySession = mergedDrafts;
+  if (state.shell) {
+    renderComposerAttachments();
+    renderComposerState();
+  }
+}
 
 async function runWithAppUpdatePaused(operation) {
   appUpdateSensitiveOperations += 1;
@@ -2075,6 +2202,24 @@ readReceiptChannel?.addEventListener('message', (event) => {
   });
 });
 
+sharedStateChannel?.addEventListener('message', (event) => {
+  const type = event.data?.type;
+  if (type === 'attachment-drafts-invalidated') {
+    const attachmentDrafts = loadAttachmentDrafts();
+    syncAttachmentDraftsFromAuthority(attachmentDrafts);
+  } else if (type === 'pending-deliveries-invalidated') {
+    void restorePendingDeliveries().then((restored) => {
+      if (restored && state.shell) renderTranscript();
+    });
+  }
+});
+
+window.addEventListener('storage', (event) => {
+  if (!sharedStateChannel && event.key === ATTACHMENT_DRAFTS_KEY) {
+    syncAttachmentDraftsFromAuthority();
+  }
+});
+
 function validPersistedKey(value) {
   return (
     typeof value === 'string' &&
@@ -2227,7 +2372,10 @@ async function mutatePendingDeliveriesRequired({
       store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(transition?.snapshot || null);
+    transaction.oncomplete = () => {
+      broadcastSharedStateInvalidation('pending-deliveries-invalidated');
+      resolve(transition?.snapshot || null);
+    };
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
@@ -2265,7 +2413,10 @@ async function claimTerminalDeliveryActionRequired(
       store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(claimed);
+    transaction.oncomplete = () => {
+      broadcastSharedStateInvalidation('pending-deliveries-invalidated');
+      resolve(claimed);
+    };
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
@@ -2290,7 +2441,10 @@ async function transitionPendingDeliveryRequired(command) {
       store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(value);
+    transaction.oncomplete = () => {
+      broadcastSharedStateInvalidation('pending-deliveries-invalidated');
+      resolve(value);
+    };
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
@@ -2656,8 +2810,17 @@ async function restorePendingDeliveries() {
   } catch {
     return false;
   }
-  state.optimistic = pendingDeliveryMessages(cached, {
+  const authoritativeMessages = pendingDeliveryMessages(cached, {
     sanitize: sanitizePendingDelivery,
+  });
+  const currentById = new Map(
+    state.optimistic.map((message) => [message.id, message]),
+  );
+  state.optimistic = authoritativeMessages.map((authoritative) => {
+    const current = currentById.get(authoritative.id);
+    if (!current) return authoritative;
+    applyAuthoritativePendingDelivery(current, authoritative);
+    return current;
   });
   return true;
 }
@@ -3685,20 +3848,8 @@ function recentSessionsNewestFirst() {
 }
 
 function stableChatStripSessions(sessions, previousIds) {
-  const byId = new Map(sessions.map((session) => [session.id, session]));
-  const ordered = [];
-  const retained = new Set();
-  for (const sessionId of previousIds) {
-    const session = byId.get(sessionId);
-    if (!session) continue;
-    ordered.push(session);
-    retained.add(sessionId);
-  }
-  for (const session of sessions) {
-    if (retained.has(session.id)) continue;
-    ordered.push(session);
-  }
-  return ordered;
+  void previousIds;
+  return [...sessions];
 }
 
 function sessionLocationLabel(session) {
@@ -4201,13 +4352,21 @@ async function refreshMessages(
         const cursor = effectiveFull
           ? 0
           : state.cursorsBySession.get(sessionId) || 0;
+        const queuedRowIds =
+          queuedRowRefresh?.sessionId === sessionId
+            ? queuedRowRefresh.rowIds.slice(0, 8)
+            : [];
+        const queuedRowsQuery =
+          queuedRowIds.length > 0
+            ? `&queuedRowIds=${encodeURIComponent(queuedRowIds.join(','))}`
+            : '';
         const data = await request(
-          `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}`,
+          `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}${queuedRowsQuery}`,
           { signal, timeoutMs },
         );
-        return { cursor, data };
+        return { cursor, data, queuedRowIds };
       },
-      commit: ({ cursor, data }) => {
+      commit: ({ cursor, data, queuedRowIds }) => {
         // The database event can beat the POST receipt by a few hundred
         // milliseconds. Hold a batch containing a user row until that receipt
         // settles, or the Mac row and its optimistic bubble briefly render as
@@ -4233,8 +4392,30 @@ async function refreshMessages(
         const messages = effectiveFull
           ? data.messages
           : [...existing, ...data.messages];
+        const requestedRowIds = new Set(queuedRowIds);
+        const existingById = new Map(
+          messages.map((message) => [message.id, message]),
+        );
+        const refreshed = Array.isArray(data.refreshed)
+          ? data.refreshed.slice(0, queuedRowIds.length)
+          : [];
+        const refreshedById = new Map(
+          refreshed
+            .filter(
+              (message) =>
+                existingById.has(message?.id) &&
+                requestedRowIds.has(Number(message?.rowId)),
+            )
+            .map((message) => [message.id, message]),
+        );
+        const refreshedMessages = messages.map(
+          (message) => refreshedById.get(message.id) || message,
+        );
         const nextCursor = Math.max(cursor, currentCursor, responseCursor);
-        state.messagesBySession.set(sessionId, dedupeMessages(messages));
+        state.messagesBySession.set(
+          sessionId,
+          dedupeMessages(refreshedMessages),
+        );
         state.cursorsBySession.set(sessionId, nextCursor);
         if (effectiveFull) {
           state.messageBaselinesBySession.add(sessionId);
@@ -4665,7 +4846,14 @@ function renderTranscript() {
       document.createTextNode('Error'),
     );
   }
-  renderBanner(transcriptBanner);
+  const bannerAnchor = captureScrollAnchor(transcriptScroll);
+  if (renderBanner(transcriptBanner)) {
+    const restoredBannerAnchor = restoreScrollAnchor(transcriptScroll, bannerAnchor);
+    setLatestButtonVisible(
+      state.shell.latestButton,
+      restoredBannerAnchor.latestVisible,
+    );
+  }
 
   // Measured against the content still on screen, which is the PREVIOUS chat's
   // when a different one is being opened. Two ways that lands the reader high
@@ -4710,13 +4898,14 @@ function renderTranscript() {
   const { entries, toolResults } = buildFocusedTranscript(messages, {
     sessionStatus: session?.status || 'unknown',
   });
+  scheduleVisibleQueuedRowRefresh(entries);
   const existingNodes = new Map(
     [...messageList.children].map((element) => [
       element.dataset.messageId,
       element,
     ]),
   );
-  const fragment = document.createDocumentFragment();
+  const desiredChildren = [];
   let previousVisibleMessage = null;
   for (const message of entries) {
     if (message.kind === 'agent-error' && message.retrying) continue;
@@ -4754,11 +4943,11 @@ function renderTranscript() {
       isMessageContinuation(previousVisibleMessage, message),
     );
     state.seenMessageIds.add(messageId);
-    fragment.append(rendered);
+    desiredChildren.push(rendered);
     previousVisibleMessage = message;
   }
-  if (fragment.childElementCount === 0) {
-    fragment.append(
+  if (desiredChildren.length === 0) {
+    desiredChildren.push(
       renderTranscriptPlaceholder({
         selected: Boolean(state.route.sessionId),
         loading:
@@ -4768,7 +4957,7 @@ function renderTranscript() {
       }),
     );
   }
-  messageList.replaceChildren(fragment);
+  reconcileMountedChildren(messageList, desiredChildren);
   renderAgentStatus(statusRow, session, messages);
   // Corrected in the SAME frame as the content change, never a frame later.
   // Reading scrollHeight forces the layout this needs, so the corrected
@@ -4855,40 +5044,30 @@ function messageRenderKey(message, toolResults) {
   }
   const toolResult =
     message.kind === 'tool' ? toolResults.get(message.toolCallId) : null;
-  return JSON.stringify([
-    message.kind,
-    message.text,
-    Array.isArray(message.attachments)
-      ? message.attachments.map((attachment) =>
-          typeof attachment === 'string'
-            ? attachment
-            : [
-                attachment?.id,
-                attachment?.mediaType,
-                attachment?.width,
-                attachment?.height,
-                Boolean(attachment?.previewUrl),
-              ],
-        )
-      : null,
-    message.delivery,
-    message.errorCode,
-    message.errorProjectName,
-    message.retrySafe,
-    message.definitelyUnsent,
-    message.deliveryRecoveryExhausted,
-    message.deliveryPhase,
-    message.kind === 'tool'
-      ? toolResult?.state || message.state
-      : message.state,
-    message.code,
-  ]);
+  return transcriptMessageRenderIdentity(message, {
+    resolvedState:
+      message.kind === 'tool'
+        ? toolResult?.state || message.state
+        : message.state,
+    newestRootEventRowId,
+  });
 }
 
 function renderBanner(container) {
-  container.replaceChildren();
-  if (state.connection === 'live') return;
   const down = state.connection === 'offline';
+  const copy =
+    state.connection === 'live'
+      ? ''
+      : down
+        ? state.lastHeartbeat
+          ? `Mac unreachable · Last synced ${formatTime(state.lastHeartbeat)}`
+          : 'Mac unreachable'
+        : 'Reconnecting…';
+  const renderKey = JSON.stringify([state.connection, copy]);
+  if (container.dataset.renderKey === renderKey) return false;
+  container.dataset.renderKey = renderKey;
+  container.replaceChildren();
+  if (state.connection === 'live') return true;
   const banner = node('div', {
     className: `banner ${down ? 'down' : 'wait'}`,
     role: 'status',
@@ -4896,11 +5075,7 @@ function renderBanner(container) {
     icon(down ? 'wifiOff' : 'refresh'),
     node('span', {
       className: 'banner-copy',
-      text: down
-        ? state.lastHeartbeat
-          ? `Mac unreachable · Last synced ${formatTime(state.lastHeartbeat)}`
-          : 'Mac unreachable'
-        : 'Reconnecting…',
+      text: copy,
     }),
     node('button', {
       className: 'banner-action',
@@ -4910,6 +5085,7 @@ function renderBanner(container) {
     }),
   ]);
   container.append(banner);
+  return true;
 }
 
 function messageAttachments(message) {
@@ -6815,10 +6991,21 @@ function openDraftConflict(message) {
 }
 
 function startEvents() {
+  startEventsAttempt();
+}
+
+function startEventsAttempt({ initialRetry = false } = {}) {
   stopEvents();
   const eventSource = new EventSource('/api/events');
   state.eventSource = eventSource;
+  let initialConnected = false;
   const live = () => {
+    if (state.eventSource !== eventSource) return;
+    initialConnected = true;
+    if (state.initialStreamTimer) {
+      clearTimeout(state.initialStreamTimer);
+      state.initialStreamTimer = null;
+    }
     state.lastHeartbeat = Date.now();
     if (state.connection !== 'live') {
       state.connection = 'live';
@@ -6888,6 +7075,23 @@ function startEvents() {
       renderConnectionState();
     }
   };
+  state.initialStreamTimer = setTimeout(() => {
+    state.initialStreamTimer = null;
+    if (
+      initialConnected ||
+      state.eventSource !== eventSource ||
+      document.hidden ||
+      !state.auth ||
+      !state.shell
+    ) {
+      return;
+    }
+    if (!initialRetry) {
+      startEventsAttempt({ initialRetry: true });
+      transcriptRefresh.schedule();
+      metadataRefresh.schedule();
+    }
+  }, INITIAL_STREAM_RESTART_MS);
   state.heartbeatTimer = setInterval(() => {
     if (Date.now() - state.lastHeartbeat > 10_000) {
       if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
@@ -6959,11 +7163,13 @@ function stopEvents() {
   metadataRefresh.stop();
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   if (state.activityTimer) clearInterval(state.activityTimer);
+  if (state.initialStreamTimer) clearTimeout(state.initialStreamTimer);
   // Cleared with the rest. startEvents calls stopEvents first, so leaking this
   // would start a second backstop on every stream revive.
   if (state.backstopTimer) clearInterval(state.backstopTimer);
   state.heartbeatTimer = null;
   state.activityTimer = null;
+  state.initialStreamTimer = null;
   state.backstopTimer = null;
 }
 
@@ -7227,6 +7433,7 @@ async function runTabAction(action, { confirm = false, sessionId: explicitId } =
         'X-CSRF-Token': state.csrfToken,
       },
       body: JSON.stringify({ action, confirm }),
+      timeoutMs: TAB_ACTION_REQUEST_MS,
     },
   );
   if (!response.ok || payload?.ok !== true) {
@@ -7266,6 +7473,13 @@ async function createChat({ onCreated, control } = {}) {
   announce('Creating a chat on the Mac...');
   try {
     return await runCreateChat({ onCreated });
+  } catch (error) {
+    announce(
+      error?.name === 'TimeoutError'
+        ? 'Pocket stopped waiting for the Mac. Check Recent chats before trying again.'
+        : 'Pocket could not create a chat. Try again.',
+    );
+    return null;
   } finally {
     chatCreationInFlight = false;
     if (control) {
@@ -7481,6 +7695,30 @@ function usageResetLabel(value) {
   }).format(new Date(value));
 }
 
+function usageSampleDescription(account, provider, now = Date.now()) {
+  const explicitSource =
+    (typeof account.source === 'string' && account.source.trim()) ||
+    (typeof provider.source === 'string' && provider.source.trim()) ||
+    null;
+  const source =
+    explicitSource || (provider.id === 'gpt' ? 'SwiftBar cache' : null);
+  const fetchedAt = Number(account.fetchedAt ?? provider.fetchedAt);
+  let age = null;
+  if (Number.isFinite(fetchedAt) && fetchedAt > 0) {
+    const elapsedMs = Math.max(0, now - fetchedAt);
+    const minutes = Math.floor(elapsedMs / 60_000);
+    if (minutes < 1) age = 'Sampled just now';
+    else if (minutes < 60) age = `Sampled ${minutes}m ago`;
+    else {
+      const hours = Math.floor(minutes / 60);
+      age = hours < 24
+        ? `Sampled ${hours}h ago`
+        : `Sampled ${Math.floor(hours / 24)}d ago`;
+    }
+  }
+  return [source, age].filter(Boolean).join(' · ');
+}
+
 async function fillAccountUsage(section, { force = false } = {}) {
   const usage = await refreshSeatUsage({ force });
   section.replaceChildren();
@@ -7552,6 +7790,15 @@ async function fillAccountUsage(section, { force = false } = {}) {
           node('span', {
             className: 'usage-seat-reset',
             text: `Resets ${resetParts.join(' · ')}`,
+          }),
+        );
+      }
+      const sampleDescription = usageSampleDescription(account, provider);
+      if (sampleDescription) {
+        row.append(
+          node('span', {
+            className: 'usage-seat-source',
+            text: sampleDescription,
           }),
         );
       }

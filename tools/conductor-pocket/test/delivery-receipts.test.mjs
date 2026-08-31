@@ -982,6 +982,8 @@ test('the browser wires shared delivery authority before mutating visible state'
   assert.match(restore, /cacheGetRequired\(PENDING_DELIVERIES_KEY\)/);
   assert.match(restore, /catch[\s\S]{0,100}return false/);
   assert.doesNotMatch(restore, /cacheGet\(PENDING_DELIVERIES_KEY\)/);
+  assert.match(restore, /currentById/);
+  assert.match(restore, /applyAuthoritativePendingDelivery\(current, authoritative\)/);
 
   const conflictStart = js.indexOf("text: 'Keep the Mac draft'");
   const conflictWiring = js.slice(conflictStart, conflictStart + 700);

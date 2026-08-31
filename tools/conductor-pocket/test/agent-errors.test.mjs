@@ -371,6 +371,19 @@ test('a superseded agent error stops giving advice, and seat usage is whiteliste
   assert.match(readerBody, /available: false, reason: 'producer_unreachable'/);
 })
 
+test('cached usage shows its sample source and age when available', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(js, /function usageSampleDescription\(account, provider/);
+  assert.match(js, /account\.fetchedAt/);
+  assert.match(js, /provider\.id === 'gpt'[\s\S]*SwiftBar cache/);
+  assert.match(js, /account\.source[\s\S]*provider\.source/);
+  assert.match(js, /className: 'usage-seat-source'/);
+  assert.match(css, /\.usage-seat-source \{/);
+});
+
 test('ordinary messages are never turned into error cards by their wording', () => {
   // The regression that shipped 2026-08-20: the text classifier was moved ahead
   // of the guard that decides whether an event failed at all, so any message

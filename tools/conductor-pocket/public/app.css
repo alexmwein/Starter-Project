@@ -3112,6 +3112,14 @@ button:active {
   font-variant-numeric: tabular-nums;
 }
 
+.usage-seat-source {
+  grid-column: 1 / -1;
+  margin-top: -8px;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .usage-seat.is-blocked .usage-seat-value {
   color: var(--down);
   font-weight: 600;
@@ -3131,6 +3139,11 @@ button:active {
   }
 
   .usage-seat-reset {
+    grid-column: 1;
+    margin-top: 0;
+  }
+
+  .usage-seat-source {
     grid-column: 1;
     margin-top: 0;
   }
