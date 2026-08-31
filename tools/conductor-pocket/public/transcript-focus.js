@@ -4,6 +4,11 @@ const HIDDEN_KINDS = new Set(['status', 'tool-result', 'turn-result']);
 export function reconcileMountedChildren(container, desiredChildren) {
   const desired = Array.from(desiredChildren || []).filter(Boolean);
   const desiredSet = new Set(desired);
+  const ownerDocument = container?.ownerDocument || null;
+  const focusedElement = ownerDocument?.activeElement || null;
+  const restoreFocus = Boolean(
+    focusedElement && container?.contains?.(focusedElement),
+  );
   for (const child of Array.from(container?.children || [])) {
     if (!desiredSet.has(child)) container.removeChild(child);
   }
@@ -11,6 +16,14 @@ export function reconcileMountedChildren(container, desiredChildren) {
     const child = desired[index];
     const current = container.children[index] || null;
     if (current !== child) container.insertBefore(child, current);
+  }
+  if (
+    restoreFocus &&
+    focusedElement?.isConnected &&
+    container?.contains?.(focusedElement) &&
+    ownerDocument.activeElement !== focusedElement
+  ) {
+    focusedElement.focus({ preventScroll: true });
   }
   return desired;
 }
@@ -94,7 +107,11 @@ export function restoreHorizontalScrollAnchor(strip, anchor) {
 
 export function transcriptMessageRenderIdentity(
   message,
-  { resolvedState = null, newestRootEventRowId = 0 } = {},
+  {
+    resolvedState = null,
+    newestRootEventRowId = 0,
+    deliveryAction = null,
+  } = {},
 ) {
   const rowId = Number(message?.rowId);
   const superseded =
@@ -135,6 +152,7 @@ export function transcriptMessageRenderIdentity(
     message?.severity,
     message?.occurrenceCount,
     superseded,
+    deliveryAction,
   ]);
 }
 

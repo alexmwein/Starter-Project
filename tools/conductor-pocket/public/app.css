@@ -1247,6 +1247,7 @@ button:active {
 }
 
 .message-retry {
+  position: relative;
   min-height: 44px;
   margin: -12px -8px -12px 0;
   padding: 0 8px;
@@ -1258,6 +1259,33 @@ button:active {
 
 .message-retry:disabled {
   opacity: 0.55;
+}
+
+.message-retry[aria-busy='true'] {
+  color: transparent;
+  opacity: 1;
+}
+
+.message-retry[aria-busy='true']::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--copper);
+  border-radius: 999px;
+  animation: message-action-spin 700ms linear infinite;
+}
+
+@keyframes message-action-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
 }
 
 @media (max-width: 420px) {

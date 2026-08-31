@@ -87,6 +87,108 @@ test('New Chat has a bounded request and always releases its busy control', asyn
   assert.match(announcements.at(-1), /stopped waiting|could not create/i);
 });
 
+test('New Chat retries retain one idempotency key until the Mac result is known', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const tabStart = source.indexOf('async function runTabAction(');
+  const createEnd = source.indexOf('const TAB_ACTION_MESSAGES', tabStart);
+  const body = source.slice(tabStart, createEnd);
+
+  assert.match(body, /CHAT_CREATION_ATTEMPTS_KEY/);
+  assert.match(body, /CHAT_CREATION_ATTEMPT_MAX/);
+  assert.match(body, /CHAT_CREATION_SETTLED_GRACE_MS/);
+  assert.match(body, /navigator\?\.locks\?\.request|navigator\.locks\.request/);
+  assert.match(body, /withChatCreationAttemptLock/);
+  assert.match(body, /'Idempotency-Key'/);
+  assert.match(body, /loadChatCreationAttempt/);
+  assert.match(body, /saveChatCreationAttempt/);
+  assert.match(body, /clearChatCreationAttempt/);
+  assert.match(body, /settleChatCreationAttempt/);
+  assert.match(body, /attempt\?\.anchorSessionId \|\| state\.route\.sessionId/);
+  assert.match(
+    body,
+    /saveChatCreationAttempt\(workspaceId, anchorSessionId(?:, now)?\)/,
+  );
+  assert.match(body, /requireDefinitive: true/);
+  assert.match(body, /TabActionIndeterminateError/);
+  assert.match(body, /payload\?\.error\?\.code/);
+  assert.match(body, /TabActionRouteUnavailableError/);
+  assert.match(body, /rebindChatCreationAttempt/);
+});
+
+test('New Chat keeps its key when a dead anchor is replaced in the same workspace', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('async function runCreateChat(');
+  const end = source.indexOf('\n}\n', start) + 3;
+  const runCreateChatSource = source.slice(start, end);
+  const originalAttempt = {
+    key: 'stable-new-chat-key',
+    workspaceId: 'workspace-1',
+    anchorSessionId: 'session-a',
+    createdAt: 100,
+  };
+  const actionCalls = [];
+  let reboundAttempt = null;
+  let settledAttempt = null;
+  const context = vm.createContext({
+    state: {
+      route: { workspaceId: 'workspace-1', sessionId: 'session-a' },
+    },
+    loadChatCreationAttempt: () => originalAttempt,
+    allocateChatCreationAttempt: async () => originalAttempt,
+    loadSessions: async () => [{ id: 'session-b' }],
+    sessionsFor: () => [{ id: 'session-b' }],
+    runTabAction: async (_action, options) => {
+      actionCalls.push(options);
+      if (actionCalls.length === 1) {
+        const error = new Error('session_not_found');
+        error.name = 'TabActionRouteUnavailableError';
+        throw error;
+      }
+      return { ok: true, code: 'tab_created' };
+    },
+    rebindChatCreationAttempt: async (attempt, anchorSessionId) => {
+      reboundAttempt = { ...attempt, anchorSessionId };
+      return reboundAttempt;
+    },
+    clearChatCreationAttempt: async () => {
+      throw new Error('a successful retry must not clear its receipt');
+    },
+    settleChatCreationAttempt: async (attempt) => {
+      settledAttempt = attempt;
+      return attempt;
+    },
+    currentWorkspaceName: () => 'Workspace',
+    loadRecentSessions: async () => {},
+    openSession: async () => {},
+    announce: () => {},
+  });
+  vm.runInContext(
+    `${runCreateChatSource}; globalThis.runCreateChat = runCreateChat;`,
+    context,
+  );
+
+  await context.runCreateChat();
+
+  assert.deepEqual(
+    actionCalls.map(({ sessionId, idempotencyKey }) => ({
+      sessionId,
+      idempotencyKey,
+    })),
+    [
+      { sessionId: 'session-a', idempotencyKey: 'stable-new-chat-key' },
+      { sessionId: 'session-b', idempotencyKey: 'stable-new-chat-key' },
+    ],
+  );
+  assert.equal(reboundAttempt.anchorSessionId, 'session-b');
+  assert.equal(settledAttempt.key, 'stable-new-chat-key');
+});
+
 test('a stopped refresh generation cannot block or clobber the next one', async () => {
   let firstResolve;
   let firstSignal;

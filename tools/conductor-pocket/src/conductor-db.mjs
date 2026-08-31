@@ -1065,10 +1065,12 @@ export class ConductorDatabase {
     const messages = rows.flatMap((row) =>
       parseAssistantRow(row, { cleanAttachments: true }),
     );
+    const visibleCursor =
+      rows.length > 0 ? Number(rows.at(-1).row_id) : 0;
     const cursor =
-      rows.length > 0
-        ? Number(rows.at(-1).row_id)
-        : this.getSessionMessageCursor(sessionId);
+      safeAfter === 0
+        ? Math.max(visibleCursor, this.getSessionMessageCursor(sessionId))
+        : visibleCursor || this.getSessionMessageCursor(sessionId);
     return { cursor, messages };
   }
 }

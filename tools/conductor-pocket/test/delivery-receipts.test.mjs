@@ -1616,7 +1616,10 @@ test('failed terminal verification reaches one visible action path', async () =>
     1,
     'manual Check may resume recovery only after the server proves the send is pending',
   );
-  assert.match(js, /activeAction === 'retry' \? 'Checking…' : 'Retry'/);
+  assert.match(
+    js,
+    /text: 'Retry'[\s\S]*'aria-busy': activeAction === 'retry'/,
+  );
   assert.match(js, /click: \(\) => void checkDeliveryNow\(message\)/);
 });
 

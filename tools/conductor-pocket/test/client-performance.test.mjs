@@ -345,7 +345,7 @@ test('new chat uses the selected repository even when no chat is open', async ()
   assert.match(createBody, /sessionsFor\(workspaceId\)/);
   assert.match(
     createBody,
-    /runTabAction\('new', \{ sessionId: anchorSessionId \}\)/,
+    /runTabAction\('new', \{[\s\S]*sessionId: attempt\.anchorSessionId,[\s\S]*idempotencyKey: attempt\.key/,
   );
 });
 

@@ -71,6 +71,38 @@ test('transcript reconciliation keeps unchanged mounted controls connected', () 
   assert.equal(final.detachCount, 0);
 });
 
+test('mounted reconciliation restores a focused control after reordering it', () => {
+  const first = { id: 'first', parentNode: null, isConnected: true };
+  const focused = {
+    id: 'focused',
+    parentNode: null,
+    isConnected: true,
+    focusCalls: 0,
+    focus(options) {
+      assert.deepEqual(options, { preventScroll: true });
+      this.focusCalls += 1;
+      document.activeElement = this;
+    },
+  };
+  const document = { activeElement: focused };
+  const container = new MountedContainer([first, focused]);
+  container.ownerDocument = document;
+  container.contains = (element) => container.children.includes(element);
+  const insertBefore = container.insertBefore.bind(container);
+  container.insertBefore = (child, before) => {
+    if (child === document.activeElement && container.children.includes(child)) {
+      document.activeElement = { tagName: 'BODY' };
+    }
+    insertBefore(child, before);
+  };
+
+  transcriptFocus.reconcileMountedChildren(container, [focused, first]);
+
+  assert.equal(focused.focusCalls, 1);
+  assert.equal(document.activeElement, focused);
+  assert.deepEqual(container.children, [focused, first]);
+});
+
 test('banner layout changes preserve the bottom or the reader and expose Latest', () => {
   assert.equal(typeof transcriptFocus.captureScrollAnchor, 'function');
   assert.equal(typeof transcriptFocus.restoreScrollAnchor, 'function');
@@ -141,6 +173,21 @@ test('message render identity includes delivery labels and superseded guidance',
     transcriptFocus.transcriptMessageRenderIdentity(agentError, {
       newestRootEventRowId: 21,
     }),
+  );
+
+  const failed = {
+    id: 'failed-1',
+    kind: 'optimistic',
+    text: 'hello',
+    delivery: 'failed',
+    definitelyUnsent: true,
+  };
+  assert.notEqual(
+    transcriptFocus.transcriptMessageRenderIdentity(failed),
+    transcriptFocus.transcriptMessageRenderIdentity(failed, {
+      deliveryAction: 'delete',
+    }),
+    'a claimed terminal action must repaint its busy state',
   );
 });
 
@@ -304,6 +351,27 @@ test('delivery labels cannot resize a short user bubble', async () => {
   );
 });
 
+test('terminal action progress keeps the same button geometry', async () => {
+  const [js, css] = await Promise.all([source('app.js'), source('app.css')]);
+  const start = js.indexOf("} else if (message.delivery === 'failed')");
+  const end = js.indexOf('const reason =', start);
+  const failed = js.slice(start, end);
+
+  assert.match(failed, /text: 'Retry'/);
+  assert.match(failed, /text: 'Edit'/);
+  assert.match(failed, /text: 'Check'/);
+  assert.match(failed, /text: 'Delete'/);
+  assert.match(failed, /'aria-busy': activeAction === 'delete'/);
+  assert.match(
+    css,
+    /\.message-retry\[aria-busy='true'\] \{[\s\S]*?color:\s*transparent/,
+  );
+  assert.match(
+    css,
+    /\.message-retry\[aria-busy='true'\]::after \{[\s\S]*?position:\s*absolute/,
+  );
+});
+
 test('the keyboard inset is subtracted from the shell exactly once', async () => {
   const css = await source('app.css');
 
@@ -388,6 +456,8 @@ test('the transcript mutates rows in place and bounds queued row refreshes', asy
   );
   assert.match(js, /queuedRowIds=\$\{encodeURIComponent/);
   assert.match(js, /Array\.isArray\(data\.refreshed\)/);
+  assert.match(js, /Array\.isArray\(data\.missingQueuedRowIds\)/);
+  assert.match(js, /missingQueuedRowIds\.has\(Number\(message\.rowId\)\)/);
   assert.match(js, /refreshedById\.get\(message\.id\) \|\| message/);
 
   const bannerStart = js.indexOf('const bannerAnchor = captureScrollAnchor');

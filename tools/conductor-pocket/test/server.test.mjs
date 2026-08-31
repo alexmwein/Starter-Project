@@ -106,6 +106,59 @@ test('account usage endpoint returns the provider-neutral phone readout', async 
   assert.deepEqual(JSON.parse(response.body), expected);
 });
 
+test('incremental messages refresh only bounded requested queued rows', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const refreshedReads = [];
+  const server = createServer(config, {
+    database: {
+      listMessages(sessionId, options) {
+        assert.equal(sessionId, 'test-session');
+        assert.deepEqual(options, { after: '10', limit: 500 });
+        return { messages: [], cursor: 10 };
+      },
+      getVisibleUserMessage(sessionId, rowId) {
+        refreshedReads.push([sessionId, rowId]);
+        return rowId === 43
+          ? null
+          : {
+              id: `user-${rowId}`,
+              rowId,
+              kind: 'user',
+              text: '',
+              queued: false,
+            };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await get(port, {
+    pathname:
+      '/api/sessions/test-session/messages?after=10&queuedRowIds=42,42,invalid,-1,43,44,45,46,47,48,49,50',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(refreshedReads, [
+    ['test-session', 42],
+    ['test-session', 43],
+    ['test-session', 44],
+    ['test-session', 45],
+    ['test-session', 46],
+    ['test-session', 47],
+    ['test-session', 48],
+    ['test-session', 49],
+  ]);
+  assert.deepEqual(
+    JSON.parse(response.body).refreshed.map((message) => message.rowId),
+    [42, 44, 45, 46, 47, 48, 49],
+  );
+  assert.deepEqual(JSON.parse(response.body).missingQueuedRowIds, [43]);
+});
+
 test('large API responses use Brotli when the phone accepts it', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -4253,7 +4306,12 @@ test('tab controls cannot overtake an accepted queued send', async (context) => 
     port,
     '/api/sessions/test-session/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'fifo-tab-action-key',
+      },
+    },
   );
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(sequence, ['send-1']);
@@ -4371,7 +4429,12 @@ test('a delayed delivery ledger write cannot let a tab overtake an accepted send
     port,
     '/api/sessions/test-session/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'persist-fifo-tab-action-key',
+      },
+    },
   );
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(sequence, []);
@@ -4471,7 +4534,12 @@ test('the mutation slot stays held until a safe result is durable', async (conte
     port,
     '/api/sessions/test-session/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'durable-result-tab-action-key',
+      },
+    },
   );
   await new Promise((resolve) => setTimeout(resolve, 20));
   const sequenceBeforeDurableResult = [...sequence];
@@ -5086,7 +5154,7 @@ test('the application wires bounded, cancellable live refreshes and wake request
   assert.match(source, /function discardFailedMessage\(message\)/);
   assert.match(
     source,
-    /text: activeAction === 'delete' \? 'Deleting…' : 'Delete'[\s\S]*click: \(\) => void discardFailedMessage\(message\)/,
+    /text: 'Delete'[\s\S]*'aria-busy': activeAction === 'delete'[\s\S]*click: \(\) => void discardFailedMessage\(message\)/,
   );
 });
 
@@ -5285,11 +5353,11 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /text: activeAction === 'check' \? 'Checking…' : 'Check'[\s\S]*checkDeliveryNow\(message\)/,
+    /text: 'Check'[\s\S]*'aria-busy': activeAction === 'check'[\s\S]*checkDeliveryNow\(message\)/,
   );
   assert.match(
     source,
-    /text: activeAction === 'edit' \? 'Recovering…' : 'Edit'[\s\S]*editFailedMessage\(message\)/,
+    /text: 'Edit'[\s\S]*'aria-busy': activeAction === 'edit'[\s\S]*editFailedMessage\(message\)/,
   );
   assert.ok(startupRestore >= 0);
   assert.ok(startupRecovery > startupRestore);
@@ -5306,7 +5374,10 @@ test('pending sends persist before draft clearing and recover for the full send 
 // creates a second chat. Measured on 2026-08-16: by the time the Mac proves the
 // tab exists, Conductor has already written the row (+0ms), so the created chat
 // can be named rather than guessed.
-function createTabServer(config, { database, transport }) {
+function createTabServer(
+  config,
+  { database, transport, tabActionLedgerPath = null },
+) {
   return createPocketServer({
     configStore: { value: config },
     security: {
@@ -5325,6 +5396,7 @@ function createTabServer(config, { database, transport }) {
     database,
     watcher: createWatcher(),
     transport,
+    tabActionLedgerPath,
   });
 }
 
@@ -5375,7 +5447,12 @@ test('creating a chat names the chat it created', async (context) => {
     port,
     '/api/sessions/session-a/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'named-new-chat-action-key',
+      },
+    },
   );
   assert.equal(response.status, 200);
   const payload = JSON.parse(response.body);
@@ -5383,6 +5460,302 @@ test('creating a chat names the chat it created', async (context) => {
   assert.equal(payload.createdSessionId, 'session-new');
   assert.equal(payload.createdSessionTitle, 'Untitled');
   assert.equal(payload.workspaceId, 'workspace-1');
+});
+
+test('a headerless New Chat request is rejected before Mac work', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let calls = 0;
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+    ]),
+    transport: {
+      async newTab() {
+        calls += 1;
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+
+  assert.equal(response.status, 428);
+  assert.equal(calls, 0);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: { code: 'tab_action_key_required' },
+  });
+});
+
+test('a repeated New Chat key joins one Mac action after the phone times out', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let release;
+  let started;
+  let calls = 0;
+  const startedPromise = new Promise((resolve) => {
+    started = resolve;
+  });
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        calls += 1;
+        started();
+        if (calls === 1) {
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+        }
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-attempt-0001',
+  };
+
+  const first = postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  await startedPromise;
+  const second = postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(calls, 1);
+  release();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    JSON.parse(secondResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+});
+
+test('a New Chat receipt can be recovered through another anchor in the same workspace', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let calls = 0;
+  let listCall = 0;
+  const database = {
+    getSessionRoute(sessionId) {
+      return {
+        id: sessionId,
+        workspaceId: 'workspace-1',
+        workspaceName: 'daemon',
+        title: sessionId === 'session-a' ? 'First anchor' : 'Second anchor',
+        titleOrdinal: 1,
+      };
+    },
+    listSessions() {
+      listCall += 1;
+      return listCall === 1
+        ? [{ id: 'session-a', title: 'First anchor' }]
+        : [
+            { id: 'session-a', title: 'First anchor' },
+            { id: 'session-new', title: 'Untitled' },
+          ];
+    },
+  };
+  const server = createTabServer(config, {
+    database,
+    transport: {
+      async newTab() {
+        calls += 1;
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-workspace-recovery-key',
+  };
+
+  const firstResponse = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  const recoveredResponse = await postJson(
+    port,
+    '/api/sessions/session-b/tab',
+    { action: 'new' },
+    { headers },
+  );
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(recoveredResponse.status, 200);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    JSON.parse(recoveredResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+});
+
+test('a failed New Chat action keeps one conservative receipt for same-process retries', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let calls = 0;
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+    ]),
+    transport: {
+      async newTab() {
+        calls += 1;
+        throw new Error('transport result lost');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-attempt-0003',
+  };
+
+  const firstResponse = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  const secondResponse = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+
+  assert.equal(firstResponse.status, 409);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(calls, 1);
+  assert.deepEqual(JSON.parse(firstResponse.body), {
+    ok: false,
+    code: 'tab_action_interrupted',
+  });
+  assert.deepEqual(
+    JSON.parse(secondResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+});
+
+test('a completed New Chat receipt survives a relay restart', async (context) => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-tab-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  context.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const tabActionLedgerPath = path.join(directory, 'tab-actions.json');
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-attempt-0002',
+  };
+  const firstServer = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+    tabActionLedgerPath,
+  });
+  const firstPort = await listen(firstServer);
+  const firstResponse = await postJson(
+    firstPort,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  assert.equal(firstResponse.status, 200);
+  await close(firstServer);
+
+  let repeated = 0;
+  const secondServer = createTabServer(config, {
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'session-a',
+          workspaceId: 'workspace-1',
+          workspaceName: 'daemon',
+          title: 'Existing chat',
+          titleOrdinal: 1,
+        };
+      },
+      listSessions() {
+        throw new Error('a restored receipt must not inspect or mutate tabs');
+      },
+    },
+    transport: {
+      async newTab() {
+        repeated += 1;
+        throw new Error('a restored receipt must not create another chat');
+      },
+    },
+    tabActionLedgerPath,
+  });
+  const secondPort = await listen(secondServer);
+  context.after(() => close(secondServer));
+  const secondResponse = await postJson(
+    secondPort,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+
+  assert.equal(secondResponse.status, 200);
+  assert.equal(repeated, 0);
+  assert.deepEqual(
+    JSON.parse(secondResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+  assert.equal((await fs.stat(tabActionLedgerPath)).mode & 0o777, 0o600);
 });
 
 test('creating a chat stays silent when the new chat is ambiguous', async (context) => {
@@ -5415,7 +5788,12 @@ test('creating a chat stays silent when the new chat is ambiguous', async (conte
     port,
     '/api/sessions/session-a/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'ambiguous-new-chat-action-key',
+      },
+    },
   );
   assert.equal(response.status, 200);
   const payload = JSON.parse(response.body);
@@ -5451,7 +5829,12 @@ test('a failed creation never reports a created chat', async (context) => {
     port,
     '/api/sessions/session-a/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'failed-new-chat-action-key',
+      },
+    },
   );
   assert.equal(response.status, 409);
   const payload = JSON.parse(response.body);

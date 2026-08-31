@@ -15,18 +15,18 @@ import {
   reconcileDeliveryReceipts,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-retry-recovery-20260830';
+} from './delivery-receipts.js?v=0.2.0-reliability-completion-20260830';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-retry-recovery-20260830';
+} from './app-update.js?v=0.2.0-reliability-completion-20260830';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-retry-recovery-20260830';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-retry-recovery-20260830';
-import { fetchJson } from './http.js?v=0.2.0-retry-recovery-20260830';
+} from './bootstrap-recovery.js?v=0.2.0-reliability-completion-20260830';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-reliability-completion-20260830';
+import { fetchJson } from './http.js?v=0.2.0-reliability-completion-20260830';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -36,16 +36,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-retry-recovery-20260830';
+} from './image-attachments.js?v=0.2.0-reliability-completion-20260830';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-retry-recovery-20260830';
+} from './live-refresh.js?v=0.2.0-reliability-completion-20260830';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-retry-recovery-20260830';
+} from './rich-text.js?v=0.2.0-reliability-completion-20260830';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -56,7 +56,7 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-retry-recovery-20260830';
+} from './read-state.js?v=0.2.0-reliability-completion-20260830';
 import {
   activityLabel,
   buildFocusedTranscript,
@@ -72,15 +72,15 @@ import {
   transcriptRefreshShouldWait,
   visibleQueuedRowIds,
   visibleQueuedRowRefreshKey,
-} from './transcript-focus.js?v=0.2.0-retry-recovery-20260830';
+} from './transcript-focus.js?v=0.2.0-reliability-completion-20260830';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-retry-recovery-20260830';
+} from './swipe-navigation.js?v=0.2.0-reliability-completion-20260830';
 import {
   activeGptUsage,
   createUsageReader,
   usageAccountStatus,
-} from './usage-state.js?v=0.2.0-retry-recovery-20260830';
+} from './usage-state.js?v=0.2.0-reliability-completion-20260830';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -122,6 +122,14 @@ const READ_RECEIPTS_KEY = 'cp:read-receipts:v1';
 const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
 const ROUTE_KEY = 'cp:last-route:v2';
 const LEGACY_ROUTE_KEY = 'cp:last-route:v1';
+const CHAT_CREATION_ATTEMPTS_KEY = 'cp:chat-creation-attempts:v2';
+const LEGACY_CHAT_CREATION_ATTEMPT_KEY = 'cp:chat-creation-attempt:v1';
+const CHAT_CREATION_LEASE_KEY = 'cp:chat-creation-attempt-lease:v1';
+const CHAT_CREATION_LOCK_NAME = 'conductor-pocket-chat-creation-attempts-v2';
+const CHAT_CREATION_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+const CHAT_CREATION_ATTEMPT_MAX = 32;
+const CHAT_CREATION_LEASE_MS = 2_000;
+const CHAT_CREATION_SETTLED_GRACE_MS = 5_000;
 const DELIVERY_RECOVERY_MS = 120_000;
 const DELIVERY_STATUS_REQUEST_MS = 8_000;
 const DELIVERY_RECOVERY_POLL_MS = 1_000;
@@ -131,7 +139,7 @@ const DELIVERY_RECEIPT_OBSERVATION_POLL_MS = 1_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-retry-recovery-20260830';
+const CLIENT_SHELL_REVISION = '0.2.0-reliability-completion-20260830';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -2920,6 +2928,9 @@ async function purgeLocalData() {
   localStorage.removeItem(LEGACY_ROUTE_KEY);
   localStorage.removeItem('cp:drafts:v1');
   localStorage.removeItem(ATTACHMENT_DRAFTS_KEY);
+  localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+  localStorage.removeItem(LEGACY_CHAT_CREATION_ATTEMPT_KEY);
+  localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
   localStorage.removeItem(HIDDEN_AT_KEY);
   await clearTranscriptCache();
   if ('caches' in window) {
@@ -4415,9 +4426,28 @@ async function refreshMessages(
             )
             .map((message) => [message.id, message]),
         );
-        const refreshedMessages = messages.map(
-          (message) => refreshedById.get(message.id) || message,
+        const missingQueuedRowIds = new Set(
+          (Array.isArray(data.missingQueuedRowIds)
+            ? data.missingQueuedRowIds.slice(0, queuedRowIds.length)
+            : []
+          )
+            .map(Number)
+            .filter(
+              (rowId) =>
+                Number.isSafeInteger(rowId) && requestedRowIds.has(rowId),
+            ),
         );
+        const refreshedMessages = messages
+          .filter(
+            (message) =>
+              !(
+                message?.kind === 'user' &&
+                message.queued === true &&
+                missingQueuedRowIds.has(Number(message.rowId)) &&
+                !refreshedById.has(message.id)
+              ),
+          )
+          .map((message) => refreshedById.get(message.id) || message);
         const nextCursor = Math.max(cursor, currentCursor, responseCursor);
         state.messagesBySession.set(
           sessionId,
@@ -4646,14 +4676,7 @@ function syncChatStripChip(chip, {
 }
 
 function reconcileChatStripChildren(strip, desiredChildren) {
-  for (let index = 0; index < desiredChildren.length; index += 1) {
-    const desired = desiredChildren[index];
-    const current = strip.children[index] || null;
-    if (current !== desired) strip.insertBefore(desired, current);
-  }
-  while (strip.children.length > desiredChildren.length) {
-    strip.lastElementChild?.remove();
-  }
+  reconcileMountedChildren(strip, desiredChildren);
 }
 
 function renderChatStrip() {
@@ -5071,6 +5094,7 @@ function messageRenderKey(message, toolResults) {
         ? toolResult?.state || message.state
         : message.state,
     newestRootEventRowId,
+    deliveryAction: deliveryActionCoordinator.current(message.id),
   });
 }
 
@@ -5306,10 +5330,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'retry' ? 'Checking…' : 'Retry',
+            text: 'Retry',
             disabled: actionBusy,
             'aria-busy': activeAction === 'retry' ? 'true' : null,
-            'aria-label': 'Retry this message',
+            'aria-label':
+              activeAction === 'retry'
+                ? 'Retry in progress'
+                : 'Retry this message',
             on: { click: () => void retryMessage(message) },
           }),
         );
@@ -5319,10 +5346,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            text: 'Edit',
             disabled: actionBusy,
             'aria-busy': activeAction === 'edit' ? 'true' : null,
-            'aria-label': 'Move this message back to the editor',
+            'aria-label':
+              activeAction === 'edit'
+                ? 'Edit recovery in progress'
+                : 'Move this message back to the editor',
             on: { click: () => void editFailedMessage(message) },
           }),
         );
@@ -5331,10 +5361,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'check' ? 'Checking…' : 'Check',
+            text: 'Check',
             disabled: actionBusy,
             'aria-busy': activeAction === 'check' ? 'true' : null,
-            'aria-label': 'Check this message’s delivery',
+            'aria-label':
+              activeAction === 'check'
+                ? 'Delivery check in progress'
+                : 'Check this message’s delivery',
             on: {
               click: () => void checkDeliveryNow(message),
             },
@@ -5347,10 +5380,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            text: 'Edit',
             disabled: actionBusy,
             'aria-busy': activeAction === 'edit' ? 'true' : null,
-            'aria-label': 'Move this message back to the editor',
+            'aria-label':
+              activeAction === 'edit'
+                ? 'Edit recovery in progress'
+                : 'Move this message back to the editor',
             on: { click: () => void editFailedMessage(message) },
           }),
         );
@@ -5359,10 +5395,13 @@ function renderMessage(message, toolResults) {
         node('button', {
           className: 'message-retry',
           type: 'button',
-          text: activeAction === 'delete' ? 'Deleting…' : 'Delete',
+          text: 'Delete',
           disabled: actionBusy,
           'aria-busy': activeAction === 'delete' ? 'true' : null,
-          'aria-label': 'Delete this delivery notice',
+          'aria-label':
+            activeAction === 'delete'
+              ? 'Delete in progress'
+              : 'Delete this delivery notice',
           on: { click: () => void discardFailedMessage(message) },
         }),
       );
@@ -7436,7 +7475,15 @@ async function openSwitcher() {
 // it is deliberately two taps with the chat's own name shown in the confirm
 // label: a fat-fingered delete on a phone has no undo, and every other
 // destructive path in this app fails closed the same way.
-async function runTabAction(action, { confirm = false, sessionId: explicitId } = {}) {
+async function runTabAction(
+  action,
+  {
+    confirm = false,
+    sessionId: explicitId,
+    idempotencyKey = null,
+    requireDefinitive = false,
+  } = {},
+) {
   const sessionId = explicitId || state.route.sessionId;
   if (!sessionId) {
     announce('Open a chat first.');
@@ -7452,13 +7499,39 @@ async function runTabAction(action, { confirm = false, sessionId: explicitId } =
         Accept: 'application/json',
         'Content-Type': 'application/json',
         'X-CSRF-Token': state.csrfToken,
+        ...(idempotencyKey
+          ? { 'Idempotency-Key': idempotencyKey }
+          : {}),
       },
       body: JSON.stringify({ action, confirm }),
       timeoutMs: TAB_ACTION_REQUEST_MS,
     },
   );
   if (!response.ok || payload?.ok !== true) {
-    announce(TAB_ACTION_MESSAGES[payload?.code] || 'That did not work on the Mac.');
+    const responseCode =
+      typeof payload?.code === 'string'
+        ? payload.code
+        : typeof payload?.error?.code === 'string'
+          ? payload.error.code
+          : null;
+    if (requireDefinitive && responseCode === 'session_not_found') {
+      const error = new Error(responseCode);
+      error.name = 'TabActionRouteUnavailableError';
+      error.code = responseCode;
+      throw error;
+    }
+    if (
+      requireDefinitive &&
+      (response.status >= 500 ||
+        responseCode === null ||
+        responseCode === 'tab_action_interrupted')
+    ) {
+      const error = new Error(responseCode || 'tab_action_result_unknown');
+      error.name = 'TabActionIndeterminateError';
+      error.code = responseCode || 'tab_action_result_unknown';
+      throw error;
+    }
+    announce(TAB_ACTION_MESSAGES[responseCode] || 'That did not work on the Mac.');
     return null;
   }
   return payload;
@@ -7469,6 +7542,214 @@ function currentWorkspaceName() {
     (item) => item.id === state.route.workspaceId,
   );
   return workspace?.name || null;
+}
+
+function validChatCreationAttempt(attempt, now) {
+  return Boolean(
+    attempt &&
+      typeof attempt === 'object' &&
+      !Array.isArray(attempt) &&
+      typeof attempt.key === 'string' &&
+      attempt.key.length >= 16 &&
+      attempt.key.length <= 100 &&
+      /^[A-Za-z0-9_-]+$/.test(attempt.key) &&
+      typeof attempt.workspaceId === 'string' &&
+      attempt.workspaceId.length > 0 &&
+      attempt.workspaceId.length <= 200 &&
+      typeof attempt.anchorSessionId === 'string' &&
+      attempt.anchorSessionId.length > 0 &&
+      attempt.anchorSessionId.length <= 200 &&
+      Number.isSafeInteger(attempt.createdAt) &&
+      attempt.createdAt <= now &&
+      now - attempt.createdAt <= CHAT_CREATION_ATTEMPT_TTL_MS &&
+      (attempt.settledAt === undefined ||
+        (Number.isSafeInteger(attempt.settledAt) &&
+          attempt.settledAt >= attempt.createdAt &&
+          attempt.settledAt <= now)),
+  );
+}
+
+function readChatCreationAttempts(now = Date.now()) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_CREATION_ATTEMPTS_KEY));
+    if (!Array.isArray(parsed)) {
+      localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+      return [];
+    }
+    const attempts = [];
+    const workspaces = new Set();
+    for (const attempt of parsed) {
+      if (
+        !validChatCreationAttempt(attempt, now) ||
+        workspaces.has(attempt.workspaceId)
+      ) {
+        continue;
+      }
+      workspaces.add(attempt.workspaceId);
+      attempts.push(attempt);
+      if (attempts.length >= CHAT_CREATION_ATTEMPT_MAX) break;
+    }
+    return attempts;
+  } catch {
+    localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+    return [];
+  }
+}
+
+function writeChatCreationAttempts(attempts) {
+  if (attempts.length === 0) {
+    localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+    return;
+  }
+  localStorage.setItem(
+    CHAT_CREATION_ATTEMPTS_KEY,
+    JSON.stringify(attempts.slice(0, CHAT_CREATION_ATTEMPT_MAX)),
+  );
+}
+
+function readChatCreationLease(now = Date.now()) {
+  try {
+    const lease = JSON.parse(localStorage.getItem(CHAT_CREATION_LEASE_KEY));
+    if (
+      !lease ||
+      typeof lease !== 'object' ||
+      Array.isArray(lease) ||
+      typeof lease.owner !== 'string' ||
+      lease.owner.length < 16 ||
+      lease.owner.length > 100 ||
+      !Number.isSafeInteger(lease.expiresAt) ||
+      lease.expiresAt <= now ||
+      lease.expiresAt > now + CHAT_CREATION_LEASE_MS
+    ) {
+      localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
+      return null;
+    }
+    return lease;
+  } catch {
+    localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
+    return null;
+  }
+}
+
+async function withChatCreationAttemptLock(task) {
+  if (globalThis.navigator?.locks?.request) {
+    return navigator.locks.request(
+      CHAT_CREATION_LOCK_NAME,
+      { mode: 'exclusive' },
+      task,
+    );
+  }
+
+  const owner = randomIdempotencyKey();
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (!readChatCreationLease()) {
+      localStorage.setItem(
+        CHAT_CREATION_LEASE_KEY,
+        JSON.stringify({
+          owner,
+          expiresAt: Date.now() + CHAT_CREATION_LEASE_MS,
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 16));
+      if (readChatCreationLease()?.owner === owner) {
+        try {
+          return await task();
+        } finally {
+          if (readChatCreationLease()?.owner === owner) {
+            localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
+          }
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('chat_creation_lock_unavailable');
+}
+
+function loadChatCreationAttempt(workspaceId, now = Date.now()) {
+  return (
+    readChatCreationAttempts(now).find(
+      (attempt) => attempt.workspaceId === workspaceId,
+    ) || null
+  );
+}
+
+function saveChatCreationAttempt(
+  workspaceId,
+  anchorSessionId,
+  now = Date.now(),
+) {
+  const attempt = {
+    key: randomIdempotencyKey(),
+    workspaceId,
+    anchorSessionId,
+    createdAt: now,
+  };
+  writeChatCreationAttempts(
+    [attempt, ...readChatCreationAttempts(now)].filter(
+      (candidate, index, attempts) =>
+        index === 0 || candidate.workspaceId !== workspaceId,
+    ),
+  );
+  return attempt;
+}
+
+function allocateChatCreationAttempt(workspaceId, anchorSessionId) {
+  return withChatCreationAttemptLock(() => {
+    const now = Date.now();
+    const current = loadChatCreationAttempt(workspaceId, now);
+    if (
+      current &&
+      (current.settledAt === undefined ||
+        now - current.settledAt <= CHAT_CREATION_SETTLED_GRACE_MS)
+    ) {
+      return current;
+    }
+    return saveChatCreationAttempt(workspaceId, anchorSessionId, now);
+  });
+}
+
+function rebindChatCreationAttempt(attempt, anchorSessionId) {
+  return withChatCreationAttemptLock(() => {
+    const current = loadChatCreationAttempt(attempt.workspaceId);
+    if (current && current.key !== attempt.key) {
+      throw new Error('chat_creation_attempt_changed');
+    }
+    const rebound = { ...attempt, anchorSessionId };
+    writeChatCreationAttempts([
+      rebound,
+      ...readChatCreationAttempts().filter(
+        (candidate) => candidate.workspaceId !== attempt.workspaceId,
+      ),
+    ]);
+    return rebound;
+  });
+}
+
+function clearChatCreationAttempt(key) {
+  return withChatCreationAttemptLock(() => {
+    writeChatCreationAttempts(
+      readChatCreationAttempts().filter((attempt) => attempt.key !== key),
+    );
+  });
+}
+
+function settleChatCreationAttempt(attempt) {
+  return withChatCreationAttemptLock(() => {
+    const current = loadChatCreationAttempt(attempt.workspaceId);
+    if (current && current.key !== attempt.key) return attempt;
+    const settled = {
+      ...attempt,
+      settledAt: current?.settledAt || Date.now(),
+    };
+    writeChatCreationAttempts([
+      settled,
+      ...readChatCreationAttempts().filter(
+        (candidate) => candidate.workspaceId !== attempt.workspaceId,
+      ),
+    ]);
+    return settled;
+  });
 }
 
 // One helper behind both entry points (the + on the chat strip and the Chats
@@ -7498,6 +7779,9 @@ async function createChat({ onCreated, control } = {}) {
     announce(
       error?.name === 'TimeoutError'
         ? 'Pocket stopped waiting for the Mac. Check Recent chats before trying again.'
+        : error?.name === 'TabActionIndeterminateError'
+          ? TAB_ACTION_MESSAGES[error.code] ||
+            'Pocket could not confirm the Mac result. Check Recent chats before trying again.'
         : 'Pocket could not create a chat. Try again.',
     );
     return null;
@@ -7516,7 +7800,8 @@ async function runCreateChat({ onCreated } = {}) {
     announce('Pick a repository first.');
     return null;
   }
-  let anchorSessionId = state.route.sessionId;
+  let attempt = loadChatCreationAttempt(workspaceId);
+  let anchorSessionId = attempt?.anchorSessionId || state.route.sessionId;
   if (!anchorSessionId) {
     const sessions = await loadSessions(workspaceId);
     anchorSessionId = sessionsFor(workspaceId)[0]?.id || sessions[0]?.id || null;
@@ -7525,8 +7810,40 @@ async function runCreateChat({ onCreated } = {}) {
     announce('Pocket could not find a chat in this repository.');
     return null;
   }
-  const done = await runTabAction('new', { sessionId: anchorSessionId });
-  if (!done) return null;
+  attempt = await allocateChatCreationAttempt(workspaceId, anchorSessionId);
+  let done;
+  try {
+    done = await runTabAction('new', {
+      sessionId: attempt.anchorSessionId,
+      idempotencyKey: attempt.key,
+      requireDefinitive: true,
+    });
+  } catch (error) {
+    if (error?.name !== 'TabActionRouteUnavailableError') throw error;
+    const refreshedSessions = await loadSessions(workspaceId);
+    const replacementAnchor = [
+      state.route.workspaceId === workspaceId ? state.route.sessionId : null,
+      ...sessionsFor(workspaceId).map((session) => session.id),
+      ...refreshedSessions.map((session) => session.id),
+    ].find(
+      (sessionId) =>
+        typeof sessionId === 'string' &&
+        sessionId.length > 0 &&
+        sessionId !== attempt.anchorSessionId,
+    );
+    if (!replacementAnchor) throw error;
+    attempt = await rebindChatCreationAttempt(attempt, replacementAnchor);
+    done = await runTabAction('new', {
+      sessionId: attempt.anchorSessionId,
+      idempotencyKey: attempt.key,
+      requireDefinitive: true,
+    });
+  }
+  if (!done) {
+    await clearChatCreationAttempt(attempt.key);
+    return null;
+  }
+  attempt = await settleChatCreationAttempt(attempt);
   onCreated?.();
   // The server reports the workspace it actually acted on. Local route state
   // can disagree with it, because the Mac-side route proof presses the
@@ -7553,6 +7870,10 @@ async function runCreateChat({ onCreated } = {}) {
 
 const TAB_ACTION_MESSAGES = {
   close_not_confirmed: 'Not closed. Confirm first.',
+  tab_action_interrupted:
+    'New Chat stopped during a relay restart. Check Recent chats before trying a new one.',
+  tab_action_queue_full:
+    'New Chat history is full. Restart Pocket Conductor before trying again.',
   tab_close_unverified: 'Could not confirm the chat closed. Nothing assumed.',
   tab_not_closed: 'The chat did not close.',
   tab_not_created: 'The chat was not created.',
@@ -7726,15 +8047,18 @@ function usageSampleDescription(account, provider, now = Date.now()) {
   const fetchedAt = Number(account.fetchedAt ?? provider.fetchedAt);
   let age = null;
   if (Number.isFinite(fetchedAt) && fetchedAt > 0) {
-    const elapsedMs = Math.max(0, now - fetchedAt);
-    const minutes = Math.floor(elapsedMs / 60_000);
-    if (minutes < 1) age = 'Sampled just now';
-    else if (minutes < 60) age = `Sampled ${minutes}m ago`;
-    else {
-      const hours = Math.floor(minutes / 60);
-      age = hours < 24
-        ? `Sampled ${hours}h ago`
-        : `Sampled ${Math.floor(hours / 24)}d ago`;
+    if (fetchedAt > now) {
+      age = 'Sample time unavailable';
+    } else {
+      const minutes = Math.floor((now - fetchedAt) / 60_000);
+      if (minutes < 1) age = 'Sampled just now';
+      else if (minutes < 60) age = `Sampled ${minutes}m ago`;
+      else {
+        const hours = Math.floor(minutes / 60);
+        age = hours < 24
+          ? `Sampled ${hours}h ago`
+          : `Sampled ${Math.floor(hours / 24)}d ago`;
+      }
     }
   }
   return [source, age].filter(Boolean).join(' · ');

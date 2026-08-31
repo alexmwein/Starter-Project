@@ -737,9 +737,13 @@ test('safe-failure release finishes inside the send queue before another send ca
     second,
   ]);
   assert.equal(firstResponse.status, 409);
-  assert.equal(secondResponse.status, 200);
-  assert.equal(transportCalls, 2);
-  assert.equal(retained, true);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(
+    JSON.parse(secondResponse.body).error.code,
+    'predecessor_failed',
+  );
+  assert.equal(transportCalls, 1);
+  assert.equal(retained, false);
 });
 
 test('upload authentication and local-workspace checks happen before request bytes', async (context) => {

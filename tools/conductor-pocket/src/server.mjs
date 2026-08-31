@@ -54,6 +54,10 @@ const DELIVERY_LEDGER_VERSION = 1;
 const DELIVERY_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DELIVERY_LEDGER_MAX_ENTRIES = 2048;
 const DELIVERY_LEDGER_MAX_BYTES = 4 * 1024 * 1024;
+const TAB_ACTION_LEDGER_VERSION = 1;
+const TAB_ACTION_LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const TAB_ACTION_LEDGER_MAX_ENTRIES = 2048;
+const TAB_ACTION_LEDGER_MAX_BYTES = 1024 * 1024;
 const TRANSIENT_PRE_COMPOSER_CODES = new Set([
   'automation_budget_exhausted',
   'composer_tree_transient',
@@ -1264,6 +1268,262 @@ class IdempotencyStore {
   }
 }
 
+function durableTabActionResult(result) {
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    typeof result.ok !== 'boolean' ||
+    typeof result.code !== 'string' ||
+    !/^[a-z0-9_]{1,80}$/.test(result.code)
+  ) {
+    return null;
+  }
+  const validated = { ok: result.ok, code: result.code };
+  for (const [key, limit] of [
+    ['createdSessionId', 200],
+    ['createdSessionTitle', 200],
+    ['workspaceId', 200],
+    ['workspaceName', 200],
+  ]) {
+    if (result[key] === undefined) continue;
+    if (
+      typeof result[key] !== 'string' ||
+      result[key].length === 0 ||
+      result[key].length > limit
+    ) {
+      return null;
+    }
+    validated[key] = result[key];
+  }
+  return validated;
+}
+
+class TabActionIdempotencyStore {
+  #entries = new Map();
+  #ledgerPath;
+  #secret;
+  #persistQueue = Promise.resolve();
+
+  constructor({ ledgerPath = null, secret }) {
+    if (typeof secret !== 'string' || secret.length < 32) {
+      throw new Error('Tab action ledger secret is unavailable');
+    }
+    if (
+      ledgerPath !== null &&
+      (typeof ledgerPath !== 'string' || !path.isAbsolute(ledgerPath))
+    ) {
+      throw new Error('Tab action ledger path must be absolute');
+    }
+    this.#ledgerPath = ledgerPath;
+    this.#secret = secret;
+    this.#load();
+  }
+
+  run(
+    key,
+    fingerprint,
+    task,
+    schedule = (operation) => operation(),
+  ) {
+    this.#prune();
+    const keyProof = deliveryLedgerProof(
+      this.#secret,
+      'tab-action-key',
+      key,
+    );
+    const fingerprintProof = deliveryLedgerProof(
+      this.#secret,
+      'tab-action-fingerprint',
+      fingerprint,
+    );
+    const expiresAt = Date.now() + TAB_ACTION_LEDGER_TTL_MS;
+    const existing = this.#entries.get(keyProof);
+    if (existing) {
+      if (
+        !deliveryLedgerProofMatches(
+          existing.fingerprintProof,
+          fingerprintProof,
+        )
+      ) {
+        throw new HttpError(409, 'idempotency_key_reused');
+      }
+      existing.expiresAt = expiresAt;
+      void this.#persist().catch(() => {});
+      return { promise: existing.promise, joined: true };
+    }
+    if (this.#entries.size >= TAB_ACTION_LEDGER_MAX_ENTRIES) {
+      throw new HttpError(503, 'tab_action_queue_full');
+    }
+    const entry = {
+      fingerprintProof,
+      state: 'pending',
+      result: null,
+      promise: null,
+      expiresAt,
+    };
+    this.#entries.set(keyProof, entry);
+    const durablePending = this.#persist();
+    const promise = schedule(async () => {
+      await durablePending;
+      try {
+        const result = durableTabActionResult(await task());
+        if (!result) throw new Error('Tab action returned an invalid result');
+        entry.state = 'resolved';
+        entry.result = result;
+        await this.#persist();
+        return result;
+      } catch (error) {
+        entry.state = 'resolved';
+        entry.result = {
+          ok: false,
+          code: 'tab_action_interrupted',
+        };
+        await this.#persist();
+        return entry.result;
+      }
+    });
+    entry.promise = promise;
+    return { promise, joined: false };
+  }
+
+  #prune() {
+    const now = Date.now();
+    for (const [key, entry] of this.#entries) {
+      if (entry.expiresAt <= now) this.#entries.delete(key);
+    }
+  }
+
+  #load() {
+    if (!this.#ledgerPath) return;
+    let stat;
+    try {
+      stat = lstatSync(this.#ledgerPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      (stat.mode & 0o077) !== 0 ||
+      stat.size > TAB_ACTION_LEDGER_MAX_BYTES
+    ) {
+      throw new Error('Tab action ledger is not a private bounded file');
+    }
+    const parsed = JSON.parse(readFileSync(this.#ledgerPath, 'utf8'));
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      parsed.version !== TAB_ACTION_LEDGER_VERSION ||
+      !Array.isArray(parsed.entries) ||
+      parsed.entries.length > TAB_ACTION_LEDGER_MAX_ENTRIES
+    ) {
+      throw new Error('Tab action ledger is invalid');
+    }
+    const now = Date.now();
+    for (const record of parsed.entries) {
+      if (
+        !record ||
+        typeof record !== 'object' ||
+        Array.isArray(record) ||
+        typeof record.keyProof !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(record.keyProof) ||
+        typeof record.fingerprintProof !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(record.fingerprintProof) ||
+        !Number.isSafeInteger(record.expiresAt) ||
+        record.expiresAt <= now ||
+        record.expiresAt > now + TAB_ACTION_LEDGER_TTL_MS
+      ) {
+        continue;
+      }
+      const result =
+        record.state === 'pending'
+          ? { ok: false, code: 'tab_action_interrupted' }
+          : durableTabActionResult(record.result);
+      if (!result) continue;
+      this.#entries.set(record.keyProof, {
+        fingerprintProof: record.fingerprintProof,
+        state: 'resolved',
+        result,
+        promise: Promise.resolve(result),
+        expiresAt: record.expiresAt,
+      });
+    }
+  }
+
+  #persist() {
+    if (!this.#ledgerPath) return Promise.resolve();
+    const write = async () => {
+      const now = Date.now();
+      const entries = [];
+      for (const [keyProof, entry] of this.#entries) {
+        if (entry.expiresAt <= now) continue;
+        const result =
+          entry.state === 'resolved'
+            ? durableTabActionResult(entry.result)
+            : null;
+        if (entry.state === 'resolved' && !result) continue;
+        entries.push({
+          keyProof,
+          fingerprintProof: entry.fingerprintProof,
+          expiresAt: entry.expiresAt,
+          state: entry.state,
+          result,
+        });
+      }
+      entries.sort((left, right) => right.expiresAt - left.expiresAt);
+      const body = `${JSON.stringify({
+        version: TAB_ACTION_LEDGER_VERSION,
+        entries,
+      })}\n`;
+      if (Buffer.byteLength(body, 'utf8') > TAB_ACTION_LEDGER_MAX_BYTES) {
+        throw new Error('Tab action ledger exceeds its size limit');
+      }
+      const directory = path.dirname(this.#ledgerPath);
+      await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+      const directoryStat = await fs.lstat(directory);
+      if (
+        !directoryStat.isDirectory() ||
+        directoryStat.isSymbolicLink() ||
+        (directoryStat.mode & 0o077) !== 0
+      ) {
+        throw new Error('Tab action ledger directory is not private');
+      }
+      const existing = await fs.lstat(this.#ledgerPath).catch((error) => {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (existing && (!existing.isFile() || existing.isSymbolicLink())) {
+        throw new Error('Tab action ledger path is unsafe');
+      }
+      const temporaryPath = `${this.#ledgerPath}.tmp-${process.pid}-${randomUUID()}`;
+      let handle;
+      try {
+        handle = await fs.open(temporaryPath, 'wx', 0o600);
+        await handle.writeFile(body, 'utf8');
+        await handle.sync();
+        await handle.close();
+        handle = null;
+        await fs.rename(temporaryPath, this.#ledgerPath);
+        await fs.chmod(this.#ledgerPath, 0o600);
+        const directoryHandle = await fs.open(directory, 'r');
+        try {
+          await directoryHandle.sync();
+        } finally {
+          await directoryHandle.close();
+        }
+      } finally {
+        await handle?.close().catch(() => {});
+        await fs.rm(temporaryPath, { force: true }).catch(() => {});
+      }
+    };
+    this.#persistQueue = this.#persistQueue.then(write, write);
+    return this.#persistQueue;
+  }
+}
+
 function sendIntakeFingerprint({
   message,
   replaceDraft,
@@ -1440,6 +1700,7 @@ class ConnectionProbe {
 // to take down a screen the operator opened to diagnose something else.
 const SEAT_USAGE_URL = 'http://127.0.0.1:3333/api/profiles';
 const SEAT_USAGE_TIMEOUT_MS = 2_000;
+const SEAT_USAGE_FRESH_MS = 5 * 60 * 1000;
 const GPT_ACCOUNT_STORE = path.join(os.homedir(), '.codex-accounts');
 const GPT_USAGE_CACHE = path.join(
   os.homedir(),
@@ -1464,7 +1725,12 @@ function seatResetAt(value) {
   return Number.isSafeInteger(number) && number > 0 ? number * 1000 : null;
 }
 
-export async function readSeatUsage(fetchImpl = fetch) {
+function seatSampleAt(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+export async function readSeatUsage(fetchImpl = fetch, { now = Date.now() } = {}) {
   let payload;
   try {
     const response = await fetchImpl(SEAT_USAGE_URL, {
@@ -1484,6 +1750,8 @@ export async function readSeatUsage(fetchImpl = fetch) {
       const limits = profile.rateLimits || {};
       const fiveHour = limits.fiveH || {};
       const sevenDay = limits.sevenD || {};
+      const fetchedAt = seatSampleAt(limits.fetchedAt);
+      const staleAt = seatSampleAt(limits.staleAt);
       return {
         name: typeof profile.name === 'string' ? profile.name.slice(0, 64) : '',
         label:
@@ -1501,10 +1769,36 @@ export async function readSeatUsage(fetchImpl = fetch) {
         blocked: limits.status === 'rejected',
         dormant: profile.dormant === true,
         expired: profile.expired === true,
+        fetchedAt,
+        stale:
+          fetchedAt === null ||
+          now < fetchedAt ||
+          (staleAt !== null
+            ? staleAt <= now
+            : now - fetchedAt >= SEAT_USAGE_FRESH_MS),
       };
     })
     .filter((seat) => seat.name !== '');
-  return { available: true, seats, fetchedAt: Date.now() };
+  const fetchedAt = seats.reduce(
+    (latest, seat) => Math.max(latest, seat.fetchedAt || 0),
+    0,
+  );
+  return { available: true, seats, fetchedAt: fetchedAt || null };
+}
+
+function requestedQueuedRowIds(value, limit = 8) {
+  if (typeof value !== 'string' || value.length === 0) return [];
+  const result = [];
+  const seen = new Set();
+  for (const raw of value.split(',')) {
+    if (!/^[1-9]\d*$/.test(raw)) continue;
+    const rowId = Number(raw);
+    if (!Number.isSafeInteger(rowId) || seen.has(rowId)) continue;
+    seen.add(rowId);
+    result.push(rowId);
+    if (result.length >= limit) break;
+  }
+  return result;
 }
 
 function gptPercent(value) {
@@ -1688,6 +1982,9 @@ export function createPocketServer({
   audit = () => {},
   attachmentManager = new AttachmentManager(),
   deliveryLedgerPath = null,
+  tabActionLedgerPath = deliveryLedgerPath
+    ? path.join(path.dirname(deliveryLedgerPath), 'tab-actions.json')
+    : null,
   usageReader = readAccountUsage,
   beforeDeliveryLedgerPersist = null,
   automationNow = Date.now,
@@ -1696,6 +1993,10 @@ export function createPocketServer({
     ledgerPath: deliveryLedgerPath,
     secret: configStore.value.csrfSecret,
     beforePersist: beforeDeliveryLedgerPersist,
+  });
+  const tabActions = new TabActionIdempotencyStore({
+    ledgerPath: tabActionLedgerPath,
+    secret: configStore.value.csrfSecret,
   });
   const probe = new ConnectionProbe(transport);
   const clients = new Set();
@@ -2223,7 +2524,7 @@ export function createPocketServer({
       );
       if (request.method === 'POST' && sessionTabAction) {
         security.assertOrigin(request);
-        security.session(request, {
+        const auth = security.session(request, {
           requireUnlocked: true,
           requireCsrf: true,
         });
@@ -2231,7 +2532,24 @@ export function createPocketServer({
         if (!route) throw new HttpError(404, 'session_not_found');
         const body = await readJson(request);
         const action = body?.action;
-        const result = await serializeMutation(async () => {
+        if (!['new', 'close'].includes(action)) {
+          throw new HttpError(400, 'unknown_tab_action');
+        }
+        const requestKey = request.headers['idempotency-key'];
+        if (action === 'new' && requestKey === undefined) {
+          throw new HttpError(428, 'tab_action_key_required');
+        }
+        const key = `${auth.device.id}:${
+          requestKey === undefined ? randomUUID() : idempotencyKey(request)
+        }`;
+        const fingerprint = sha256(
+          JSON.stringify([
+            action === 'new' ? route.workspaceId : route.id,
+            action,
+            body?.confirm === true,
+          ]),
+        );
+        const operation = tabActions.run(key, fingerprint, async () => {
           const activeRoute = database.getSessionRoute(route.id);
           if (!activeRoute) throw new HttpError(404, 'session_not_found');
           const target = {
@@ -2281,11 +2599,10 @@ export function createPocketServer({
             operationResult = await transport.closeTab(target, {
               confirmClose: body?.confirm === true,
             });
-          } else {
-            throw new HttpError(400, 'unknown_tab_action');
           }
           return operationResult;
-        });
+        }, (task) => serializeMutation(task));
+        const result = await operation.promise;
         recordAudit({
           phase: 'tab-action',
           action,
@@ -2318,7 +2635,34 @@ export function createPocketServer({
           limit: requestUrl.searchParams.get('limit') || 500,
         });
         if (!result) throw new HttpError(404, 'session_not_found');
-        return sendJson(response, 200, result, config);
+        const queuedRowIds = requestedQueuedRowIds(
+          requestUrl.searchParams.get('queuedRowIds'),
+        );
+        const refreshedRows =
+          queuedRowIds.length > 0 &&
+          typeof database.getVisibleUserMessage === 'function'
+            ? queuedRowIds.map((rowId) => ({
+                rowId,
+                message: database.getVisibleUserMessage(
+                  sessionMessages[0],
+                  rowId,
+                ),
+              }))
+            : null;
+        const refreshed = refreshedRows?.flatMap(({ message }) =>
+          message ? [message] : [],
+        );
+        const missingQueuedRowIds = refreshedRows?.flatMap(
+          ({ rowId, message }) => (message ? [] : [rowId]),
+        );
+        return sendJson(
+          response,
+          200,
+          refreshedRows === null
+            ? result
+            : { ...result, refreshed, missingQueuedRowIds },
+          config,
+        );
       }
 
       if (request.method === 'POST' && sessionMessages) {

@@ -947,7 +947,7 @@ test('cancelled rows stay hidden while the high-water cursor still fences them',
     transcript.messages.some((message) => message.text === 'Cancelled message'),
     false,
   );
-  assert.equal(transcript.cursor, visibleCursor);
+  assert.equal(transcript.cursor, highWaterCursor);
   assert.deepEqual(incremental.messages, []);
   assert.equal(incremental.cursor, highWaterCursor);
 });
