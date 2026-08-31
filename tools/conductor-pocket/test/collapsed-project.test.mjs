@@ -5,9 +5,15 @@ import vm from 'node:vm';
 import { workspaceProjectCollapsedCopy } from '../public/delivery-receipts.js';
 import { parseResult } from '../src/accessibility.mjs';
 
-const targetWorkspace = 'iphone-conductor';
+const targetWorkspace = 'iphone conductor';
 
-function makeNode({ children = [], name = '', role = 'AXGroup' } = {}) {
+function makeNode({
+  children = [],
+  name = '',
+  position = [0, 0],
+  role = 'AXGroup',
+  size = [0, 0],
+} = {}) {
   return {
     name() {
       return name;
@@ -15,13 +21,31 @@ function makeNode({ children = [], name = '', role = 'AXGroup' } = {}) {
     role() {
       return role;
     },
+    position() {
+      return position;
+    },
+    size() {
+      return size;
+    },
     uiElements() {
       return children;
     },
   };
 }
 
-function makeProcess({ includeTargetLink = false } = {}) {
+function makeProcess({
+  duplicateQuickstart = false,
+  includeTargetLink = false,
+  quickstartExpanded = false,
+} = {}) {
+  const quickstartRow = () => makeNode({
+    name: quickstartExpanded
+      ? 'Quickstart Quickstart Repo settings New workspace'
+      : 'Quickstart Quickstart 48 Repo settings New workspace',
+    position: [25, 351],
+    role: 'AXButton',
+    size: [216, 44],
+  });
   const listRows = [
     makeNode({
       name: 'Quickstart Quickstart Repo settings New workspace',
@@ -89,13 +113,25 @@ async function diagnosisHarness() {
   };
   vm.createContext(sandbox);
   vm.runInContext(
-    `${source}\nglobalThis.__collapsed = { diagnoseWorkspaceFailure };`,
+    `${source}\nglobalThis.__collapsed = {
+      diagnoseWorkspaceFailure,
+      expandCollapsedProject:
+        typeof expandCollapsedProject === 'function'
+          ? expandCollapsedProject
+          : null,
+      projectRowState:
+        typeof projectRowState === 'function' ? projectRowState : null,
+      sidebarProjectSnapshot:
+        typeof sidebarProjectSnapshot === 'function'
+          ? sidebarProjectSnapshot
+          : null,
+    };`,
     sandbox,
   );
   return sandbox.__collapsed;
 }
 
-test('collapsed project fixture returns workspace_project_collapsed with the real project name', async () => {
+test('exact Conductor 0.82.6 mixed sidebar fixture returns workspace_project_collapsed', async () => {
   const { diagnoseWorkspaceFailure } = await diagnosisHarness();
   const fixtureFailure = diagnoseWorkspaceFailure(
     makeProcess(),
@@ -125,7 +161,7 @@ test('collapsed project fixture returns workspace_project_collapsed with the rea
   assert.match(failureHandler, /POCKET_OPERATION=workspace-failure/);
   assert.doesNotMatch(failureHandler, /AXPress|AXShowMenu/);
   assert.equal(
-    (appleScript.match(/return my workspaceListFailure\(inputScriptPath, conductorPid\)/g) || [])
+    (appleScript.match(/set (?:initial|later)WorkspaceFailure to my workspaceListFailure\(inputScriptPath, conductorPid\)/g) || [])
       .length,
     2,
   );
@@ -151,4 +187,231 @@ test('collapsed project fixture keeps genuine visible-route failures generic', a
     ),
     { ok: false, code: 'automation_invalid_response' },
   );
+});
+
+test('project rows require an exact repeated name and complete fixed suffix', async () => {
+  const { projectRowState } = await diagnosisHarness();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      projectRowState('Quickstart Quickstart 48 Repo settings New workspace'),
+    )),
+    { name: 'Quickstart', collapsed: true },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      projectRowState('OVO CRM Fable OVO CRM Fable Repo settings New workspace'),
+    )),
+    { name: 'OVO CRM Fable', collapsed: false },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      projectRowState('Project 2 Project 2 12 Repo settings New workspace'),
+    )),
+    { name: 'Project 2', collapsed: true },
+  );
+
+  for (const title of [
+    null,
+    'Quickstart Quickstart 48',
+    'Quickstart Other 48 Repo settings New workspace',
+    'Quickstart Quickstart 0 Repo settings New workspace',
+    'Quickstart Quickstart 048 Repo settings New workspace',
+    'Quickstart Quickstart 48 Repo settings New workspace extra',
+    'Quickstart Quickstart 48 repository settings New workspace',
+    'Quick\u0000start Quick\u0000start 48 Repo settings New workspace',
+    `${'Q'.repeat(501)} ${'Q'.repeat(501)} 48 Repo settings New workspace`,
+  ]) {
+    assert.equal(projectRowState(title), null, String(title));
+  }
+});
+
+test('duplicate matching collapsed project rows fail closed', async () => {
+  const {
+    diagnoseWorkspaceFailure,
+    expandCollapsedProject,
+    sidebarProjectSnapshot,
+  } = await diagnosisHarness();
+  const process = makeProcess({ duplicateQuickstart: true });
+  let clicks = 0;
+
+  assert.equal(
+    diagnoseWorkspaceFailure(process, targetWorkspace, 'Quickstart').code,
+    'workspace_list_unavailable',
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sidebarProjectSnapshot(process))),
+    { ok: false, projects: [] },
+  );
+  assert.equal(
+    expandCollapsedProject(process, targetWorkspace, 'Quickstart', {
+      acquireLease: () => ({}),
+      assertLease() {},
+      click() { clicks += 1; },
+    }),
+    'not-expanded',
+  );
+  assert.equal(clicks, 0);
+});
+
+test('collapsed project expansion clicks the proven owner once at its leading edge', async () => {
+  const { expandCollapsedProject } = await diagnosisHarness();
+  assert.equal(typeof expandCollapsedProject, 'function');
+  const calls = [];
+
+  const result = expandCollapsedProject(
+    makeProcess(),
+    targetWorkspace,
+    'Quickstart',
+    {
+      acquireLease() {
+        calls.push('acquire');
+        return { inputCounters: [0], syntheticInputPosted: false };
+      },
+      assertLease() {
+        calls.push('assert');
+      },
+      click(point) {
+        calls.push(['click', point.x, point.y]);
+      },
+    },
+  );
+
+  assert.equal(result, 'expanded');
+  assert.deepEqual(calls, [
+    'acquire',
+    'assert',
+    'assert',
+    ['click', 37, 373],
+    'assert',
+  ]);
+});
+
+test('collapsed project expansion never clicks a different collapsed project', async () => {
+  const { expandCollapsedProject } = await diagnosisHarness();
+  let clicks = 0;
+
+  const result = expandCollapsedProject(
+    makeProcess(),
+    targetWorkspace,
+    'Another project',
+    {
+      acquireLease: () => ({}),
+      assertLease() {},
+      click() {
+        clicks += 1;
+      },
+    },
+  );
+
+  assert.equal(result, 'not-expanded');
+  assert.equal(clicks, 0);
+});
+
+test('collapsed project expansion re-proves the row immediately before click', async () => {
+  const { expandCollapsedProject } = await diagnosisHarness();
+  let inspections = 0;
+  let clicks = 0;
+  const row = makeNode({
+    name: 'Quickstart Quickstart 46 Repo settings New workspace',
+    position: [25, 351],
+    role: 'AXButton',
+    size: [216, 44],
+  });
+  const result = expandCollapsedProject(
+    makeProcess(),
+    targetWorkspace,
+    'Quickstart',
+    {
+      acquireLease: () => ({ syntheticInputPosted: false }),
+      activate() {},
+      assertLease() {},
+      inspect: () => {
+        inspections += 1;
+        return inspections === 1 ? row : null;
+      },
+      click() {
+        clicks += 1;
+      },
+    },
+  );
+
+  assert.equal(result, 'not-expanded');
+  assert.equal(inspections, 2);
+  assert.equal(clicks, 0);
+});
+
+test('watchdog sidebar snapshot is read-only and names collapsed projects', async () => {
+  const { sidebarProjectSnapshot } = await diagnosisHarness();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sidebarProjectSnapshot(makeProcess()))),
+    {
+      ok: true,
+      projects: [
+        { name: 'Quickstart', collapsed: true },
+        { name: 'OVO CRM Fable', collapsed: false },
+      ],
+    },
+  );
+  const inputSource = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const operation = inputSource.slice(
+    inputSource.indexOf("operation === 'sidebar-snapshot'"),
+    inputSource.indexOf("operation === 'workspace-failure'"),
+  );
+  assert.match(operation, /conductorProcessForReadOnlyDiagnosis/);
+  assert.doesNotMatch(operation, /CGEvent|AXPress|click|activate/i);
+});
+
+test('expanded project headers remain distinct without visible workspace counts', async () => {
+  const { diagnoseWorkspaceFailure, sidebarProjectSnapshot } =
+    await diagnosisHarness();
+  const process = makeProcess({ quickstartExpanded: true });
+
+  assert.equal(
+    diagnoseWorkspaceFailure(process, targetWorkspace, 'Quickstart').code,
+    'workspace_list_unavailable',
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sidebarProjectSnapshot(process))),
+    {
+      ok: true,
+      projects: [
+        { name: 'Quickstart', collapsed: false },
+        { name: 'OVO CRM Fable', collapsed: false },
+      ],
+    },
+  );
+});
+
+test('the send path attempts collapsed project expansion at most once', async () => {
+  const appleScript = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const transport = await fs.readFile(
+    new URL('../src/accessibility.mjs', import.meta.url),
+    'utf8',
+  );
+  const sendPath = appleScript.slice(
+    appleScript.indexOf(
+      'set sidebarGroup to getSidebarGroup()',
+      appleScript.indexOf('set my projectExpansionAttempted to false'),
+    ),
+    appleScript.indexOf(
+      'set workspaceRoute to my getWorkspaceRoute',
+      appleScript.indexOf('set my projectExpansionAttempted to false'),
+    ),
+  );
+
+  assert.equal(
+    (sendPath.match(/expandCollapsedProject/g) || []).length,
+    1,
+  );
+  assert.match(sendPath, /set sidebarGroup to getSidebarGroup\(\)/);
+  assert.match(sendPath, /return initialWorkspaceFailure/);
+  assert.match(transport, /POCKET_PROJECT_NAME_BASE64/);
+  assert.match(appleScript, /POCKET_OPERATION=workspace-expand/);
+  assert.doesNotMatch(sendPath, /AXPress/);
 });

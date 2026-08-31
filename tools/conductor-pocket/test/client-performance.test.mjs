@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 async function applicationSource() {
   return fs.readFile(
@@ -16,6 +17,180 @@ function functionSource(source, name, nextName) {
   assert.ok(end > start, `${nextName} must follow ${name}`);
   return source.slice(start, end);
 }
+
+function createRevealHarness(source, {
+  hiddenAt,
+  request,
+  handleRuntimeError = () => undefined,
+}) {
+  let shieldPresent = true;
+  let shieldRemovals = 0;
+  let appReveals = 0;
+  let storedHiddenAt = String(hiddenAt);
+  const sandbox = {
+    app: {
+      removeAttribute() {
+        appReveals += 1;
+      },
+    },
+    document: {
+      hidden: false,
+      querySelector() {
+        if (!shieldPresent) return null;
+        return {
+          remove() {
+            shieldPresent = false;
+            shieldRemovals += 1;
+          },
+        };
+      },
+    },
+    handleRuntimeError,
+    localStorage: {
+      getItem() {
+        return storedHiddenAt;
+      },
+      removeItem() {
+        storedHiddenAt = null;
+      },
+    },
+    metadataRefresh: { schedule() {} },
+    renderConnectionGate() {},
+    renderLock() {},
+    request,
+    scheduleReadEvaluation() {},
+    startEvents() {},
+    state: {
+      auth: { reauthenticationMode: 'strict' },
+      hiddenAt,
+      shell: {},
+      visibilityEpoch: 1,
+    },
+    transcriptRefresh: { schedule() {} },
+  };
+  vm.createContext(sandbox);
+  const reveal = functionSource(
+    source,
+    'async function revealApplication',
+    'function currentAppUpdateReloadIsSafe',
+  );
+  vm.runInContext(
+    `const HIDDEN_AT_KEY = 'hidden';
+const AWAY_LOCK_MS = 1_000;
+const TAILSCALE_SESSION_MODE = 'tailscale-session';
+const RESUME_REQUEST_MS = 6_000;
+let revealOperationsInFlight = 0;
+let revealApplicationPromise = null;
+${reveal}
+globalThis.__revealApplication = revealApplication;`,
+    sandbox,
+  );
+  return {
+    revealApplication: sandbox.__revealApplication,
+    result() {
+      return { appReveals, shieldRemovals, shieldPresent };
+    },
+  };
+}
+
+test('transient IndexedDB failures and closed handles reopen without a reload', async () => {
+  const source = await applicationSource();
+  const start = source.indexOf('function invalidateCacheDatabaseConnection');
+  const end = source.indexOf("cachePurgeChannel?.addEventListener", start);
+  assert.ok(start >= 0, 'cache invalidation helper must exist');
+  assert.ok(end > start, 'cache connection helpers must stay together');
+
+  const openRequests = [];
+  const sandbox = {
+    Error,
+    indexedDB: {
+      open() {
+        const request = {};
+        openRequests.push(request);
+        return request;
+      },
+    },
+    localStorage: { getItem: () => null },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `let cacheDatabasePromise = null;
+let cacheDatabaseConnection = null;
+let originRetired = false;
+const ORIGIN_RETIRED_KEY = 'retired';
+${source.slice(start, end)}
+globalThis.__cacheDatabase = cacheDatabase;`,
+    sandbox,
+  );
+
+  const failed = sandbox.__cacheDatabase();
+  openRequests[0].error = new Error('transient open failure');
+  openRequests[0].onerror();
+  await assert.rejects(failed, /transient open failure/);
+
+  const recovered = sandbox.__cacheDatabase();
+  assert.equal(openRequests.length, 2);
+  const firstDatabase = { close() {} };
+  openRequests[1].result = firstDatabase;
+  openRequests[1].onsuccess();
+  assert.equal(await recovered, firstDatabase);
+
+  firstDatabase.onclose();
+  const reopened = sandbox.__cacheDatabase();
+  assert.equal(openRequests.length, 3);
+  const secondDatabase = { close() {} };
+  openRequests[2].result = secondDatabase;
+  openRequests[2].onsuccess();
+  assert.equal(await reopened, secondDatabase);
+});
+
+test('a synchronous IndexedDB open failure does not poison later sends', async () => {
+  const source = await applicationSource();
+  const start = source.indexOf('function invalidateCacheDatabaseConnection');
+  const end = source.indexOf("cachePurgeChannel?.addEventListener", start);
+  assert.ok(start >= 0, 'cache invalidation helper must exist');
+  assert.ok(end > start, 'cache connection helpers must stay together');
+
+  let openAttempts = 0;
+  const openRequests = [];
+  const sandbox = {
+    Error,
+    indexedDB: {
+      open() {
+        openAttempts += 1;
+        if (openAttempts === 1) {
+          throw new Error('transient synchronous open failure');
+        }
+        const request = {};
+        openRequests.push(request);
+        return request;
+      },
+    },
+    localStorage: { getItem: () => null },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `let cacheDatabasePromise = null;
+let cacheDatabaseConnection = null;
+let originRetired = false;
+const ORIGIN_RETIRED_KEY = 'retired';
+${source.slice(start, end)}
+globalThis.__cacheDatabase = cacheDatabase;`,
+    sandbox,
+  );
+
+  await assert.rejects(
+    sandbox.__cacheDatabase(),
+    /transient synchronous open failure/,
+  );
+
+  const recovered = sandbox.__cacheDatabase();
+  assert.equal(openAttempts, 2, 'the rejected open must not stay memoized');
+  const database = { close() {} };
+  openRequests[0].result = database;
+  openRequests[0].onsuccess();
+  assert.equal(await recovered, database);
+});
 
 test('warm chat navigation paints before cache or network work', async () => {
   const source = await applicationSource();
@@ -277,7 +452,8 @@ test('the app can never be left blank, and reading position survives a render', 
   // left the privacy shield over the app until it was force-quit.
   assert.doesNotMatch(js, /if \(!appUpdateCoordinator\?\.foreground\(\)\) revealApplication\(\)/);
   assert.match(js, /appUpdateCoordinator\?\.foreground\(\);\s*\n\s*revealApplication\(\);/);
-  // A visible page with a shield over it must self-correct.
+  // A visible page with a shield over it must retry the authenticated reveal.
+  // The failsafe must never expose a transcript while that request is pending.
   assert.match(js, /function ensureNotShielded\(\)/);
   assert.match(js, /#privacy-shield'\)[\s\S]*shield\.remove\(\)/);
   // A rescued page needs its stream back or it sits stale and looks broken.

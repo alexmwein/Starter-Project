@@ -637,6 +637,7 @@ export class ConductorDatabase {
             w.directory_name,
             w.workspace_path,
             w.sandbox_provider,
+            r.name AS repository_name,
             ROW_NUMBER() OVER (
               PARTITION BY s.workspace_id, s.title
               ORDER BY s.created_at, s.id
@@ -940,6 +941,7 @@ export class ConductorDatabase {
       repositoryName: row.repository_name,
       workspaceId: row.workspace_id,
       workspaceName: workspaceDisplayName(row),
+      repositoryName: row.repository_name,
       title: row.title || 'Untitled chat',
       titleOrdinal: Number(row.title_ordinal),
       status: row.status || 'unknown',

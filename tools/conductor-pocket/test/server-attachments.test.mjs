@@ -492,7 +492,10 @@ test('provably unsent attachment delivery restores the photo to a deletable stag
     ['retain', 'release'],
   );
   assert.deepEqual(calls[1][1], [ATTACHMENT_ID]);
-  assert.deepEqual(calls[1][2], scope);
+  assert.deepEqual(calls[1][2], {
+    ...scope,
+    retentionClaim: calls[0][2].retentionClaim,
+  });
 });
 
 test('a cursor read failure happens before an attachment becomes retained', async (context) => {
@@ -582,6 +585,145 @@ test('a cursor read failure happens before an attachment becomes retained', asyn
   );
   assert.equal(retained, 0);
   assert.equal(transportCalls, 0);
+});
+
+test('a later final delivery failure releases the durable photo retention claim', async (context) => {
+  const workspacePath = await workspace(context);
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const rows = [];
+  const retainedClaims = [];
+  const releasedClaims = [];
+  let deliveredMessageState = 'visible';
+  const selected = {
+    id: ATTACHMENT_ID,
+    name: 'image.jpg',
+    relativePath: `.context/attachments/${ATTACHMENT_ID}/image.jpg`,
+    digest: 'private-server-digest',
+    bytes: 1234,
+    width: 800,
+    height: 600,
+  };
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'device-a' },
+          unlocked: true,
+          csrfToken: 'test-csrf',
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'session-a',
+          repositoryName: 'Starter-Project',
+          workspaceId: 'workspace-a',
+          workspaceName: 'Pocket',
+          workspacePath,
+          sandboxProvider: null,
+          title: 'Images',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 0;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+      findImmediateSendRejection() {
+        return null;
+      },
+      getDeliveredMessageState() {
+        return deliveredMessageState;
+      },
+      listLocalWorkspacePaths() {
+        return [workspacePath];
+      },
+    },
+    watcher: createWatcher(),
+    attachmentManager: {
+      async sweepWorkspaces() {},
+      async resolveForSend() {
+        return [selected];
+      },
+      async retainForSend(_ids, scope) {
+        retainedClaims.push(scope.retentionClaim);
+      },
+      async releaseAfterFinalFailure(claim, options) {
+        releasedClaims.push({ claim, options });
+      },
+      stop() {},
+    },
+    transport: {
+      async send({ message }) {
+        const pressedAt = Date.now();
+        rows.push({
+          id: 'delivered-photo-message',
+          rowId: 1,
+          text: message,
+          createdAt: new Date(pressedAt).toISOString(),
+          sentAt: new Date(pressedAt).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          composerOwned: true,
+          pressedAt,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const idempotencyKey = 'late-photo-failure-key-123456';
+
+  const sent = await request(port, '/api/sessions/session-a/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'Caption',
+      attachments: [ATTACHMENT_ID],
+    }),
+    headers: mutationHeaders({
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    }),
+  });
+  assert.equal(sent.status, 200);
+  assert.equal(releasedClaims.length, 0);
+  assert.match(retainedClaims[0], /^[A-Za-z0-9_-]{43}$/);
+
+  deliveredMessageState = 'cancelled';
+  const status = await request(
+    port,
+    '/api/sessions/session-a/delivery-status',
+    {
+      method: 'POST',
+      headers: mutationHeaders({
+        'Idempotency-Key': idempotencyKey,
+      }),
+    },
+  );
+  assert.equal(status.status, 200);
+  assert.deepEqual(JSON.parse(status.body).delivery, {
+    state: 'failed',
+    code: 'conductor_message_cancelled',
+    retrySafe: false,
+    final: true,
+    messageId: 'delivered-photo-message',
+    rowId: 1,
+  });
+  assert.equal(releasedClaims.length, 1);
+  assert.equal(releasedClaims[0].claim, retainedClaims[0]);
+  assert.ok(
+    releasedClaims[0].options.workspacePaths.includes(workspacePath),
+  );
 });
 
 test('safe-failure release finishes inside the send queue before another send can retain the same photo', async (context) => {

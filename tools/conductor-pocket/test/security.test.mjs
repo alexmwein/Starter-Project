@@ -12,6 +12,7 @@ import {
 } from '../src/config.mjs';
 import {
   DEVICE_SESSION_TTL_SECONDS,
+  REAUTHENTICATION_MODE_FACE_ID,
   REAUTHENTICATION_MODE_TAILSCALE_SESSION,
   SESSION_ROTATION_GRACE_MS,
   SESSION_COOKIE,
@@ -603,6 +604,266 @@ test('trusted device is rejected exactly at its server-side expiry', async (cont
     (error) =>
       error.status === 401 &&
       error.code === 'device_session_expired',
+  );
+});
+
+test('active trusted use renews both deadlines only inside the five-day window', async (context) => {
+  const startedAt = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, startedAt);
+  const now = startedAt + 25 * 24 * 60 * 60 * 1000;
+  const security = new SecurityManager(fixture.store, { now: () => now });
+  const bootstrap = security.bootstrap(fixture.request);
+  fixture.request.headers['x-csrf-token'] = bootstrap.csrfToken;
+
+  const renewed = await security.touch(fixture.request);
+  const stored = await loadConfig(fixture.configPath);
+
+  assert.equal(renewed.renewed, true);
+  assert.equal(
+    stored.devices[0].sessionExpiresAt,
+    new Date(now + DEVICE_SESSION_TTL_SECONDS * 1_000).toISOString(),
+  );
+  assert.equal(
+    stored.devices[0].trustedUntil,
+    new Date(now + TRUSTED_DEVICE_TTL_MS).toISOString(),
+  );
+  assert.notEqual(stored.devices[0].sessionHash, sha256(fixture.rawSession));
+  assert.equal(
+    stored.devices[0].previousSessionHash,
+    sha256(fixture.rawSession),
+  );
+  assert.equal(
+    stored.devices[0].previousSessionExpiresAt,
+    new Date(now + SESSION_ROTATION_GRACE_MS).toISOString(),
+  );
+  const renewedToken = new RegExp(`^${SESSION_COOKIE}=([^;]+);`).exec(
+    renewed.setCookie,
+  )?.[1];
+  assert.ok(renewedToken);
+  assert.notEqual(renewedToken, fixture.rawSession);
+  assert.equal(stored.devices[0].sessionHash, sha256(renewedToken));
+  assert.notEqual(renewed.csrfToken, bootstrap.csrfToken);
+  assert.equal(renewed.device.trustedUntil, stored.devices[0].trustedUntil);
+  assert.equal(
+    renewed.device.sessionExpiresAt,
+    stored.devices[0].sessionExpiresAt,
+  );
+});
+
+test('active trusted use leaves a healthy grant untouched outside the renewal window', async (context) => {
+  const now = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, now);
+  const security = new SecurityManager(fixture.store, {
+    now: () => now + 60_000,
+  });
+  const bootstrap = security.bootstrap(fixture.request);
+  fixture.request.headers['x-csrf-token'] = bootstrap.csrfToken;
+
+  const touched = await security.touch(fixture.request);
+
+  assert.equal(touched.renewed, false);
+  assert.equal(touched.setCookie, null);
+  assert.equal(
+    (await loadConfig(fixture.configPath)).devices[0].trustedUntil,
+    fixture.config.devices[0].trustedUntil,
+  );
+});
+
+test('an expired device session cannot be resurrected by active renewal', async (context) => {
+  const now = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, now);
+  const original = structuredClone(fixture.config.devices[0]);
+  fixture.request.headers['x-csrf-token'] = new SecurityManager(
+    fixture.store,
+    { now: () => now },
+  ).bootstrap(fixture.request).csrfToken;
+  const expiresAt = Date.parse(original.sessionExpiresAt);
+  const security = new SecurityManager(fixture.store, {
+    now: () => expiresAt,
+  });
+
+  await assert.rejects(
+    security.touch(fixture.request),
+    (error) =>
+      error.status === 401 && error.code === 'device_session_expired',
+  );
+  assert.deepEqual(
+    (await loadConfig(fixture.configPath)).devices[0],
+    original,
+  );
+});
+
+test('bootstrap exposes both trusted deadlines for phone warnings', async (context) => {
+  const now = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, now);
+  const security = new SecurityManager(fixture.store, { now: () => now });
+
+  const bootstrap = security.bootstrap(fixture.request);
+
+  assert.equal(
+    bootstrap.device.trustedUntil,
+    fixture.config.devices[0].trustedUntil,
+  );
+  assert.equal(
+    bootstrap.device.sessionExpiresAt,
+    fixture.config.devices[0].sessionExpiresAt,
+  );
+});
+
+test('hard expiry needs Tailscale-bound Face ID before a fresh grant exists', async (context) => {
+  const startedAt = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, startedAt);
+  const expiredAt = Date.parse(fixture.config.devices[0].sessionExpiresAt);
+  const security = new SecurityManager(fixture.store, {
+    now: () => expiredAt,
+    verifyAuthentication: async () => ({
+      verified: true,
+      authenticationInfo: { newCounter: 1 },
+    }),
+  });
+  const recoveryRequest = {
+    headers: {
+      origin: fixture.config.publicOrigin,
+      'tailscale-user-login': 'alex@example.com',
+    },
+    socket: { remoteAddress: '100.64.0.1' },
+  };
+
+  const recovery = await security.recoveryAuthenticationOptions(
+    recoveryRequest,
+  );
+  assert.deepEqual(
+    recovery.options.allowCredentials.map((credential) => credential.id),
+    ['credential-1'],
+  );
+  assert.match(recovery.setCookie, /^__Host-cp_recovery=[^;]+;/);
+  assert.deepEqual(
+    (await loadConfig(fixture.configPath)).devices[0],
+    fixture.config.devices[0],
+  );
+
+  const recoveryToken = /^__Host-cp_recovery=([^;]+);/.exec(
+    recovery.setCookie,
+  )?.[1];
+  const recovered = await security.verifyRecoveryAuthentication(
+    {
+      ...recoveryRequest,
+      headers: {
+        ...recoveryRequest.headers,
+        cookie: `__Host-cp_recovery=${recoveryToken}`,
+      },
+    },
+    { id: 'credential-1' },
+  );
+  const nextSessionToken = new RegExp(
+    `^${SESSION_COOKIE}=([^;]+);`,
+  ).exec(recovered.setCookies[0])?.[1];
+  assert.ok(nextSessionToken);
+  assert.notEqual(nextSessionToken, fixture.rawSession);
+  assert.match(recovered.setCookies[1], /^__Host-cp_recovery=;/);
+
+  const stored = await loadConfig(fixture.configPath);
+  assert.equal(stored.devices[0].sessionHash, sha256(nextSessionToken));
+  assert.equal(
+    stored.devices[0].sessionExpiresAt,
+    new Date(expiredAt + DEVICE_SESSION_TTL_SECONDS * 1_000).toISOString(),
+  );
+  assert.equal(
+    stored.devices[0].trustedUntil,
+    new Date(expiredAt + TRUSTED_DEVICE_TTL_MS).toISOString(),
+  );
+  assert.equal(stored.devices[0].previousSessionHash, null);
+  assert.equal(stored.devices[0].lockedAt, null);
+
+  assert.throws(
+    () => security.bootstrap(fixture.request),
+    (error) => error.status === 401,
+  );
+  const fresh = security.bootstrap({
+    ...fixture.request,
+    headers: {
+      ...fixture.request.headers,
+      cookie: `${SESSION_COOKIE}=${nextSessionToken}`,
+    },
+  });
+  assert.equal(fresh.authenticated, true);
+  assert.equal(fresh.unlocked, true);
+});
+
+test('Face ID recovery refuses a different Tailscale identity', async (context) => {
+  const now = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, now);
+  const security = new SecurityManager(fixture.store, {
+    now: () => Date.parse(fixture.config.devices[0].sessionExpiresAt),
+  });
+
+  await assert.rejects(
+    security.recoveryAuthenticationOptions({
+      headers: {
+        origin: fixture.config.publicOrigin,
+        'tailscale-user-login': 'other@example.com',
+      },
+      socket: { remoteAddress: '100.64.0.2' },
+    }),
+    (error) =>
+      error.status === 403 && error.code === 'tailscale_identity_denied',
+  );
+});
+
+test('expired recovery preserves strict Face ID mode', async (context) => {
+  const now = Date.parse('2026-07-27T20:00:00.000Z');
+  const fixture = await trustedSecurityFixture(context, now);
+  await fixture.store.update((config) => {
+    config.reauthenticationMode = REAUTHENTICATION_MODE_FACE_ID;
+    config.devices[0].sessionExpiresAt = null;
+    config.devices[0].trustedUntil = null;
+    return config;
+  });
+  const security = new SecurityManager(fixture.store, {
+    now: () => now,
+    verifyAuthentication: async () => ({
+      verified: true,
+      authenticationInfo: { newCounter: 1 },
+    }),
+  });
+  const request = {
+    headers: {
+      origin: fixture.config.publicOrigin,
+      'tailscale-user-login': 'alex@example.com',
+    },
+    socket: { remoteAddress: '100.64.0.1' },
+  };
+  const options = await security.recoveryAuthenticationOptions(request);
+  const recoveryToken = /^__Host-cp_recovery=([^;]+);/.exec(
+    options.setCookie,
+  )?.[1];
+  const recovered = await security.verifyRecoveryAuthentication(
+    {
+      ...request,
+      headers: {
+        ...request.headers,
+        cookie: `__Host-cp_recovery=${recoveryToken}`,
+      },
+    },
+    { id: 'credential-1' },
+  );
+  const nextSessionToken = new RegExp(
+    `^${SESSION_COOKIE}=([^;]+);`,
+  ).exec(recovered.setCookies[0])?.[1];
+  const stored = await loadConfig(fixture.configPath);
+
+  assert.equal(recovered.reauthenticationMode, REAUTHENTICATION_MODE_FACE_ID);
+  assert.equal(stored.devices[0].sessionExpiresAt, null);
+  assert.equal(stored.devices[0].trustedUntil, null);
+  assert.equal(
+    security.bootstrap({
+      ...request,
+      headers: {
+        ...request.headers,
+        cookie: `${SESSION_COOKIE}=${nextSessionToken}`,
+      },
+    }).unlocked,
+    true,
   );
 });
 

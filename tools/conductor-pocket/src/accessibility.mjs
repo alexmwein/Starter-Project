@@ -532,6 +532,14 @@ export class AccessibilityTransport {
     timeoutMs = 45_000,
   }) {
     const normalized = normalizeText(message);
+    const normalizedProjectName = normalizeText(projectName);
+    if (
+      normalizedProjectName.length > 160 ||
+      normalizedProjectName.includes('\0') ||
+      /[\u0001-\u001f\u007f]/.test(normalizedProjectName)
+    ) {
+      return Promise.resolve(safeToRetry('workspace_list_unavailable'));
+    }
     if (!normalized.trim()) {
       return Promise.resolve(safeToRetry('message_empty'));
     }
@@ -724,7 +732,7 @@ export class AccessibilityTransport {
           // the transport's, so it terminates itself with a structured code
           // and nothing outlives the send.
           POCKET_DEADLINE_AT: String(
-            Date.now() + Math.max(timeoutMs - 5_000, 5_000),
+            innerAutomationDeadlineAt(Date.now(), timeoutMs),
           ),
           POCKET_EXPECTED_DRAFT_BASE64: Buffer.from(
             expectedMacDraft,

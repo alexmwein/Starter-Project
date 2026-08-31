@@ -323,7 +323,9 @@ function workspaceBelongsToRepository(
 // count so an ordinary sidebar button can never masquerade as this diagnosis.
 function countedProjectName(rowTitle) {
   if (typeof rowTitle !== 'string' || rowTitle.length > 500) return null;
-  const match = /^(.+?)\s+\1\s+([1-9][0-9]*)\b/u.exec(rowTitle.trim());
+  const match = /^(.+?)\s+\1(?:\s+([1-9][0-9]*))?\s+Repo settings New workspace$/u.exec(
+    rowTitle.trim(),
+  );
   if (!match) return null;
   const projectName = match[1].trim();
   if (
@@ -333,7 +335,39 @@ function countedProjectName(rowTitle) {
   ) {
     return null;
   }
-  return projectName;
+  return {
+    name: projectName,
+    collapsed: match[2] !== undefined,
+  };
+}
+
+function countedProjectName(rowTitle) {
+  const project = projectRowState(rowTitle);
+  return project?.collapsed ? project.name : null;
+}
+
+// Read the same strict project-row shape used by send recovery, but never
+// interact with it. launchd calls this while the watchdog is checking the
+// chain, so unreadable or duplicate rows fail closed instead of producing a
+// guess about which project is collapsed.
+function sidebarProjectSnapshot(process) {
+  const projects = [];
+  const names = new Set();
+  for (const root of webAreaRootElements(process)) {
+    for (const container of routeElements(root)) {
+      for (const row of routeElements(container)) {
+        if (routeRole(row) !== 'AXButton') continue;
+        const project = projectRowState(routeName(row));
+        if (!project) continue;
+        if (names.has(project.name)) return { ok: false, projects: [] };
+        names.add(project.name);
+        projects.push(project);
+      }
+    }
+  }
+  return projects.length > 0
+    ? { ok: true, projects }
+    : { ok: false, projects: [] };
 }
 
 // Read-only post-failure diagnosis. This never presses the project row: AXPress
@@ -399,20 +433,127 @@ function diagnoseWorkspaceFailure(
         ) {
           targetLinkCount += 1;
         }
-        if (currentProject) currentProject.workspaceLinks += 1;
       }
-      finishProject();
     }
   }
-
-  if (targetLinkCount !== 0 || collapsedProjects.length === 0) {
-    return generic;
+  if (targetLinkCount !== 0 || matchingCollapsedRows.length !== 1) {
+    return null;
   }
+  return matchingCollapsedRows[0];
+}
+
+function diagnoseWorkspaceFailure(
+  process,
+  workspaceName,
+  expectedProjectName = '',
+) {
+  const generic = Object.freeze({
+    ok: false,
+    code: 'workspace_list_unavailable',
+  });
+  if (
+    !inspectCollapsedProject(
+      process,
+      workspaceName,
+      expectedProjectName,
+    )
+  ) return generic;
   return Object.freeze({
     ok: false,
     code: 'workspace_project_collapsed',
-    projectName: collapsedProjects[0],
+    projectName: expectedProjectName,
   });
+}
+
+function axisPair(value) {
+  let pair = value;
+  try {
+    pair = ObjC.deepUnwrap(value);
+  } catch {
+    // Plain arrays from System Events and unit fixtures need no bridge unwrap.
+  }
+  const x = Number(Array.isArray(pair) ? pair[0] : pair?.x);
+  const y = Number(Array.isArray(pair) ? pair[1] : pair?.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function postGlobalLeftClick(point, lease) {
+  const source = $.CGEventSourceCreate($.kCGEventSourceStatePrivate);
+  if (!source) fail('event_source_failed');
+  const location = $.CGPointMake(point.x, point.y);
+  const down = $.CGEventCreateMouseEvent(
+    source,
+    $.kCGEventLeftMouseDown,
+    location,
+    $.kCGMouseButtonLeft,
+  );
+  const up = $.CGEventCreateMouseEvent(
+    source,
+    $.kCGEventLeftMouseUp,
+    location,
+    $.kCGMouseButtonLeft,
+  );
+  if (!down || !up) fail('event_source_failed');
+  $.CGEventPost($.kCGHIDEventTap, down);
+  lease.syntheticInputPosted = true;
+  $.CGEventPost($.kCGHIDEventTap, up);
+}
+
+function expandCollapsedProject(
+  process,
+  workspaceName,
+  expectedProjectName,
+  {
+    acquireLease = acquireInputLease,
+    activate = () => {},
+    assertLease = assertInputLease,
+    inspect = inspectCollapsedProject,
+    click = postGlobalLeftClick,
+  } = {},
+) {
+  const lease = acquireLease();
+  activate(lease);
+  const row = inspect(process, workspaceName, expectedProjectName);
+  if (!row) return 'not-expanded';
+  let position;
+  let size;
+  try {
+    position = axisPair(row.position());
+    size = axisPair(row.size());
+  } catch {
+    return 'not-expanded';
+  }
+  if (!position || !size || size.x <= 0 || size.y <= 0) {
+    return 'not-expanded';
+  }
+  assertLease(lease);
+  const currentRow = inspect(process, workspaceName, expectedProjectName);
+  if (!currentRow) return 'not-expanded';
+  let currentPosition;
+  let currentSize;
+  try {
+    currentPosition = axisPair(currentRow.position());
+    currentSize = axisPair(currentRow.size());
+  } catch {
+    return 'not-expanded';
+  }
+  if (
+    !currentPosition ||
+    !currentSize ||
+    currentSize.x <= 0 ||
+    currentSize.y <= 0
+  ) {
+    return 'not-expanded';
+  }
+  const currentPoint = {
+    x: currentPosition.x + 12,
+    y: currentPosition.y + currentSize.y / 2,
+  };
+  assertLease(lease);
+  click(currentPoint, lease);
+  delay(0.03);
+  assertLease(lease);
+  return 'expanded';
 }
 
 function isWellFormed(value) {
@@ -705,7 +846,51 @@ function sessionRadioTopology(tabGroup) {
   return topology;
 }
 
-function resolveMainRoot(rootElements) {
+function inspectMainRootCandidate(element, rootPath) {
+  const elements = routeElements(element);
+  // Two Apple Events instead of two per child. Same values, same checks.
+  const roles = bulkRead(
+    element,
+    elements,
+    (root) => root.uiElements.role(),
+    (child) => routeRole(child),
+  );
+  const descriptions = bulkRead(
+    element,
+    elements,
+    (root) => root.uiElements.description(),
+    (child) => routeDescription(child),
+  );
+  let composerCount = 0;
+  let tabGroupCount = 0;
+  let tabGroupIndex = -1;
+  for (let index = 0; index < elements.length; index += 1) {
+    if (roles[index] === 'AXTabGroup') {
+      tabGroupCount += 1;
+      tabGroupIndex = index;
+    }
+    if (descriptions[index] === 'composer') {
+      composerCount += 1;
+    }
+  }
+  return {
+    candidate:
+      tabGroupCount === 1 && composerCount === 1
+        ? {
+            descriptions,
+            elements,
+            roles,
+            rootIndex: rootPath[0],
+            rootPath: rootPath.slice(),
+            tabGroupIndex,
+          }
+        : null,
+    elements,
+    roles,
+  };
+}
+
+function resolveMainRoot(rootElements, expectedRootPath = null) {
   const candidates = [];
   for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
     assertRouteAcquisitionDeadline();
@@ -731,19 +916,52 @@ function resolveMainRoot(rootElements) {
         tabGroupCount += 1;
         tabGroupIndex = index;
       }
-      if (descriptions[index] === 'composer') {
-        composerCount += 1;
+    } else {
+      const expectedChildIndex = expectedRootPath[1];
+      if (
+        expectedRootResult.roles[expectedChildIndex] !== 'AXGroup' ||
+        !expectedRootResult.elements[expectedChildIndex]
+      ) {
+        fail('route_changed', 'mainRootWrapperChanged');
+      }
+      const expectedNested = inspect(
+        expectedRootResult.elements[expectedChildIndex],
+        expectedRootPath,
+      );
+      if (!expectedNested.candidate) {
+        fail('route_changed', 'mainRootMoved');
       }
     }
-    if (tabGroupCount !== 1) continue;
-    if (composerCount === 1) {
-      candidates.push({
-        descriptions,
-        elements,
-        roles,
-        rootIndex,
-        tabGroupIndex,
-      });
+  }
+
+  for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
+    const isExpectedRoot = expectedRootPath?.[0] === rootIndex;
+    const root = isExpectedRoot
+      ? expectedRootResult
+      : expectedRootPath === null
+        ? inspect(rootElements[rootIndex], [rootIndex])
+        : inspectOptional(rootElements[rootIndex], [rootIndex]);
+    if (!root) continue;
+    if (root.candidate || root.elements.length === 0) continue;
+
+    // Conductor 0.83.1 moved the proven main group under one chrome wrapper.
+    // Inspect only direct AXGroup children, with a global candidate budget.
+    // Sidebar controls and unrelated leaf roots remain opaque.
+    for (let childIndex = 0; childIndex < root.elements.length; childIndex += 1) {
+      if (root.roles[childIndex] !== 'AXGroup') continue;
+      if (
+        expectedRootPath?.length === 2 &&
+        expectedRootPath[0] === rootIndex &&
+        expectedRootPath[1] === childIndex
+      ) {
+        continue;
+      }
+      const childPath = [rootIndex, childIndex];
+      if (expectedRootPath === null) {
+        inspect(root.elements[childIndex], childPath);
+      } else {
+        inspectOptional(root.elements[childIndex], childPath);
+      }
     }
   }
   if (candidates.length !== 1) fail('route_changed');
@@ -902,6 +1120,7 @@ function acquireRouteLease(process, target = routeTarget()) {
   return Object.freeze({
     mainChildCount: mainElements.length,
     mainRootIndex: main.rootIndex,
+    mainRootPath: Object.freeze(main.rootPath.slice()),
     rootCount: rootElements.length,
     sessionName,
     sessionOrdinal: target.sessionOrdinal,
@@ -942,6 +1161,12 @@ function assertRouteLease(process, lease) {
     !Array.isArray(lease.workspacePath) ||
     !Array.isArray(lease.targetSessionPath) ||
     !Array.isArray(lease.sessionTopology) ||
+    !Array.isArray(lease.mainRootPath) ||
+    lease.mainRootPath.length < 1 ||
+    lease.mainRootPath.length > 2 ||
+    !lease.mainRootPath.every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
     !Number.isSafeInteger(lease.rootCount) ||
     lease.rootCount < 2 ||
     !Number.isSafeInteger(lease.mainRootIndex) ||
@@ -949,6 +1174,7 @@ function assertRouteLease(process, lease) {
     !Number.isSafeInteger(lease.sidebarRootIndex) ||
     lease.sidebarRootIndex < 0 ||
     lease.mainRootIndex >= lease.rootCount ||
+    lease.mainRootPath[0] !== lease.mainRootIndex ||
     lease.sidebarRootIndex >= lease.rootCount ||
     lease.mainRootIndex === lease.sidebarRootIndex
   ) {
@@ -972,9 +1198,12 @@ function assertRouteLease(process, lease) {
     },
     workspaceName: lease.workspaceName,
   });
-  const main = resolveMainRoot(rootElements);
-  if (main.rootIndex !== lease.mainRootIndex) {
-    fail('route_changed', `mainRootIndex ${main.rootIndex}!=${lease.mainRootIndex}`);
+  const main = resolveMainRoot(rootElements, lease.mainRootPath);
+  if (!sameRoutePath(main.rootPath, lease.mainRootPath)) {
+    fail(
+      'route_changed',
+      `mainRootPath ${JSON.stringify(main.rootPath)}!=${JSON.stringify(lease.mainRootPath)}`,
+    );
   }
   const mainElements = main.elements;
   // Conductor's toolbar gains and loses chrome while a send is in flight, as git
@@ -1069,6 +1298,26 @@ function conductorProcessForReadOnlyDiagnosis(pid) {
     fail('invalid_target_process');
   }
   return process;
+}
+
+function activateConductorForClick(pid, process, lease) {
+  assertSessionUnlocked();
+  const conductor = $.NSRunningApplication.runningApplicationWithProcessIdentifier(
+    pid,
+  );
+  if (!conductor || ObjC.unwrap(conductor.bundleIdentifier) !== CONDUCTOR_BUNDLE_ID) {
+    fail('invalid_target_process');
+  }
+  assertInputLease(lease);
+  conductor.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+  const deadline = Date.now() + 1_000;
+  do {
+    assertSessionUnlocked();
+    assertInputLease(lease);
+    if (process.frontmost()) return;
+    delay(0.05);
+  } while (Date.now() < deadline);
+  fail('target_not_active');
 }
 
 function validateFocusedComposer(pid, expectedDraft = null) {
@@ -2015,11 +2264,19 @@ function waitForComposerSend(
 // the proven chunked path. The fast path can never become a new way to fail, and
 // nothing here presses anything: the exact-draft proof and the route proof still
 // run before the press exactly as before.
-function deliverWholeMessage(pid, message) {
+function deliverWholeMessage(pid, message, inputLease, expectedDraft) {
+  let wroteMessage = false;
   try {
-    const process = validateFocusedComposer(pid);
+    assertInputLease(inputLease);
+    const process = validateFocusedComposer(pid, expectedDraft);
     const focused = process.attributes.byName('AXFocusedUIElement').value();
+    assertInputLease(inputLease);
+    if (focusedDraft(process) !== expectedDraft) return false;
+    assertInputLease(inputLease);
+    if (focusedDraft(process) !== expectedDraft) return false;
     focused.value = message;
+    wroteMessage = true;
+    assertInputLease(inputLease);
     for (let attempt = 0; attempt < 25; attempt += 1) {
       if (focusedDraft(validateFocusedComposer(pid)) === message) return true;
       delay(0.02);
@@ -2027,12 +2284,21 @@ function deliverWholeMessage(pid, message) {
   } catch {
     // Fall back to chunked typing.
   }
-  try {
-    // Leave nothing half-written for the fallback to trip over.
-    const process = validateFocusedComposer(pid);
-    process.attributes.byName('AXFocusedUIElement').value().value = '';
-  } catch {
-    // The chunked path clears the composer itself.
+  if (wroteMessage) {
+    try {
+      // Clear only the exact value Pocket wrote while the same physical-input
+      // lease still holds. A transient read or newer Mac typing must survive.
+      assertInputLease(inputLease);
+      const process = validateFocusedComposer(pid, message);
+      const focused = process.attributes.byName('AXFocusedUIElement').value();
+      assertInputLease(inputLease);
+      if (focusedDraft(process) === message) {
+        assertInputLease(inputLease);
+        if (focusedDraft(process) === message) focused.value = '';
+      }
+    } catch {
+      // The chunked path will classify any remaining draft without erasing it.
+    }
   }
   return false;
 }
@@ -2132,7 +2398,7 @@ function typeAndSendMessage(pid) {
       if (replaceDraft && currentDraft !== expectedDraft) fail('draft_conflict');
       if (currentDraft === '') lastProvenPrefix = '';
 
-      if (deliverWholeMessage(pid, message)) {
+      if (deliverWholeMessage(pid, message, inputLease, currentDraft)) {
         lastProvenPrefix = message;
         exactDraftExposedAt = Date.now();
       } else {
@@ -2324,6 +2590,11 @@ function run(argv) {
   if (operation === 'input-check') {
     assertSessionUnlocked();
     return waitForInputIdle() ? 'ready' : 'busy';
+  }
+  if (operation === 'sidebar-snapshot') {
+    assertSessionUnlocked();
+    const process = conductorProcessForReadOnlyDiagnosis(pid);
+    return JSON.stringify(sidebarProjectSnapshot(process));
   }
   if (operation === 'workspace-failure') {
     assertSessionUnlocked();

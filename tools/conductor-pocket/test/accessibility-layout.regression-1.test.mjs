@@ -99,6 +99,19 @@ function makeMain({ includeComposer = true } = {}) {
   };
 }
 
+function makeMainWrapper(main, mainChildIndex = 8) {
+  return makeNode({
+    children: [
+      ...Array.from({ length: mainChildIndex }, (_, index) =>
+        index === 0
+          ? makeNode({ role: 'AXGroup' })
+          : makeNode({ role: index % 2 === 0 ? 'AXStaticText' : 'AXButton' }),
+      ),
+      main,
+    ],
+  });
+}
+
 function makeTabOnlyRoot() {
   return makeNode({
     children: [makeNode({ role: 'AXTabGroup' })],
@@ -133,10 +146,16 @@ function makeLayout(
 ) {
   const sidebar = makeSidebar();
   const { composer, root: main } = makeMain();
-  const roots =
-    kind === 'legacy'
-      ? [makeNode(), sidebar, main]
-      : [sidebar, main, makeNode(), makeNode()];
+  let roots;
+  if (kind === 'legacy') {
+    roots = [makeNode(), sidebar, main];
+  } else if (kind === 'conductor-0.83.1') {
+    roots = [sidebar, makeMainWrapper(main), makeNode(), makeNode()];
+  } else if (kind === 'conductor-0.83.1-single-child') {
+    roots = [sidebar, makeMainWrapper(main, 0), makeNode(), makeNode()];
+  } else {
+    roots = [sidebar, main, makeNode(), makeNode()];
+  }
   if (duplicateSidebar) roots.push(makeSidebar());
   if (duplicateMain) roots.push(makeMain().root);
   if (decoyTabRoot) roots.push(makeTabOnlyRoot());
@@ -203,14 +222,19 @@ globalThis.__layoutRegression = {
   return sandbox.__layoutRegression;
 }
 
-test('semantic route discovery supports legacy and Conductor 0.79 root layouts', async () => {
+test('semantic route discovery supports legacy and current Conductor root layouts', async () => {
   const {
     acquireRouteLease,
     assertRouteLease,
     composerSendContext,
   } = await routeHarness();
 
-  for (const kind of ['legacy', 'conductor-0.79']) {
+  for (const kind of [
+    'legacy',
+    'conductor-0.79',
+    'conductor-0.83.1',
+    'conductor-0.83.1-single-child',
+  ]) {
     const state = makeLayout(kind);
     const process = processFor(state);
     const lease = acquireRouteLease(process, target);
@@ -222,6 +246,27 @@ test('semantic route discovery supports legacy and Conductor 0.79 root layouts',
     state.webArea = visible.webArea;
     assert.equal(composerSendContext(process).composer, visible.composer);
   }
+});
+
+test('Conductor 0.83.1 nested main route stays pinned to its full path', async () => {
+  const { acquireRouteLease, assertRouteLease } = await routeHarness();
+  const initial = makeLayout('conductor-0.83.1');
+  const state = { webArea: initial.webArea };
+  const process = processFor(state);
+  const lease = acquireRouteLease(process, target);
+
+  assert.deepEqual(Array.from(lease.mainRootPath), [1, 8]);
+
+  const movedRoots = makeLayout('conductor-0.83.1').webArea.uiElements();
+  const wrapperChildren = movedRoots[1].uiElements();
+  const main = wrapperChildren.pop();
+  wrapperChildren.splice(7, 0, main);
+  state.webArea = makeNode({ children: movedRoots });
+
+  assert.throws(
+    () => assertRouteLease(process, lease),
+    (error) => error?.pocketCode === 'route_changed',
+  );
 });
 
 test('Conductor 0.79 production hints ignore non-sidebar links and tab-only roots', async () => {
@@ -354,6 +399,8 @@ test('AppleScript resolves AX roots semantically instead of by position', async 
     source,
     /on isMainGroup\(candidate\)[\s\S]*AXTabGroup[\s\S]*"composer"/,
   );
+  assert.match(source, /on mainGroupCandidates\(rootElements\)/);
+  assert.doesNotMatch(source, /if childCount > 1 then/);
   assert.match(
     source,
     /on findSidebarGroup\(workspaceName\)[\s\S]*isMainGroup\(candidate\) is false[\s\S]*getWorkspaceRoute\(workspaceName, candidate\)/,
