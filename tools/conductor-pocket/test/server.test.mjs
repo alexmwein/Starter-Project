@@ -1248,6 +1248,87 @@ test('a transient route lookup retries once inside the original send boundary', 
   );
 });
 
+test('a seventeen second composer tree transient still gets one complete retry', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  const rows = [];
+  const calls = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send(options) {
+        calls.push(options);
+        if (calls.length === 1) {
+          automationTime += 17_000;
+          return {
+            ok: false,
+            code: 'composer_tree_transient',
+            safeToRetry: true,
+          };
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'composer-tree-retry-row',
+          rowId: 11,
+          text: 'Composer tree retry',
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'composer_tree_transient_retry_key',
+    message: 'Composer tree retry',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].timeoutMs, 45_000);
+});
+
 test('a transient route failure retries only with one complete transport reserve', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -1290,7 +1371,7 @@ test('a transient route failure retries only with one complete transport reserve
     transport: {
       async send() {
         sends += 1;
-        automationTime += 20_000;
+        automationTime += 31_000;
         return {
           ok: false,
           code: 'workspace_list_unavailable',
@@ -5258,7 +5339,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     retryBlock,
-    /claimTerminalDeliveryActionRequired\(message, 'retry'\)/,
+    /claim:\s*\(candidate\) =>[\s\S]*claimTerminalDeliveryActionRequired\(candidate, 'retry'\)/,
   );
   assert.match(
     source,

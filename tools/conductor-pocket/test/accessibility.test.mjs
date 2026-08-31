@@ -805,7 +805,7 @@ globalThis.__assertPreComposerBudget = assertPreComposerBudget;`,
   );
   assert.match(
     serverSource,
-    /SEND_AUTOMATION_RETRY_BUDGET_MS = 60_000/,
+    /SEND_AUTOMATION_RETRY_BUDGET_MS = 75_000/,
   );
   assert.match(
     serverSource,

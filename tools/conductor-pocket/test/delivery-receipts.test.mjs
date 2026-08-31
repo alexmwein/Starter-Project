@@ -7,6 +7,7 @@ import {
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
+  extendDeliveryRecoveryDeadline,
   readDeliveryStatusResponse,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
@@ -1394,6 +1395,86 @@ test('a confirmed receipt stays visible until its exact transcript row exists', 
   assert.deepEqual(cancelledLater.missing, [message]);
 });
 
+test('a delivered receipt is tracked while its transcript row has not appeared', () => {
+  const message = optimistic({
+    receiptRowId: 12,
+    receiptMessageId: 'server-user-12',
+    receiptObservedAt: null,
+  });
+  const otherSession = optimistic({
+    id: 'optimistic-other-session',
+    sessionId: 'session-2',
+    receiptRowId: 20,
+    receiptMessageId: 'server-user-20',
+    receiptObservedAt: null,
+  });
+
+  const result = reconcileDeliveryReceipts(
+    [message, otherSession],
+    'session-1',
+    11,
+    [],
+  );
+
+  assert.deepEqual(result.remaining, [message, otherSession]);
+  assert.deepEqual(result.reconciled, []);
+  assert.deepEqual(result.missing, []);
+  assert.deepEqual(result.unreconciled, [message]);
+});
+
+test('server-verified stalled receipt observation cannot erase a transcript observation or cancellation', () => {
+  const stalled = persistedMessage({
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+    receiptMessageId: 'server-user-12',
+    receiptRowId: 12,
+    receiptObservedAt: null,
+  });
+  const command = {
+    type: 'observe-stalled-receipt',
+    message: stalled,
+    messageId: stalled.receiptMessageId,
+    rowId: stalled.receiptRowId,
+    observedAt: 1_777_777_787_000,
+  };
+  const observedResult = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [stalled] },
+    command,
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(observedResult.value?.id, stalled.id);
+  assert.equal(
+    observedResult.snapshot.messages[0].receiptObservedAt,
+    command.observedAt,
+  );
+
+  const observed = {
+    ...stalled,
+    receiptObservedAt: 1_777_777_777_000,
+  };
+  const observationWins = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [observed] },
+    command,
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(observationWins.value, null);
+  assert.deepEqual(observationWins.snapshot.messages, [observed]);
+
+  const cancelled = {
+    ...stalled,
+    delivery: 'failed',
+    errorCode: 'conductor_message_cancelled',
+  };
+  const cancellationWins = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [cancelled] },
+    command,
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(cancellationWins.value, null);
+  assert.deepEqual(cancellationWins.snapshot.messages, [cancelled]);
+});
+
 test('receipt expiry cannot erase a cancellation written by another window', () => {
   const observed = persistedMessage({
     delivery: 'delivered',
@@ -1496,7 +1577,73 @@ test('the browser observes confirmed receipts before expiring them', async () =>
   );
   assert.match(
     js,
+    /for \(const message of result\.reconciled\)[\s\S]*receiptObservedAt = Date\.now\(\)[\s\S]*observeDeliveredReceipt\(message\)/,
+  );
+  assert.match(
+    js,
+    /for \(const message of result\.unreconciled\)[\s\S]*verifyStalledDeliveredReceipt\(message\)/,
+  );
+  assert.match(
+    js,
+    /function verifyStalledDeliveredReceipt[\s\S]*requestDeliveryStatus\(message\)[\s\S]*refreshMessages\(message\.sessionId, \{ full: true \}\)[\s\S]*transcriptHasReceipt[\s\S]*type: 'observe-stalled-receipt'[\s\S]*observeDeliveredReceipt\(message\)/,
+  );
+  assert.match(
+    js,
     /const previousDelivery = message\.delivery[\s\S]*deliveryStateTransitions: authorizedDeliveryStateTransition\([\s\S]*previousDelivery/,
+  );
+  assert.match(
+    js,
+    /composer_tree_transient:\s*'Conductor was redrawing the message box\. Retry this message\.'/,
+  );
+});
+
+test('an accepted queued send keeps its recovery window while the relay reports pending', async () => {
+  assert.equal(
+    extendDeliveryRecoveryDeadline(
+      { state: 'pending' },
+      120_000,
+      100_000,
+      120_000,
+    ),
+    220_000,
+  );
+  assert.equal(
+    extendDeliveryRecoveryDeadline(
+      { state: 'failed' },
+      220_000,
+      200_000,
+      120_000,
+    ),
+    220_000,
+  );
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    js,
+    /let deadline = Date\.now\(\) \+ DELIVERY_RECOVERY_MS/,
+  );
+  assert.match(
+    js,
+    /deadline = extendDeliveryRecoveryDeadline\([\s\S]*delivery,[\s\S]*deadline,[\s\S]*Date\.now\(\),[\s\S]*DELIVERY_RECOVERY_MS/,
+  );
+});
+
+test('the backstop rearms only stranded automatic recovery states', () => {
+  const needsRecovery = deliveryReceipts.deliveryBackstopNeedsRecovery;
+  assert.equal(typeof needsRecovery, 'function');
+  assert.equal(needsRecovery({ delivery: 'failed' }), true);
+  assert.equal(needsRecovery({ delivery: 'confirming' }), true);
+  assert.equal(needsRecovery({ delivery: 'delivering' }), true);
+  assert.equal(
+    needsRecovery({ delivery: 'delivering' }, { activePost: true }),
+    false,
+  );
+  assert.equal(needsRecovery({ delivery: 'delivered' }), false);
+  assert.equal(
+    needsRecovery({ delivery: 'failed', definitelyUnsent: true }),
+    false,
   );
 });
 

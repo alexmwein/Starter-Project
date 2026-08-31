@@ -529,6 +529,33 @@ export function pendingDeliverySnapshotTransition(
     );
     return { snapshot, value: candidate };
   }
+  if (command?.type === 'observe-stalled-receipt') {
+    const index = snapshot.messages.findIndex(
+      (candidate) => candidate.id === command.message?.id,
+    );
+    const candidate = index >= 0 ? snapshot.messages[index] : null;
+    const messageId = authorityString(command.messageId, 500);
+    const rowId = Number(command.rowId);
+    const observedAt = Number(command.observedAt);
+    if (
+      candidate?.delivery !== 'delivered' ||
+      !deliveryIdentityMatches(candidate, command.message) ||
+      Number.isFinite(candidate.receiptObservedAt) ||
+      !messageId ||
+      !Number.isSafeInteger(rowId) ||
+      rowId <= 0 ||
+      !Number.isFinite(observedAt) ||
+      observedAt <= 0 ||
+      observedAt > now ||
+      candidate.receiptMessageId !== messageId ||
+      candidate.receiptRowId !== rowId
+    ) {
+      return { snapshot, value: null };
+    }
+    const observed = { ...candidate, receiptObservedAt: observedAt };
+    snapshot.messages[index] = observed;
+    return { snapshot, value: observed };
+  }
   if (
     command?.type === 'finalize-edit' ||
     command?.type === 'release-edit'
@@ -847,6 +874,41 @@ export function deliveryRecoveryDecision(
   };
 }
 
+export function extendDeliveryRecoveryDeadline(
+  delivery,
+  deadline,
+  now,
+  recoveryMs,
+) {
+  const currentDeadline = Number(deadline);
+  const checkedAt = Number(now);
+  const recoveryWindow = Number(recoveryMs);
+  if (
+    delivery?.state !== 'pending' ||
+    !Number.isFinite(currentDeadline) ||
+    !Number.isFinite(checkedAt) ||
+    !Number.isFinite(recoveryWindow) ||
+    recoveryWindow <= 0
+  ) {
+    return currentDeadline;
+  }
+  return Math.max(currentDeadline, checkedAt + recoveryWindow);
+}
+
+export function deliveryBackstopNeedsRecovery(
+  message,
+  { activePost = false } = {},
+) {
+  if (!deliveryNeedsAutomaticRecovery(message)) return false;
+  if (
+    message.delivery === 'failed' ||
+    message.delivery === 'confirming'
+  ) {
+    return true;
+  }
+  return message.delivery === 'delivering' && activePost !== true;
+}
+
 export function deliveryNeedsAutomaticRecovery(message) {
   return (
     message?.definitelyUnsent !== true &&
@@ -912,5 +974,12 @@ export function reconcileDeliveryReceipts(
       message.receiptMessageId.length > 0
     );
   });
-  return { remaining, reconciled, missing };
+  const reconciledMessages = new Set(reconciled);
+  const unreconciled = remaining.filter(
+    (message) =>
+      message.sessionId === sessionId &&
+      message.delivery === 'delivered' &&
+      !reconciledMessages.has(message),
+  );
+  return { remaining, reconciled, missing, unreconciled };
 }

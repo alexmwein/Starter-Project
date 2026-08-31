@@ -59,6 +59,18 @@ test('the on-screen backstop refresh exists, skips a hidden app, and is cleared 
     block,
     /if \(document\.hidden \|\| !state\.auth \|\| !state\.shell\) return/,
   );
+  assert.match(
+    block,
+    /recheckAmbiguousDeliveries\(state\.route\.sessionId, \{\s*settlementOnly: true,?\s*\}\)[\s\S]*transcriptRefresh\.schedule\(\)/,
+  );
+  assert.match(
+    source,
+    /function recheckAmbiguousDeliveries\(\s*sessionId = null,\s*\{ settlementOnly = false \} = \{\},?\s*\)[\s\S]*deliveryBackstopNeedsRecovery\([\s\S]*activePost: deliveryPostsInFlight\.has\(message\.id\)/,
+  );
+  assert.match(
+    source,
+    /deliveryPostsInFlight\.add\(optimistic\.id\)[\s\S]*deliveryPostsInFlight\.delete\(optimistic\.id\)/,
+  );
   // stopEvents must clear it: startEvents calls stopEvents first, so leaking
   // this timer would stack a second backstop on every stream revive.
   assert.match(
