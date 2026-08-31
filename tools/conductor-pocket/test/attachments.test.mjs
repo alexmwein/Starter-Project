@@ -365,62 +365,6 @@ test('staged attachments and idempotent retries survive relay restarts', async (
   afterReleaseRestart.stop();
 });
 
-test('final delivery failure releases only its durable retention claim after restart', async (context) => {
-  const workspacePath = await makeTemporaryDirectory(
-    context,
-    'pocket-retention-claim-',
-  );
-  const scope = {
-    deviceId: 'claim-device',
-    sessionId: 'claim-session',
-    workspacePath,
-  };
-  const firstClaim = 'A'.repeat(43);
-  const secondClaim = 'B'.repeat(43);
-  const first = new AttachmentManager({ normalize: fakeNormalizer });
-  const attachment = await first.upload({
-    key: 'claim-device:upload-key',
-    ...scope,
-    upload: await fakeUpload(context, 'claim-digest'),
-  });
-  await first.retainForSend([attachment.id], {
-    ...scope,
-    retentionClaim: firstClaim,
-  });
-  await first.retainForSend([attachment.id], {
-    ...scope,
-    retentionClaim: secondClaim,
-  });
-  first.stop();
-
-  const afterFirstFailure = new AttachmentManager({
-    normalize: fakeNormalizer,
-  });
-  assert.equal(
-    await afterFirstFailure.releaseAfterFinalFailure(firstClaim, {
-      workspacePaths: [workspacePath],
-    }),
-    1,
-  );
-  await assert.rejects(
-    afterFirstFailure.remove(attachment.id, scope),
-    (error) => error.code === 'attachment_already_sent',
-  );
-  afterFirstFailure.stop();
-
-  const afterSecondFailure = new AttachmentManager({
-    normalize: fakeNormalizer,
-  });
-  assert.equal(
-    await afterSecondFailure.releaseAfterFinalFailure(secondClaim, {
-      workspacePaths: [workspacePath],
-    }),
-    1,
-  );
-  assert.equal(await afterSecondFailure.remove(attachment.id, scope), true);
-  afterSecondFailure.stop();
-});
-
 test('multi-image retention preflights every ledger and cannot strand a partial send', async (context) => {
   const workspacePath = await makeTemporaryDirectory(
     context,

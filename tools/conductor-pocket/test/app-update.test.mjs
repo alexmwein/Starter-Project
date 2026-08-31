@@ -115,63 +115,6 @@ test('the current server shell revision does not reload', async () => {
   assert.equal(reloads, 0);
 });
 
-test('a completed worker activation gets one final reload after stale documents hit the cap', (context) => {
-  const originalSessionStorage = Object.getOwnPropertyDescriptor(
-    globalThis,
-    'sessionStorage',
-  );
-  const stored = new Map();
-  Object.defineProperty(globalThis, 'sessionStorage', {
-    configurable: true,
-    value: {
-      getItem: (key) => stored.get(key) ?? null,
-      setItem: (key, value) => stored.set(key, String(value)),
-      removeItem: (key) => stored.delete(key),
-    },
-  });
-  context.after(() => {
-    if (originalSessionStorage) {
-      Object.defineProperty(
-        globalThis,
-        'sessionStorage',
-        originalSessionStorage,
-      );
-    } else {
-      delete globalThis.sessionStorage;
-    }
-  });
-
-  const reloads = [];
-  const createStalePage = () => {
-    const serviceWorker = fakeServiceWorker({ id: 'old-controller' });
-    const coordinator = createAppUpdateCoordinator(
-      coordinatorOptions(serviceWorker, {
-        clientRevision: 'shell-old',
-        reload: (revision) => reloads.push(revision),
-      }),
-    );
-    coordinator.start();
-    return coordinator;
-  };
-
-  createStalePage().serverRevision('shell-new');
-  createStalePage().serverRevision('shell-new');
-  assert.deepEqual(reloads, ['shell-new', 'shell-new']);
-
-  const activatedPage = createStalePage();
-  assert.equal(activatedPage.serverRevision('shell-new'), true);
-  assert.equal(reloads.length, 2, 'the stale-document cap must stop health reloads');
-
-  assert.equal(
-    activatedPage.serverRevision('shell-new', { workerActivated: true }),
-    true,
-  );
-  assert.deepEqual(reloads, ['shell-new', 'shell-new', 'shell-new']);
-
-  activatedPage.serverRevision('shell-new', { workerActivated: true });
-  assert.equal(reloads.length, 3, 'one activation cannot start a reload loop');
-});
-
 test('a shell revision waits for an active delivery and keeps its revision', () => {
   const serviceWorker = fakeServiceWorker({ id: 'controller' });
   let safe = false;

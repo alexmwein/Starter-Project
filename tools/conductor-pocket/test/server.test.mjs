@@ -2295,10 +2295,17 @@ test('a delivered receipt remains authoritative after a relay restart', async ()
     await transportStartedPromise;
     droppedRequest.destroy();
     await droppedResponse;
-    assert.equal(await firstServer.drainPocketRequests(5_000), true);
-    const durableResult = JSON.parse(
-      await fs.readFile(deliveryLedgerPath, 'utf8'),
-    ).entries[0]?.result;
+    let durableResult = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const ledger = JSON.parse(
+        await fs.readFile(deliveryLedgerPath, 'utf8'),
+      );
+      if (ledger.entries[0]?.state === 'resolved') {
+        durableResult = ledger.entries[0].result;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     assert.equal(durableResult?.ok, true);
     await close(firstServer);
 
@@ -3255,7 +3262,7 @@ test('an interruption before Pocket owns the full composer fails fast and is ret
   );
 });
 
-test('an interrupted owned composer stays non-retryable while recovery is open', async (context) => {
+test('an interrupted pre-send attempt is retryable only after Conductor stays unchanged', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
     developmentMode: true,
@@ -3319,156 +3326,15 @@ test('an interrupted owned composer stays non-retryable while recovery is open',
   const retry = await postMessage(port, {
     idempotencyKey: 'input_interruption_retry_key',
   });
-  const status = await postDeliveryStatus(port, {
-    idempotencyKey: 'input_interruption_retry_key',
-  });
 
-  assert.equal(first.status, 502);
+  assert.equal(first.status, 409);
   assert.deepEqual(JSON.parse(first.body).error, {
-    code: 'send_not_confirmed',
-    retrySafe: false,
-  });
-  assert.equal(retry.status, 502);
-  assert.deepEqual(JSON.parse(status.body).delivery, {
-    state: 'pending',
-    phase: 'confirming',
-  });
-  assert.equal(sends, 1);
-});
-
-test('an interrupted send becomes retryable only after an empty recovery window', async () => {
-  const reconciliation = await reconcileExactUserMessage({
-    database: {
-      listUserMessagesAfter() {
-        return [];
-      },
-    },
-    sessionId: 'test-session',
-    afterRowId: 25,
-    exactContentHash: sha256('Interrupted Pocket message'),
-    pressedAt: Date.now() - 60_001,
-    composerOwned: true,
-    attributionWindowMs: 60_000,
-    timeoutMs: 0,
-  });
-
-  assert.deepEqual(reconciliation, {
-    state: 'failed',
-    definitelyUnsent: true,
-  });
-});
-
-test('delivery status unlocks one retry after the interruption window is empty', async (context) => {
-  const { config } = createConfig({
-    publicOrigin: 'http://127.0.0.1:4317',
-    developmentMode: true,
-  });
-  let sends = 0;
-  const server = createPocketServer({
-    configStore: { value: config },
-    security: {
-      assertOrigin() {},
-      session() {
-        return {
-          device: { id: 'test-device' },
-          csrfToken: 'test-csrf',
-          unlocked: true,
-        };
-      },
-    },
-    database: {
-      getSessionRoute() {
-        return {
-          id: 'test-session',
-          workspaceName: 'Workspace',
-          title: 'Chat',
-          titleOrdinal: 1,
-        };
-      },
-      getSessionMessageCursor() {
-        return 25;
-      },
-      listUserMessagesAfter() {
-        return [];
-      },
-    },
-    watcher: createWatcher(),
-    transport: {
-      async send() {
-        sends += 1;
-        if (sends === 1) {
-          return {
-            ok: false,
-            code: 'send_interrupted',
-            pressedAt: Date.now() - 60_001,
-            composerOwned: true,
-          };
-        }
-        return {
-          ok: false,
-          code: 'composer_unavailable',
-          safeToRetry: true,
-        };
-      },
-    },
-  });
-  const port = await listen(server);
-  context.after(() => close(server));
-
-  const first = await postMessage(port, {
-    idempotencyKey: 'expired_input_interruption_key',
-  });
-  const status = await postDeliveryStatus(port, {
-    idempotencyKey: 'expired_input_interruption_key',
-  });
-  const retry = await postMessage(port, {
-    idempotencyKey: 'expired_input_interruption_key',
-  });
-
-  assert.equal(first.status, 502);
-  assert.deepEqual(JSON.parse(status.body).delivery, {
-    state: 'failed',
     code: 'user_input_active',
     retrySafe: true,
-    final: true,
+    definitelyUnsent: true,
   });
   assert.equal(retry.status, 503);
   assert.equal(sends, 3);
-});
-
-test('an interrupted send bounds initial confirmation while preserving the recovery window', async () => {
-  const source = await fs.readFile(
-    new URL('../src/server.mjs', import.meta.url),
-    'utf8',
-  );
-  assert.match(
-    source,
-    /const SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS = 5_000;/,
-  );
-  assert.match(
-    source,
-    /const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;/,
-  );
-  const start = source.indexOf(
-    'const confirmationAttributionWindowMs =',
-  );
-  const block = source.slice(start, start + 1_700);
-  assert.match(
-    block,
-    /const confirmationTimeoutMs =[\s\S]*SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS/,
-  );
-  assert.match(
-    block,
-    /timeoutMs:\s*confirmationTimeoutMs/,
-  );
-  assert.match(
-    block,
-    /attributionWindowMs:\s*confirmationAttributionWindowMs/,
-  );
-  assert.doesNotMatch(
-    block,
-    /timeoutMs:\s*SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS/,
-  );
 });
 
 test('a cleared composer without an exact database row is never reported delivered', async (context) => {

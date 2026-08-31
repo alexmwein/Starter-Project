@@ -692,26 +692,26 @@ async function serve(options) {
   // A send's automation runs up to 45s plus confirmation, so a shutdown that
   // force-exits at a flat 5s routinely dies mid-send, and the osascript child
   // survives the parent and keeps typing into Conductor with no relay left to
-  // record the result. Exit is gated on the server closing, the transport
-  // draining, and every accepted request settling. Shutdown also seals the
-  // mutation queue, so queued sends and tab actions fail before touching
-  // Conductor while the one mutation already running gets the full automation
-  // and confirmation budget. The LaunchAgent waits beyond the force deadline.
-  const SHUTDOWN_DRAIN_MS = 55_000;
-  const SHUTDOWN_FORCE_EXIT_MS = 60_000;
+  // record the result. Exit is therefore gated on BOTH the server closing and
+  // the transport draining (a phone that gave up its connection early must
+  // not let the relay exit under a live automation), the drain budget covers
+  // the full automation worst case, and any forced path kills the child
+  // first. The LaunchAgent's ExitTimeOut is set above the force deadline so
+  // launchd's own SIGKILL cannot preempt this sequence.
+  const SHUTDOWN_DRAIN_MS = 50_000;
+  const SHUTDOWN_FORCE_EXIT_MS = 55_000;
   const shutdown = () => {
     let serverClosed = false;
     let transportDrained = false;
-    let requestsDrained = false;
-    const exitWhenAllSettle = () => {
-      if (!serverClosed || !transportDrained || !requestsDrained) return;
+    const exitWhenBothSettle = () => {
+      if (!serverClosed || !transportDrained) return;
       database.close();
       process.exit(0);
     };
     server.closePocketEventStreams?.();
     server.close(() => {
       serverClosed = true;
-      exitWhenAllSettle();
+      exitWhenBothSettle();
     });
     void transport
       .drain(SHUTDOWN_DRAIN_MS)
@@ -721,19 +721,8 @@ async function serve(options) {
       .catch(() => transport.killCurrentAutomation())
       .then(() => {
         transportDrained = true;
-        exitWhenAllSettle();
+        exitWhenBothSettle();
       });
-    void server
-      .drainPocketRequests(SHUTDOWN_DRAIN_MS)
-      .then((drained) => {
-        if (!drained) {
-          transport.killCurrentAutomation();
-          return;
-        }
-        requestsDrained = true;
-        exitWhenAllSettle();
-      })
-      .catch(() => transport.killCurrentAutomation());
     setTimeout(() => {
       transport.killCurrentAutomation();
       process.exit(1);

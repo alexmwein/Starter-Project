@@ -43,7 +43,6 @@ const SEND_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_CONFIRMATION_POLL_MS = 50;
 const SEND_ATTRIBUTION_WINDOW_MS = 3_000;
 const SEND_EVENT_TIMESTAMP_SKEW_MS = 250;
-const SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS = 5_000;
 const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;
 const SEND_ATTRIBUTION_RECHECK_MS = 400;
 const SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS = 15_000;
@@ -91,10 +90,6 @@ const staticFiles = new Map([
   ['/usage-state.js', ['usage-state.js', 'text/javascript; charset=utf-8']],
   ['/app-update.js', ['app-update.js', 'text/javascript; charset=utf-8']],
   ['/http.js', ['http.js', 'text/javascript; charset=utf-8']],
-  [
-    '/session-lifecycle.js',
-    ['session-lifecycle.js', 'text/javascript; charset=utf-8'],
-  ],
   [
     '/image-attachments.js',
     ['image-attachments.js', 'text/javascript; charset=utf-8'],
@@ -409,25 +404,16 @@ export async function reconcileExactUserMessage({
       timeoutMs: candidateTimeoutMs,
       attributionWindowMs,
     });
-  const attributionDeadline = pressedAt + attributionWindowMs;
-  let attributionExpired = Date.now() > attributionDeadline;
-  let match = await reconcile(attributionExpired ? 0 : timeoutMs);
+  let match = await reconcile(timeoutMs);
   if (match) return { state: 'delivered', match };
-  attributionExpired = Date.now() > attributionDeadline;
-  let rows;
-  try {
-    rows = database.listUserMessagesAfter(sessionId, afterRowId);
-  } catch {
-    return { state: attributionExpired ? 'failed' : 'pending' };
+  if (Date.now() > pressedAt + attributionWindowMs) {
+    return { state: 'failed' };
   }
-  if (rows.length === 0) {
-    if (!attributionExpired) return { state: 'pending' };
-    return {
-      state: 'failed',
-      ...(attributionWindowMs === SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-        ? { definitelyUnsent: true }
-        : {}),
-    };
+  try {
+    const rows = database.listUserMessagesAfter(sessionId, afterRowId);
+    if (rows.length === 0) return { state: 'pending' };
+  } catch {
+    return { state: 'pending' };
   }
   match = await reconcile(0);
   return match
@@ -963,36 +949,21 @@ class IdempotencyStore {
               entry.promise = Promise.resolve(delivered);
               await this.#persist();
             }
-            return reconciliation;
+            return reconciliation.state;
           })
           .finally(() => {
             entry.reconciliationPromise = null;
           });
       }
-      const reconciliation = await entry.reconciliationPromise;
-      if (reconciliation.state === 'pending') {
+      const reconciliationState = await entry.reconciliationPromise;
+      if (reconciliationState === 'pending') {
         return { state: 'pending', phase: 'confirming' };
       }
-      if (reconciliation.state === 'failed' && !entry.result.ok) {
-        if (
-          reconciliation.definitelyUnsent === true &&
-          recovery.attributionWindowMs ===
-            SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
-        ) {
-          // The full physical-input recovery window elapsed with no user row.
-          // That restores a safe retry without making the initial five-second
-          // confirmation attempt guess that a delayed row will never arrive.
-          entry.result = {
-            ok: false,
-            code: 'user_input_active',
-            safeToRetry: true,
-          };
-          entry.promise = Promise.resolve(entry.result);
-        } else {
-          // A failed reconciliation is conclusive, but an interfering or
-          // unreadable row cannot prove a retry boundary.
-          delete entry.result.recovery;
-        }
+      if (reconciliationState === 'failed' && !entry.result.ok) {
+        // A failed reconciliation is conclusive: either its attribution
+        // window elapsed or another row made attribution unsafe. Do not scan
+        // the database again for this idempotency key.
+        delete entry.result.recovery;
         await this.#persist();
       }
     }
@@ -1672,7 +1643,6 @@ function sameSessionRoute(expected, current, { attachments = false } = {}) {
     current.repositoryName !== expected.repositoryName ||
     current.workspaceId !== expected.workspaceId ||
     current.workspaceName !== expected.workspaceName ||
-    current.repositoryName !== expected.repositoryName ||
     current.title !== expected.title ||
     current.titleOrdinal !== expected.titleOrdinal
   ) {
@@ -2172,39 +2142,6 @@ export function createPocketServer({
     }
   }
 
-  function attachmentRetentionClaim(key) {
-    return deliveryLedgerProof(
-      configStore.value.csrfSecret,
-      'attachment-retention',
-      key,
-    );
-  }
-
-  async function releaseAttachmentsAfterFinalFailure(
-    key,
-    workspacePaths,
-    traceId = null,
-  ) {
-    if (
-      typeof attachmentManager.releaseAfterFinalFailure !== 'function'
-    ) {
-      return;
-    }
-    try {
-      await attachmentManager.releaseAfterFinalFailure(
-        attachmentRetentionClaim(key),
-        {
-          workspacePaths: [...new Set(workspacePaths.filter(Boolean))],
-        },
-      );
-    } catch {
-      recordAudit({
-        ...(traceId ? { traceId } : {}),
-        phase: 'attachment-final-release-failed',
-      });
-    }
-  }
-
   const unsubscribe = watcher.subscribe((event) => {
     const payload = `event: change\ndata: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) {
@@ -2223,7 +2160,7 @@ export function createPocketServer({
       });
   });
 
-  const handlePocketRequest = async (request, response) => {
+  const server = http.createServer(async (request, response) => {
     const config = configStore.value;
     let requestPathname = null;
     let deliveryTransportStarted = false;
@@ -2300,39 +2237,6 @@ export function createPocketServer({
 
       if (
         request.method === 'POST' &&
-        requestUrl.pathname === '/api/auth/recover/options'
-      ) {
-        const recovery = await security.recoveryAuthenticationOptions(request);
-        return sendJson(
-          response,
-          200,
-          recovery.options,
-          config,
-          { 'Set-Cookie': recovery.setCookie },
-        );
-      }
-
-      if (
-        request.method === 'POST' &&
-        requestUrl.pathname === '/api/auth/recover/verify'
-      ) {
-        const body = await readJson(request);
-        const recovery = await security.verifyRecoveryAuthentication(
-          request,
-          body.response,
-        );
-        const { setCookies, ...result } = recovery;
-        return sendJson(
-          response,
-          200,
-          result,
-          config,
-          { 'Set-Cookie': setCookies },
-        );
-      }
-
-      if (
-        request.method === 'POST' &&
         requestUrl.pathname === '/api/auth/options'
       ) {
         const options = await security.authenticationOptions(request);
@@ -2367,14 +2271,8 @@ export function createPocketServer({
       }
 
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/touch') {
-        const { setCookie, ...result } = await security.touch(request);
-        return sendJson(
-          response,
-          200,
-          result,
-          config,
-          setCookie ? { 'Set-Cookie': setCookie } : {},
-        );
+        const result = security.touch(request);
+        return sendJson(response, 200, result, config);
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/events') {
@@ -2723,21 +2621,10 @@ export function createPocketServer({
         const route = database.getSessionRoute(deliveryStatus[0]);
         if (!route) throw new HttpError(404, 'session_not_found');
         const key = `${auth.device.id}:${idempotencyKey(request)}`;
-        const delivery = await idempotency.status(key, route.id, database);
-        if (
-          delivery.state === 'failed' &&
-          delivery.final === true &&
-          typeof attachmentManager.releaseAfterFinalFailure === 'function'
-        ) {
-          await releaseAttachmentsAfterFinalFailure(key, [
-            route.workspacePath,
-            ...localAttachmentWorkspacePaths(),
-          ]);
-        }
         return sendJson(
           response,
           200,
-          { delivery },
+          { delivery: await idempotency.status(key, route.id, database) },
           config,
         );
       }
@@ -2806,7 +2693,6 @@ export function createPocketServer({
           attachmentIds,
         });
         const traceId = randomUUID();
-        const retentionClaim = attachmentRetentionClaim(key);
         const sendStartedAt = Date.now();
         const clientRevision = clientShellRevision(request);
         const deliveryOperation = idempotency.run(
@@ -3290,18 +3176,6 @@ export function createPocketServer({
                     : attributedTransportFailure
                       ? SEND_DELIVERY_RECOVERY_ATTRIBUTION_WINDOW_MS
                     : SEND_ATTRIBUTION_WINDOW_MS;
-                const confirmationTimeoutMs =
-                  sendResult.code === 'send_interrupted'
-                    ? Math.max(
-                        0,
-                        Math.min(
-                          SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS,
-                          confirmationPressedAt +
-                            SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS -
-                            Date.now(),
-                        ),
-                      )
-                    : SEND_CONFIRMATION_TIMEOUT_MS;
                 await setDeliveryPhase('confirming');
                 const confirmed = await waitForExactUserMessage({
                   database,
@@ -3310,7 +3184,10 @@ export function createPocketServer({
                   exactContent: deliveryMessage,
                   pressedAt: confirmationPressedAt,
                   composerOwned: confirmationComposerOwned,
-                  timeoutMs: confirmationTimeoutMs,
+                  timeoutMs:
+                    sendResult.code === 'send_interrupted'
+                      ? SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS
+                      : SEND_CONFIRMATION_TIMEOUT_MS,
                   attributionWindowMs:
                     confirmationAttributionWindowMs,
                 });
@@ -3415,13 +3292,6 @@ export function createPocketServer({
         });
         if (deliveryOperation.joined) deliveryTransportStarted = true;
         const result = await deliveryOperation.promise;
-        if (!result.ok && result.final === true) {
-          await releaseAttachmentsAfterFinalFailure(
-            key,
-            [attachmentWorkspacePath, ...localAttachmentWorkspacePaths()],
-            traceId,
-          );
-        }
         recordAudit({
           traceId,
           phase: 'complete',
@@ -3570,11 +3440,6 @@ export function createPocketServer({
         configStore.value,
       );
     }
-  };
-
-  const server = http.createServer((request, response) => {
-    const operation = handlePocketRequest(request, response);
-    void trackRequestTask(operation).catch(() => {});
   });
 
   server.closePocketEventStreams = closePocketEventStreams;
@@ -3663,7 +3528,6 @@ async function serveStatic(
         pathname === '/bootstrap-recovery.js' ||
         pathname === '/delivery-receipts.js' ||
         pathname === '/app-update.js' ||
-        pathname === '/session-lifecycle.js' ||
         pathname === '/' ||
         pathname === '/index.html'
           ? 'no-cache'

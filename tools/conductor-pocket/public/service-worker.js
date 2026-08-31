@@ -31,7 +31,6 @@ const SHELL_PATHS = new Set([
   '/usage-state.js',
   '/app-update.js',
   '/http.js',
-  '/session-lifecycle.js',
   '/image-attachments.js',
   '/live-refresh.js',
   '/read-state.js',
@@ -50,7 +49,6 @@ const SHELL_ASSET_PATHS = new Set([
   '/usage-state.js',
   '/app-update.js',
   '/http.js',
-  '/session-lifecycle.js',
   '/image-attachments.js',
   '/live-refresh.js',
   '/read-state.js',
@@ -157,24 +155,6 @@ self.addEventListener('install', (event) => {
   );
 });
 
-function activationRevisionForClient(clientUrl) {
-  try {
-    const attemptedRevision = new URL(clientUrl).searchParams.get(
-      'appRevision',
-    );
-    if (attemptedRevision === SHELL_REVISION) {
-      // Older Pocket shells cap retries by revision. If an old worker served
-      // its cached document after a reload, use a one-time activation token so
-      // that old coordinator can safely try again now that this worker owns the
-      // complete new shell.
-      return `${SHELL_REVISION}:activated`;
-    }
-  } catch {
-    // A malformed client URL still receives the ordinary revision signal.
-  }
-  return SHELL_REVISION;
-}
-
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
@@ -196,7 +176,7 @@ self.addEventListener('activate', (event) => {
       for (const client of windows) {
         client.postMessage({
           type: 'shell-activated',
-          revision: activationRevisionForClient(client.url),
+          revision: SHELL_REVISION,
         });
       }
     })(),

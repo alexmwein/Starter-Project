@@ -2,7 +2,6 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { createConfig } from '../src/config.mjs';
 import { parseAttachmentMessage } from '../src/attachment-markup.mjs';
-import { HttpError } from '../src/errors.mjs';
 import { createPocketServer } from '../src/server.mjs';
 
 const port = Number(process.env.POCKET_UI_PORT || 4320);
@@ -469,9 +468,6 @@ const security = {
     };
   },
   bootstrap() {
-    if (fixtureMode === 'expired') {
-      throw new HttpError(401, 'device_session_expired');
-    }
     return {
       authenticated: true,
       unlocked: fixtureMode !== 'locked',
@@ -485,12 +481,6 @@ const security = {
         name: "Alex's iPhone",
         createdAt: at(14_400),
         lastSeenAt: at(0),
-        trustedUntil: new Date(
-          Date.now() + (fixtureMode === 'warning' ? 2 : 20) * 24 * 60 * 60 * 1000,
-        ).toISOString(),
-        sessionExpiresAt: new Date(
-          Date.now() + (fixtureMode === 'warning' ? 3 : 21) * 24 * 60 * 60 * 1000,
-        ).toISOString(),
         tailscaleLogin: 'alex@example.com',
         passkeyBackedUp: true,
       },
@@ -590,9 +580,7 @@ const server = createPocketServer({
 });
 
 const usesConnectionProxy =
-  fixtureMode === 'offline' ||
-  fixtureMode === 'reconnecting' ||
-  fixtureMode === 'unreachable';
+  fixtureMode === 'offline' || fixtureMode === 'reconnecting';
 const relayPort = usesConnectionProxy ? port + 1_000 : port;
 let proxy = null;
 
@@ -600,17 +588,6 @@ function startConnectionProxy() {
   let servedInitialStream = false;
   proxy = http.createServer((request, response) => {
     const isEventStream = request.url?.startsWith('/api/events');
-    if (
-      fixtureMode === 'unreachable' &&
-      request.url?.startsWith('/api/auth/bootstrap')
-    ) {
-      response.writeHead(503, {
-        'Cache-Control': 'no-store',
-        'Content-Type': 'application/json; charset=utf-8',
-      });
-      response.end('{"error":{"code":"fixture_mac_unreachable"}}');
-      return;
-    }
     if (
       isEventStream &&
       (fixtureMode === 'reconnecting' || servedInitialStream)

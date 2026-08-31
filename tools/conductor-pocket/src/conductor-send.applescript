@@ -161,15 +161,6 @@ on workspaceListFailure(inputScriptPath, conductorPid)
 	end try
 end workspaceListFailure
 
-on expandCollapsedProject(inputScriptPath, conductorPid)
-	set my projectExpansionAttempted to true
-	try
-		return do shell script "/usr/bin/env POCKET_OPERATION=workspace-expand /usr/bin/osascript -l JavaScript " & quoted form of inputScriptPath & " " & (conductorPid as text)
-	on error
-		return "not-expanded"
-	end try
-end expandCollapsedProject
-
 on isMainGroup(candidate)
 	set tabGroupCount to 0
 	set composerCount to 0
@@ -217,50 +208,6 @@ on isMainGroup(candidate)
 	end tell
 	return tabGroupCount is 1 and composerCount is 1
 end isMainGroup
-
-on mainGroupCandidates(rootElements)
-	set matchingGroups to {}
-	set inspectedCount to count of rootElements
-	if inspectedCount > my maxMainRootCandidates then return {}
-	tell application "System Events"
-		repeat with candidate in rootElements
-			if my isMainGroup(candidate) then
-				copy candidate to end of matchingGroups
-			else
-				try
-					set candidateElements to UI elements of candidate
-				on error
-					set candidateElements to {}
-				end try
-				set childCount to count of candidateElements
-				if childCount > 0 then
-					set bulkRoles to missing value
-					try
-						set candidateRoles to role of UI elements of candidate
-						if (count of candidateRoles) is childCount then set bulkRoles to candidateRoles
-					end try
-					repeat with childIndex from 1 to childCount
-						set childRole to ""
-						if bulkRoles is not missing value then
-							set childRole to item childIndex of bulkRoles
-						else
-							try
-								set childRole to role of item childIndex of candidateElements as text
-							end try
-						end if
-						if childRole is "AXGroup" then
-							set inspectedCount to inspectedCount + 1
-							if inspectedCount > my maxMainRootCandidates then return {}
-							set nestedCandidate to item childIndex of candidateElements
-							if my isMainGroup(nestedCandidate) then copy nestedCandidate to end of matchingGroups
-						end if
-					end repeat
-				end if
-			end if
-		end repeat
-	end tell
-	return matchingGroups
-end mainGroupCandidates
 
 on findSidebarGroup(workspaceName)
 	my clearWorkspaceRouteCache()
@@ -316,6 +263,7 @@ on getMainGroup()
 	if my heldMainGroup is not missing value then return my heldMainGroup
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
+	set matchingGroups to {}
 	tell application "System Events"
 		try
 			set rootElements to UI elements of webArea
@@ -327,7 +275,6 @@ on getMainGroup()
 			if my isMainGroup(candidate) then copy candidate to end of matchingGroups
 		end repeat
 	end tell
-	set matchingGroups to my mainGroupCandidates(rootElements)
 	if (count of matchingGroups) is not 1 then return missing value
 	set my heldMainGroup to item 1 of matchingGroups
 	return my heldMainGroup
@@ -996,7 +943,6 @@ set messageText to my decodeBase64(system attribute "POCKET_MESSAGE_BASE64")
 set replaceDraft to (system attribute "POCKET_REPLACE_DRAFT") is "true"
 set expectedDraft to my decodeBase64(system attribute "POCKET_EXPECTED_DRAFT_BASE64")
 set retryInputCounters to system attribute "POCKET_EXPECTED_INPUT_COUNTERS"
-set my projectExpansionAttempted to false
 
 set inputReadiness to my waitForInputIdle(inputScriptPath, conductorPid)
 if inputReadiness is "busy" then return "{\"ok\":false,\"code\":\"user_input_active\"}"

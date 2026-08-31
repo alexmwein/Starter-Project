@@ -86,7 +86,7 @@ async function loadWorker({
         claimCalls += 1;
       },
       async matchAll() {
-        return clients;
+        return [];
       },
     },
     addEventListener(type, listener) {
