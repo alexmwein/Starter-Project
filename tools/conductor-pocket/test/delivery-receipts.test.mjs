@@ -7,9 +7,12 @@ import {
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
+  extendDeliveryRecoveryDeadline,
   readDeliveryStatusResponse,
+  rearmDeliveryRecovery,
   receiptReachedTranscript,
   reconcileDeliveryReceipts,
+  runDefinitelyUnsentRetry,
   terminalDeliveryActionDisposition,
 } from '../public/delivery-receipts.js';
 
@@ -58,6 +61,46 @@ test('a terminal tombstone stops a stale Pocket window from resurrecting a delet
   assert.deepEqual(staleRecovery?.snapshot?.messages, []);
   assert.equal(staleRecovery?.snapshot?.version, 2);
   assert.equal(staleRecovery?.snapshot?.tombstones?.length, 1);
+});
+
+test('a certified unsent retry claims locally and posts the same delivery without a status preflight', async () => {
+  const message = persistedMessage({
+    errorCode: 'automation_budget_exhausted',
+  });
+  const calls = [];
+  const claimed = {
+    ...message,
+    delivery: 'delivering',
+    deliveryAttempt: 2,
+    retrySafe: false,
+    definitelyUnsent: false,
+  };
+
+  const result = await runDefinitelyUnsentRetry({
+    message,
+    canRetry(candidate) {
+      calls.push(['can-retry', candidate.activeDeliveryKey]);
+      return candidate.retrySafe === true && candidate.definitelyUnsent === true;
+    },
+    async claim(candidate) {
+      calls.push(['claim', candidate.activeDeliveryKey]);
+      return claimed;
+    },
+    apply(candidate) {
+      calls.push(['apply', candidate.activeDeliveryKey]);
+    },
+    deliver(candidate) {
+      calls.push(['post', candidate.activeDeliveryKey]);
+    },
+  });
+
+  assert.deepEqual(result, { status: 'started', message: claimed });
+  assert.deepEqual(calls, [
+    ['can-retry', message.activeDeliveryKey],
+    ['claim', message.activeDeliveryKey],
+    ['apply', message.activeDeliveryKey],
+    ['post', message.activeDeliveryKey],
+  ]);
 });
 
 test('stopping a delivery check leaves one actionable notice without rearming recovery', () => {
@@ -109,21 +152,12 @@ test('a retry clears the collapsed project name from the prior failure', () => {
     {
       type: 'claim-terminal',
       action: 'retry',
-      nextDeliveryKey: 'idempotency-key-retry-123456789',
       message,
     },
     { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
   );
 
   assert.equal(retried.value?.delivery, 'delivering');
-  assert.equal(
-    retried.value?.activeDeliveryKey,
-    'idempotency-key-retry-123456789',
-  );
-  assert.equal(
-    retried.value?.idempotencyKey,
-    'idempotency-key-retry-123456789',
-  );
   assert.equal(retried.value?.errorCode, null);
   assert.equal(retried.value?.errorProjectName, null);
 });
@@ -212,7 +246,7 @@ test('two Pocket windows get one atomic winner for the same visible draft revisi
   assert.equal(secondWindow?.snapshot?.draftClaims?.length, 1);
 });
 
-test('a duplicate draft revision identifies the exact delivery that owns it', () => {
+test('a duplicate draft claim identifies the exact delivery that owns it', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const firstMessage = persistedMessage({
     id: 'optimistic:owned-draft-first-123456789',
@@ -241,7 +275,7 @@ test('a duplicate draft revision identifies the exact delivery that owns it', ()
   );
   const duplicate = transition(
     first.snapshot,
-    claim(duplicateMessage, 'draft-owned-first-123456789'),
+    claim(duplicateMessage, 'draft-owned-duplicate-123456789'),
     { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
   );
 
@@ -296,37 +330,6 @@ test('editing a definitely unsent delivery releases only its exact draft claim',
   assert.equal(finalized.value?.id, message.id);
   assert.deepEqual(finalized.snapshot.messages, []);
   assert.deepEqual(finalized.snapshot.draftClaims, []);
-});
-
-test('restoring a phone draft can atomically remove its pending claim', () => {
-  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
-  const message = persistedMessage({
-    id: 'optimistic:restored-phone-draft-123456789',
-  });
-  const claimed = transition(
-    [],
-    {
-      type: 'claim-draft-send',
-      sessionId: message.sessionId,
-      draftRevision: 'draft-restored-phone-123456789',
-      payloadFingerprint: 'payload-restored-phone-123456789',
-      message,
-    },
-    { sanitize: acceptPersistedMessage, now: 1_777_777_777_000 },
-  );
-  const removed = transition(
-    claimed.snapshot,
-    {
-      type: 'mutate',
-      upserts: [],
-      removeIds: [message.id],
-      releaseDraftClaimIds: [message.id],
-    },
-    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
-  );
-
-  assert.deepEqual(removed.snapshot.messages, []);
-  assert.deepEqual(removed.snapshot.draftClaims, []);
 });
 
 test('editing an unconfirmed delivery keeps its duplicate protection', () => {
@@ -400,12 +403,7 @@ test('a retried delivery remains the owner of its original draft claim', () => {
   );
   const retried = transition(
     first.snapshot,
-    {
-      type: 'claim-terminal',
-      action: 'retry',
-      nextDeliveryKey: 'idempotency-retried-owner-next-123456789',
-      message,
-    },
+    { type: 'claim-terminal', action: 'retry', message },
     { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
   );
   const blocked = transition(
@@ -413,7 +411,7 @@ test('a retried delivery remains the owner of its original draft claim', () => {
     {
       type: 'claim-draft-send',
       sessionId: duplicate.sessionId,
-      draftRevision: 'draft-retried-owner-first-123456789',
+      draftRevision: 'draft-retried-owner-second-123456789',
       payloadFingerprint: 'payload-retried-owner-123456789',
       message: duplicate,
     },
@@ -424,6 +422,93 @@ test('a retried delivery remains the owner of its original draft claim', () => {
   assert.equal(blocked.value?.kind, 'draft-claim-conflict');
   assert.equal(blocked.value?.message?.id, message.id);
   assert.equal(blocked.value?.message?.deliveryAttempt, 2);
+});
+
+test('a reconciled delivery releases its draft claim before an intentional identical send', () => {
+  const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
+  const firstMessage = persistedMessage({
+    id: 'optimistic:resolved-draft-owner-123456789',
+    idempotencyKey: 'resolved-draft-owner-key-123456789',
+    activeDeliveryKey: 'resolved-draft-owner-key-123456789',
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+    receiptObservedAt: 1_777_777_778_000,
+  });
+  const snapshot = {
+    version: 2,
+    messages: [firstMessage],
+    tombstones: [],
+    draftClaims: [{
+      sessionId: firstMessage.sessionId,
+      draftRevision: 'resolved-draft-revision-123456789',
+      payloadFingerprint: 'resolved-draft-payload-123456789',
+      messageId: firstMessage.id,
+      activeDeliveryKey: firstMessage.activeDeliveryKey,
+      deliveryAttempt: firstMessage.deliveryAttempt,
+      at: 1_777_777_777_000,
+    }],
+  };
+  const expired = transition(
+    snapshot,
+    {
+      type: 'expire-receipt',
+      message: firstMessage,
+      observedAt: firstMessage.receiptObservedAt,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_779_000 },
+  );
+  const secondMessage = persistedMessage({
+    id: 'optimistic:later-identical-send-123456789',
+    idempotencyKey: 'later-identical-send-key-123456789',
+    activeDeliveryKey: 'later-identical-send-key-123456789',
+    delivery: 'delivering',
+  });
+  const second = transition(
+    expired.snapshot,
+    {
+      type: 'claim-draft-send',
+      sessionId: secondMessage.sessionId,
+      draftRevision: 'later-identical-draft-revision-123456789',
+      payloadFingerprint: 'resolved-draft-payload-123456789',
+      message: secondMessage,
+    },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_780_000 },
+  );
+
+  assert.equal(expired.value?.id, firstMessage.id);
+  assert.deepEqual(expired.snapshot.draftClaims, []);
+  assert.equal(second.value?.id, secondMessage.id);
+});
+
+test('snapshot normalization clears a legacy draft claim whose delivery already resolved', () => {
+  const ownerId = 'optimistic:legacy-resolved-owner-123456789';
+  const normalized = deliveryReceipts.pendingDeliverySnapshotTransition(
+    {
+      version: 2,
+      messages: [],
+      tombstones: [{
+        id: ownerId,
+        activeDeliveryKey: 'legacy-resolved-owner-key-123456789',
+        deliveryAttempt: 1,
+        action: 'resolved',
+        at: 1_777_777_777_000,
+      }],
+      draftClaims: [{
+        sessionId: 'session-1',
+        draftRevision: 'legacy-resolved-revision-123456789',
+        payloadFingerprint: 'legacy-resolved-payload-123456789',
+        messageId: ownerId,
+        activeDeliveryKey: 'legacy-resolved-owner-key-123456789',
+        deliveryAttempt: 1,
+        at: 1_777_777_777_000,
+      }],
+    },
+    { type: 'mutate' },
+    { sanitize: acceptPersistedMessage, now: 1_777_777_778_000 },
+  );
+
+  assert.deepEqual(normalized.snapshot.draftClaims, []);
 });
 
 test('deleting a definitely unsent legacy delivery releases its matching payload claim', () => {
@@ -477,7 +562,7 @@ test('draft claim conflicts explain the owning delivery without changing layout'
   );
 });
 
-test('a newly authored draft may intentionally repeat an earlier payload', () => {
+test('two Pocket windows cannot send one visible payload through divergent revisions', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const firstMessage = persistedMessage({
     id: 'optimistic:first-payload-123456789',
@@ -529,15 +614,16 @@ test('a newly authored draft may intentionally repeat an earlier payload', () =>
   );
 
   assert.equal(firstWindow.value?.id, firstMessage.id);
-  assert.equal(staleSecondWindow.value?.id, duplicateMessage.id);
+  assert.equal(staleSecondWindow.value?.kind, 'draft-claim-conflict');
+  assert.equal(staleSecondWindow.value?.message?.id, firstMessage.id);
   assert.equal(changedSecondWindow.value?.id, changedMessage.id);
   assert.deepEqual(
     changedSecondWindow.snapshot.messages.map((item) => item.id),
-    [firstMessage.id, duplicateMessage.id, changedMessage.id],
+    [firstMessage.id, changedMessage.id],
   );
 });
 
-test('a payload fingerprint never blocks a different draft revision', () => {
+test('a visible payload claim blocks divergent revisions for its full durable lifetime', () => {
   const transition = deliveryReceipts.pendingDeliverySnapshotTransition;
   const firstMessage = persistedMessage({
     id: 'optimistic:full-life-first-123456789',
@@ -579,7 +665,8 @@ test('a payload fingerprint never blocks a different draft revision', () => {
     },
   );
 
-  assert.equal(beforeExpiry.value?.id, delayedDuplicate.id);
+  assert.equal(beforeExpiry.value?.kind, 'draft-claim-conflict');
+  assert.equal(beforeExpiry.value?.message?.id, firstMessage.id);
   assert.equal(afterExpiry.value?.id, delayedDuplicate.id);
 });
 
@@ -938,6 +1025,8 @@ test('the browser wires shared delivery authority before mutating visible state'
   assert.match(restore, /cacheGetRequired\(PENDING_DELIVERIES_KEY\)/);
   assert.match(restore, /catch[\s\S]{0,100}return false/);
   assert.doesNotMatch(restore, /cacheGet\(PENDING_DELIVERIES_KEY\)/);
+  assert.match(restore, /currentById/);
+  assert.match(restore, /applyAuthoritativePendingDelivery\(current, authoritative\)/);
 
   const conflictStart = js.indexOf("text: 'Keep the Mac draft'");
   const conflictWiring = js.slice(conflictStart, conflictStart + 700);
@@ -963,6 +1052,27 @@ test('the browser wires shared delivery authority before mutating visible state'
       automatic.indexOf("message.delivery = 'confirming'"),
     'automatic recovery must read shared authority before changing status',
   );
+});
+
+test('manual discovery of a pending send immediately resumes recovery controls', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const verifyStart = js.indexOf('async function verifyTerminalDeliveryAction(message)');
+  const verifyEnd = js.indexOf('async function readAuthoritativePendingDeliveryRequired', verifyStart);
+  const checkStart = js.indexOf('async function checkDeliveryNow(message)');
+  const checkEnd = js.indexOf('function checkDelivery(message', checkStart);
+  const verify = js.slice(verifyStart, verifyEnd);
+  const check = js.slice(checkStart, checkEnd);
+
+  for (const body of [verify, check]) {
+    const pendingStart = body.indexOf("if (disposition === 'pending')");
+    assert.ok(pendingStart >= 0, 'the pending status branch must exist');
+    const pending = body.slice(pendingStart);
+    assert.match(pending, /message\.delivery = 'confirming'/);
+    assert.match(pending, /void checkDelivery\(message, \{ force: true \}\)/);
+  }
 });
 
 test('the client receipt parser preserves body aborts and rejects malformed success', async () => {
@@ -1108,6 +1218,24 @@ test('rapid terminal action taps run one operation and expose its busy label', a
   ]);
 });
 
+test('a terminal action still runs and releases when its busy-state render fails', async () => {
+  let operationCalls = 0;
+  const coordinator = createDeliveryActionCoordinator({
+    onChange() {
+      throw new Error('test_render_failed');
+    },
+  });
+
+  const result = await coordinator.run('optimistic-1', 'retry', async () => {
+    operationCalls += 1;
+    return 'posted';
+  });
+
+  assert.deepEqual(result, { started: true, value: 'posted' });
+  assert.equal(operationCalls, 1);
+  assert.equal(coordinator.current('optimistic-1'), null);
+});
+
 test('inconclusive delivery statuses remain recoverable through slow receipt checks', () => {
   let inconclusiveChecks = 0;
   for (let attempt = 1; attempt <= 8; attempt += 1) {
@@ -1138,7 +1266,7 @@ test('inconclusive delivery statuses remain recoverable through slow receipt che
   );
 });
 
-test('automatic recovery re-arms legacy exhausted ambiguous notices', () => {
+test('an exhausted recovery waits for one explicit rearm event', () => {
   assert.equal(
     deliveryNeedsAutomaticRecovery({ delivery: 'delivering' }),
     true,
@@ -1161,8 +1289,18 @@ test('automatic recovery re-arms legacy exhausted ambiguous notices', () => {
       deliveryRecoveryExhausted: true,
       errorCode: 'delivery_unknown',
     }),
-    true,
+    false,
   );
+  const exhausted = {
+    delivery: 'failed',
+    definitelyUnsent: false,
+    deliveryRecoveryExhausted: true,
+    errorCode: 'delivery_unknown',
+  };
+  assert.equal(rearmDeliveryRecovery(exhausted), true);
+  assert.equal(exhausted.deliveryRecoveryExhausted, false);
+  assert.equal(deliveryNeedsAutomaticRecovery(exhausted), true);
+  assert.equal(rearmDeliveryRecovery(exhausted), false);
   assert.equal(
     deliveryNeedsAutomaticRecovery({
       delivery: 'failed',
@@ -1268,6 +1406,121 @@ test('a confirmed receipt stays visible until its exact transcript row exists', 
   assert.deepEqual(cancelledLater.missing, [message]);
 });
 
+test('a confirmed receipt safely settles after its row leaves the transcript window', () => {
+  const disposition = deliveryReceipts.receiptTranscriptDisposition;
+  assert.equal(typeof disposition, 'function');
+  assert.equal(
+    disposition(
+      { messageId: 'server-user-12', rowId: 12 },
+      [
+        { id: 'later-user-20', rowId: 20 },
+        { id: 'later-answer-21', rowId: 21 },
+      ],
+    ),
+    'before-window',
+  );
+  assert.equal(
+    disposition(
+      { messageId: 'server-user-20', rowId: 20 },
+      [
+        { id: 'different-user-20', rowId: 20 },
+        { id: 'later-answer-21', rowId: 21 },
+      ],
+    ),
+    'unresolved',
+  );
+  assert.equal(
+    disposition(
+      { messageId: 'server-user-20', rowId: 20 },
+      [
+        { id: 'server-user-20', rowId: 20 },
+        { id: 'later-answer-21', rowId: 21 },
+      ],
+    ),
+    'present',
+  );
+});
+
+test('a delivered receipt is tracked while its transcript row has not appeared', () => {
+  const message = optimistic({
+    receiptRowId: 12,
+    receiptMessageId: 'server-user-12',
+    receiptObservedAt: null,
+  });
+  const otherSession = optimistic({
+    id: 'optimistic-other-session',
+    sessionId: 'session-2',
+    receiptRowId: 20,
+    receiptMessageId: 'server-user-20',
+    receiptObservedAt: null,
+  });
+
+  const result = reconcileDeliveryReceipts(
+    [message, otherSession],
+    'session-1',
+    11,
+    [],
+  );
+
+  assert.deepEqual(result.remaining, [message, otherSession]);
+  assert.deepEqual(result.reconciled, []);
+  assert.deepEqual(result.missing, []);
+  assert.deepEqual(result.unreconciled, [message]);
+});
+
+test('server-verified stalled receipt observation cannot erase a transcript observation or cancellation', () => {
+  const stalled = persistedMessage({
+    delivery: 'delivered',
+    retrySafe: false,
+    definitelyUnsent: false,
+    receiptMessageId: 'server-user-12',
+    receiptRowId: 12,
+    receiptObservedAt: null,
+  });
+  const command = {
+    type: 'observe-stalled-receipt',
+    message: stalled,
+    messageId: stalled.receiptMessageId,
+    rowId: stalled.receiptRowId,
+    observedAt: 1_777_777_787_000,
+  };
+  const observedResult = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [stalled] },
+    command,
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(observedResult.value?.id, stalled.id);
+  assert.equal(
+    observedResult.snapshot.messages[0].receiptObservedAt,
+    command.observedAt,
+  );
+
+  const observed = {
+    ...stalled,
+    receiptObservedAt: 1_777_777_777_000,
+  };
+  const observationWins = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [observed] },
+    command,
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(observationWins.value, null);
+  assert.deepEqual(observationWins.snapshot.messages, [observed]);
+
+  const cancelled = {
+    ...stalled,
+    delivery: 'failed',
+    errorCode: 'conductor_message_cancelled',
+  };
+  const cancellationWins = deliveryReceipts.pendingDeliverySnapshotTransition(
+    { messages: [cancelled] },
+    command,
+    { sanitize: acceptPersistedMessage, now: 1_777_777_787_000 },
+  );
+  assert.equal(cancellationWins.value, null);
+  assert.deepEqual(cancellationWins.snapshot.messages, [cancelled]);
+});
+
 test('receipt expiry cannot erase a cancellation written by another window', () => {
   const observed = persistedMessage({
     delivery: 'delivered',
@@ -1370,7 +1623,73 @@ test('the browser observes confirmed receipts before expiring them', async () =>
   );
   assert.match(
     js,
+    /for \(const message of result\.reconciled\)[\s\S]*receiptObservedAt = Date\.now\(\)[\s\S]*observeDeliveredReceipt\(message\)/,
+  );
+  assert.match(
+    js,
+    /for \(const message of result\.unreconciled\)[\s\S]*verifyStalledDeliveredReceipt\(message\)/,
+  );
+  assert.match(
+    js,
+    /function verifyStalledDeliveredReceipt[\s\S]*requestDeliveryStatus\(message\)[\s\S]*refreshMessages\(message\.sessionId, \{ full: true \}\)[\s\S]*receiptTranscriptDisposition[\s\S]*type: 'observe-stalled-receipt'[\s\S]*observeDeliveredReceipt\(message\)/,
+  );
+  assert.match(
+    js,
     /const previousDelivery = message\.delivery[\s\S]*deliveryStateTransitions: authorizedDeliveryStateTransition\([\s\S]*previousDelivery/,
+  );
+  assert.match(
+    js,
+    /composer_tree_transient:\s*'Conductor was redrawing the message box\. Retry this message\.'/,
+  );
+});
+
+test('an accepted queued send keeps its recovery window while the relay reports pending', async () => {
+  assert.equal(
+    extendDeliveryRecoveryDeadline(
+      { state: 'pending' },
+      120_000,
+      100_000,
+      120_000,
+    ),
+    220_000,
+  );
+  assert.equal(
+    extendDeliveryRecoveryDeadline(
+      { state: 'failed' },
+      220_000,
+      200_000,
+      120_000,
+    ),
+    220_000,
+  );
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    js,
+    /let deadline = Date\.now\(\) \+ DELIVERY_RECOVERY_MS/,
+  );
+  assert.match(
+    js,
+    /deadline = extendDeliveryRecoveryDeadline\([\s\S]*delivery,[\s\S]*deadline,[\s\S]*Date\.now\(\),[\s\S]*DELIVERY_RECOVERY_MS/,
+  );
+});
+
+test('the backstop rearms only stranded automatic recovery states', () => {
+  const needsRecovery = deliveryReceipts.deliveryBackstopNeedsRecovery;
+  assert.equal(typeof needsRecovery, 'function');
+  assert.equal(needsRecovery({ delivery: 'failed' }), true);
+  assert.equal(needsRecovery({ delivery: 'confirming' }), true);
+  assert.equal(needsRecovery({ delivery: 'delivering' }), true);
+  assert.equal(
+    needsRecovery({ delivery: 'delivering' }, { activePost: true }),
+    false,
+  );
+  assert.equal(needsRecovery({ delivery: 'delivered' }), false);
+  assert.equal(
+    needsRecovery({ delivery: 'failed', definitelyUnsent: true }),
+    false,
   );
 });
 
@@ -1536,20 +1855,32 @@ test('failed terminal verification reaches one visible action path', async () =>
   const retryEnd = js.indexOf('async function claimConflictAction', retryStart);
   const retry = js.slice(retryStart, retryEnd);
   assert.match(retry, /deliveryActionCoordinator\.run\(/);
-  assert.match(retry, /claimTerminalDeliveryActionRequired\(message, 'retry'\)/);
+  assert.match(retry, /runDefinitelyUnsentRetry\(\{/);
+  assert.match(
+    retry,
+    /claimTerminalDeliveryActionRequired\(candidate, 'retry'\)/,
+  );
   assert.match(retry, /void deliverOptimistic\(message/);
+  assert.doesNotMatch(
+    retry,
+    /verifyTerminalDeliveryAction\(message\)/,
+    'a certified unsent Retry must use the same-key authoritative POST directly',
+  );
 
   const checkStart = js.indexOf('async function checkDeliveryNow(message)');
   const checkEnd = js.indexOf('function checkDelivery(message', checkStart);
   const check = js.slice(checkStart, checkEnd);
   assert.match(check, /requestDeliveryStatus\(message\)/);
   assert.match(check, /terminalDeliveryActionDisposition\(delivery\)/);
-  assert.doesNotMatch(
-    check,
-    /checkDelivery\(message/,
-    'manual Check must not enqueue another two minute recovery pass',
+  assert.equal(
+    (check.match(/checkDelivery\(message, \{ force: true \}\)/g) || []).length,
+    1,
+    'manual Check may resume recovery only after the server proves the send is pending',
   );
-  assert.match(js, /activeAction === 'retry' \? 'Checking…' : 'Retry'/);
+  assert.match(
+    js,
+    /text: 'Retry'[\s\S]*'aria-busy': activeAction === 'retry'/,
+  );
   assert.match(js, /click: \(\) => void checkDeliveryNow\(message\)/);
 });
 
@@ -1591,4 +1922,23 @@ test('manual delivery actions cancel stale automatic recovery work', async () =>
       `${functionName} must cancel background recovery first`,
     );
   }
+});
+
+test('a forced recovery request survives the cancelled recovery it replaces', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = js.indexOf('function checkDelivery(message');
+  const end = js.indexOf('async function checkDeliveryOnce', start);
+  const coordinator = js.slice(start, end);
+
+  assert.match(
+    coordinator,
+    /if \(existing\) \{[\s\S]*existing\.cancelled && force[\s\S]*existing\.restartRequested = true[\s\S]*return existing\.operation/,
+  );
+  assert.match(
+    coordinator,
+    /const restart =[\s\S]*entry\.restartRequested === true[\s\S]*if \(restart\) \{[\s\S]*void checkDelivery\(entry\.message, \{ force: true \}\)/,
+  );
 });

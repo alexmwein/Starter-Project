@@ -173,7 +173,7 @@ export function createAppUpdateCoordinator({
     observeController();
   }
 
-  function serverRevision(revision, { workerActivated = false } = {}) {
+  function serverRevision(revision) {
     if (typeof revision === 'string' && revision === clientRevision) {
       // The running shell is current, so any earlier attempts succeeded and the
       // counter must not leak into the next genuine update.
@@ -187,12 +187,6 @@ export function createAppUpdateCoordinator({
     ) {
       return false;
     }
-    // A health or event-stream revision can arrive before the replacement
-    // worker finishes installing. Two cache-first reloads may then hit the
-    // safety cap while the old worker still owns the document. Activation is
-    // stronger evidence: the new worker has installed its complete shell and
-    // claimed this page, so allow exactly one fresh reload attempt.
-    if (workerActivated) clearReloadAttempts();
     updatePending = true;
     pendingRevision = revision;
     applyIfSafe();

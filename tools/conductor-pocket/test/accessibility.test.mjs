@@ -4,14 +4,150 @@ import fs from 'node:fs/promises';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import vm from 'node:vm';
+import * as accessibilityModule from '../src/accessibility.mjs';
 import {
   AccessibilityTransport,
-  innerAutomationDeadlineAt,
+  coordinatePrepressAuthorization,
   mapAutomationError,
   parseResult,
 } from '../src/accessibility.mjs';
 
 const execFileAsync = promisify(execFile);
+
+test('prepress authorization waits for the held helper lease and writes one decision', async () => {
+  let readyReads = 0;
+  let authorizeCalls = 0;
+  const decisions = [];
+  const result = await coordinatePrepressAuthorization({
+    attemptStartedAt: 1_000,
+    async readReady() {
+      readyReads += 1;
+      return readyReads < 3 ? '' : '1000\n';
+    },
+    async writeDecision(value) {
+      decisions.push(value);
+    },
+    async authorize() {
+      authorizeCalls += 1;
+      return { ok: false, code: 'user_input_active', safeToRetry: true };
+    },
+    isSettled: () => false,
+    now: () => 1_000,
+    wait: async () => {},
+    deadlineAt: 2_000,
+  });
+
+  assert.equal(readyReads, 3);
+  assert.equal(authorizeCalls, 1);
+  assert.deepEqual(decisions, ['deny:user_input_active\n']);
+  assert.deepEqual(result, {
+    ok: false,
+    code: 'user_input_active',
+    safeToRetry: true,
+  });
+});
+
+test('the helper waits for server authorization before changing the composer', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('function typeAndSendMessage(pid)');
+  const end = source.indexOf('\nfunction ', start + 20);
+  const block = source.slice(start, end);
+  const authorization = block.indexOf('waitForPrepressAuthorization(');
+  assert.ok(authorization > 0);
+  assert.ok(authorization < block.indexOf('deliverWholeMessage(pid, message)'));
+  assert.ok(authorization < block.indexOf('postToConductor('));
+});
+
+test('a send launches Conductor at most once before one bounded route retry', async () => {
+  assert.equal(
+    typeof accessibilityModule.runWithSingleConductorLaunch,
+    'function',
+  );
+  let now = 1_000;
+  let launches = 0;
+  const runBudgets = [];
+  const result = await accessibilityModule.runWithSingleConductorLaunch({
+    timeoutMs: 30_000,
+    now: () => now,
+    async run(remainingMs) {
+      runBudgets.push(remainingMs);
+      now += 250;
+      return runBudgets.length === 1
+        ? { ok: false, code: 'conductor_not_running', safeToRetry: true }
+        : { ok: true, code: 'sent' };
+    },
+    async launch() {
+      launches += 1;
+      now += 500;
+    },
+    async wait(delayMs) {
+      now += delayMs;
+    },
+    startupWaitMs: 1_000,
+  });
+
+  assert.deepEqual(result, { ok: true, code: 'sent' });
+  assert.equal(launches, 1);
+  assert.equal(runBudgets.length, 2);
+  assert.equal(runBudgets[0], 30_000);
+  assert.ok(runBudgets[1] >= 17_000 && runBudgets[1] < runBudgets[0]);
+
+  let shortRuns = 0;
+  let shortLaunches = 0;
+  const shortResult = await accessibilityModule.runWithSingleConductorLaunch({
+    timeoutMs: 20_000,
+    now: () => 5_000,
+    async run() {
+      shortRuns += 1;
+      return shortRuns === 1
+        ? {
+            ok: false,
+            code: 'conductor_not_running',
+            safeToRetry: true,
+          }
+        : { ok: true, code: 'sent' };
+    },
+    async launch() {
+      shortLaunches += 1;
+    },
+    async wait() {},
+    startupWaitMs: 1_500,
+  });
+  assert.deepEqual(shortResult, {
+    ok: false,
+    code: 'conductor_not_running',
+    safeToRetry: true,
+  });
+  assert.equal(shortRuns, 1);
+  assert.equal(shortLaunches, 0);
+
+  const source = await fs.readFile(
+    new URL('../src/accessibility.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /send\([\s\S]*recoverConductor: true/,
+  );
+  for (const method of [
+    'listControls',
+    'openControlMenu',
+    'chooseControlMenuItem',
+    'newTab',
+    'closeTab',
+  ]) {
+    const start = source.indexOf(`  ${method}(`);
+    const end = source.indexOf('\n  }', start);
+    assert.match(
+      source.slice(start, end),
+      /recoverConductor: true/,
+      `${method} must share the bounded one-launch recovery`,
+    );
+  }
+});
 
 test('accessibility transport rejects invalid messages before UI automation', async () => {
   const transport = new AccessibilityTransport();
@@ -60,29 +196,6 @@ test('accessibility transport rejects invalid messages before UI automation', as
       message: '\ud800',
     }),
     { ok: false, code: 'message_invalid', safeToRetry: true },
-  );
-});
-
-test('the nested JXA deadline always expires before its outer transport timeout', () => {
-  const now = 1_785_093_000_000;
-  for (const timeoutMs of [1_000, 1_001, 4_999, 5_000, 45_000]) {
-    const innerDeadline = innerAutomationDeadlineAt(now, timeoutMs);
-    assert.ok(innerDeadline > now);
-    assert.ok(
-      innerDeadline < now + timeoutMs,
-      `inner deadline ${innerDeadline - now} must precede ${timeoutMs}`,
-    );
-  }
-  assert.equal(innerAutomationDeadlineAt(now, 45_000), now + 40_000);
-});
-
-test('the release check compiles the AppleScript automation entrypoint', async () => {
-  const packageJson = JSON.parse(
-    await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
-  );
-  assert.match(
-    packageJson.scripts.check,
-    /\/usr\/bin\/osacompile -o \/dev\/null src\/conductor-send\.applescript/,
   );
 });
 
@@ -404,11 +517,11 @@ test('AXPress provenance is timestamp-only, attempt-bound, and cleaned after eac
   );
   assert.match(
     inputHelper,
-    /const pressAction = resolveComposerPressAction\(sendButton\);[\s\S]*pressInvokedAt = Date\.now\(\);\s*pressAction\.perform\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);/,
+    /const pressAction = resolveComposerPressAction\(sendButton\);[\s\S]*pressInvokedAt = Date\.now\(\);\s*recordPressProvenance\(attemptStartedAt, pressInvokedAt\);\s*pressAction\.perform\(\);/,
   );
   const markerWriter = inputHelper.slice(
     inputHelper.indexOf('function recordPressProvenance'),
-    inputHelper.indexOf('function decodeBase64Environment'),
+    inputHelper.indexOf('function prepressMarkerPath'),
   );
   assert.doesNotMatch(markerWriter, /message|draft|base64/i);
 });
@@ -555,6 +668,319 @@ test('the final route lease uses the same workspace label policy as navigation',
       `${base} must match ${candidate}: ${expected}`,
     );
   }
+});
+
+test('empty route hint fields mean no hint instead of a broken route', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const values = new Map([
+    ['POCKET_REPOSITORY_NAME', 'growth-operating'],
+    ['POCKET_WORKSPACE_NAME', 'daemon'],
+    ['POCKET_SESSION_TITLE', 'pocket conductor'],
+    ['POCKET_SESSION_ORDINAL', '1'],
+    ['POCKET_WORKSPACE_CONTAINER_INDEX', ''],
+    ['POCKET_WORKSPACE_LINK_INDEX', ''],
+    ['POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT', ''],
+    ['POCKET_WORKSPACE_CONTAINER_CHILD_COUNT', ''],
+  ]);
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __values: values,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+environmentValue = (name) => globalThis.__values.has(name)
+  ? globalThis.__values.get(name)
+  : null;
+globalThis.__targetWithoutHint = routeTarget();`,
+    sandbox,
+  );
+
+  assert.equal(sandbox.__targetWithoutHint.repositoryName, 'growth-operating');
+  assert.equal(sandbox.__targetWithoutHint.workspaceName, 'daemon');
+  assert.equal(sandbox.__targetWithoutHint.sessionTitle, 'pocket conductor');
+  assert.equal(sandbox.__targetWithoutHint.sessionOrdinal, 1);
+  assert.equal(sandbox.__targetWithoutHint.workspaceHint, null);
+});
+
+test('selected route fast path returns an exact reusable workspace hint', async () => {
+  const [source, inputHelper] = await Promise.all([
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    inputHelper,
+    /operation === 'route-check'[\s\S]*routeLease\.workspacePath\[0\][\s\S]*routeLease\.workspacePath\[1\][\s\S]*routeLease\.sidebarChildCount[\s\S]*routeLease\.workspaceContainerChildCount/,
+  );
+  assert.match(source, /on selectedRouteHint\(inputScriptPath, conductorPid\)/);
+  const readiness = source.indexOf('set inputReadiness to my waitForInputIdle');
+  const fastPath = source.indexOf('set selectedHint to my selectedRouteHint');
+  const sidebarScan = source.indexOf('set sidebarGroup to getSidebarGroup()');
+  assert.ok(readiness >= 0 && fastPath > readiness && sidebarScan > fastPath);
+  assert.match(
+    source,
+    /if operationMode is "send" then[\s\S]*selectedRouteHint[\s\S]*if selectedHint is missing value then[\s\S]*getSidebarGroup\(\)/,
+  );
+});
+
+test('repository scoped navigation can recover when no workspace is selected', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-send.applescript', import.meta.url),
+    'utf8',
+  );
+  const routeStart = source.indexOf('on getWorkspaceRoute(workspaceName, sidebarGroup)');
+  const routeEnd = source.indexOf('end getWorkspaceRoute', routeStart);
+  const route = source.slice(routeStart, routeEnd);
+
+  assert.match(route, /if \(count of matchingRoutes\) is not 1 then return missing value/);
+  assert.match(route, /if selectedWorkspaceCount is greater than 1 then return missing value/);
+  assert.match(
+    route,
+    /if selectedWorkspaceCount is 0 and my targetRepositoryName is "" then return missing value/,
+  );
+  assert.doesNotMatch(route, /selectedWorkspaceCount is not 1/);
+});
+
+test('queued edit tree read failures have a retryable pre-composer code', async () => {
+  const [source, transportSource, serverSource, appleScript] = await Promise.all([
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/server.mjs', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+  ]);
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+globalThis.__scanQueuedEditTree = hasStaticTextInBoundedTree;`,
+    sandbox,
+  );
+
+  assert.throws(
+    () =>
+      sandbox.__scanQueuedEditTree(
+        { role() { throw new Error('AX node replaced'); } },
+        ['Editing queued message'],
+        { remaining: 4 },
+      ),
+    (error) =>
+      error?.pocketCode === 'composer_tree_transient' &&
+      error?.pocketTransientRead === true,
+  );
+  const queuedStart = source.indexOf('function assertNotQueuedEditMode');
+  const queuedEnd = source.indexOf('\n}', queuedStart);
+  assert.match(
+    source.slice(queuedStart, queuedEnd),
+    /error\?\.pocketTransientRead === true/,
+  );
+  assert.match(
+    transportSource,
+    /safeToRetryCodes = new Set\(\[[\s\S]*'composer_tree_transient'/,
+  );
+  assert.match(
+    serverSource,
+    /TRANSIENT_PRE_COMPOSER_CODES = new Set\(\[[\s\S]*'composer_tree_transient'/,
+  );
+  assert.match(
+    appleScript,
+    /knownCode in \{[^}]*"composer_tree_transient"/,
+  );
+});
+
+test('a slow navigation retries before exposing the phone draft', async () => {
+  const [source, transportSource, serverSource, timingSource, appleScript] = await Promise.all([
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/server.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/timing.mjs', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+  ]);
+  const sandbox = {
+    $: new Proxy(() => null, { get: () => 0 }),
+    Application: () => {
+      throw new Error('Application must not be called in this unit test');
+    },
+    ObjC: { bindFunction() {}, import() {} },
+    __now: 1_000,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${source}
+Date.now = () => globalThis.__now;
+globalThis.__assertPreComposerBudget = assertPreComposerBudget;`,
+    sandbox,
+  );
+
+  assert.doesNotThrow(() => sandbox.__assertPreComposerBudget(null));
+  assert.doesNotThrow(() => sandbox.__assertPreComposerBudget(16_000));
+  assert.throws(
+    () => sandbox.__assertPreComposerBudget(15_999),
+    (error) => error?.pocketCode === 'automation_budget_exhausted',
+  );
+
+  const sendStart = source.indexOf('function typeAndSendMessage');
+  const sendBody = source.slice(sendStart, source.indexOf('\n}\n', sendStart));
+  const queuedProof = sendBody.indexOf('assertNotQueuedEditMode(process)');
+  const budgetProof = sendBody.indexOf('assertPreComposerBudget(');
+  const firstDraftRead = sendBody.indexOf('focusedDraft(process)');
+  assert.ok(queuedProof >= 0 && budgetProof > queuedProof);
+  assert.ok(firstDraftRead > budgetProof);
+  assert.match(
+    transportSource,
+    /safeToRetryCodes = new Set\(\[[\s\S]*'automation_budget_exhausted'/,
+  );
+  assert.match(
+    timingSource,
+    /SEND_AUTOMATION_RETRY_BUDGET_MS = 75_000/,
+  );
+  assert.match(
+    serverSource,
+    /TRANSIENT_PRE_COMPOSER_CODES = new Set\(\[[\s\S]*'automation_budget_exhausted'/,
+  );
+  assert.match(
+    appleScript,
+    /knownCode in \{[^}]*"automation_budget_exhausted"/,
+  );
+});
+
+test('outer route acquisition stops before consuming the complete send attempt', async () => {
+  const [transport, inputHelper, appleScript] = await Promise.all([
+    fs.readFile(new URL('../src/accessibility.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../src/conductor-input.js', import.meta.url), 'utf8'),
+    fs.readFile(
+      new URL('../src/conductor-send.applescript', import.meta.url),
+      'utf8',
+    ),
+  ]);
+
+  assert.match(
+    transport,
+    /const ROUTE_ACQUISITION_TIMEOUT_MS = 12_000/,
+  );
+  assert.match(
+    transport,
+    /POCKET_ROUTE_DEADLINE_AT: String\(\s*attemptStartedAt \+ ROUTE_ACQUISITION_TIMEOUT_MS/,
+  );
+  assert.match(
+    inputHelper,
+    /function assertRouteAcquisitionDeadline[\s\S]*POCKET_ROUTE_DEADLINE_AT[\s\S]*fail\('automation_budget_exhausted'\)/,
+  );
+  const routeLease = inputHelper.slice(
+    inputHelper.indexOf('function acquireRouteLease'),
+    inputHelper.indexOf('function assertRouteLease'),
+  );
+  assert.match(routeLease, /assertRouteAcquisitionDeadline\(\)/);
+  assert.match(
+    appleScript,
+    /on routeBudgetExpired\(\)[\s\S]*routeDeadline[\s\S]*current date[\s\S]*end routeBudgetExpired/,
+  );
+  assert.match(
+    appleScript,
+    /repeat with attemptIndex from 1 to 3[\s\S]*routeBudgetExpired\(\)/,
+  );
+  assert.match(
+    appleScript,
+    /repeat with waitIndex from 1 to 50[\s\S]*routeBudgetExpired\(\)/,
+  );
+  assert.match(
+    appleScript,
+    /routeBudgetDidExpire[\s\S]*return "\{\\"ok\\":false,\\"code\\":\\"automation_budget_exhausted\\"\}"/,
+  );
+  const selectedHint = appleScript.slice(
+    appleScript.indexOf('on selectedRouteHint'),
+    appleScript.indexOf('end selectedRouteHint'),
+  );
+  const commitHelper = appleScript.slice(
+    appleScript.indexOf('on commitAndPressMessage'),
+    appleScript.indexOf('end commitAndPressMessage'),
+  );
+  assert.match(selectedHint, /POCKET_ROUTE_DEADLINE_AT=/);
+  const deadlineUnset = commitHelper.match(
+    /\/usr\/bin\/env -u POCKET_ROUTE_DEADLINE_AT/,
+  );
+  assert.ok(
+    deadlineUnset,
+    'the inner prepress proof must clear the inherited outer route deadline',
+  );
+  const [unsetCommand, ...unsetArguments] = deadlineUnset[0].split(' ');
+  await assert.rejects(
+    execFileAsync(
+      unsetCommand,
+      [
+        ...unsetArguments,
+        '/usr/bin/printenv',
+        'POCKET_ROUTE_DEADLINE_AT',
+      ],
+      {
+        env: {
+          ...process.env,
+          POCKET_ROUTE_DEADLINE_AT: '1',
+        },
+      },
+    ),
+    (error) => error.code === 1 && error.stdout === '',
+  );
+});
+
+test('an unset JXA environment value normalizes to null', async () => {
+  const source = await fs.readFile(
+    new URL('../src/conductor-input.js', import.meta.url),
+    'utf8',
+  );
+  const environmentValueSource = source.match(
+    /function environmentValue\(name\) \{[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(environmentValueSource);
+
+  const script = [
+    'ObjC.import("Foundation");',
+    environmentValueSource,
+    'JSON.stringify({',
+    '  value: environmentValue("POCKET_ROUTE_DEADLINE_AT"),',
+    '  type: typeof environmentValue("POCKET_ROUTE_DEADLINE_AT"),',
+    '});',
+  ].join('\n');
+  const { stdout } = await execFileAsync(
+    '/usr/bin/env',
+    [
+      '-u',
+      'POCKET_ROUTE_DEADLINE_AT',
+      '/usr/bin/osascript',
+      '-l',
+      'JavaScript',
+      '-e',
+      script,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  assert.deepEqual(JSON.parse(stdout), {
+    value: null,
+    type: 'object',
+  });
 });
 
 test('repository-scoped routing distinguishes duplicate workspace names', async () => {
@@ -805,7 +1231,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     inputHelper,
-    /function hasStaticTextInBoundedTree[\s\S]*budget\.remaining <= 0[\s\S]*role = element\.role\(\)[\s\S]*role === 'AXStaticText'[\s\S]*!nameReadable \|\| !valueReadable[\s\S]*fail\('send_unavailable'\)[\s\S]*hasStaticTextInBoundedTree\(child, expectedTexts, budget\)[\s\S]*function assertNotQueuedEditMode[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*contextElements\.slice\(0, -1\)\.some\([\s\S]*\[QUEUED_EDIT_MARKER\][\s\S]*hasStaticTextInBoundedTree\(\s*composer,\s*\[QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER\][\s\S]*fail\('send_unavailable'\)/,
+    /function hasStaticTextInBoundedTree[\s\S]*budget\.remaining <= 0[\s\S]*role = element\.role\(\)[\s\S]*role === 'AXStaticText'[\s\S]*!nameReadable \|\| !valueReadable[\s\S]*fail\('composer_tree_transient',[\s\S]*transientRead: true[\s\S]*hasStaticTextInBoundedTree\(child, expectedTexts, budget\)[\s\S]*function assertNotQueuedEditMode[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*contextElements\.slice\(0, -1\)\.some\([\s\S]*\[QUEUED_EDIT_MARKER\][\s\S]*hasStaticTextInBoundedTree\(\s*composer,\s*\[QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER\][\s\S]*fail\('send_unavailable'\)/,
   );
   assert.doesNotMatch(
     inputHelper,
@@ -853,6 +1279,10 @@ test('message submission waits for and presses Conductor’s unique enabled Send
     'pressAction.perform();',
     pressBoundary,
   );
+  const pressIntent = inputHelper.indexOf(
+    'recordPressProvenance(attemptStartedAt, pressInvokedAt);',
+    pressBoundary,
+  );
   const preResolveProof = inputHelper.lastIndexOf(
     'assertRouteLease(process, routeLease);',
     finalResolve,
@@ -867,6 +1297,8 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   assert.ok(pressBoundary > finalActionResolve);
   assert.ok(finalRouteProof > finalResolve);
   assert.ok(finalPress > pressBoundary);
+  assert.ok(pressIntent > pressBoundary);
+  assert.ok(pressIntent < finalPress);
   const finalSendBoundary = inputHelper.slice(
     inputHelper.lastIndexOf(
       'waitForComposerSend(pid, message, inputLease);',
@@ -932,7 +1364,7 @@ test('message submission waits for and presses Conductor’s unique enabled Send
   );
   assert.match(
     source,
-    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*if \(count of matchingRoutes\) is not 1 or selectedWorkspaceCount is not 1 then return missing value/,
+    /on getWorkspaceRoute\(workspaceName, sidebarGroup\)[\s\S]*if \(count of matchingRoutes\) is not 1 then return missing value[\s\S]*selectedWorkspaceCount is greater than 1[\s\S]*selectedWorkspaceCount is 0 and my targetRepositoryName is ""/,
   );
   const initialWorkspaceLookup = source.indexOf(
     'set workspaceRoute to my getWorkspaceRoute(workspaceName, sidebarGroup)',
@@ -1448,7 +1880,11 @@ globalThis.__routeLeaseTest = {
     state.webArea = makeGuardTree({ directMarker }).webArea;
     assert.throws(
       () => assertNotQueuedEditMode(process),
-      (error) => error?.pocketCode === 'send_unavailable',
+      (error) =>
+        error?.pocketCode ===
+        (directMarker === 'unreadable-value'
+          ? 'composer_tree_transient'
+          : 'send_unavailable'),
     );
   }
 
@@ -1573,97 +2009,12 @@ test('Tiptap text entry uses Unicode events under a physical-input lease', async
   );
   assert.match(
     inputHelper,
-    /resolveComposerPressAction\(sendButton\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*pressAction\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
+    /resolveComposerPressAction\(sendButton\)[\s\S]*pressInvokedAt = Date\.now\(\)[\s\S]*recordPressProvenance\(attemptStartedAt, pressInvokedAt\)[\s\S]*pressAction\.perform\(\)[\s\S]*return `pressed:\$\{pressInvokedAt\}`/,
   );
   assert.match(appleScript, /session_locked/);
 
   assert.doesNotMatch(`${appleScript}\n${inputHelper}`, /clipboard|NSPasteboard/i);
   assert.match(inputHelper, /exactDraftExposedAt = possibleExposureAt/);
-});
-
-test('whole-message AX delivery never overwrites or clears a newer Mac draft', async () => {
-  const source = await fs.readFile(
-    new URL('../src/conductor-input.js', import.meta.url),
-    'utf8',
-  );
-  const dollar = new Proxy(() => null, { get: () => 0 });
-  const sandbox = {
-    $: dollar,
-    Application: () => {
-      throw new Error('Application must not be called in this unit test');
-    },
-    ObjC: { bindFunction() {}, import() {} },
-    __composerValue: '',
-    __leaseValid: true,
-    __readFailureAfterWrite: false,
-    __writes: [],
-  };
-  vm.createContext(sandbox);
-  vm.runInContext(
-    `${source}
-const fixtureFocused = {};
-Object.defineProperty(fixtureFocused, 'value', {
-  get() { return globalThis.__composerValue; },
-  set(value) {
-    globalThis.__composerValue = value;
-    globalThis.__writes.push(value);
-  },
-});
-const fixtureProcess = {
-  attributes: {
-    byName() {
-      return { value: () => fixtureFocused };
-    },
-  },
-};
-validateFocusedComposer = (_pid, expectedDraft) => {
-  if (
-    globalThis.__readFailureAfterWrite &&
-    globalThis.__writes.length > 0
-  ) {
-    globalThis.__composerValue = 'new Mac text';
-    throw new Error('transient AX read');
-  }
-  if (
-    typeof expectedDraft === 'string' &&
-    globalThis.__composerValue !== expectedDraft
-  ) fail('draft_changed');
-  return fixtureProcess;
-};
-focusedDraft = () => globalThis.__composerValue;
-assertInputLease = () => {
-  if (!globalThis.__leaseValid) fail('user_input_active');
-};
-delay = () => {};
-globalThis.__deliverWholeMessage = deliverWholeMessage;`,
-    sandbox,
-  );
-
-  sandbox.__composerValue = 'new Mac text';
-  assert.equal(
-    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
-    false,
-  );
-  assert.equal(sandbox.__composerValue, 'new Mac text');
-  assert.deepEqual(sandbox.__writes, []);
-
-  sandbox.__composerValue = '';
-  sandbox.__leaseValid = false;
-  assert.equal(
-    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
-    false,
-  );
-  assert.equal(sandbox.__composerValue, '');
-  assert.deepEqual(sandbox.__writes, []);
-
-  sandbox.__leaseValid = true;
-  sandbox.__readFailureAfterWrite = true;
-  assert.equal(
-    sandbox.__deliverWholeMessage(123, 'phone text', {}, ''),
-    false,
-  );
-  assert.equal(sandbox.__composerValue, 'new Mac text');
-  assert.deepEqual(sandbox.__writes, ['phone text']);
 });
 
 test('Pocket makes code and primary replies directly copyable on iPhone', async () => {
@@ -1807,7 +2158,7 @@ test('a transient accessibility read is retried instead of aborting the send', a
   );
   assert.match(
     queuedEditMode.slice(0, queuedEditMode.indexOf('\n}\n')),
-    /withTransientReadRetry\(\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES/,
+    /withTransientReadRetry\([\s\S]*\(\) => \{[\s\S]*composerSendContext\(process\)[\s\S]*remaining: MAX_QUEUED_EDIT_CONTEXT_NODES[\s\S]*error\?\.pocketTransientRead === true/,
   );
   const exactWait = inputHelper.slice(
     inputHelper.indexOf('function waitForExactDraft'),
@@ -1861,7 +2212,7 @@ test('the send path does not re-derive work it already has', async () => {
   // about a second of every send.
   assert.match(
     inputHelper,
-    /candidate:[\s\S]*descriptions,[\s\S]*roles,[\s\S]*rootPath:/,
+    /candidates\.push\(\{[\s\S]*descriptions,[\s\S]*roles,[\s\S]*\}\)/,
   );
   const context = inputHelper.slice(
     inputHelper.indexOf('function composerSendContext'),

@@ -34,6 +34,22 @@ test('a detectably dead stream is rebuilt from the heartbeat watchdog', () => {
   assert.match(block, /startEvents\(\);\s*transcriptRefresh\.schedule\(\);\s*metadataRefresh\.schedule\(\)/);
 });
 
+test('a stream that never connects gets exactly one bounded restart', () => {
+  assert.match(source, /const INITIAL_STREAM_RESTART_MS = \d[\d_]*;/);
+  assert.match(source, /function startEventsAttempt\(\{ initialRetry = false \} = \{\}\)/);
+  const start = source.indexOf('function startEventsAttempt({ initialRetry = false } = {})');
+  const stop = source.indexOf('function stopEvents()', start);
+  const block = source.slice(start, stop);
+  assert.match(block, /state\.initialStreamTimer = setTimeout/);
+  assert.match(block, /if \(!initialRetry\)[\s\S]*startEventsAttempt\(\{ initialRetry: true \}\)/);
+  assert.doesNotMatch(
+    block.slice(block.indexOf('if (!initialRetry)')),
+    /startEventsAttempt\(\{ initialRetry: false \}\)/,
+  );
+  assert.match(source, /clearTimeout\(state\.initialStreamTimer\)/);
+  assert.match(source, /state\.initialStreamTimer = null/);
+});
+
 test('the on-screen backstop refresh exists, skips a hidden app, and is cleared with the stream', () => {
   assert.match(source, /const TRANSCRIPT_BACKSTOP_MS = 8 \* 1000/);
   const backstop = source.indexOf('state.backstopTimer = setInterval');
@@ -42,6 +58,18 @@ test('the on-screen backstop refresh exists, skips a hidden app, and is cleared 
   assert.match(
     block,
     /if \(document\.hidden \|\| !state\.auth \|\| !state\.shell\) return/,
+  );
+  assert.match(
+    block,
+    /recheckAmbiguousDeliveries\(state\.route\.sessionId, \{\s*settlementOnly: true,?\s*\}\)[\s\S]*transcriptRefresh\.schedule\(\)/,
+  );
+  assert.match(
+    source,
+    /function recheckAmbiguousDeliveries\(\s*sessionId = null,\s*\{ settlementOnly = false \} = \{\},?\s*\)[\s\S]*deliveryBackstopNeedsRecovery\([\s\S]*activePost: deliveryPostsInFlight\.has\(message\.id\)/,
+  );
+  assert.match(
+    source,
+    /deliveryPostsInFlight\.add\(optimistic\.id\)[\s\S]*deliveryPostsInFlight\.delete\(optimistic\.id\)/,
   );
   // stopEvents must clear it: startEvents calls stopEvents first, so leaking
   // this timer would stack a second backstop on every stream revive.

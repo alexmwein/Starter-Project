@@ -8,11 +8,6 @@ const RECOVERY_TERMINAL_AUTH_CODES = new Set([
   'device_revoked',
   'device_session_expired',
 ]);
-const LEGACY_INCONCLUSIVE_RECOVERY_CODES = new Set([
-  'delivery_confirmation_timeout',
-  'delivery_status_invalid_response',
-  'delivery_unknown',
-]);
 const AUTHORITATIVE_POST_RECEIPT_FAILURE_CODES = new Set([
   'conductor_message_cancelled',
   'conductor_turn_rejected',
@@ -193,6 +188,11 @@ function normalizePendingSnapshot(raw, sanitize, now) {
     .filter(Boolean)
     .sort((left, right) => right.at - left.at)
     .slice(0, TERMINAL_TOMBSTONE_LIMIT);
+  const resolvedMessageIds = new Set(
+    tombstones
+      .filter((item) => item.action === 'resolved')
+      .map((item) => item.id),
+  );
   const draftClaims = (Array.isArray(raw?.draftClaims) ? raw.draftClaims : [])
     .map((value) => {
       const sessionId = authorityString(value?.sessionId, 300);
@@ -230,6 +230,9 @@ function normalizePendingSnapshot(raw, sanitize, now) {
       return claim;
     })
     .filter(Boolean)
+    .filter(
+      (claim) => !claim.messageId || !resolvedMessageIds.has(claim.messageId),
+    )
     .sort((left, right) => right.at - left.at)
     .slice(0, DRAFT_CLAIM_LIMIT);
   return {
@@ -296,7 +299,6 @@ function mergePendingUpserts(
   snapshot,
   upserts,
   removeIds,
-  releaseDraftClaimIds,
   deliveryKeyTransitions,
   deliveryStateTransitions,
   sanitize,
@@ -306,9 +308,6 @@ function mergePendingUpserts(
     snapshot.messages.map((message) => [message.id, message]),
   );
   const removed = new Set(removeIds.filter((id) => typeof id === 'string'));
-  const releasedClaims = new Set(
-    releaseDraftClaimIds.filter((id) => typeof id === 'string'),
-  );
   for (const id of removed) {
     const current = merged.get(id);
     if (current) addTerminalTombstone(snapshot, current, 'resolved', now);
@@ -334,11 +333,6 @@ function mergePendingUpserts(
     );
   }
   snapshot.messages = [...merged.values()];
-  if (releasedClaims.size > 0) {
-    snapshot.draftClaims = snapshot.draftClaims.filter(
-      (claim) => !releasedClaims.has(claim.messageId),
-    );
-  }
 }
 
 export function pendingDeliverySnapshotTransition(
@@ -355,9 +349,6 @@ export function pendingDeliverySnapshotTransition(
       snapshot,
       Array.isArray(command.upserts) ? command.upserts : [],
       Array.isArray(command.removeIds) ? command.removeIds : [],
-      Array.isArray(command.releaseDraftClaimIds)
-        ? command.releaseDraftClaimIds
-        : [],
       Array.isArray(command.deliveryKeyTransitions)
         ? command.deliveryKeyTransitions
         : [],
@@ -384,10 +375,14 @@ export function pendingDeliverySnapshotTransition(
         const samePayload =
           payloadFingerprint &&
           item.payloadFingerprint === payloadFingerprint;
-        return (
-          sameRevision &&
-          (!payloadFingerprint || !item.payloadFingerprint || samePayload)
-        );
+        if (sameRevision) {
+          return (
+            !payloadFingerprint ||
+            !item.payloadFingerprint ||
+            samePayload
+          );
+        }
+        return samePayload;
       },
     );
     if (
@@ -424,16 +419,7 @@ export function pendingDeliverySnapshotTransition(
       },
       ...snapshot.draftClaims,
     ].slice(0, DRAFT_CLAIM_LIMIT);
-    mergePendingUpserts(
-      snapshot,
-      [candidate],
-      [],
-      [],
-      [],
-      [],
-      sanitize,
-      now,
-    );
+    mergePendingUpserts(snapshot, [candidate], [], [], [], sanitize, now);
     return { snapshot, value: candidate };
   }
   if (command?.type === 'claim-terminal') {
@@ -445,10 +431,6 @@ export function pendingDeliverySnapshotTransition(
       (candidate) => candidate.id === command.message?.id,
     );
     const candidate = index >= 0 ? snapshot.messages[index] : null;
-    const nextDeliveryKey =
-      action === 'retry'
-        ? authorityString(command.nextDeliveryKey, 200)
-        : null;
     const matches =
       candidate?.delivery === 'failed' &&
       deliveryIdentityMatches(candidate, command.message) &&
@@ -456,8 +438,7 @@ export function pendingDeliverySnapshotTransition(
       (action === 'delete' ||
         action === 'edit' ||
         candidate.definitelyUnsent === true) &&
-      (action !== 'retry' ||
-        (candidate.retrySafe === true && nextDeliveryKey));
+      (action !== 'retry' || candidate.retrySafe === true);
     if (!matches) return { snapshot, value: null };
     if (action === 'edit') {
       const claimToken = authorityString(command.claimToken, 200);
@@ -485,10 +466,6 @@ export function pendingDeliverySnapshotTransition(
     }
     const claimed = {
       ...candidate,
-      ...(candidate.replaceDraft === true
-        ? { replaceIdempotencyKey: nextDeliveryKey }
-        : { idempotencyKey: nextDeliveryKey }),
-      activeDeliveryKey: nextDeliveryKey,
       delivery: 'delivering',
       deliveryPhase: null,
       retrySafe: false,
@@ -546,6 +523,33 @@ export function pendingDeliverySnapshotTransition(
       (claim) => !draftClaimOwnsMessage(claim, candidate),
     );
     return { snapshot, value: candidate };
+  }
+  if (command?.type === 'observe-stalled-receipt') {
+    const index = snapshot.messages.findIndex(
+      (candidate) => candidate.id === command.message?.id,
+    );
+    const candidate = index >= 0 ? snapshot.messages[index] : null;
+    const messageId = authorityString(command.messageId, 500);
+    const rowId = Number(command.rowId);
+    const observedAt = Number(command.observedAt);
+    if (
+      candidate?.delivery !== 'delivered' ||
+      !deliveryIdentityMatches(candidate, command.message) ||
+      Number.isFinite(candidate.receiptObservedAt) ||
+      !messageId ||
+      !Number.isSafeInteger(rowId) ||
+      rowId <= 0 ||
+      !Number.isFinite(observedAt) ||
+      observedAt <= 0 ||
+      observedAt > now ||
+      candidate.receiptMessageId !== messageId ||
+      candidate.receiptRowId !== rowId
+    ) {
+      return { snapshot, value: null };
+    }
+    const observed = { ...candidate, receiptObservedAt: observedAt };
+    snapshot.messages[index] = observed;
+    return { snapshot, value: observed };
   }
   if (
     command?.type === 'finalize-edit' ||
@@ -748,6 +752,31 @@ export function terminalDeliveryActionDisposition(delivery) {
   return 'unverified';
 }
 
+export async function runDefinitelyUnsentRetry({
+  message,
+  canRetry,
+  claim,
+  apply,
+  deliver,
+}) {
+  if (
+    typeof canRetry !== 'function' ||
+    typeof claim !== 'function' ||
+    typeof apply !== 'function' ||
+    typeof deliver !== 'function'
+  ) {
+    throw new TypeError('invalid_delivery_retry');
+  }
+  if (!canRetry(message)) {
+    return { status: 'not-retryable', message: null };
+  }
+  const claimed = await claim(message);
+  if (!claimed) return { status: 'conflict', message: null };
+  apply(claimed);
+  deliver(claimed);
+  return { status: 'started', message: claimed };
+}
+
 export function createDeliveryActionCoordinator({
   onChange = () => {},
 } = {}) {
@@ -755,6 +784,14 @@ export function createDeliveryActionCoordinator({
     throw new TypeError('invalid_delivery_action_change_handler');
   }
   const active = new Map();
+  const notify = (key, action) => {
+    try {
+      onChange(key, action);
+    } catch {
+      // Busy-state presentation is advisory. It must never block the action
+      // or leave its cross-tap coordinator permanently occupied.
+    }
+  };
   return {
     current(key) {
       return active.get(key) || null;
@@ -771,12 +808,12 @@ export function createDeliveryActionCoordinator({
       }
       if (active.has(key)) return { started: false, value: null };
       active.set(key, action);
-      onChange(key, action);
+      notify(key, action);
       try {
         return { started: true, value: await operation() };
       } finally {
         active.delete(key);
-        onChange(key, null);
+        notify(key, null);
       }
     },
   };
@@ -832,17 +869,64 @@ export function deliveryRecoveryDecision(
   };
 }
 
+export function extendDeliveryRecoveryDeadline(
+  delivery,
+  deadline,
+  now,
+  recoveryMs,
+) {
+  const currentDeadline = Number(deadline);
+  const checkedAt = Number(now);
+  const recoveryWindow = Number(recoveryMs);
+  if (
+    delivery?.state !== 'pending' ||
+    !Number.isFinite(currentDeadline) ||
+    !Number.isFinite(checkedAt) ||
+    !Number.isFinite(recoveryWindow) ||
+    recoveryWindow <= 0
+  ) {
+    return currentDeadline;
+  }
+  return Math.max(currentDeadline, checkedAt + recoveryWindow);
+}
+
+export function deliveryBackstopNeedsRecovery(
+  message,
+  { activePost = false } = {},
+) {
+  if (!deliveryNeedsAutomaticRecovery(message)) return false;
+  if (
+    message.delivery === 'failed' ||
+    message.delivery === 'confirming'
+  ) {
+    return true;
+  }
+  return message.delivery === 'delivering' && activePost !== true;
+}
+
 export function deliveryNeedsAutomaticRecovery(message) {
   return (
     message?.definitelyUnsent !== true &&
     !RECOVERY_TERMINAL_AUTH_CODES.has(message?.errorCode) &&
-    (message?.deliveryRecoveryExhausted !== true ||
-      LEGACY_INCONCLUSIVE_RECOVERY_CODES.has(message?.errorCode)) &&
+    message?.deliveryRecoveryExhausted !== true &&
     (message?.delivery === 'delivering' ||
       message?.delivery === 'confirming' ||
       (message?.delivery === 'failed' &&
         message.definitelyUnsent !== true))
   );
+}
+
+export function rearmDeliveryRecovery(message) {
+  if (
+    message?.deliveryRecoveryExhausted !== true ||
+    message?.definitelyUnsent === true ||
+    RECOVERY_TERMINAL_AUTH_CODES.has(message?.errorCode) ||
+    !['delivering', 'confirming', 'failed'].includes(message?.delivery)
+  ) {
+    return false;
+  }
+  message.deliveryRecoveryExhausted = false;
+  return true;
 }
 
 export function receiptReachedTranscript(
@@ -871,6 +955,42 @@ export function receiptReachedTranscript(
   return true;
 }
 
+export function receiptTranscriptDisposition(
+  receipt,
+  transcriptMessages,
+) {
+  const messageId = authorityString(receipt?.messageId, 500);
+  const rowId = Number(receipt?.rowId);
+  if (
+    !messageId ||
+    !Number.isSafeInteger(rowId) ||
+    rowId <= 0 ||
+    !Array.isArray(transcriptMessages)
+  ) {
+    return 'unresolved';
+  }
+  if (
+    transcriptMessages.some(
+      (candidate) =>
+        candidate?.id === messageId && candidate?.rowId === rowId,
+    )
+  ) {
+    return 'present';
+  }
+  const visibleRowIds = transcriptMessages
+    .map((candidate) => Number(candidate?.rowId))
+    .filter((candidateRowId) =>
+      Number.isSafeInteger(candidateRowId) && candidateRowId > 0,
+    );
+  if (
+    visibleRowIds.length > 0 &&
+    rowId < Math.min(...visibleRowIds)
+  ) {
+    return 'before-window';
+  }
+  return 'unresolved';
+}
+
 export function reconcileDeliveryReceipts(
   optimisticMessages,
   sessionId,
@@ -897,5 +1017,12 @@ export function reconcileDeliveryReceipts(
       message.receiptMessageId.length > 0
     );
   });
-  return { remaining, reconciled, missing };
+  const reconciledMessages = new Set(reconciled);
+  const unreconciled = remaining.filter(
+    (message) =>
+      message.sessionId === sessionId &&
+      message.delivery === 'delivered' &&
+      !reconciledMessages.has(message),
+  );
+  return { remaining, reconciled, missing, unreconciled };
 }

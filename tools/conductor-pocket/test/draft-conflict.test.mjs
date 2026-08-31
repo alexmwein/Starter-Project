@@ -124,7 +124,6 @@ test('send the Mac draft delivers its exact text and returns mine to the compose
     ['the draft on the mac'],
   );
   assert.deepEqual(durableMutation.removeIds, [message.id]);
-  assert.deepEqual(durableMutation.releaseDraftClaimIds, [message.id]);
   const restoreAt = log.findIndex(([kind]) => kind === 'restore');
   const persistAt = log.findIndex(([kind]) => kind === 'persist');
   const removeAt = log.findIndex(

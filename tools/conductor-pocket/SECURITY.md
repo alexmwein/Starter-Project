@@ -82,14 +82,9 @@ server-side device-session deadline, remembered deadline, and persistent lock
 state all pass. The device session lasts 30 days and remembered access lasts
 at most 29 days. Manual lock is persisted, nonexplicit legacy auto-lock calls
 are ignored, and successful WebAuthn verification rotates the bearer token and
-refreshes both deadlines. Active use may renew only a still-valid grant inside
-its final five days. Renewal rechecks the cookie, CSRF proof, pinned Tailscale
-login, persistent lock, and both current deadlines, then rotates the bearer
-token and CSRF proof before issuing fresh deadlines. It cannot resurrect an
-expired grant. Expired recovery requires a new WebAuthn user verification from
-the same pinned Tailscale identity. The immediately prior token has a
-five-minute, Face-ID-only recovery window for a lost cookie-update response;
-it cannot read transcripts or send.
+refreshes both deadlines. The immediately prior token has a five-minute,
+Face-ID-only recovery window for a lost cookie-update response; it cannot read
+transcripts or send.
 
 In both modes, the PWA stops its stream while hidden and adds an opaque
 privacy shield before iOS takes an app-switcher snapshot.
@@ -189,15 +184,6 @@ A send uses macOS Accessibility to:
    only to Conductor's process while retaining the same physical-input lease;
 6. report delivery only after the exact new user-message row appears after the
    pre-send database cursor in the intended session.
-
-When the exact owning project row is proven collapsed and the target workspace
-has zero visible links, one send may expand that row once. The relay reads the
-row position and size, takes the same physical-input lease used by delivery,
-and posts one real global CGEvent click at the row's leading edge. It never
-uses AXPress on a project row and never asks System Events to click coordinates.
-The full exactly-one route proof and database delivery confirmation still run
-after expansion. The watchdog uses a separate read-only sidebar snapshot and
-cannot invoke this click path.
 
 If any check fails, the phone sees a specific failure code and the message
 remains available for explicit retry. Reconnect never auto-sends a draft.

@@ -132,7 +132,6 @@ export function createDraftConflictFlow({
           ? [macOptimistic, message]
           : [macOptimistic],
         removeIds: thenPhone ? [] : [message.id],
-        releaseDraftClaimIds: thenPhone ? [] : [message.id],
       });
     } catch {
       // Secure delivery storage refused the new entry, so the Mac draft send

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 import { fetchJson } from '../public/http.js';
 import {
   applyConnectionAvailability,
@@ -37,6 +38,155 @@ test('the request timeout remains active while a response body stalls', async ()
       error?.message === 'request_timeout',
   );
   assert.equal(receivedSignal.aborted, true);
+});
+
+test('New Chat has a bounded request and always releases its busy control', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /const TAB_ACTION_REQUEST_MS = \d[\d_]*;/);
+  const tabStart = source.indexOf('async function runTabAction(');
+  const tabEnd = source.indexOf('function currentWorkspaceName', tabStart);
+  assert.match(
+    source.slice(tabStart, tabEnd),
+    /timeoutMs: TAB_ACTION_REQUEST_MS/,
+  );
+
+  const creationStart = source.indexOf('async function createChat(');
+  const creationEnd = source.indexOf('async function runCreateChat', creationStart);
+  const creationSource = source.slice(creationStart, creationEnd);
+  const announcements = [];
+  const timeout = new Error('request_timeout');
+  timeout.name = 'TimeoutError';
+  const context = vm.createContext({
+    announce: (message) => announcements.push(message),
+    runCreateChat: async () => {
+      throw timeout;
+    },
+  });
+  vm.runInContext(
+    `let chatCreationInFlight = false; ${creationSource}; globalThis.createChat = createChat;`,
+    context,
+  );
+  const attributes = new Map();
+  const control = {
+    disabled: false,
+    setAttribute(name, value) {
+      attributes.set(name, value);
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+  };
+
+  const result = await context.createChat({ control });
+  assert.equal(result, null);
+  assert.equal(control.disabled, false);
+  assert.equal(attributes.has('aria-busy'), false);
+  assert.match(announcements.at(-1), /stopped waiting|could not create/i);
+});
+
+test('New Chat retries retain one idempotency key until the Mac result is known', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const tabStart = source.indexOf('async function runTabAction(');
+  const createEnd = source.indexOf('const TAB_ACTION_MESSAGES', tabStart);
+  const body = source.slice(tabStart, createEnd);
+
+  assert.match(body, /CHAT_CREATION_ATTEMPTS_KEY/);
+  assert.match(body, /CHAT_CREATION_ATTEMPT_MAX/);
+  assert.match(body, /CHAT_CREATION_SETTLED_GRACE_MS/);
+  assert.match(body, /navigator\?\.locks\?\.request|navigator\.locks\.request/);
+  assert.match(body, /withChatCreationAttemptLock/);
+  assert.match(body, /'Idempotency-Key'/);
+  assert.match(body, /loadChatCreationAttempt/);
+  assert.match(body, /saveChatCreationAttempt/);
+  assert.match(body, /clearChatCreationAttempt/);
+  assert.match(body, /settleChatCreationAttempt/);
+  assert.match(body, /attempt\?\.anchorSessionId \|\| state\.route\.sessionId/);
+  assert.match(
+    body,
+    /saveChatCreationAttempt\(workspaceId, anchorSessionId(?:, now)?\)/,
+  );
+  assert.match(body, /requireDefinitive: true/);
+  assert.match(body, /TabActionIndeterminateError/);
+  assert.match(body, /payload\?\.error\?\.code/);
+  assert.match(body, /TabActionRouteUnavailableError/);
+  assert.match(body, /rebindChatCreationAttempt/);
+});
+
+test('New Chat keeps its key when a dead anchor is replaced in the same workspace', async () => {
+  const source = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('async function runCreateChat(');
+  const end = source.indexOf('\n}\n', start) + 3;
+  const runCreateChatSource = source.slice(start, end);
+  const originalAttempt = {
+    key: 'stable-new-chat-key',
+    workspaceId: 'workspace-1',
+    anchorSessionId: 'session-a',
+    createdAt: 100,
+  };
+  const actionCalls = [];
+  let reboundAttempt = null;
+  let settledAttempt = null;
+  const context = vm.createContext({
+    state: {
+      route: { workspaceId: 'workspace-1', sessionId: 'session-a' },
+    },
+    loadChatCreationAttempt: () => originalAttempt,
+    allocateChatCreationAttempt: async () => originalAttempt,
+    loadSessions: async () => [{ id: 'session-b' }],
+    sessionsFor: () => [{ id: 'session-b' }],
+    runTabAction: async (_action, options) => {
+      actionCalls.push(options);
+      if (actionCalls.length === 1) {
+        const error = new Error('session_not_found');
+        error.name = 'TabActionRouteUnavailableError';
+        throw error;
+      }
+      return { ok: true, code: 'tab_created' };
+    },
+    rebindChatCreationAttempt: async (attempt, anchorSessionId) => {
+      reboundAttempt = { ...attempt, anchorSessionId };
+      return reboundAttempt;
+    },
+    clearChatCreationAttempt: async () => {
+      throw new Error('a successful retry must not clear its receipt');
+    },
+    settleChatCreationAttempt: async (attempt) => {
+      settledAttempt = attempt;
+      return attempt;
+    },
+    currentWorkspaceName: () => 'Workspace',
+    loadRecentSessions: async () => {},
+    openSession: async () => {},
+    announce: () => {},
+  });
+  vm.runInContext(
+    `${runCreateChatSource}; globalThis.runCreateChat = runCreateChat;`,
+    context,
+  );
+
+  await context.runCreateChat();
+
+  assert.deepEqual(
+    actionCalls.map(({ sessionId, idempotencyKey }) => ({
+      sessionId,
+      idempotencyKey,
+    })),
+    [
+      { sessionId: 'session-a', idempotencyKey: 'stable-new-chat-key' },
+      { sessionId: 'session-b', idempotencyKey: 'stable-new-chat-key' },
+    ],
+  );
+  assert.equal(reboundAttempt.anchorSessionId, 'session-b');
+  assert.equal(settledAttempt.key, 'stable-new-chat-key');
 });
 
 test('a stopped refresh generation cannot block or clobber the next one', async () => {

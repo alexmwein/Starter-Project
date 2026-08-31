@@ -38,7 +38,6 @@ const QUEUED_EDIT_PLACEHOLDER = 'Edit queued message';
 // queued-edit scan happens after the transcript boundary. So it is budgeted
 // like its sibling band rather than pinned to the exact shape of one release.
 const MAX_PRE_TRANSCRIPT_CONTROLS = 8;
-const MAX_MAIN_ROOT_CANDIDATES = 32;
 const MAX_QUEUED_EDIT_CONTEXT_SIBLINGS = 12;
 const MAX_QUEUED_EDIT_CONTEXT_CHILDREN = 8;
 const MAX_QUEUED_EDIT_CONTEXT_NODES = 96;
@@ -145,6 +144,34 @@ const SEND_CONTROL_RECOVERY_WINDOW_MS = 6_000;
 const SEND_CONTROL_AUTHORITATIVE_DELAY_MS = 750;
 const SEND_CONTROL_AUTHORITATIVE_INTERVAL_MS = 3_000;
 const SEND_CONTROL_CERTIFICATION_RESERVE_MS = 8_000;
+const PRE_COMPOSER_BUDGET_RESERVE_MS = 15_000;
+
+function assertPreComposerBudget(deadlineAt) {
+  if (
+    deadlineAt !== null &&
+    deadlineAt - Date.now() < PRE_COMPOSER_BUDGET_RESERVE_MS
+  ) {
+    fail('automation_budget_exhausted');
+  }
+}
+
+function assertRouteAcquisitionDeadline() {
+  let rawDeadline = null;
+  try {
+    rawDeadline = environmentValue('POCKET_ROUTE_DEADLINE_AT');
+  } catch {
+    return;
+  }
+  if (rawDeadline === null) return;
+  const deadlineAt = Number(rawDeadline);
+  if (
+    !Number.isSafeInteger(deadlineAt) ||
+    deadlineAt <= 0 ||
+    Date.now() >= deadlineAt
+  ) {
+    fail('automation_budget_exhausted');
+  }
+}
 
 // Conductor re-renders its transcript continuously while an agent streams, so
 // an AX element is routinely replaced between the moment a walk enumerates it
@@ -174,7 +201,9 @@ function withTransientReadRetry(readOnlyCheck, shouldRetry = () => true) {
 
 function environmentValue(name) {
   const value = $.NSProcessInfo.processInfo.environment.objectForKey(name);
-  return value ? ObjC.unwrap(value) : null;
+  if (!value) return null;
+  const unwrapped = ObjC.unwrap(value);
+  return unwrapped === undefined || unwrapped === null ? null : unwrapped;
 }
 
 function recordPressProvenance(attemptStartedAt, pressedAt) {
@@ -209,6 +238,88 @@ function recordPressProvenance(attemptStartedAt, pressedAt) {
     )
   ) {
     fail('press_marker_unavailable');
+  }
+}
+
+function prepressMarkerPath(name, suffix) {
+  const markerPath = environmentValue(name);
+  if (markerPath === null) return null;
+  if (
+    typeof markerPath !== 'string' ||
+    !markerPath.startsWith('/') ||
+    markerPath.length > 4096 ||
+    markerPath.includes('\0') ||
+    !markerPath.endsWith(suffix)
+  ) {
+    fail('input_helper_unavailable');
+  }
+  return markerPath;
+}
+
+function writePrepressReady(markerPath, attemptStartedAt) {
+  const value = `${attemptStartedAt}\n`;
+  const data = $(value).dataUsingEncoding($.NSUTF8StringEncoding);
+  const fileManager = $.NSFileManager.defaultManager;
+  if (
+    !data ||
+    Number(data.length) > 128 ||
+    fileManager.fileExistsAtPath($(markerPath)) ||
+    !fileManager.createFileAtPathContentsAttributes(
+      $(markerPath),
+      data,
+      $.NSDictionary.dictionary,
+    )
+  ) {
+    fail('input_helper_unavailable');
+  }
+}
+
+function readPrepressDecision(markerPath) {
+  const data = $.NSData.dataWithContentsOfFile($(markerPath));
+  if (!data || Number(data.length) > 128) return null;
+  const value = $.NSString.alloc.initWithDataEncoding(
+    data,
+    $.NSUTF8StringEncoding,
+  );
+  return value ? ObjC.unwrap(value) : null;
+}
+
+function waitForPrepressAuthorization(
+  pid,
+  inputLease,
+  routeLease,
+  attemptStartedAt,
+) {
+  const readyPath = prepressMarkerPath(
+    'POCKET_PREPRESS_READY_PATH',
+    '/prepress-ready',
+  );
+  const decisionPath = prepressMarkerPath(
+    'POCKET_PREPRESS_DECISION_PATH',
+    '/prepress-decision',
+  );
+  if (readyPath === null && decisionPath === null) return;
+  if (readyPath === null || decisionPath === null) {
+    fail('input_helper_unavailable');
+  }
+  const heldDraft = focusedDraft(validateFocusedComposer(pid));
+  writePrepressReady(readyPath, attemptStartedAt);
+  while (true) {
+    assertDeadline(automationDeadline());
+    assertInputLease(inputLease);
+    assertSessionUnlocked();
+    const process = validateFocusedComposer(pid, heldDraft);
+    assertRouteLease(process, routeLease);
+    if ($.NSFileManager.defaultManager.fileExistsAtPath($(decisionPath))) {
+      const decision = readPrepressDecision(decisionPath);
+      if (decision === 'allow\n') return;
+      const denied = /^deny:([a-z][a-z0-9_]{0,63})\n$/.exec(
+        decision || '',
+      );
+      if (denied) fail(denied[1]);
+      fail('input_helper_unavailable');
+    }
+    delay(0.02);
   }
 }
 
@@ -277,6 +388,7 @@ function workspaceBelongsToRepository(
 ) {
   if (!repositoryName) return true;
   for (let index = workspaceIndex - 1; index >= 0; index -= 1) {
+    assertRouteAcquisitionDeadline();
     const candidate = containerElements[index];
     if (routeRole(candidate) !== 'AXButton') continue;
     const candidateName = routeName(candidate);
@@ -286,15 +398,14 @@ function workspaceBelongsToRepository(
   return false;
 }
 
-// Conductor exposes both project states as AXButton rows. A collapsed title is
-// "project project COUNT Repo settings New workspace"; an expanded title omits
-// COUNT. Parse the complete fixed suffix so other sidebar buttons cannot become
-// project boundaries merely because part of their text repeats.
-function projectRowState(rowTitle) {
+// Conductor exposes a collapsed project as one AXButton row whose flattened
+// title is "project project COUNT ...", followed immediately by the next
+// project row instead of by AXLink workspace rows. There is no AXExpanded
+// attribute to read. Require the repeated project name and a positive integer
+// count so an ordinary sidebar button can never masquerade as this diagnosis.
+function countedProjectName(rowTitle) {
   if (typeof rowTitle !== 'string' || rowTitle.length > 500) return null;
-  const match = /^(.+?)\s+\1(?:\s+([1-9][0-9]*))?\s+Repo settings New workspace$/u.exec(
-    rowTitle.trim(),
-  );
+  const match = /^(.+?)\s+\1\s+([1-9][0-9]*)\b/u.exec(rowTitle.trim());
   if (!match) return null;
   const projectName = match[1].trim();
   if (
@@ -304,39 +415,7 @@ function projectRowState(rowTitle) {
   ) {
     return null;
   }
-  return {
-    name: projectName,
-    collapsed: match[2] !== undefined,
-  };
-}
-
-function countedProjectName(rowTitle) {
-  const project = projectRowState(rowTitle);
-  return project?.collapsed ? project.name : null;
-}
-
-// Read the same strict project-row shape used by send recovery, but never
-// interact with it. launchd calls this while the watchdog is checking the
-// chain, so unreadable or duplicate rows fail closed instead of producing a
-// guess about which project is collapsed.
-function sidebarProjectSnapshot(process) {
-  const projects = [];
-  const names = new Set();
-  for (const root of webAreaRootElements(process)) {
-    for (const container of routeElements(root)) {
-      for (const row of routeElements(container)) {
-        if (routeRole(row) !== 'AXButton') continue;
-        const project = projectRowState(routeName(row));
-        if (!project) continue;
-        if (names.has(project.name)) return { ok: false, projects: [] };
-        names.add(project.name);
-        projects.push(project);
-      }
-    }
-  }
-  return projects.length > 0
-    ? { ok: true, projects }
-    : { ok: false, projects: [] };
+  return projectName;
 }
 
 // Read-only post-failure diagnosis. This never presses the project row: AXPress
@@ -344,160 +423,78 @@ function sidebarProjectSnapshot(process) {
 // target-link count is checked across every root first, so an unselected or
 // duplicate visible route keeps the old generic failure rather than blaming an
 // unrelated collapsed project.
-function inspectCollapsedProject(process, workspaceName, expectedProjectName) {
-  if (
-    typeof workspaceName !== 'string' ||
-    !workspaceName ||
-    typeof expectedProjectName !== 'string' ||
-    !expectedProjectName
-  ) {
-    return null;
-  }
-  const matchingCollapsedRows = [];
+function diagnoseWorkspaceFailure(
+  process,
+  workspaceName,
+  repositoryName = '',
+) {
+  const generic = Object.freeze({
+    ok: false,
+    code: 'workspace_list_unavailable',
+  });
+  if (typeof workspaceName !== 'string' || !workspaceName) return generic;
+
+  const collapsedProjects = [];
   let targetLinkCount = 0;
   const rootElements = webAreaRootElements(process);
   for (const root of rootElements) {
     const containers = routeElements(root);
     for (const container of containers) {
       const rows = routeElements(container);
+      let currentProject = null;
+      const finishProject = () => {
+        if (
+          typeof currentProject?.name === 'string' &&
+          currentProject.workspaceLinks === 0
+        ) {
+          collapsedProjects.push(currentProject.name);
+        }
+      };
       for (const row of rows) {
         const role = routeRole(row);
         if (role === 'AXButton') {
-          const projectName = countedProjectName(routeName(row));
-          if (projectName === expectedProjectName) {
-            matchingCollapsedRows.push(row);
+          const rowName = routeName(row);
+          const legacyName = countedProjectName(rowName);
+          const isCurrentProjectHeader =
+            typeof rowName === 'string' &&
+            rowName.endsWith(PROJECT_HEADER_SUFFIX);
+          if (legacyName || isCurrentProjectHeader) {
+            finishProject();
+            const targetProjectName = repositoryName
+              ? repositoryHeaderMatches(repositoryName, rowName)
+                ? repositoryName
+                : null
+              : legacyName;
+            currentProject = {
+              name: targetProjectName,
+              workspaceLinks: 0,
+            };
           }
           continue;
         }
         if (role !== 'AXLink') continue;
         const linkName = routeName(row);
         if (
+          typeof currentProject?.name === 'string' &&
           typeof linkName === 'string' &&
           workspaceNameAppearsInRoute(workspaceName, linkName)
         ) {
           targetLinkCount += 1;
         }
+        if (currentProject) currentProject.workspaceLinks += 1;
       }
+      finishProject();
     }
   }
-  if (targetLinkCount !== 0 || matchingCollapsedRows.length !== 1) {
-    return null;
-  }
-  return matchingCollapsedRows[0];
-}
 
-function diagnoseWorkspaceFailure(
-  process,
-  workspaceName,
-  expectedProjectName = '',
-) {
-  const generic = Object.freeze({
-    ok: false,
-    code: 'workspace_list_unavailable',
-  });
-  if (
-    !inspectCollapsedProject(
-      process,
-      workspaceName,
-      expectedProjectName,
-    )
-  ) return generic;
+  if (targetLinkCount !== 0 || collapsedProjects.length === 0) {
+    return generic;
+  }
   return Object.freeze({
     ok: false,
     code: 'workspace_project_collapsed',
-    projectName: expectedProjectName,
+    projectName: collapsedProjects[0],
   });
-}
-
-function axisPair(value) {
-  let pair = value;
-  try {
-    pair = ObjC.deepUnwrap(value);
-  } catch {
-    // Plain arrays from System Events and unit fixtures need no bridge unwrap.
-  }
-  const x = Number(Array.isArray(pair) ? pair[0] : pair?.x);
-  const y = Number(Array.isArray(pair) ? pair[1] : pair?.y);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-
-function postGlobalLeftClick(point, lease) {
-  const source = $.CGEventSourceCreate($.kCGEventSourceStatePrivate);
-  if (!source) fail('event_source_failed');
-  const location = $.CGPointMake(point.x, point.y);
-  const down = $.CGEventCreateMouseEvent(
-    source,
-    $.kCGEventLeftMouseDown,
-    location,
-    $.kCGMouseButtonLeft,
-  );
-  const up = $.CGEventCreateMouseEvent(
-    source,
-    $.kCGEventLeftMouseUp,
-    location,
-    $.kCGMouseButtonLeft,
-  );
-  if (!down || !up) fail('event_source_failed');
-  $.CGEventPost($.kCGHIDEventTap, down);
-  lease.syntheticInputPosted = true;
-  $.CGEventPost($.kCGHIDEventTap, up);
-}
-
-function expandCollapsedProject(
-  process,
-  workspaceName,
-  expectedProjectName,
-  {
-    acquireLease = acquireInputLease,
-    activate = () => {},
-    assertLease = assertInputLease,
-    inspect = inspectCollapsedProject,
-    click = postGlobalLeftClick,
-  } = {},
-) {
-  const lease = acquireLease();
-  activate(lease);
-  const row = inspect(process, workspaceName, expectedProjectName);
-  if (!row) return 'not-expanded';
-  let position;
-  let size;
-  try {
-    position = axisPair(row.position());
-    size = axisPair(row.size());
-  } catch {
-    return 'not-expanded';
-  }
-  if (!position || !size || size.x <= 0 || size.y <= 0) {
-    return 'not-expanded';
-  }
-  assertLease(lease);
-  const currentRow = inspect(process, workspaceName, expectedProjectName);
-  if (!currentRow) return 'not-expanded';
-  let currentPosition;
-  let currentSize;
-  try {
-    currentPosition = axisPair(currentRow.position());
-    currentSize = axisPair(currentRow.size());
-  } catch {
-    return 'not-expanded';
-  }
-  if (
-    !currentPosition ||
-    !currentSize ||
-    currentSize.x <= 0 ||
-    currentSize.y <= 0
-  ) {
-    return 'not-expanded';
-  }
-  const currentPoint = {
-    x: currentPosition.x + 12,
-    y: currentPosition.y + currentSize.y / 2,
-  };
-  assertLease(lease);
-  click(currentPoint, lease);
-  delay(0.03);
-  assertLease(lease);
-  return 'expanded';
 }
 
 function isWellFormed(value) {
@@ -591,7 +588,9 @@ function routeTarget() {
     environmentValue('POCKET_WORKSPACE_SIDEBAR_CHILD_COUNT'),
     environmentValue('POCKET_WORKSPACE_CONTAINER_CHILD_COUNT'),
   ];
-  const hintProvided = hintValues.some((value) => value !== null);
+  const hintProvided = hintValues.some(
+    (value) => value !== null && value !== '',
+  );
   let workspaceHint = null;
   if (hintProvided) {
     if (hintValues.some((value) => value === null)) {
@@ -714,6 +713,7 @@ function routeSelected(element) {
 }
 
 function sessionRadioTopology(tabGroup) {
+  assertRouteAcquisitionDeadline();
   const topology = [];
   const tabChildren = routeElements(tabGroup);
   // Six Apple Events for the whole tab strip instead of three per tab plus
@@ -738,6 +738,7 @@ function sessionRadioTopology(tabGroup) {
     childIndex < tabChildren.length;
     childIndex += 1
   ) {
+    assertRouteAcquisitionDeadline();
     if (roles[childIndex] === 'AXRadioButton') {
       const tabChild = tabChildren[childIndex];
       topology.push({
@@ -768,6 +769,7 @@ function sessionRadioTopology(tabGroup) {
       nestedIndex < childRoles.length;
       nestedIndex += 1
     ) {
+      assertRouteAcquisitionDeadline();
       if (childRoles[nestedIndex] !== 'AXRadioButton') continue;
       if ((!childNames || !childSelections) && nestedElements === null) {
         nestedElements = nestedChildrenOf(childIndex);
@@ -785,138 +787,45 @@ function sessionRadioTopology(tabGroup) {
   return topology;
 }
 
-function inspectMainRootCandidate(element, rootPath) {
-  const elements = routeElements(element);
-  // Two Apple Events instead of two per child. Same values, same checks.
-  const roles = bulkRead(
-    element,
-    elements,
-    (root) => root.uiElements.role(),
-    (child) => routeRole(child),
-  );
-  const descriptions = bulkRead(
-    element,
-    elements,
-    (root) => root.uiElements.description(),
-    (child) => routeDescription(child),
-  );
-  let composerCount = 0;
-  let tabGroupCount = 0;
-  let tabGroupIndex = -1;
-  for (let index = 0; index < elements.length; index += 1) {
-    if (roles[index] === 'AXTabGroup') {
-      tabGroupCount += 1;
-      tabGroupIndex = index;
-    }
-    if (descriptions[index] === 'composer') {
-      composerCount += 1;
-    }
-  }
-  return {
-    candidate:
-      tabGroupCount === 1 && composerCount === 1
-        ? {
-            descriptions,
-            elements,
-            roles,
-            rootIndex: rootPath[0],
-            rootPath: rootPath.slice(),
-            tabGroupIndex,
-          }
-        : null,
-    elements,
-    roles,
-  };
-}
-
-function resolveMainRoot(rootElements, expectedRootPath = null) {
+function resolveMainRoot(rootElements) {
   const candidates = [];
-  let inspectedCount = 0;
-  const inspect = (element, rootPath) => {
-    inspectedCount += 1;
-    if (inspectedCount > MAX_MAIN_ROOT_CANDIDATES) {
-      fail('route_changed', 'mainRootCandidateBudget');
-    }
-    const result = inspectMainRootCandidate(element, rootPath);
-    if (result.candidate) candidates.push(result.candidate);
-    return result;
-  };
-
-  const inspectOptional = (element, rootPath) => {
-    try {
-      return inspect(element, rootPath);
-    } catch (error) {
-      if (error?.pocketCode === 'route_changed') return null;
-      throw error;
-    }
-  };
-
-  let expectedRootResult = null;
-  if (expectedRootPath !== null) {
-    if (
-      !Array.isArray(expectedRootPath) ||
-      expectedRootPath.length < 1 ||
-      expectedRootPath.length > 2 ||
-      !expectedRootPath.every(
-        (value) => Number.isSafeInteger(value) && value >= 0,
-      )
-    ) {
-      fail('route_changed', 'mainRootPath');
-    }
-    const expectedRootIndex = expectedRootPath[0];
-    const expectedRoot = rootElements[expectedRootIndex];
-    if (!expectedRoot) fail('route_changed', 'mainRootMissing');
-    expectedRootResult = inspect(expectedRoot, [expectedRootIndex]);
-    if (expectedRootPath.length === 1) {
-      if (!expectedRootResult.candidate) {
-        fail('route_changed', 'mainRootMoved');
-      }
-    } else {
-      const expectedChildIndex = expectedRootPath[1];
-      if (
-        expectedRootResult.roles[expectedChildIndex] !== 'AXGroup' ||
-        !expectedRootResult.elements[expectedChildIndex]
-      ) {
-        fail('route_changed', 'mainRootWrapperChanged');
-      }
-      const expectedNested = inspect(
-        expectedRootResult.elements[expectedChildIndex],
-        expectedRootPath,
-      );
-      if (!expectedNested.candidate) {
-        fail('route_changed', 'mainRootMoved');
-      }
-    }
-  }
-
   for (let rootIndex = 0; rootIndex < rootElements.length; rootIndex += 1) {
-    const isExpectedRoot = expectedRootPath?.[0] === rootIndex;
-    const root = isExpectedRoot
-      ? expectedRootResult
-      : expectedRootPath === null
-        ? inspect(rootElements[rootIndex], [rootIndex])
-        : inspectOptional(rootElements[rootIndex], [rootIndex]);
-    if (!root) continue;
-    if (root.candidate || root.elements.length === 0) continue;
-
-    // Conductor 0.83.1 moved the proven main group under one chrome wrapper.
-    // Inspect only direct AXGroup children, with a global candidate budget.
-    // Sidebar controls and unrelated leaf roots remain opaque.
-    for (let childIndex = 0; childIndex < root.elements.length; childIndex += 1) {
-      if (root.roles[childIndex] !== 'AXGroup') continue;
-      if (
-        expectedRootPath?.length === 2 &&
-        expectedRootPath[0] === rootIndex &&
-        expectedRootPath[1] === childIndex
-      ) {
-        continue;
+    assertRouteAcquisitionDeadline();
+    const elements = routeElements(rootElements[rootIndex]);
+    // Two Apple Events instead of two per child. Same values, same checks.
+    const roles = bulkRead(
+      rootElements[rootIndex],
+      elements,
+      (root) => root.uiElements.role(),
+      (element) => routeRole(element),
+    );
+    const descriptions = bulkRead(
+      rootElements[rootIndex],
+      elements,
+      (root) => root.uiElements.description(),
+      (element) => routeDescription(element),
+    );
+    let composerCount = 0;
+    let tabGroupCount = 0;
+    let tabGroupIndex = -1;
+    for (let index = 0; index < elements.length; index += 1) {
+      if (roles[index] === 'AXTabGroup') {
+        tabGroupCount += 1;
+        tabGroupIndex = index;
       }
-      const childPath = [rootIndex, childIndex];
-      if (expectedRootPath === null) {
-        inspect(root.elements[childIndex], childPath);
-      } else {
-        inspectOptional(root.elements[childIndex], childPath);
+      if (descriptions[index] === 'composer') {
+        composerCount += 1;
       }
+    }
+    if (tabGroupCount !== 1) continue;
+    if (composerCount === 1) {
+      candidates.push({
+        descriptions,
+        elements,
+        roles,
+        rootIndex,
+        tabGroupIndex,
+      });
     }
   }
   if (candidates.length !== 1) fail('route_changed');
@@ -939,6 +848,7 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
       rootIndex < rootElements.length;
       rootIndex += 1
     ) {
+      assertRouteAcquisitionDeadline();
       if (rootIndex === excludedRootIndex) continue;
       const sidebarElements = routeElements(rootElements[rootIndex]);
       if (sidebarElements.length !== sidebarChildCount) continue;
@@ -975,6 +885,7 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
       rootIndex < rootElements.length;
       rootIndex += 1
     ) {
+      assertRouteAcquisitionDeadline();
       if (rootIndex === excludedRootIndex) continue;
       const sidebarElements = routeElements(rootElements[rootIndex]);
       const rootMatches = [];
@@ -983,8 +894,10 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
         containerIndex < sidebarElements.length;
         containerIndex += 1
       ) {
+        assertRouteAcquisitionDeadline();
         const links = routeElements(sidebarElements[containerIndex]);
         for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+          assertRouteAcquisitionDeadline();
           const link = links[linkIndex];
           if (routeRole(link) !== 'AXLink') continue;
           if (
@@ -1031,35 +944,46 @@ function resolveWorkspaceRoot(rootElements, target, excludedRootIndex = -1) {
 }
 
 function acquireRouteLease(process, target = routeTarget()) {
+  assertRouteAcquisitionDeadline();
   const rootElements = webAreaRootElements(process);
   const sessionName = `Close chat ${target.sessionTitle}`;
+  assertRouteAcquisitionDeadline();
   const main = resolveMainRoot(rootElements);
+  assertRouteAcquisitionDeadline();
   const workspace = resolveWorkspaceRoot(rootElements, target, main.rootIndex);
-  if (main.rootIndex === workspace.rootIndex) fail('route_changed');
+  if (main.rootIndex === workspace.rootIndex) {
+    fail('route_changed', 'rootOverlap');
+  }
   const mainElements = main.elements;
   const tabGroupIndex = main.tabGroupIndex;
 
   const sessionTopology = sessionRadioTopology(
     mainElements[tabGroupIndex],
   );
+  assertRouteAcquisitionDeadline();
   const matchingSessions = sessionTopology.filter(
     (entry) => entry.name === sessionName,
   );
   if (matchingSessions.length < target.sessionOrdinal) {
-    fail('route_changed');
+    fail(
+      'route_changed',
+      `ordinal ${matchingSessions.length}<${target.sessionOrdinal}`,
+    );
   }
   const targetSession = matchingSessions[target.sessionOrdinal - 1];
   if (
     !targetSession.selected ||
     sessionTopology.filter((entry) => entry.selected).length !== 1
   ) {
-    fail('route_changed');
+    fail(
+      'route_changed',
+      `initialSelected target=${Boolean(targetSession.selected)} count=${sessionTopology.filter((entry) => entry.selected).length}`,
+    );
   }
 
   return Object.freeze({
     mainChildCount: mainElements.length,
     mainRootIndex: main.rootIndex,
-    mainRootPath: Object.freeze(main.rootPath.slice()),
     rootCount: rootElements.length,
     sessionName,
     sessionOrdinal: target.sessionOrdinal,
@@ -1100,12 +1024,6 @@ function assertRouteLease(process, lease) {
     !Array.isArray(lease.workspacePath) ||
     !Array.isArray(lease.targetSessionPath) ||
     !Array.isArray(lease.sessionTopology) ||
-    !Array.isArray(lease.mainRootPath) ||
-    lease.mainRootPath.length < 1 ||
-    lease.mainRootPath.length > 2 ||
-    !lease.mainRootPath.every(
-      (value) => Number.isSafeInteger(value) && value >= 0,
-    ) ||
     !Number.isSafeInteger(lease.rootCount) ||
     lease.rootCount < 2 ||
     !Number.isSafeInteger(lease.mainRootIndex) ||
@@ -1113,7 +1031,6 @@ function assertRouteLease(process, lease) {
     !Number.isSafeInteger(lease.sidebarRootIndex) ||
     lease.sidebarRootIndex < 0 ||
     lease.mainRootIndex >= lease.rootCount ||
-    lease.mainRootPath[0] !== lease.mainRootIndex ||
     lease.sidebarRootIndex >= lease.rootCount ||
     lease.mainRootIndex === lease.sidebarRootIndex
   ) {
@@ -1137,12 +1054,9 @@ function assertRouteLease(process, lease) {
     },
     workspaceName: lease.workspaceName,
   });
-  const main = resolveMainRoot(rootElements, lease.mainRootPath);
-  if (!sameRoutePath(main.rootPath, lease.mainRootPath)) {
-    fail(
-      'route_changed',
-      `mainRootPath ${JSON.stringify(main.rootPath)}!=${JSON.stringify(lease.mainRootPath)}`,
-    );
+  const main = resolveMainRoot(rootElements);
+  if (main.rootIndex !== lease.mainRootIndex) {
+    fail('route_changed', `mainRootIndex ${main.rootIndex}!=${lease.mainRootIndex}`);
   }
   const mainElements = main.elements;
   // Conductor's toolbar gains and loses chrome while a send is in flight, as git
@@ -1237,26 +1151,6 @@ function conductorProcessForReadOnlyDiagnosis(pid) {
     fail('invalid_target_process');
   }
   return process;
-}
-
-function activateConductorForClick(pid, process, lease) {
-  assertSessionUnlocked();
-  const conductor = $.NSRunningApplication.runningApplicationWithProcessIdentifier(
-    pid,
-  );
-  if (!conductor || ObjC.unwrap(conductor.bundleIdentifier) !== CONDUCTOR_BUNDLE_ID) {
-    fail('invalid_target_process');
-  }
-  assertInputLease(lease);
-  conductor.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
-  const deadline = Date.now() + 1_000;
-  do {
-    assertSessionUnlocked();
-    assertInputLease(lease);
-    if (process.frontmost()) return;
-    delay(0.05);
-  } while (Date.now() < deadline);
-  fail('target_not_active');
 }
 
 function validateFocusedComposer(pid, expectedDraft = null) {
@@ -1533,7 +1427,7 @@ function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
   try {
     role = element.role();
   } catch {
-    fail('send_unavailable');
+    fail('composer_tree_transient', null, { transientRead: true });
   }
   if (role === 'AXStaticText') {
     let nameReadable = false;
@@ -1552,17 +1446,19 @@ function hasStaticTextInBoundedTree(element, expectedTexts, budget) {
     } catch {
       // Fail below unless the name was independently readable.
     }
-    if (!nameReadable || !valueReadable) fail('send_unavailable');
+    if (!nameReadable || !valueReadable) {
+      fail('composer_tree_transient', null, { transientRead: true });
+    }
   }
 
   let children;
   try {
     children = element.uiElements();
   } catch {
-    fail('send_unavailable');
+    fail('composer_tree_transient', null, { transientRead: true });
   }
   if (!children || typeof children.length !== 'number') {
-    fail('send_unavailable');
+    fail('composer_tree_transient', null, { transientRead: true });
   }
   for (const child of children) {
     if (hasStaticTextInBoundedTree(child, expectedTexts, budget)) return true;
@@ -1760,29 +1656,32 @@ function composerSendContext(process) {
 let queuedEditProven = false;
 
 function assertNotQueuedEditMode(process) {
-  return withTransientReadRetry(() => {
-    const { composer, contextElements } = composerSendContext(process);
-    if (queuedEditProven) return composer;
-    const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
-    if (
-      contextElements.slice(0, -1).some((candidate) =>
+  return withTransientReadRetry(
+    () => {
+      const { composer, contextElements } = composerSendContext(process);
+      if (queuedEditProven) return composer;
+      const budget = { remaining: MAX_QUEUED_EDIT_CONTEXT_NODES };
+      if (
+        contextElements.slice(0, -1).some((candidate) =>
+          hasStaticTextInBoundedTree(
+            candidate,
+            [QUEUED_EDIT_MARKER],
+            budget,
+          )
+        ) ||
         hasStaticTextInBoundedTree(
-          candidate,
-          [QUEUED_EDIT_MARKER],
+          composer,
+          [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
           budget,
         )
-      ) ||
-      hasStaticTextInBoundedTree(
-        composer,
-        [QUEUED_EDIT_MARKER, QUEUED_EDIT_PLACEHOLDER],
-        budget,
-      )
-    ) {
-      fail('send_unavailable');
-    }
-    queuedEditProven = true;
-    return composer;
-  });
+      ) {
+        fail('send_unavailable');
+      }
+      queuedEditProven = true;
+      return composer;
+    },
+    (error) => error?.pocketTransientRead === true,
+  );
 }
 
 function uniqueComposerDraft(process) {
@@ -2198,19 +2097,11 @@ function waitForComposerSend(
 // the proven chunked path. The fast path can never become a new way to fail, and
 // nothing here presses anything: the exact-draft proof and the route proof still
 // run before the press exactly as before.
-function deliverWholeMessage(pid, message, inputLease, expectedDraft) {
-  let wroteMessage = false;
+function deliverWholeMessage(pid, message) {
   try {
-    assertInputLease(inputLease);
-    const process = validateFocusedComposer(pid, expectedDraft);
+    const process = validateFocusedComposer(pid);
     const focused = process.attributes.byName('AXFocusedUIElement').value();
-    assertInputLease(inputLease);
-    if (focusedDraft(process) !== expectedDraft) return false;
-    assertInputLease(inputLease);
-    if (focusedDraft(process) !== expectedDraft) return false;
     focused.value = message;
-    wroteMessage = true;
-    assertInputLease(inputLease);
     for (let attempt = 0; attempt < 25; attempt += 1) {
       if (focusedDraft(validateFocusedComposer(pid)) === message) return true;
       delay(0.02);
@@ -2218,21 +2109,12 @@ function deliverWholeMessage(pid, message, inputLease, expectedDraft) {
   } catch {
     // Fall back to chunked typing.
   }
-  if (wroteMessage) {
-    try {
-      // Clear only the exact value Pocket wrote while the same physical-input
-      // lease still holds. A transient read or newer Mac typing must survive.
-      assertInputLease(inputLease);
-      const process = validateFocusedComposer(pid, message);
-      const focused = process.attributes.byName('AXFocusedUIElement').value();
-      assertInputLease(inputLease);
-      if (focusedDraft(process) === message) {
-        assertInputLease(inputLease);
-        if (focusedDraft(process) === message) focused.value = '';
-      }
-    } catch {
-      // The chunked path will classify any remaining draft without erasing it.
-    }
+  try {
+    // Leave nothing half-written for the fallback to trip over.
+    const process = validateFocusedComposer(pid);
+    process.attributes.byName('AXFocusedUIElement').value().value = '';
+  } catch {
+    // The chunked path clears the composer itself.
   }
   return false;
 }
@@ -2321,9 +2203,16 @@ function typeAndSendMessage(pid) {
     routeLease = acquireRouteLease(process);
     routeReadyAt = Date.now();
     assertNotQueuedEditMode(process);
+    assertPreComposerBudget(automationDeadline());
     process = validateFocusedComposer(pid);
     const draftReadStartedAt = Date.now();
     const currentDraft = focusedDraft(process);
+    waitForPrepressAuthorization(
+      pid,
+      inputLease,
+      routeLease,
+      attemptStartedAt,
+    );
     if (currentDraft === message) {
       exactDraftExposedAt = draftReadStartedAt;
     } else {
@@ -2331,7 +2220,7 @@ function typeAndSendMessage(pid) {
       if (replaceDraft && currentDraft !== expectedDraft) fail('draft_conflict');
       if (currentDraft === '') lastProvenPrefix = '';
 
-      if (deliverWholeMessage(pid, message, inputLease, currentDraft)) {
+      if (deliverWholeMessage(pid, message)) {
         lastProvenPrefix = message;
         exactDraftExposedAt = Date.now();
       } else {
@@ -2389,8 +2278,8 @@ function typeAndSendMessage(pid) {
     // phantom send the operator would then duplicate by retrying.
     assertDeadline(automationDeadline());
     pressInvokedAt = Date.now();
-    pressAction.perform();
     recordPressProvenance(attemptStartedAt, pressInvokedAt);
+    pressAction.perform();
     assertSessionUnlocked();
     assertInputLease(inputLease);
     const completedAt = Date.now();
@@ -2512,16 +2401,17 @@ function run(argv) {
     const refreshed = validateFocusedComposer(pid);
     assertRouteLease(refreshed, routeLease);
     validateFocusedComposer(pid);
-    return 'ready';
+    return [
+      'ready',
+      routeLease.workspacePath[0],
+      routeLease.workspacePath[1],
+      routeLease.sidebarChildCount,
+      routeLease.workspaceContainerChildCount,
+    ].join(':');
   }
   if (operation === 'input-check') {
     assertSessionUnlocked();
     return waitForInputIdle() ? 'ready' : 'busy';
-  }
-  if (operation === 'sidebar-snapshot') {
-    assertSessionUnlocked();
-    const process = conductorProcessForReadOnlyDiagnosis(pid);
-    return JSON.stringify(sidebarProjectSnapshot(process));
   }
   if (operation === 'workspace-failure') {
     assertSessionUnlocked();
@@ -2533,21 +2423,8 @@ function run(argv) {
       diagnoseWorkspaceFailure(
         process,
         environmentValue('POCKET_WORKSPACE_NAME'),
-        decodeBase64Environment('POCKET_PROJECT_NAME_BASE64'),
+        environmentValue('POCKET_REPOSITORY_NAME') || '',
       ),
-    );
-  }
-  if (operation === 'workspace-expand') {
-    assertSessionUnlocked();
-    const process = conductorProcessForReadOnlyDiagnosis(pid);
-    return expandCollapsedProject(
-      process,
-      environmentValue('POCKET_WORKSPACE_NAME'),
-      decodeBase64Environment('POCKET_PROJECT_NAME_BASE64'),
-      {
-        activate: (lease) =>
-          activateConductorForClick(pid, process, lease),
-      },
     );
   }
   if (operation === 'tab-new') return postTabShortcut(pid, KEY_T);
