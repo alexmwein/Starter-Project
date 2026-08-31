@@ -105,6 +105,14 @@ const VISIBLE_TRANSCRIPT_EVENT_SQL = `
   )
 `;
 
+const SESSION_ACTIVITY_SQL = `
+  MAX(
+    COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', s.last_user_message_at), ''),
+    COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at), ''),
+    COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at), '')
+  )
+`;
+
 const AGENT_ERROR_BEHAVIOR = {
   provider_reconnecting: {
     severity: 'warning',
@@ -485,7 +493,7 @@ export class ConductorDatabase {
           r.name AS repository_name,
           COUNT(s.id) AS session_count,
           COALESCE(SUM(s.unread_count), 0) AS unread_count,
-          MAX(COALESCE(s.last_user_message_at, s.updated_at, s.created_at)) AS activity_at,
+          MAX(${SESSION_ACTIVITY_SQL}) AS activity_at,
           SUM(CASE WHEN s.status = 'working' THEN 1 ELSE 0 END) AS working_count
         FROM workspaces w
         JOIN repos r ON r.id = w.repository_id
@@ -566,6 +574,7 @@ export class ConductorDatabase {
           s.created_at,
           s.updated_at,
           s.last_user_message_at,
+          ${SESSION_ACTIVITY_SQL} AS activity_at,
           s.context_used_percent,
           s.queue_paused_at,
           (
@@ -582,7 +591,7 @@ export class ConductorDatabase {
           ) AS queued_count
         FROM sessions s
         WHERE s.workspace_id = ? AND s.is_hidden = 0
-        ORDER BY COALESCE(s.last_user_message_at, s.updated_at, s.created_at) DESC
+        ORDER BY activity_at DESC
       `),
       recentSessions: this.#db.prepare(`
         SELECT
@@ -596,6 +605,7 @@ export class ConductorDatabase {
           s.created_at,
           s.updated_at,
           s.last_user_message_at,
+          ${SESSION_ACTIVITY_SQL} AS activity_at,
           w.workspace_name,
           w.secondary_directory_name,
           w.placeholder_branch_name,
@@ -606,7 +616,7 @@ export class ConductorDatabase {
         JOIN workspaces w ON w.id = s.workspace_id
         JOIN repos r ON r.id = w.repository_id
         WHERE s.is_hidden = 0 AND w.state != 'archived' AND r.hidden = 0
-        ORDER BY COALESCE(s.last_user_message_at, s.updated_at, s.created_at) DESC
+        ORDER BY activity_at DESC
         LIMIT ?
       `),
       sessionRoute: this.#db.prepare(`
@@ -702,6 +712,24 @@ export class ConductorDatabase {
           AND content COLLATE BINARY = ?
           AND cancelled_at IS NULL
         ORDER BY rowid
+        LIMIT 1
+      `),
+      visibleUserMessage: this.#db.prepare(`
+        SELECT
+          rowid AS row_id,
+          id,
+          role,
+          content,
+          created_at,
+          sent_at,
+          cancelled_at,
+          model,
+          turn_id
+        FROM session_messages
+        WHERE rowid = ?
+          AND session_id = ?
+          AND role = 'user'
+          AND cancelled_at IS NULL
         LIMIT 1
       `),
       readableHeadRows: this.#db.prepare(`
@@ -883,7 +911,7 @@ export class ConductorDatabase {
       queuePaused: row.queue_paused_at != null,
       contextUsedPercent:
         typeof row.context_used_percent === 'number' ? row.context_used_percent : null,
-      activityAt: row.last_user_message_at || row.updated_at || row.created_at,
+      activityAt: row.activity_at,
     }));
   }
 
@@ -899,7 +927,7 @@ export class ConductorDatabase {
       model: row.model || null,
       status: row.status || 'unknown',
       unreadCount: Number(row.unread_count || 0),
-      activityAt: row.last_user_message_at || row.updated_at || row.created_at,
+      activityAt: row.activity_at,
     }));
   }
 
@@ -943,6 +971,18 @@ export class ConductorDatabase {
       safeAfter,
       exactContent,
     );
+    return row ? parseAssistantRow(row)[0] : null;
+  }
+
+  getVisibleUserMessage(sessionId, rowId) {
+    if (
+      typeof sessionId !== 'string' ||
+      !Number.isSafeInteger(rowId) ||
+      rowId <= 0
+    ) {
+      return null;
+    }
+    const row = this.#statements.visibleUserMessage.get(rowId, sessionId);
     return row ? parseAssistantRow(row)[0] : null;
   }
 

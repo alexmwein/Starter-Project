@@ -451,6 +451,107 @@ test('workspace routes use the visible Conductor name instead of the folder code
   assert.equal(path.isAbsolute(database.listLocalWorkspacePaths()[0]), true);
 });
 
+test('session lists promote the newest activity across user, assistant, and creation timestamps', async (context) => {
+  const { database, writable } = await createConfirmationFixture(context);
+  writable.exec(`
+    UPDATE sessions
+      SET created_at = '2026-01-01T00:00:00Z',
+          updated_at = '2026-01-01 00:04:00',
+          last_user_message_at = '2026-01-01T00:01:00Z'
+      WHERE id = 'session-1';
+    UPDATE sessions
+      SET created_at = '2026-01-01T00:00:00Z',
+          updated_at = '2026-01-01 00:03:00',
+          last_user_message_at = '2026-01-01T00:03:00Z'
+      WHERE id = 'session-2';
+    INSERT INTO sessions
+      (id, workspace_id, title, agent_type, model, status, unread_count, created_at, updated_at, last_user_message_at, is_hidden)
+    VALUES
+      ('session-3', 'workspace-1', 'Newest chat', 'codex', 'gpt-test', 'idle', 0,
+       '2026-01-01T00:05:00Z', '2026-01-01T00:02:00Z', NULL, 0),
+      ('session-hidden', 'workspace-1', 'Hidden chat', 'codex', 'gpt-test', 'idle', 0,
+       '2026-01-01T00:10:00Z', '2026-01-01T00:10:00Z', NULL, 1);
+  `);
+
+  const workspaceSessions = database.listSessions('workspace-1');
+  assert.deepEqual(
+    workspaceSessions.map(({ id }) => id),
+    ['session-3', 'session-1', 'session-2'],
+  );
+  assert.deepEqual(
+    workspaceSessions.map(({ activityAt }) => activityAt),
+    [
+      '2026-01-01T00:05:00.000Z',
+      '2026-01-01T00:04:00.000Z',
+      '2026-01-01T00:03:00.000Z',
+    ],
+  );
+
+  const recentSessions = database.listRecentSessions(3);
+  assert.deepEqual(
+    recentSessions.map(({ id }) => id),
+    ['session-3', 'session-1', 'session-2'],
+  );
+  assert.deepEqual(
+    recentSessions.map(({ activityAt }) => activityAt),
+    [
+      '2026-01-01T00:05:00.000Z',
+      '2026-01-01T00:04:00.000Z',
+      '2026-01-01T00:03:00.000Z',
+    ],
+  );
+  assert.equal(
+    database.listWorkspaces()[0].activityAt,
+    '2026-01-01T00:05:00.000Z',
+  );
+});
+
+test('a visible queued user row can be refreshed as sent without a new row id', async (context) => {
+  const { database, insert, writable } = await createConfirmationFixture(context);
+  insert.run(
+    'queued-refresh',
+    'session-1',
+    'user',
+    'Queued then sent',
+    '2026-01-01T00:00:01Z',
+    null,
+    null,
+  );
+  const queued = database.findExactUserMessageAfter(
+    'session-1',
+    0,
+    'Queued then sent',
+  );
+
+  assert.deepEqual(
+    database.getVisibleUserMessage('session-1', queued.rowId),
+    queued,
+  );
+  assert.equal(
+    database.getVisibleUserMessage('session-2', queued.rowId),
+    null,
+  );
+  assert.equal(database.getVisibleUserMessage('session-1', 0), null);
+
+  const sentAt = '2026-01-01T00:00:02Z';
+  writable
+    .prepare('UPDATE session_messages SET sent_at = ? WHERE rowid = ?')
+    .run(sentAt, queued.rowId);
+  const sent = database.getVisibleUserMessage('session-1', queued.rowId);
+  assert.equal(sent.id, queued.id);
+  assert.equal(sent.rowId, queued.rowId);
+  assert.equal(sent.sentAt, sentAt);
+  assert.equal(sent.queued, false);
+
+  writable
+    .prepare('UPDATE session_messages SET cancelled_at = ? WHERE rowid = ?')
+    .run('2026-01-01T00:00:03Z', queued.rowId);
+  assert.equal(
+    database.getVisibleUserMessage('session-1', queued.rowId),
+    null,
+  );
+});
+
 test('send confirmation associates an immediate stale steer rejection with its user row', async (context) => {
   const { database, insert } = await createConfirmationFixture(context);
   insert.run(
@@ -865,6 +966,10 @@ test('large-database queries keep the indexed sent and cancellation predicates',
   assert.match(
     source,
     /SELECT MAX\(rowid\) AS row_id[\s\S]*INDEXED BY idx_session_messages_cancelled_at[\s\S]*cancelled_at IS NULL[\s\S]*UNION ALL[\s\S]*cancelled_at IS NOT NULL/,
+  );
+  assert.match(
+    source,
+    /visibleUserMessage: this\.\#db\.prepare\(`[\s\S]*?WHERE rowid = \?[\s\S]*?AND session_id = \?/,
   );
 });
 
