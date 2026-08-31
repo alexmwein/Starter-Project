@@ -1395,6 +1395,41 @@ test('a confirmed receipt stays visible until its exact transcript row exists', 
   assert.deepEqual(cancelledLater.missing, [message]);
 });
 
+test('a confirmed receipt safely settles after its row leaves the transcript window', () => {
+  const disposition = deliveryReceipts.receiptTranscriptDisposition;
+  assert.equal(typeof disposition, 'function');
+  assert.equal(
+    disposition(
+      { messageId: 'server-user-12', rowId: 12 },
+      [
+        { id: 'later-user-20', rowId: 20 },
+        { id: 'later-answer-21', rowId: 21 },
+      ],
+    ),
+    'before-window',
+  );
+  assert.equal(
+    disposition(
+      { messageId: 'server-user-20', rowId: 20 },
+      [
+        { id: 'different-user-20', rowId: 20 },
+        { id: 'later-answer-21', rowId: 21 },
+      ],
+    ),
+    'unresolved',
+  );
+  assert.equal(
+    disposition(
+      { messageId: 'server-user-20', rowId: 20 },
+      [
+        { id: 'server-user-20', rowId: 20 },
+        { id: 'later-answer-21', rowId: 21 },
+      ],
+    ),
+    'present',
+  );
+});
+
 test('a delivered receipt is tracked while its transcript row has not appeared', () => {
   const message = optimistic({
     receiptRowId: 12,
@@ -1585,7 +1620,7 @@ test('the browser observes confirmed receipts before expiring them', async () =>
   );
   assert.match(
     js,
-    /function verifyStalledDeliveredReceipt[\s\S]*requestDeliveryStatus\(message\)[\s\S]*refreshMessages\(message\.sessionId, \{ full: true \}\)[\s\S]*transcriptHasReceipt[\s\S]*type: 'observe-stalled-receipt'[\s\S]*observeDeliveredReceipt\(message\)/,
+    /function verifyStalledDeliveredReceipt[\s\S]*requestDeliveryStatus\(message\)[\s\S]*refreshMessages\(message\.sessionId, \{ full: true \}\)[\s\S]*receiptTranscriptDisposition[\s\S]*type: 'observe-stalled-receipt'[\s\S]*observeDeliveredReceipt\(message\)/,
   );
   assert.match(
     js,

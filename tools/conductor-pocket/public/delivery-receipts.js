@@ -948,6 +948,42 @@ export function receiptReachedTranscript(
   return true;
 }
 
+export function receiptTranscriptDisposition(
+  receipt,
+  transcriptMessages,
+) {
+  const messageId = authorityString(receipt?.messageId, 500);
+  const rowId = Number(receipt?.rowId);
+  if (
+    !messageId ||
+    !Number.isSafeInteger(rowId) ||
+    rowId <= 0 ||
+    !Array.isArray(transcriptMessages)
+  ) {
+    return 'unresolved';
+  }
+  if (
+    transcriptMessages.some(
+      (candidate) =>
+        candidate?.id === messageId && candidate?.rowId === rowId,
+    )
+  ) {
+    return 'present';
+  }
+  const visibleRowIds = transcriptMessages
+    .map((candidate) => Number(candidate?.rowId))
+    .filter((candidateRowId) =>
+      Number.isSafeInteger(candidateRowId) && candidateRowId > 0,
+    );
+  if (
+    visibleRowIds.length > 0 &&
+    rowId < Math.min(...visibleRowIds)
+  ) {
+    return 'before-window';
+  }
+  return 'unresolved';
+}
+
 export function reconcileDeliveryReceipts(
   optimisticMessages,
   sessionId,
