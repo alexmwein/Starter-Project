@@ -15,6 +15,7 @@ property workspaceHintContainerIndex : ""
 property workspaceHintLinkIndex : ""
 property workspaceHintSidebarChildCount : ""
 property workspaceHintContainerChildCount : ""
+property maxMainRootCandidates : 32
 property routeDeadline : missing value
 property routeDeadlineAt : ""
 property routeBudgetDidExpire : false
@@ -259,22 +260,71 @@ on findSidebarGroupWithRetry(workspaceName)
 	return missing value
 end findSidebarGroupWithRetry
 
+-- Conductor 0.83.1 nests the main group one AXGroup below the web area root.
+-- A top-level-only scan finds zero candidates there, so getMainGroup returns
+-- missing value, getTextArea finds nothing, and every send and doctor run dies
+-- with composer_unavailable. Check each root, then descend exactly one level
+-- into its AXGroup children. maxMainRootCandidates caps total AX reads so an
+-- unexpected or huge tree cannot spin, and the route budget is still honoured
+-- on every iteration.
+on mainGroupCandidates(rootElements)
+	set matchingGroups to {}
+	set inspectedCount to count of rootElements
+	if inspectedCount > my maxMainRootCandidates then return {}
+	tell application "System Events"
+		repeat with candidate in rootElements
+			if my routeBudgetExpired() then return {}
+			if my isMainGroup(candidate) then
+				copy candidate to end of matchingGroups
+			else
+				try
+					set candidateElements to UI elements of candidate
+				on error
+					set candidateElements to {}
+				end try
+				set childCount to count of candidateElements
+				if childCount > 0 then
+					set bulkRoles to missing value
+					try
+						set candidateRoles to role of UI elements of candidate
+						if (count of candidateRoles) is childCount then set bulkRoles to candidateRoles
+					end try
+					repeat with childIndex from 1 to childCount
+						if my routeBudgetExpired() then return {}
+						set childRole to ""
+						if bulkRoles is not missing value then
+							set childRole to item childIndex of bulkRoles
+						else
+							try
+								set childRole to role of item childIndex of candidateElements as text
+							end try
+						end if
+						if childRole is "AXGroup" then
+							set inspectedCount to inspectedCount + 1
+							if inspectedCount > my maxMainRootCandidates then return {}
+							set nestedCandidate to item childIndex of candidateElements
+							if my isMainGroup(nestedCandidate) then copy nestedCandidate to end of matchingGroups
+						end if
+					end repeat
+				end if
+			end if
+		end repeat
+	end tell
+	return matchingGroups
+end mainGroupCandidates
+
 on getMainGroup()
 	if my heldMainGroup is not missing value then return my heldMainGroup
 	set webArea to getWebArea()
 	if webArea is missing value then return missing value
-	set matchingGroups to {}
 	tell application "System Events"
 		try
 			set rootElements to UI elements of webArea
 		on error
 			return missing value
 		end try
-		repeat with candidate in rootElements
-			if my routeBudgetExpired() then return missing value
-			if my isMainGroup(candidate) then copy candidate to end of matchingGroups
-		end repeat
 	end tell
+	set matchingGroups to my mainGroupCandidates(rootElements)
 	if (count of matchingGroups) is not 1 then return missing value
 	set my heldMainGroup to item 1 of matchingGroups
 	return my heldMainGroup
