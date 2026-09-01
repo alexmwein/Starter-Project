@@ -10,6 +10,7 @@ import {
   SHELL_REVISION,
 } from '../src/constants.mjs';
 import { withOperationLock } from '../src/operation-lock.mjs';
+import { RELAY_EXIT_TIMEOUT_SECONDS } from '../src/timing.mjs';
 import {
   RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS,
   bootoutIfLoaded,
@@ -119,11 +120,11 @@ function relayLaunchAgentPlist({
        intentional shutdown. -->
   <true/>
   <key>ExitTimeOut</key>
-  <!-- Above the relay's own 60s force-exit deadline: a send's automation can
-       legitimately run about 50s, and launchd's default 20s SIGKILL would preempt
+  <!-- Above the relay's own force-exit deadline: a send's automation can
+       legitimately use its full retry budget, and launchd's default SIGKILL would preempt
        the graceful drain that keeps a dying relay from orphaning an
        osascript child mid-type. -->
-  <integer>65</integer>
+  <integer>${RELAY_EXIT_TIMEOUT_SECONDS}</integer>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>

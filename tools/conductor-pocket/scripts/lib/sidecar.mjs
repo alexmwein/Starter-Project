@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
+import { RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS } from '../../src/timing.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,7 +25,7 @@ export const SIDECAR_LAUNCH_AGENT_PATH = path.join(
   `${SIDECAR_LABEL}.plist`,
 );
 export const RELAY_LABEL = 'com.ovo.conductor-pocket';
-export const RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS = 70_000;
+export { RELAY_LAUNCHD_REMOVAL_TIMEOUT_MS };
 export const RELAY_LAUNCH_AGENT_PATH = path.join(
   os.homedir(),
   'Library',

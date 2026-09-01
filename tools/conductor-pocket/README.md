@@ -182,29 +182,9 @@ the exact Tailscale login on every request. It has a 30-day server-side device
 session and remembers an unlock for up to 29 days. Security & Devices includes
 an explicit **Lock now** control that survives relay restarts. Initial pairing,
 manual lock, server-session expiry, revocation, cookie loss, and identity
-mismatch still fail closed. Active authenticated use inside the final five days
-rotates the device token and issues fresh 30-day and 29-day deadlines. It never
-extends an expired grant. An expired phone sees **Session expired** and can use
-Face ID to issue a fresh grant bound to the same Tailscale identity. The prior
-token remains usable for only five minutes and only to repeat Face ID if the
-cookie-update response was lost. The phone shows a warning during the final
-five days so the renewal is visible before access ends.
-
-## Pocket watchdog
-
-The sibling `tools/pocket-watchdog` package checks the complete local chain
-every ten minutes. It checks disk space, relay health and revision, Tailnet
-reachability, relay launchd state, Funnel, device deadlines, active Conductor
-project rows, Codex vault and route consistency, and the Mac five-minute load.
-Its doctor command is read-only and sends nothing:
-
-```sh
-~/.local/bin/pocket-doctor
-```
-
-The launchd run sends only through `safe-imessage` to the fixed `alex`
-recipient. Each distinct issue has a six-hour cooldown. A cleared issue sends
-one recovery message. A fully green run sends nothing.
+mismatch still fail closed. A successful Face ID check rotates the device
+token and renews both deadlines. The prior token remains usable for only five
+minutes and only to repeat Face ID if the cookie-update response was lost.
 
 Return to strict reauthentication with:
 

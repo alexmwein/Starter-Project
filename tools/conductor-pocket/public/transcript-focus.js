@@ -1,6 +1,204 @@
 const ACTIVITY_KINDS = new Set(['assistant', 'tool']);
 const HIDDEN_KINDS = new Set(['status', 'tool-result', 'turn-result']);
 
+export function reconcileMountedChildren(container, desiredChildren) {
+  const desired = Array.from(desiredChildren || []).filter(Boolean);
+  const desiredSet = new Set(desired);
+  const ownerDocument = container?.ownerDocument || null;
+  const focusedElement = ownerDocument?.activeElement || null;
+  const restoreFocus = Boolean(
+    focusedElement && container?.contains?.(focusedElement),
+  );
+  for (const child of Array.from(container?.children || [])) {
+    if (!desiredSet.has(child)) container.removeChild(child);
+  }
+  for (let index = 0; index < desired.length; index += 1) {
+    const child = desired[index];
+    const current = container.children[index] || null;
+    if (current !== child) container.insertBefore(child, current);
+  }
+  if (
+    restoreFocus &&
+    focusedElement?.isConnected &&
+    container?.contains?.(focusedElement) &&
+    ownerDocument.activeElement !== focusedElement
+  ) {
+    focusedElement.focus({ preventScroll: true });
+  }
+  return desired;
+}
+
+export function captureScrollAnchor(scroller, { pinThreshold = 48 } = {}) {
+  const scrollHeight = Math.max(0, Number(scroller?.scrollHeight) || 0);
+  const clientHeight = Math.max(0, Number(scroller?.clientHeight) || 0);
+  const scrollTop = Math.max(0, Number(scroller?.scrollTop) || 0);
+  const distance = Math.max(0, scrollHeight - clientHeight - scrollTop);
+  return {
+    pinned: distance < pinThreshold,
+    scrollTop,
+    viewportTop: Number(scroller?.getBoundingClientRect?.().top) || 0,
+  };
+}
+
+export function restoreScrollAnchor(
+  scroller,
+  anchor,
+  { latestThreshold = 120 } = {},
+) {
+  const scrollHeight = Math.max(0, Number(scroller?.scrollHeight) || 0);
+  const clientHeight = Math.max(0, Number(scroller?.clientHeight) || 0);
+  const maximum = Math.max(0, scrollHeight - clientHeight);
+  const viewportTop = Number(scroller?.getBoundingClientRect?.().top) || 0;
+  const viewportDelta = viewportTop - (Number(anchor?.viewportTop) || 0);
+  scroller.scrollTop = anchor?.pinned
+    ? maximum
+    : Math.min(
+        maximum,
+        Math.max(0, (Number(anchor?.scrollTop) || 0) + viewportDelta),
+      );
+  const distance = Math.max(
+    0,
+    scrollHeight - clientHeight - (Number(scroller.scrollTop) || 0),
+  );
+  return {
+    latestVisible: distance >= latestThreshold,
+    distance,
+  };
+}
+
+export function captureHorizontalScrollAnchor(
+  strip,
+  children,
+  { preferred = null, manual = false } = {},
+) {
+  const stripRect = strip?.getBoundingClientRect?.();
+  const candidates = Array.from(children || []).filter(Boolean);
+  const visible = stripRect
+    ? candidates.find((child) => {
+        const rect = child.getBoundingClientRect?.();
+        return rect && rect.right > stripRect.left && rect.left < stripRect.right;
+      })
+    : null;
+  const element = manual ? visible || preferred : preferred || visible;
+  if (!element) return null;
+  return {
+    element,
+    offsetLeft: Number(element.offsetLeft) || 0,
+    scrollLeft: Math.max(0, Number(strip?.scrollLeft) || 0),
+  };
+}
+
+export function restoreHorizontalScrollAnchor(strip, anchor) {
+  if (!strip || !anchor?.element) return null;
+  const maximum = Math.max(
+    0,
+    (Number(strip.scrollWidth) || 0) - (Number(strip.clientWidth) || 0),
+  );
+  const offsetDelta =
+    (Number(anchor.element.offsetLeft) || 0) -
+    (Number(anchor.offsetLeft) || 0);
+  const next = Math.max(
+    0,
+    Math.min(maximum, (Number(anchor.scrollLeft) || 0) + offsetDelta),
+  );
+  strip.scrollLeft = next;
+  return next;
+}
+
+export function transcriptMessageRenderIdentity(
+  message,
+  {
+    resolvedState = null,
+    newestRootEventRowId = 0,
+    deliveryAction = null,
+  } = {},
+) {
+  const rowId = Number(message?.rowId);
+  const superseded =
+    message?.kind === 'agent-error' &&
+    Number.isFinite(rowId) &&
+    newestRootEventRowId > 0 &&
+    rowId < newestRootEventRowId;
+  return JSON.stringify([
+    message?.kind,
+    message?.text,
+    Array.isArray(message?.attachments)
+      ? message.attachments.map((attachment) =>
+          typeof attachment === 'string'
+            ? attachment
+            : [
+                attachment?.id,
+                attachment?.mediaType,
+                attachment?.width,
+                attachment?.height,
+                Boolean(attachment?.previewUrl),
+              ],
+        )
+      : null,
+    message?.delivery,
+    message?.errorCode,
+    message?.errorProjectName,
+    message?.errorDetail,
+    message?.retrySafe,
+    message?.definitelyUnsent,
+    message?.deliveryRecoveryExhausted,
+    message?.deliveryPhase,
+    message?.queued,
+    message?.createdAt,
+    message?.sentAt,
+    message?.deliveredAt,
+    resolvedState ?? message?.state,
+    message?.code,
+    message?.severity,
+    message?.occurrenceCount,
+    superseded,
+    deliveryAction,
+  ]);
+}
+
+export function visibleQueuedRowIds(messages, { limit = 8 } = {}) {
+  const result = [];
+  const seen = new Set();
+  for (const message of messages || []) {
+    const rowId = Number(message?.rowId);
+    if (
+      message?.kind !== 'user' ||
+      message?.queued !== true ||
+      !Number.isSafeInteger(rowId) ||
+      rowId <= 0 ||
+      seen.has(rowId)
+    ) {
+      continue;
+    }
+    seen.add(rowId);
+    result.push(rowId);
+    if (result.length >= Math.max(1, limit)) break;
+  }
+  return result;
+}
+
+export function visibleQueuedRowRefreshKey(messages) {
+  const seen = new Set();
+  const queued = [];
+  for (const message of messages || []) {
+    const rowId = Number(message?.rowId);
+    if (
+      message?.kind !== 'user' ||
+      message?.queued !== true ||
+      typeof message?.id !== 'string' ||
+      !Number.isSafeInteger(rowId) ||
+      rowId <= 0 ||
+      seen.has(rowId)
+    ) {
+      continue;
+    }
+    seen.add(rowId);
+    queued.push([message.id, rowId]);
+    if (queued.length >= 8) break;
+  }
+  return queued.length > 0 ? JSON.stringify(queued) : null;
+}
+
 export function stableTranscriptMessages(serverMessages, pendingMessages) {
   const serverIds = new Set(serverMessages.map((message) => message?.id));
   const failedByReceiptId = new Map(

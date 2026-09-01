@@ -106,6 +106,59 @@ test('account usage endpoint returns the provider-neutral phone readout', async 
   assert.deepEqual(JSON.parse(response.body), expected);
 });
 
+test('incremental messages refresh only bounded requested queued rows', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const refreshedReads = [];
+  const server = createServer(config, {
+    database: {
+      listMessages(sessionId, options) {
+        assert.equal(sessionId, 'test-session');
+        assert.deepEqual(options, { after: '10', limit: 500 });
+        return { messages: [], cursor: 10 };
+      },
+      getVisibleUserMessage(sessionId, rowId) {
+        refreshedReads.push([sessionId, rowId]);
+        return rowId === 43
+          ? null
+          : {
+              id: `user-${rowId}`,
+              rowId,
+              kind: 'user',
+              text: '',
+              queued: false,
+            };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await get(port, {
+    pathname:
+      '/api/sessions/test-session/messages?after=10&queuedRowIds=42,42,invalid,-1,43,44,45,46,47,48,49,50',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(refreshedReads, [
+    ['test-session', 42],
+    ['test-session', 43],
+    ['test-session', 44],
+    ['test-session', 45],
+    ['test-session', 46],
+    ['test-session', 47],
+    ['test-session', 48],
+    ['test-session', 49],
+  ]);
+  assert.deepEqual(
+    JSON.parse(response.body).refreshed.map((message) => message.rowId),
+    [42, 44, 45, 46, 47, 48, 49],
+  );
+  assert.deepEqual(JSON.parse(response.body).missingQueuedRowIds, [43]);
+});
+
 test('large API responses use Brotli when the phone accepts it', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -272,6 +325,7 @@ function postMessage(
     message = 'Test message',
     replaceDraft,
     expectedMacDraft,
+    attachments,
     headers = {},
   },
 ) {
@@ -280,6 +334,7 @@ function postMessage(
   if (typeof expectedMacDraft === 'string') {
     payload.expectedMacDraft = expectedMacDraft;
   }
+  if (Array.isArray(attachments)) payload.attachments = attachments;
   const body = JSON.stringify(payload);
   return new Promise((resolve, reject) => {
     const request = http.request(
@@ -1193,6 +1248,484 @@ test('a transient route lookup retries once inside the original send boundary', 
   );
 });
 
+test('a seventeen second composer tree transient still gets one complete retry', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  const rows = [];
+  const calls = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send(options) {
+        calls.push(options);
+        if (calls.length === 1) {
+          automationTime += 17_000;
+          return {
+            ok: false,
+            code: 'composer_tree_transient',
+            safeToRetry: true,
+          };
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'composer-tree-retry-row',
+          rowId: 11,
+          text: 'Composer tree retry',
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'composer_tree_transient_retry_key',
+    message: 'Composer tree retry',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].timeoutMs, 45_000);
+});
+
+test('two certified composer redraws recover inside the original send budget', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  const rows = [];
+  const calls = [];
+  const audit = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      audit.push(event);
+    },
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send(options) {
+        calls.push(options);
+        if (calls.length === 1) {
+          automationTime += 29_000;
+          return {
+            ok: false,
+            code: 'composer_unavailable',
+            safeToRetry: true,
+          };
+        }
+        if (calls.length === 2) {
+          automationTime += 16_000;
+          return {
+            ok: false,
+            code: 'composer_tree_transient',
+            safeToRetry: true,
+          };
+        }
+        automationTime += 23_000;
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        rows.push({
+          id: 'double-redraw-retry-row',
+          rowId: 11,
+          text: 'Recover through both redraws',
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'double_composer_redraw_retry_key',
+    message: 'Recover through both redraws',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].timeoutMs, 45_000);
+  assert.equal(calls[2].timeoutMs, 30_000);
+  assert.deepEqual(
+    audit
+      .filter((event) => event.phase === 'transport')
+      .map((event) => [event.attempt, event.code]),
+    [
+      [1, 'composer_unavailable'],
+      [2, 'composer_tree_transient'],
+      [3, 'sent'],
+    ],
+  );
+});
+
+test('the third composer certificate cannot start a fourth transport', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        automationTime += 1_000;
+        if (sends < 3) {
+          return {
+            ok: false,
+            code: sends === 1
+              ? 'composer_unavailable'
+              : 'composer_tree_transient',
+            safeToRetry: true,
+          };
+        }
+        return composerRetryResult('Do not run attempt');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'three_attempt_hard_cap_key',
+    message: 'Do not run attempt four',
+  });
+
+  assert.equal(sends, 3);
+  assert.equal(response.status, 502);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'composer_changed_pre_send',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
+test('a new user row blocks the final composer redraw recovery attempt', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  let sends = 0;
+  const rows = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        if (sends === 1) {
+          automationTime += 20_000;
+          return {
+            ok: false,
+            code: 'composer_unavailable',
+            safeToRetry: true,
+          };
+        }
+        automationTime += 16_000;
+        rows.push({
+          id: 'outside-user-row',
+          rowId: 11,
+          text: 'Someone used Conductor directly',
+          createdAt: new Date().toISOString(),
+          sentAt: new Date().toISOString(),
+        });
+        return {
+          ok: false,
+          code: 'composer_tree_transient',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'blocked_final_composer_redraw_retry_key',
+    message: 'Do not send after another user row appears',
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(sends, 2);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
+test('the held prepress lease rechecks the database before authorization', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const rows = [];
+  let transportCalls = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 10;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send(options) {
+        transportCalls += 1;
+        rows.push({
+          id: 'manual-row-during-prepress',
+          rowId: 11,
+          text: 'Mac operator sent another message',
+          createdAt: new Date().toISOString(),
+          sentAt: new Date().toISOString(),
+        });
+        return options.beforeAuthorize();
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'held_prepress_database_recheck_key',
+    message: 'Do not duplicate me',
+  });
+
+  assert.equal(transportCalls, 1);
+  assert.equal(response.status, 409);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'user_input_active',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
+test('a transient route failure retries only with one complete transport reserve', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let automationTime = 10_000;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 10;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    automationNow() {
+      return automationTime;
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        automationTime += 31_000;
+        return {
+          ok: false,
+          code: 'workspace_list_unavailable',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postMessage(port, {
+    idempotencyKey: 'incomplete_retry_reserve_key',
+    message: 'Do not start a doomed retry',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(response.body).error, {
+    code: 'workspace_list_unavailable',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+});
+
 test('collapsed project failures skip automatic retry and preserve the project name', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
@@ -2091,10 +2624,17 @@ test('a delivered receipt remains authoritative after a relay restart', async ()
     await transportStartedPromise;
     droppedRequest.destroy();
     await droppedResponse;
-    assert.equal(await firstServer.drainPocketRequests(5_000), true);
-    const durableResult = JSON.parse(
-      await fs.readFile(deliveryLedgerPath, 'utf8'),
-    ).entries[0]?.result;
+    let durableResult = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const ledger = JSON.parse(
+        await fs.readFile(deliveryLedgerPath, 'utf8'),
+      );
+      if (ledger.entries[0]?.state === 'resolved') {
+        durableResult = ledger.entries[0].result;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     assert.equal(durableResult?.ok, true);
     await close(firstServer);
 
@@ -2129,7 +2669,7 @@ test('a delivered receipt remains authoritative after a relay restart', async ()
   }
 });
 
-test('delivery-ledger retention is week-long, bounded, and newest-first', async () => {
+test('delivery-ledger retention is week-long, bounded, and never evicts a receipt', async () => {
   const source = await fs.readFile(
     new URL('../src/server.mjs', import.meta.url),
     'utf8',
@@ -2140,14 +2680,13 @@ test('delivery-ledger retention is week-long, bounded, and newest-first', async 
   );
   assert.match(source, /DELIVERY_LEDGER_MAX_ENTRIES = 2048/);
   assert.match(source, /DELIVERY_LEDGER_MAX_BYTES = 4 \* 1024 \* 1024/);
-  assert.match(
-    source,
-    /#makeRoomFor\(entryKey\)[\s\S]*reusesBinding = this\.#bindings\.has\(entryKey\)[\s\S]*reusesBinding \|\|[\s\S]*key !== entryKey[\s\S]*sort\(\(left, right\) => left\[1\]\.expiresAt - right\[1\]\.expiresAt\)/,
+  const makeRoom = source.slice(
+    source.indexOf('  #makeRoomFor(entryKey)'),
+    source.indexOf('  #sessionProof(sessionId)'),
   );
-  assert.match(
-    source,
-    /entries\.sort\(\(left, right\) => right\.expiresAt - left\.expiresAt\)[\s\S]*entries\.slice\(0, DELIVERY_LEDGER_MAX_ENTRIES\)/,
-  );
+  assert.doesNotMatch(makeRoom, /this\.#entries\.delete/);
+  assert.match(makeRoom, /throw new HttpError\(503, 'delivery_queue_full'\)/);
+  assert.doesNotMatch(source, /entries\.slice\(0, DELIVERY_LEDGER_MAX_ENTRIES\)/);
 });
 
 test('an idempotency key remains bound to the exact send body across safe retries', async (context) => {
@@ -3052,7 +3591,7 @@ test('an interruption before Pocket owns the full composer fails fast and is ret
   );
 });
 
-test('an interrupted owned composer stays non-retryable while recovery is open', async (context) => {
+test('an interrupted pre-send attempt is retryable only after Conductor stays unchanged', async (context) => {
   const { config } = createConfig({
     publicOrigin: 'http://127.0.0.1:4317',
     developmentMode: true,
@@ -3116,156 +3655,17 @@ test('an interrupted owned composer stays non-retryable while recovery is open',
   const retry = await postMessage(port, {
     idempotencyKey: 'input_interruption_retry_key',
   });
-  const status = await postDeliveryStatus(port, {
-    idempotencyKey: 'input_interruption_retry_key',
-  });
 
-  assert.equal(first.status, 502);
+  assert.equal(first.status, 409);
   assert.deepEqual(JSON.parse(first.body).error, {
-    code: 'send_not_confirmed',
-    retrySafe: false,
-  });
-  assert.equal(retry.status, 502);
-  assert.deepEqual(JSON.parse(status.body).delivery, {
-    state: 'pending',
-    phase: 'confirming',
-  });
-  assert.equal(sends, 1);
-});
-
-test('an interrupted send becomes retryable only after an empty recovery window', async () => {
-  const reconciliation = await reconcileExactUserMessage({
-    database: {
-      listUserMessagesAfter() {
-        return [];
-      },
-    },
-    sessionId: 'test-session',
-    afterRowId: 25,
-    exactContentHash: sha256('Interrupted Pocket message'),
-    pressedAt: Date.now() - 60_001,
-    composerOwned: true,
-    attributionWindowMs: 60_000,
-    timeoutMs: 0,
-  });
-
-  assert.deepEqual(reconciliation, {
-    state: 'failed',
-    definitelyUnsent: true,
-  });
-});
-
-test('delivery status unlocks one retry after the interruption window is empty', async (context) => {
-  const { config } = createConfig({
-    publicOrigin: 'http://127.0.0.1:4317',
-    developmentMode: true,
-  });
-  let sends = 0;
-  const server = createPocketServer({
-    configStore: { value: config },
-    security: {
-      assertOrigin() {},
-      session() {
-        return {
-          device: { id: 'test-device' },
-          csrfToken: 'test-csrf',
-          unlocked: true,
-        };
-      },
-    },
-    database: {
-      getSessionRoute() {
-        return {
-          id: 'test-session',
-          workspaceName: 'Workspace',
-          title: 'Chat',
-          titleOrdinal: 1,
-        };
-      },
-      getSessionMessageCursor() {
-        return 25;
-      },
-      listUserMessagesAfter() {
-        return [];
-      },
-    },
-    watcher: createWatcher(),
-    transport: {
-      async send() {
-        sends += 1;
-        if (sends === 1) {
-          return {
-            ok: false,
-            code: 'send_interrupted',
-            pressedAt: Date.now() - 60_001,
-            composerOwned: true,
-          };
-        }
-        return {
-          ok: false,
-          code: 'composer_unavailable',
-          safeToRetry: true,
-        };
-      },
-    },
-  });
-  const port = await listen(server);
-  context.after(() => close(server));
-
-  const first = await postMessage(port, {
-    idempotencyKey: 'expired_input_interruption_key',
-  });
-  const status = await postDeliveryStatus(port, {
-    idempotencyKey: 'expired_input_interruption_key',
-  });
-  const retry = await postMessage(port, {
-    idempotencyKey: 'expired_input_interruption_key',
-  });
-
-  assert.equal(first.status, 502);
-  assert.deepEqual(JSON.parse(status.body).delivery, {
-    state: 'failed',
     code: 'user_input_active',
     retrySafe: true,
-    final: true,
+    definitelyUnsent: true,
   });
   assert.equal(retry.status, 503);
-  assert.equal(sends, 3);
-});
-
-test('an interrupted send bounds initial confirmation while preserving the recovery window', async () => {
-  const source = await fs.readFile(
-    new URL('../src/server.mjs', import.meta.url),
-    'utf8',
-  );
-  assert.match(
-    source,
-    /const SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS = 5_000;/,
-  );
-  assert.match(
-    source,
-    /const SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS = 60_000;/,
-  );
-  const start = source.indexOf(
-    'const confirmationAttributionWindowMs =',
-  );
-  const block = source.slice(start, start + 1_700);
-  assert.match(
-    block,
-    /const confirmationTimeoutMs =[\s\S]*SEND_INTERRUPTION_CONFIRMATION_TIMEOUT_MS/,
-  );
-  assert.match(
-    block,
-    /timeoutMs:\s*confirmationTimeoutMs/,
-  );
-  assert.match(
-    block,
-    /attributionWindowMs:\s*confirmationAttributionWindowMs/,
-  );
-  assert.doesNotMatch(
-    block,
-    /timeoutMs:\s*SEND_INTERRUPTION_ATTRIBUTION_WINDOW_MS/,
-  );
+  // The same-key retry receives the full bounded composer recovery policy:
+  // its initial attempt plus two certified pre-composer retries.
+  assert.equal(sends, 4);
 });
 
 test('a cleared composer without an exact database row is never reported delivered', async (context) => {
@@ -3760,8 +4160,7 @@ test('a queued send refreshes its route after reaching the mutation queue', asyn
         }
         return {
           ok: false,
-          code: 'accessibility_disabled',
-          safeToRetry: true,
+          code: 'automation_failed',
         };
       },
     },
@@ -3787,6 +4186,538 @@ test('a queued send refreshes its route after reaching the mutation queue', asyn
     ['Untitled chat', 1],
     ['Renamed chat', 2],
   ]);
+});
+
+test('same-session queued work stops after a definitely-unsent predecessor', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseFirst;
+  let firstStarted;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStartedPromise = new Promise((resolve) => {
+    firstStarted = resolve;
+  });
+  let secondAccepted;
+  let accepted = 0;
+  const secondAcceptedPromise = new Promise((resolve) => {
+    secondAccepted = resolve;
+  });
+  const rows = [];
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return rows.at(-1)?.rowId || 0;
+      },
+      listUserMessagesAfter(_sessionId, afterRowId) {
+        return rows.filter((row) => row.rowId > afterRowId);
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      if (event.phase !== 'accepted') return;
+      accepted += 1;
+      if (accepted === 2) secondAccepted();
+    },
+    transport: {
+      async send({ message }) {
+        sends += 1;
+        if (sends === 1) {
+          firstStarted();
+          await firstGate;
+          return {
+            ok: false,
+            code: 'accessibility_disabled',
+            safeToRetry: true,
+          };
+        }
+        const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
+        const rowId = rows.length + 1;
+        rows.push({
+          id: `causal-row-${rowId}`,
+          rowId,
+          text: message,
+          createdAt: new Date(pressedAt + 100).toISOString(),
+          sentAt: new Date(pressedAt + 150).toISOString(),
+        });
+        return {
+          ok: true,
+          code: 'sent',
+          pressedAt,
+          composerOwned: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const first = postMessage(port, {
+    idempotencyKey: 'causal_first_key',
+    message: 'First must land first',
+  });
+  await firstStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'causal_second_key',
+    message: 'Second must not overtake',
+  });
+  await secondAcceptedPromise;
+  releaseFirst();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+  assert.equal(firstResponse.status, 503);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(sends, 1);
+  assert.deepEqual(JSON.parse(secondResponse.body).error, {
+    code: 'predecessor_failed',
+    retrySafe: true,
+    definitelyUnsent: true,
+  });
+
+  const prematureSecondRetry = await postMessage(port, {
+    idempotencyKey: 'causal_second_key',
+    message: 'Second must not overtake',
+  });
+  assert.equal(prematureSecondRetry.status, 409);
+  assert.equal(sends, 1);
+
+  const firstRetry = await postMessage(port, {
+    idempotencyKey: 'causal_first_key',
+    message: 'First must land first',
+  });
+  assert.equal(firstRetry.status, 200);
+  assert.equal(sends, 2);
+
+  const secondRetry = await postMessage(port, {
+    idempotencyKey: 'causal_second_key',
+    message: 'Second must not overtake',
+  });
+  assert.equal(secondRetry.status, 200);
+  assert.equal(sends, 3);
+});
+
+test('device revocation waits for an earlier accepted send to finish', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releaseSend;
+  let markSendStarted;
+  let revokeCalls = 0;
+  const sendGate = new Promise((resolve) => {
+    releaseSend = resolve;
+  });
+  const sendStarted = new Promise((resolve) => {
+    markSendStarted = resolve;
+  });
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+      async revokeDevice() {
+        revokeCalls += 1;
+        return { currentDevice: false };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        markSendStarted();
+        await sendGate;
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const send = postMessage(port, {
+    idempotencyKey: 'revoke_barrier_send_key',
+    message: 'Finish before revocation',
+  });
+  await sendStarted;
+  let revokeSettled = false;
+  const revoke = postJson(
+    port,
+    '/api/devices/other-device/revoke',
+    { clientVersion: SHELL_REVISION, localPurgeCompleted: true },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  ).then((value) => {
+    revokeSettled = true;
+    return value;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const revokeCallsWhileSendActive = revokeCalls;
+  const revokeSettledWhileSendActive = revokeSettled;
+
+  releaseSend();
+  await send;
+  const revokeResponse = await revoke;
+  assert.equal(revokeCallsWhileSendActive, 0);
+  assert.equal(revokeSettledWhileSendActive, false);
+  assert.equal(revokeResponse.status, 200);
+  assert.equal(revokeCalls, 1);
+});
+
+test('a new key can supersede an abandoned definitely-unsent chain', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    transport: {
+      async send() {
+        sends += 1;
+        return sends === 1
+          ? {
+              ok: false,
+              code: 'accessibility_disabled',
+              safeToRetry: true,
+            }
+          : { ok: false, code: 'automation_failed' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const abandoned = await postMessage(port, {
+    idempotencyKey: 'abandoned_chain_key',
+    message: 'Abandoned text',
+  });
+  assert.equal(abandoned.status, 503);
+
+  const replacement = await postMessage(port, {
+    idempotencyKey: 'replacement_chain_key',
+    message: 'Edited replacement text',
+  });
+  assert.equal(replacement.status, 502);
+  assert.equal(sends, 2);
+});
+
+test('same-session intake is durable and ordered through attachment resolution', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-intake-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  const deliveryLedgerPath = path.join(directory, 'delivery-receipts.json');
+  let releaseFirstResolution;
+  let firstResolutionStarted;
+  const firstResolutionGate = new Promise((resolve) => {
+    releaseFirstResolution = resolve;
+  });
+  const firstResolutionStartedPromise = new Promise((resolve) => {
+    firstResolutionStarted = resolve;
+  });
+  let secondRequestAuthenticated;
+  const secondRequestAuthenticatedPromise = new Promise((resolve) => {
+    secondRequestAuthenticated = resolve;
+  });
+  let authenticationCalls = 0;
+  const sentMessages = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session(request) {
+        if (/\/messages$/.test(request.url || '')) {
+          authenticationCalls += 1;
+          if (authenticationCalls === 2) secondRequestAuthenticated();
+        }
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          workspacePath: '/tmp/conductor-pocket-intake-workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    deliveryLedgerPath,
+    attachmentManager: {
+      async resolveForSend(ids) {
+        if (ids.includes('slow-first')) {
+          firstResolutionStarted();
+          await firstResolutionGate;
+        }
+        return [];
+      },
+    },
+    transport: {
+      async send({ message }) {
+        sentMessages.push(message);
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(async () => {
+    releaseFirstResolution();
+    await close(server);
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const first = postMessage(port, {
+    idempotencyKey: 'slow_intake_first_key',
+    message: 'First through intake',
+    attachments: ['slow-first'],
+  });
+  await Promise.race([
+    firstResolutionStartedPromise,
+    first.then((response) => {
+      throw new Error(
+        `first request ended before resolution: ${response.status} ${response.body}`,
+      );
+    }),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error('first resolution did not start')),
+        500,
+      ),
+    ),
+  ]);
+  const intakeStatus = JSON.parse(
+    (
+      await postDeliveryStatus(port, {
+        idempotencyKey: 'slow_intake_first_key',
+      })
+    ).body,
+  ).delivery;
+  assert.deepEqual(intakeStatus, {
+    state: 'pending',
+    phase: 'queued',
+  });
+  const durableIntake = JSON.parse(
+    await fs.readFile(deliveryLedgerPath, 'utf8'),
+  );
+  assert.deepEqual(
+    durableIntake.entries.map(({ state, phase }) => ({ state, phase })),
+    [{ state: 'pending', phase: 'queued' }],
+  );
+  const second = postMessage(port, {
+    idempotencyKey: 'slow_intake_second_key',
+    message: 'Second through intake',
+  });
+  await Promise.race([
+    secondRequestAuthenticatedPromise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error('second request was not accepted')),
+        500,
+      ),
+    ),
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const sentBeforeFirstResolution = [...sentMessages];
+  releaseFirstResolution();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+  assert.deepEqual(sentBeforeFirstResolution, []);
+  assert.equal(firstResponse.status, 503);
+  assert.equal(secondResponse.status, 409);
+  assert.deepEqual(sentMessages, ['First through intake']);
+});
+
+test('a pretransport queue exception blocks an accepted follower', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let releasePreparation;
+  let preparationStarted;
+  const preparationGate = new Promise((resolve) => {
+    releasePreparation = resolve;
+  });
+  const preparationStartedPromise = new Promise((resolve) => {
+    preparationStarted = resolve;
+  });
+  let secondAccepted;
+  let accepted = 0;
+  const secondAcceptedPromise = new Promise((resolve) => {
+    secondAccepted = resolve;
+  });
+  let resolutions = 0;
+  let cursorReads = 0;
+  let sends = 0;
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        cursorReads += 1;
+        if (cursorReads === 1) throw new Error('cursor unavailable');
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+    },
+    watcher: createWatcher(),
+    audit(event) {
+      if (event.phase !== 'accepted') return;
+      accepted += 1;
+      if (accepted === 2) secondAccepted();
+    },
+    attachmentManager: {
+      async resolveForSend() {
+        resolutions += 1;
+        if (resolutions === 1) {
+          preparationStarted();
+          await preparationGate;
+        }
+        return [];
+      },
+    },
+    transport: {
+      async send() {
+        sends += 1;
+        return { ok: false, code: 'automation_failed' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(async () => {
+    releasePreparation();
+    await close(server);
+  });
+
+  const first = postMessage(port, {
+    idempotencyKey: 'pretransport_exception_first_key',
+    message: 'First fails before transport',
+  });
+  await preparationStartedPromise;
+  const second = postMessage(port, {
+    idempotencyKey: 'pretransport_exception_second_key',
+    message: 'Second cannot overtake',
+  });
+  await secondAcceptedPromise;
+  releasePreparation();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+  assert.equal(firstResponse.status, 500);
+  assert.equal(JSON.parse(firstResponse.body).error.definitelyUnsent, true);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(sends, 0);
 });
 
 test('tab controls cannot overtake an accepted queued send', async (context) => {
@@ -3851,8 +4782,7 @@ test('tab controls cannot overtake an accepted queued send', async (context) => 
         }
         return {
           ok: false,
-          code: 'accessibility_disabled',
-          safeToRetry: true,
+          code: 'automation_failed',
         };
       },
       async newTab(target) {
@@ -3879,7 +4809,12 @@ test('tab controls cannot overtake an accepted queued send', async (context) => 
     port,
     '/api/sessions/test-session/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'fifo-tab-action-key',
+      },
+    },
   );
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(sequence, ['send-1']);
@@ -3901,7 +4836,7 @@ test('accepted sends reserve FIFO before delivery ledger persistence', async () 
   const block = source.slice(start, end);
   assert.match(
     block,
-    /idempotency\.run\([\s\S]*serializeMutation,\s*\)/,
+    /idempotency\.run\([\s\S]*serializeSendMutation\(route\.id, key, async \(precomputedResult\) =>/,
   );
   assert.doesNotMatch(
     block,
@@ -3997,12 +4932,124 @@ test('a delayed delivery ledger write cannot let a tab overtake an accepted send
     port,
     '/api/sessions/test-session/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'persist-fifo-tab-action-key',
+      },
+    },
   );
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(sequence, []);
   releasePersist();
   await Promise.all([send, tab]);
+  assert.deepEqual(sequence, ['send', 'tab']);
+});
+
+test('the mutation slot stays held until a safe result is durable', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-result-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  let releaseResultPersist;
+  let resultPersistStarted;
+  const resultPersistGate = new Promise((resolve) => {
+    releaseResultPersist = resolve;
+  });
+  const resultPersistStartedPromise = new Promise((resolve) => {
+    resultPersistStarted = resolve;
+  });
+  let persistCalls = 0;
+  const sequence = [];
+  const server = createPocketServer({
+    configStore: { value: config },
+    security: {
+      assertOrigin() {},
+      session() {
+        return {
+          device: { id: 'test-device' },
+          csrfToken: 'test-csrf',
+          unlocked: true,
+        };
+      },
+    },
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'test-session',
+          repositoryName: 'Repo',
+          workspaceId: 'workspace-1',
+          workspaceName: 'Workspace',
+          title: 'Chat',
+          titleOrdinal: 1,
+        };
+      },
+      getSessionMessageCursor() {
+        return 0;
+      },
+      listUserMessagesAfter() {
+        return [];
+      },
+      listSessions() {
+        return [{ id: 'test-session', title: 'Chat' }];
+      },
+    },
+    watcher: createWatcher(),
+    deliveryLedgerPath: path.join(directory, 'delivery-receipts.json'),
+    async beforeDeliveryLedgerPersist() {
+      persistCalls += 1;
+      if (persistCalls !== 4) return;
+      resultPersistStarted();
+      await resultPersistGate;
+    },
+    transport: {
+      async send() {
+        sequence.push('send');
+        return {
+          ok: false,
+          code: 'accessibility_disabled',
+          safeToRetry: true,
+        };
+      },
+      async newTab() {
+        sequence.push('tab');
+        return { ok: false, code: 'tab_not_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(async () => {
+    releaseResultPersist();
+    await close(server);
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const send = postMessage(port, {
+    idempotencyKey: 'durable_result_slot_key',
+    message: 'Persist before releasing the slot',
+  });
+  await resultPersistStartedPromise;
+  const tab = postJson(
+    port,
+    '/api/sessions/test-session/tab',
+    { action: 'new' },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'durable-result-tab-action-key',
+      },
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const sequenceBeforeDurableResult = [...sequence];
+  releaseResultPersist();
+  await Promise.all([send, tab]);
+
+  assert.deepEqual(sequenceBeforeDurableResult, ['send']);
   assert.deepEqual(sequence, ['send', 'tab']);
 });
 
@@ -4077,97 +5124,6 @@ test('an immediate Conductor stale steer error is never reported as delivered', 
   assert.equal(response.status, 409);
   assert.deepEqual(JSON.parse(response.body), {
     error: {
-      code: 'conductor_turn_rejected',
-      retrySafe: false,
-      final: true,
-      messageId: exact.id,
-      rowId: exact.rowId,
-    },
-  });
-});
-
-test('delivery status revokes a receipt when a stale steer error arrives late', async (context) => {
-  const { config } = createConfig({
-    publicOrigin: 'http://127.0.0.1:4317',
-    developmentMode: true,
-  });
-  const pressedAt = Math.floor(Date.now() / 1_000) * 1_000;
-  const exact = {
-    id: 'late-rejected-user',
-    rowId: 31,
-    kind: 'user',
-    text: 'Continue the late work',
-    createdAt: new Date(pressedAt + 100).toISOString(),
-    sentAt: new Date(pressedAt + 120).toISOString(),
-    turnId: 'late-stale-turn',
-  };
-  let rejectionVisible = false;
-  const server = createPocketServer({
-    configStore: { value: config },
-    security: {
-      assertOrigin() {},
-      session() {
-        return {
-          device: { id: 'test-device' },
-          csrfToken: 'test-csrf',
-          unlocked: true,
-        };
-      },
-    },
-    database: {
-      getSessionRoute() {
-        return {
-          id: 'test-session',
-          repositoryName: 'Repo',
-          workspaceId: 'workspace-1',
-          workspaceName: 'Workspace',
-          title: 'Stale chat',
-          titleOrdinal: 1,
-        };
-      },
-      getSessionMessageCursor() {
-        return 30;
-      },
-      listUserMessagesAfter() {
-        return [exact];
-      },
-      findImmediateSendRejection(_sessionId, match) {
-        assert.equal(match.rowId, exact.rowId);
-        return rejectionVisible
-          ? { code: 'conductor_turn_rejected', rowId: 32 }
-          : null;
-      },
-      getDeliveredMessageState() {
-        return 'visible';
-      },
-    },
-    watcher: createWatcher(),
-    transport: {
-      async send() {
-        return {
-          ok: true,
-          code: 'sent',
-          pressedAt,
-          composerOwned: true,
-        };
-      },
-    },
-  });
-  const port = await listen(server);
-  context.after(() => close(server));
-  const idempotencyKey = 'late_stale_steer_rejection_key';
-
-  const sent = await postMessage(port, {
-    idempotencyKey,
-    message: exact.text,
-  });
-  assert.equal(sent.status, 200);
-
-  rejectionVisible = true;
-  const status = await postDeliveryStatus(port, { idempotencyKey });
-  assert.deepEqual(JSON.parse(status.body), {
-    delivery: {
-      state: 'failed',
       code: 'conductor_turn_rejected',
       retrySafe: false,
       final: true,
@@ -4701,7 +5657,7 @@ test('the application wires bounded, cancellable live refreshes and wake request
   assert.match(source, /function discardFailedMessage\(message\)/);
   assert.match(
     source,
-    /text: activeAction === 'delete' \? 'Deleting…' : 'Delete'[\s\S]*click: \(\) => void discardFailedMessage\(message\)/,
+    /text: 'Delete'[\s\S]*'aria-busy': activeAction === 'delete'[\s\S]*click: \(\) => void discardFailedMessage\(message\)/,
   );
 });
 
@@ -4805,7 +5761,7 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     retryBlock,
-    /claimTerminalDeliveryActionRequired\(message, 'retry'\)/,
+    /claim:\s*\(candidate\) =>[\s\S]*claimTerminalDeliveryActionRequired\(candidate, 'retry'\)/,
   );
   assert.match(
     source,
@@ -4900,11 +5856,11 @@ test('pending sends persist before draft clearing and recover for the full send 
   );
   assert.match(
     source,
-    /text: activeAction === 'check' \? 'Checking…' : 'Check'[\s\S]*checkDeliveryNow\(message\)/,
+    /text: 'Check'[\s\S]*'aria-busy': activeAction === 'check'[\s\S]*checkDeliveryNow\(message\)/,
   );
   assert.match(
     source,
-    /text: activeAction === 'edit' \? 'Recovering…' : 'Edit'[\s\S]*editFailedMessage\(message\)/,
+    /text: 'Edit'[\s\S]*'aria-busy': activeAction === 'edit'[\s\S]*editFailedMessage\(message\)/,
   );
   assert.ok(startupRestore >= 0);
   assert.ok(startupRecovery > startupRestore);
@@ -4921,7 +5877,10 @@ test('pending sends persist before draft clearing and recover for the full send 
 // creates a second chat. Measured on 2026-08-16: by the time the Mac proves the
 // tab exists, Conductor has already written the row (+0ms), so the created chat
 // can be named rather than guessed.
-function createTabServer(config, { database, transport }) {
+function createTabServer(
+  config,
+  { database, transport, tabActionLedgerPath = null },
+) {
   return createPocketServer({
     configStore: { value: config },
     security: {
@@ -4940,6 +5899,7 @@ function createTabServer(config, { database, transport }) {
     database,
     watcher: createWatcher(),
     transport,
+    tabActionLedgerPath,
   });
 }
 
@@ -4990,7 +5950,12 @@ test('creating a chat names the chat it created', async (context) => {
     port,
     '/api/sessions/session-a/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'named-new-chat-action-key',
+      },
+    },
   );
   assert.equal(response.status, 200);
   const payload = JSON.parse(response.body);
@@ -4998,6 +5963,302 @@ test('creating a chat names the chat it created', async (context) => {
   assert.equal(payload.createdSessionId, 'session-new');
   assert.equal(payload.createdSessionTitle, 'Untitled');
   assert.equal(payload.workspaceId, 'workspace-1');
+});
+
+test('a headerless New Chat request is rejected before Mac work', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let calls = 0;
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+    ]),
+    transport: {
+      async newTab() {
+        calls += 1;
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+
+  const response = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+  );
+
+  assert.equal(response.status, 428);
+  assert.equal(calls, 0);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: { code: 'tab_action_key_required' },
+  });
+});
+
+test('a repeated New Chat key joins one Mac action after the phone times out', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let release;
+  let started;
+  let calls = 0;
+  const startedPromise = new Promise((resolve) => {
+    started = resolve;
+  });
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        calls += 1;
+        started();
+        if (calls === 1) {
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+        }
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-attempt-0001',
+  };
+
+  const first = postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  await startedPromise;
+  const second = postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(calls, 1);
+  release();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    JSON.parse(secondResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+});
+
+test('a New Chat receipt can be recovered through another anchor in the same workspace', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let calls = 0;
+  let listCall = 0;
+  const database = {
+    getSessionRoute(sessionId) {
+      return {
+        id: sessionId,
+        workspaceId: 'workspace-1',
+        workspaceName: 'daemon',
+        title: sessionId === 'session-a' ? 'First anchor' : 'Second anchor',
+        titleOrdinal: 1,
+      };
+    },
+    listSessions() {
+      listCall += 1;
+      return listCall === 1
+        ? [{ id: 'session-a', title: 'First anchor' }]
+        : [
+            { id: 'session-a', title: 'First anchor' },
+            { id: 'session-new', title: 'Untitled' },
+          ];
+    },
+  };
+  const server = createTabServer(config, {
+    database,
+    transport: {
+      async newTab() {
+        calls += 1;
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-workspace-recovery-key',
+  };
+
+  const firstResponse = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  const recoveredResponse = await postJson(
+    port,
+    '/api/sessions/session-b/tab',
+    { action: 'new' },
+    { headers },
+  );
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(recoveredResponse.status, 200);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    JSON.parse(recoveredResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+});
+
+test('a failed New Chat action keeps one conservative receipt for same-process retries', async (context) => {
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  let calls = 0;
+  const server = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+    ]),
+    transport: {
+      async newTab() {
+        calls += 1;
+        throw new Error('transport result lost');
+      },
+    },
+  });
+  const port = await listen(server);
+  context.after(() => close(server));
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-attempt-0003',
+  };
+
+  const firstResponse = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  const secondResponse = await postJson(
+    port,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+
+  assert.equal(firstResponse.status, 409);
+  assert.equal(secondResponse.status, 409);
+  assert.equal(calls, 1);
+  assert.deepEqual(JSON.parse(firstResponse.body), {
+    ok: false,
+    code: 'tab_action_interrupted',
+  });
+  assert.deepEqual(
+    JSON.parse(secondResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+});
+
+test('a completed New Chat receipt survives a relay restart', async (context) => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'conductor-pocket-tab-ledger-'),
+  );
+  await fs.chmod(directory, 0o700);
+  context.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const tabActionLedgerPath = path.join(directory, 'tab-actions.json');
+  const { config } = createConfig({
+    publicOrigin: 'http://127.0.0.1:4317',
+    developmentMode: true,
+  });
+  const headers = {
+    'X-CSRF-Token': 'test-csrf',
+    'Idempotency-Key': 'new-chat-attempt-0002',
+  };
+  const firstServer = createTabServer(config, {
+    database: tabDatabase([
+      [{ id: 'session-a', title: 'Existing chat' }],
+      [
+        { id: 'session-a', title: 'Existing chat' },
+        { id: 'session-new', title: 'Untitled' },
+      ],
+    ]),
+    transport: {
+      async newTab() {
+        return { ok: true, code: 'tab_created' };
+      },
+    },
+    tabActionLedgerPath,
+  });
+  const firstPort = await listen(firstServer);
+  const firstResponse = await postJson(
+    firstPort,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+  assert.equal(firstResponse.status, 200);
+  await close(firstServer);
+
+  let repeated = 0;
+  const secondServer = createTabServer(config, {
+    database: {
+      getSessionRoute() {
+        return {
+          id: 'session-a',
+          workspaceId: 'workspace-1',
+          workspaceName: 'daemon',
+          title: 'Existing chat',
+          titleOrdinal: 1,
+        };
+      },
+      listSessions() {
+        throw new Error('a restored receipt must not inspect or mutate tabs');
+      },
+    },
+    transport: {
+      async newTab() {
+        repeated += 1;
+        throw new Error('a restored receipt must not create another chat');
+      },
+    },
+    tabActionLedgerPath,
+  });
+  const secondPort = await listen(secondServer);
+  context.after(() => close(secondServer));
+  const secondResponse = await postJson(
+    secondPort,
+    '/api/sessions/session-a/tab',
+    { action: 'new' },
+    { headers },
+  );
+
+  assert.equal(secondResponse.status, 200);
+  assert.equal(repeated, 0);
+  assert.deepEqual(
+    JSON.parse(secondResponse.body),
+    JSON.parse(firstResponse.body),
+  );
+  assert.equal((await fs.stat(tabActionLedgerPath)).mode & 0o777, 0o600);
 });
 
 test('creating a chat stays silent when the new chat is ambiguous', async (context) => {
@@ -5030,7 +6291,12 @@ test('creating a chat stays silent when the new chat is ambiguous', async (conte
     port,
     '/api/sessions/session-a/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'ambiguous-new-chat-action-key',
+      },
+    },
   );
   assert.equal(response.status, 200);
   const payload = JSON.parse(response.body);
@@ -5066,7 +6332,12 @@ test('a failed creation never reports a created chat', async (context) => {
     port,
     '/api/sessions/session-a/tab',
     { action: 'new' },
-    { headers: { 'X-CSRF-Token': 'test-csrf' } },
+    {
+      headers: {
+        'X-CSRF-Token': 'test-csrf',
+        'Idempotency-Key': 'failed-new-chat-action-key',
+      },
+    },
   );
   assert.equal(response.status, 409);
   const payload = JSON.parse(response.body);

@@ -10,6 +10,70 @@ function fileEntry(name, isFile = true) {
   };
 }
 
+test('Claude usage preserves the producer sample age and stale state', async () => {
+  const now = 1_788_139_300_000;
+  const fetchedAt = now - 10 * 60 * 1000;
+  const staleAt = now - 5 * 60 * 1000;
+  const provider = await pocketServer.readSeatUsage(
+    async () => ({
+      ok: true,
+      async json() {
+        return {
+          profiles: [
+            {
+              name: 'upperfloorpod',
+              label: 'upperfloorpod@gmail.com',
+              isActive: true,
+              rateLimits: {
+                fetchedAt,
+                staleAt,
+                status: 'ok',
+                fiveH: { utilization: 0.29, status: 'allowed' },
+                sevenD: { utilization: 0.96, status: 'allowed' },
+              },
+            },
+          ],
+        };
+      },
+    }),
+    { now },
+  );
+
+  assert.equal(provider.seats[0].fetchedAt, fetchedAt);
+  assert.equal(provider.seats[0].stale, true);
+  assert.equal(provider.fetchedAt, fetchedAt);
+});
+
+test('Claude usage expires an old cached sample when staleAt is absent', async () => {
+  const now = 1_788_139_300_000;
+  const fetchedAt = now - 6 * 60 * 1000;
+  const provider = await pocketServer.readSeatUsage(
+    async () => ({
+      ok: true,
+      async json() {
+        return {
+          profiles: [
+            {
+              name: 'upperfloorpod',
+              isActive: true,
+              rateLimits: {
+                fetchedAt,
+                status: 'ok',
+                fiveH: { utilization: 0.29, status: 'allowed' },
+                sevenD: { utilization: 0.55, status: 'allowed' },
+              },
+            },
+          ],
+        };
+      },
+    }),
+    { now },
+  );
+
+  assert.equal(provider.seats[0].fetchedAt, fetchedAt);
+  assert.equal(provider.seats[0].stale, true);
+});
+
 test('GPT usage reads only SwiftBar cache metadata and returns a fixed phone shape', async () => {
   assert.equal(typeof pocketServer.readGptUsage, 'function');
   const accountStore = '/account-store';

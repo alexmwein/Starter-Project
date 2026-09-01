@@ -185,3 +185,50 @@ test('definite preflight failures stay visible and can be moved back to the edit
     /error\.definitelyUnsent[\s\S]*markDefinitelyUnsent/,
   );
 });
+
+test('other Pocket windows receive invalidations and reread durable draft state', async () => {
+  const source = await applicationSource();
+  assert.match(source, /const SHARED_STATE_CHANNEL = 'conductor-pocket-shared-state-v1'/);
+  assert.match(source, /function broadcastSharedStateInvalidation\(type\)/);
+  assert.match(
+    source,
+    /sharedStateChannel\?\.postMessage\(\{ type \}\)/,
+    'the channel must carry only an invalidation, never draft or delivery data',
+  );
+  assert.match(
+    source,
+    /type === 'attachment-drafts-invalidated'[\s\S]*loadAttachmentDrafts\(\)/,
+  );
+  assert.match(
+    source,
+    /type === 'pending-deliveries-invalidated'[\s\S]*restorePendingDeliveries\(\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /event\.data\.(?:attachments|messages|optimistic|snapshot)/,
+  );
+  assert.match(
+    source,
+    /window\.addEventListener\('storage',[\s\S]*!sharedStateChannel &&[\s\S]*event\.key === ATTACHMENT_DRAFTS_KEY/,
+    'the localStorage fallback must not duplicate BroadcastChannel renders',
+  );
+
+  const persistence = functionSource(
+    source,
+    'function persistAttachmentDrafts',
+    'function attachmentsFor',
+  );
+  assert.match(
+    persistence,
+    /broadcastSharedStateInvalidation\('attachment-drafts-invalidated'\)/,
+  );
+  const pending = functionSource(
+    source,
+    'async function mutatePendingDeliveriesRequired',
+    'async function claimTerminalDeliveryActionRequired',
+  );
+  assert.match(
+    pending,
+    /broadcastSharedStateInvalidation\('pending-deliveries-invalidated'\)/,
+  );
+});

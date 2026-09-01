@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import vm from 'node:vm';
 
 import {
   classifyAgentError,
@@ -370,6 +371,42 @@ test('a superseded agent error stops giving advice, and seat usage is whiteliste
   // something else.
   assert.match(readerBody, /available: false, reason: 'producer_unreachable'/);
 })
+
+test('cached usage shows its sample source and age when available', async () => {
+  const [js, css] = await Promise.all([
+    fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../public/app.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(js, /function usageSampleDescription\(account, provider/);
+  assert.match(js, /account\.fetchedAt/);
+  assert.match(js, /provider\.id === 'gpt'[\s\S]*SwiftBar cache/);
+  assert.match(js, /account\.source[\s\S]*provider\.source/);
+  assert.match(js, /className: 'usage-seat-source'/);
+  assert.match(css, /\.usage-seat-source \{/);
+});
+
+test('a future usage timestamp never claims the sample was taken just now', async () => {
+  const js = await fs.readFile(
+    new URL('../public/app.js', import.meta.url),
+    'utf8',
+  );
+  const match = js.match(
+    /function usageSampleDescription\(account, provider, now = Date\.now\(\)\) \{[\s\S]*?\n\}\n\nasync function fillAccountUsage/,
+  );
+  assert.ok(match, 'usageSampleDescription must remain executable in isolation');
+  const describe = vm.runInNewContext(
+    `(${match[0].replace(/\n\nasync function fillAccountUsage$/, '')})`,
+  );
+  const now = 1_788_139_300_000;
+  assert.equal(
+    describe(
+      { fetchedAt: now + 60 * 60 * 1000, stale: true },
+      { id: 'gpt' },
+      now,
+    ),
+    'SwiftBar cache · Sample time unavailable',
+  );
+});
 
 test('ordinary messages are never turned into error cards by their wording', () => {
   // The regression that shipped 2026-08-20: the text classifier was moved ahead

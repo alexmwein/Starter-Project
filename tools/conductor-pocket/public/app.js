@@ -1,36 +1,37 @@
 import {
   claimedDraftClearIsAuthorized,
   createDeliveryActionCoordinator,
+  deliveryBackstopNeedsRecovery,
   deliveryNeedsAutomaticRecovery,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
   draftClaimConflictCopy,
   draftSendPayloadFingerprint,
+  extendDeliveryRecoveryDeadline,
   mergeRecoveredAttachmentItems,
   mergeRecoveredDraftText,
   pendingDeliverySnapshotTransition,
   pendingDeliveryMessages,
   persistRecoveredDraftBeforeFinalizing,
   readDeliveryStatusResponse,
+  rearmDeliveryRecovery,
   reconcileDeliveryReceipts,
+  receiptTranscriptDisposition,
+  runDefinitelyUnsentRetry,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './delivery-receipts.js?v=0.2.0-transactional-send-20260831';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './app-update.js?v=0.2.0-transactional-send-20260831';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-pocket-storage-selfheal-20260830';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-pocket-storage-selfheal-20260830';
-import { fetchJson } from './http.js?v=0.2.0-pocket-storage-selfheal-20260830';
-import {
-  bootstrapFailureState,
-  sessionExpiryNotice,
-} from './session-lifecycle.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './bootstrap-recovery.js?v=0.2.0-transactional-send-20260831';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-transactional-send-20260831';
+import { fetchJson } from './http.js?v=0.2.0-transactional-send-20260831';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -40,16 +41,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './image-attachments.js?v=0.2.0-transactional-send-20260831';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './live-refresh.js?v=0.2.0-transactional-send-20260831';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './rich-text.js?v=0.2.0-transactional-send-20260831';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -60,23 +61,31 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './read-state.js?v=0.2.0-transactional-send-20260831';
 import {
   activityLabel,
   buildFocusedTranscript,
+  captureHorizontalScrollAnchor,
+  captureScrollAnchor,
   hasCurrentTerminalAgentError,
+  reconcileMountedChildren,
   reconciledTranscriptMessageIds,
+  restoreHorizontalScrollAnchor,
+  restoreScrollAnchor,
   stableTranscriptMessages,
+  transcriptMessageRenderIdentity,
   transcriptRefreshShouldWait,
-} from './transcript-focus.js?v=0.2.0-pocket-storage-selfheal-20260830';
+  visibleQueuedRowIds,
+  visibleQueuedRowRefreshKey,
+} from './transcript-focus.js?v=0.2.0-transactional-send-20260831';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './swipe-navigation.js?v=0.2.0-transactional-send-20260831';
 import {
   activeGptUsage,
   createUsageReader,
   usageAccountStatus,
-} from './usage-state.js?v=0.2.0-pocket-storage-selfheal-20260830';
+} from './usage-state.js?v=0.2.0-transactional-send-20260831';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -88,6 +97,10 @@ const RESUME_REQUEST_MS = 6 * 1000;
 const LIVE_REFRESH_DEBOUNCE_MS = 100;
 const METADATA_REFRESH_DEBOUNCE_MS = 800;
 const LIVE_REFRESH_REQUEST_MS = 6 * 1000;
+const INITIAL_STREAM_RESTART_MS = 10_000;
+const QUEUED_ROW_REFRESH_DELAY_MS = 800;
+const QUEUED_ROW_REFRESH_MAX_ATTEMPTS = 3;
+const TAB_ACTION_REQUEST_MS = 60_000;
 // Spacing between attempts to rebuild a dead event stream. Long enough that a
 // relay that is genuinely down is not hammered once per second, short enough
 // that a dropped stream recovers before it is worth reaching for the app
@@ -105,6 +118,7 @@ const HIDDEN_AT_KEY = 'cp:hidden-at:v1';
 const CLIENT_VERSION = '0.2.0';
 const SHELL_CACHE_PREFIX = 'conductor-pocket-shell-';
 const CACHE_PURGE_CHANNEL = 'conductor-pocket-cache-purge-v1';
+const SHARED_STATE_CHANNEL = 'conductor-pocket-shared-state-v1';
 const ORIGIN_RETIRED_KEY = 'cp:origin-retired:v1';
 const PENDING_DELIVERIES_KEY = 'pending-deliveries:v1';
 const DRAFTS_KEY = 'cp:drafts:v1';
@@ -113,16 +127,25 @@ const READ_RECEIPTS_KEY = 'cp:read-receipts:v1';
 const READ_RECEIPTS_CHANNEL = 'conductor-pocket-read-receipts-v1';
 const ROUTE_KEY = 'cp:last-route:v2';
 const LEGACY_ROUTE_KEY = 'cp:last-route:v1';
+const CHAT_CREATION_ATTEMPTS_KEY = 'cp:chat-creation-attempts:v2';
+const LEGACY_CHAT_CREATION_ATTEMPT_KEY = 'cp:chat-creation-attempt:v1';
+const CHAT_CREATION_LEASE_KEY = 'cp:chat-creation-attempt-lease:v1';
+const CHAT_CREATION_LOCK_NAME = 'conductor-pocket-chat-creation-attempts-v2';
+const CHAT_CREATION_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+const CHAT_CREATION_ATTEMPT_MAX = 32;
+const CHAT_CREATION_LEASE_MS = 2_000;
+const CHAT_CREATION_SETTLED_GRACE_MS = 5_000;
 const DELIVERY_RECOVERY_MS = 120_000;
 const DELIVERY_STATUS_REQUEST_MS = 8_000;
 const DELIVERY_RECOVERY_POLL_MS = 1_000;
 const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const DELIVERY_RECEIPT_OBSERVATION_MS = 10_000;
 const DELIVERY_RECEIPT_OBSERVATION_POLL_MS = 1_000;
+const DELIVERY_RECEIPT_STALL_MS = 30_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-pocket-storage-selfheal-20260830';
+const CLIENT_SHELL_REVISION = '0.2.0-transactional-send-20260831';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -138,6 +161,7 @@ const state = {
   lastHeartbeat: 0,
   connectionProbe: null,
   eventSource: null,
+  initialStreamTimer: null,
   heartbeatTimer: null,
   activityTimer: null,
   workspaces: [],
@@ -184,6 +208,8 @@ const readReceiptCommits = new Set();
 const deliveryRecoveryInFlight = new Map();
 const missingReceiptChecks = new Map();
 const deliveryReceiptObservations = new Map();
+const stalledReceiptChecks = new Map();
+const deliveryPostsInFlight = new Set();
 const deliveryRecoveryQueue = [];
 let activeDeliveryRecoveryCount = 0;
 let bootstrapCoordinator = null;
@@ -194,6 +220,70 @@ const deliveryActionCoordinator = createDeliveryActionCoordinator({
 });
 
 const sessionMessageRequests = createSessionMessageRequestCoordinator();
+let queuedRowRefresh = null;
+
+function stopVisibleQueuedRowRefresh() {
+  if (queuedRowRefresh?.timer) clearTimeout(queuedRowRefresh.timer);
+  queuedRowRefresh = null;
+}
+
+function scheduleQueuedRowRefreshAttempt(task) {
+  if (
+    queuedRowRefresh !== task ||
+    task.running ||
+    task.timer ||
+    task.attempts >= QUEUED_ROW_REFRESH_MAX_ATTEMPTS
+  ) {
+    return;
+  }
+  task.timer = setTimeout(async () => {
+    task.timer = null;
+    if (
+      queuedRowRefresh !== task ||
+      state.route.sessionId !== task.sessionId ||
+      document.hidden
+    ) {
+      return;
+    }
+    task.running = true;
+    task.attempts += 1;
+    try {
+      await refreshMessages(task.sessionId, {
+        full: true,
+        timeoutMs: LIVE_REFRESH_REQUEST_MS,
+      });
+    } finally {
+      task.running = false;
+      if (queuedRowRefresh === task) scheduleQueuedRowRefreshAttempt(task);
+    }
+  }, QUEUED_ROW_REFRESH_DELAY_MS);
+}
+
+function scheduleVisibleQueuedRowRefresh(messages) {
+  const sessionId = state.route.sessionId;
+  const key = visibleQueuedRowRefreshKey(messages);
+  if (!sessionId || !key) {
+    stopVisibleQueuedRowRefresh();
+    return;
+  }
+  if (
+    queuedRowRefresh?.sessionId === sessionId &&
+    queuedRowRefresh.key === key
+  ) {
+    scheduleQueuedRowRefreshAttempt(queuedRowRefresh);
+    return;
+  }
+  stopVisibleQueuedRowRefresh();
+  queuedRowRefresh = {
+    sessionId,
+    key,
+    rowIds: visibleQueuedRowIds(messages),
+    attempts: 0,
+    running: false,
+    timer: null,
+  };
+  scheduleQueuedRowRefreshAttempt(queuedRowRefresh);
+}
 
 function resetSessionMessageState() {
   state.sessionOpenController?.abort();
@@ -203,6 +293,7 @@ function resetSessionMessageState() {
   state.cursorsBySession.clear();
   state.messageBaselinesBySession.clear();
   state.messageLiveEpochBySession.clear();
+  stopVisibleQueuedRowRefresh();
   cancelReadTracking();
 }
 
@@ -375,6 +466,8 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   automation_failed: 'The Mac could not complete the Conductor action.',
   automation_invalid_response: 'The Mac returned an invalid send result.',
   automation_timeout: 'Conductor took too long to respond.',
+  composer_tree_transient:
+    'Conductor was redrawing the message box. Retry this message.',
   composer_changed_pre_send: 'The Conductor composer changed before sending.',
   composer_unavailable: 'The message box is not ready on your Mac.',
   conductor_message_cancelled: 'Conductor canceled this message after it entered the chat.',
@@ -391,6 +484,8 @@ const DELIVERY_ERROR_COPY = Object.freeze({
   message_empty: 'The message is empty.',
   message_invalid: 'The message contains unsupported content.',
   message_too_large: 'The message is too long.',
+  predecessor_failed:
+    'An earlier message in this chat needs Retry, Edit, or Delete first.',
   relay_restarted_before_send: 'The relay restarted before sending it.',
   relay_restarted_during_send:
     'The relay restarted during this send, so Pocket cannot safely send it again.',
@@ -991,77 +1086,14 @@ function bootstrap() {
       else renderLock();
     },
     onFailure: async (error) => {
-      const failure = bootstrapFailureState(error);
-      if (error.code === 'device_revoked') {
+      if (error.status === 401 || error.code === 'device_revoked') {
         await purgeThenRenderSignedOut();
-      } else if (failure.state === 'unauthenticated') {
-        renderExpiredSession();
       } else {
         renderConnectionGate(error.code);
       }
     },
   });
   return bootstrapCoordinator.run();
-}
-
-function renderExpiredSession({ errorMessage = '' } = {}) {
-  stopEvents();
-  state.auth = null;
-  state.csrfToken = null;
-  const action = node('button', {
-    className: 'primary-button',
-    type: 'button',
-    text: 'Unlock with Face ID',
-    on: {
-      click: async (event) => {
-        const control = event.currentTarget;
-        control.disabled = true;
-        control.textContent = 'Waiting for Face ID…';
-        try {
-          await runWithAppUpdatePaused(async () => {
-            const options = await request('/api/auth/recover/options', {
-              method: 'POST',
-              body: {},
-            });
-            const credential = await navigator.credentials.get({
-              publicKey: authenticationOptions(options),
-            });
-            const result = await request('/api/auth/recover/verify', {
-              method: 'POST',
-              body: { response: authenticationResponse(credential) },
-            });
-            state.auth = result;
-            state.csrfToken = result.csrfToken;
-            await startApplication();
-          });
-        } catch (error) {
-          if (
-            error.code === 'tailscale_identity_required' ||
-            error.code === 'tailscale_identity_denied' ||
-            error.code === 'tailscale_identity_unpaired'
-          ) {
-            renderConnectionGate(error.code);
-            return;
-          }
-          renderExpiredSession({
-            errorMessage:
-              error.name === 'NotAllowedError'
-                ? 'Face ID was canceled. Try again.'
-                : 'Face ID could not renew this session. Try again.',
-          });
-        }
-      },
-    },
-  });
-  gateView({
-    mark: 'faceid',
-    title: 'Session expired',
-    body: 'Unlock with Face ID to reconnect this iPhone.',
-    content: errorMessage
-      ? node('p', { className: 'inline-error', text: errorMessage })
-      : null,
-    action,
-  });
 }
 
 function renderLock({ errorMessage = '' } = {}) {
@@ -1230,11 +1262,7 @@ function renderConnectionGate(code) {
   gateView({
     connectionAnchor: !upgradeRequired && !identityProblem,
     mark: upgradeRequired ? 'refresh' : 'wifiOff',
-    title: upgradeRequired
-      ? 'Pocket must refresh'
-      : identityProblem
-        ? 'Tailscale connection required'
-        : 'Mac unreachable',
+    title: upgradeRequired ? 'Pocket must refresh' : 'Mac unreachable',
     body:
       upgradeRequired
         ? 'Fully close Pocket, reopen it while online, then sign out again. The old app cannot retire this phone.'
@@ -1500,6 +1528,7 @@ function persistAttachmentDrafts({
       if (ready.length > 0) saved[sessionId] = ready;
     }
     localStorage.setItem(ATTACHMENT_DRAFTS_KEY, JSON.stringify(saved));
+    broadcastSharedStateInvalidation('attachment-drafts-invalidated');
     return true;
   } catch {
     return false;
@@ -1924,7 +1953,6 @@ function renderComposerAttachments() {
 }
 
 let cacheDatabasePromise;
-let cacheDatabaseConnection = null;
 let originRetired = localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
 const cachePurgeChannel =
   'BroadcastChannel' in window
@@ -1934,9 +1962,58 @@ const readReceiptChannel =
   'BroadcastChannel' in window
     ? new BroadcastChannel(READ_RECEIPTS_CHANNEL)
     : null;
+const sharedStateChannel =
+  'BroadcastChannel' in window
+    ? new BroadcastChannel(SHARED_STATE_CHANNEL)
+    : null;
 let getServiceWorkerRegistration = null;
 let appUpdateCoordinator = null;
 let appUpdateSensitiveOperations = 0;
+
+function broadcastSharedStateInvalidation(type) {
+  sharedStateChannel?.postMessage({ type });
+}
+
+function syncAttachmentDraftsFromAuthority(
+  authoritativeDrafts = loadAttachmentDrafts(),
+) {
+  const mergedDrafts = new Map();
+  const sessionIds = new Set([
+    ...state.attachmentsBySession.keys(),
+    ...authoritativeDrafts.keys(),
+  ]);
+  for (const sessionId of sessionIds) {
+    const current = state.attachmentsBySession.get(sessionId) || [];
+    const authoritative = authoritativeDrafts.get(sessionId) || [];
+    const authoritativeById = new Map(
+      authoritative.map((item) => [item.id, item]),
+    );
+    const consumed = new Set();
+    const merged = [];
+    for (const item of current) {
+      if (item.state !== 'ready' && item.restored !== true) {
+        merged.push(item);
+        continue;
+      }
+      const saved = authoritativeById.get(item.id);
+      if (!saved || consumed.has(item.id)) continue;
+      Object.assign(item, saved);
+      merged.push(item);
+      consumed.add(item.id);
+    }
+    for (const item of authoritative) {
+      if (consumed.has(item.id)) continue;
+      merged.push(item);
+      consumed.add(item.id);
+    }
+    if (merged.length > 0) mergedDrafts.set(sessionId, merged);
+  }
+  state.attachmentsBySession = mergedDrafts;
+  if (state.shell) {
+    renderComposerAttachments();
+    renderComposerState();
+  }
+}
 
 async function runWithAppUpdatePaused(operation) {
   appUpdateSensitiveOperations += 1;
@@ -1951,12 +2028,6 @@ async function runWithAppUpdatePaused(operation) {
   }
 }
 
-function invalidateCacheDatabaseConnection(database = null) {
-  if (database && cacheDatabaseConnection !== database) return;
-  cacheDatabaseConnection = null;
-  cacheDatabasePromise = null;
-}
-
 function cacheDatabase() {
   if (
     originRetired ||
@@ -1966,85 +2037,28 @@ function cacheDatabase() {
     return Promise.reject(new Error('origin_retired'));
   }
   if (!cacheDatabasePromise) {
-    let openingPromise;
-    openingPromise = new Promise((resolve, reject) => {
+    cacheDatabasePromise = new Promise((resolve, reject) => {
       const open = indexedDB.open('conductor-pocket-v1', 1);
       open.onupgradeneeded = () => {
         if (!open.result.objectStoreNames.contains('snapshots')) {
           open.result.createObjectStore('snapshots');
         }
       };
-      open.onsuccess = () => {
-        const database = open.result;
-        if (cacheDatabasePromise !== openingPromise) {
-          database.close();
-          reject(new Error('cache_open_cancelled'));
-          return;
-        }
-        cacheDatabaseConnection = database;
-        database.onclose = () =>
-          invalidateCacheDatabaseConnection(database);
-        database.onversionchange = () => {
-          database.close();
-          invalidateCacheDatabaseConnection(database);
-        };
-        resolve(database);
-      };
-      open.onerror = () => {
-        if (cacheDatabasePromise === openingPromise) {
-          invalidateCacheDatabaseConnection();
-        }
-        reject(open.error || new Error('cache_open_failed'));
-      };
-    });
-    cacheDatabasePromise = openingPromise;
-    // Safari can throw synchronously from indexedDB.open while resuming a PWA.
-    // That rejection happens before the executor can install open.onerror, so
-    // without this post-assignment guard the rejected promise stays memoized
-    // and every later send fails even after storage becomes available again.
-    void openingPromise.catch(() => {
-      if (cacheDatabasePromise === openingPromise) {
-        invalidateCacheDatabaseConnection();
-      }
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
     });
   }
   return cacheDatabasePromise;
 }
 
 async function closeCacheDatabase() {
-  const pending = cacheDatabasePromise;
-  cacheDatabasePromise = null;
-  cacheDatabaseConnection = null;
   try {
-    const database = await pending;
-    database.onclose = null;
-    database.onversionchange = null;
+    const database = await cacheDatabasePromise;
     database?.close();
   } catch {
     // A failed cache open has nothing to close.
   }
-}
-
-async function runCacheDatabaseRequired(operation) {
-  let lastError = new Error('cache_operation_failed');
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let database = null;
-    try {
-      database = await cacheDatabase();
-      return await operation(database);
-    } catch (error) {
-      lastError = error;
-      if (database && cacheDatabaseConnection === database) {
-        invalidateCacheDatabaseConnection(database);
-        try {
-          database.close();
-        } catch {
-          // The connection may already be closed.
-        }
-      }
-    }
-  }
-  throw lastError;
+  cacheDatabasePromise = null;
 }
 
 cachePurgeChannel?.addEventListener('message', (event) => {
@@ -2073,7 +2087,8 @@ async function cacheGet(key) {
 }
 
 async function cacheGetRequired(key) {
-  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readonly');
     const requestValue = transaction.objectStore('snapshots').get(key);
     requestValue.onsuccess = () => resolve(requestValue.result);
@@ -2081,7 +2096,7 @@ async function cacheGetRequired(key) {
       reject(requestValue.error || new Error('cache_read_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_read_aborted'));
-  }));
+  });
 }
 
 async function cacheSet(key, value) {
@@ -2099,7 +2114,8 @@ async function cacheSet(key, value) {
 }
 
 async function mergeReadReceiptRequired(receipt) {
-  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(READ_RECEIPTS_KEY);
@@ -2117,7 +2133,7 @@ async function mergeReadReceiptRequired(receipt) {
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  }));
+  });
 }
 
 async function restoreReadReceipts() {
@@ -2206,6 +2222,24 @@ readReceiptChannel?.addEventListener('message', (event) => {
     renderChatStrip();
     scheduleReadEvaluation();
   });
+});
+
+sharedStateChannel?.addEventListener('message', (event) => {
+  const type = event.data?.type;
+  if (type === 'attachment-drafts-invalidated') {
+    const attachmentDrafts = loadAttachmentDrafts();
+    syncAttachmentDraftsFromAuthority(attachmentDrafts);
+  } else if (type === 'pending-deliveries-invalidated') {
+    void restorePendingDeliveries().then((restored) => {
+      if (restored && state.shell) renderTranscript();
+    });
+  }
+});
+
+window.addEventListener('storage', (event) => {
+  if (!sharedStateChannel && event.key === ATTACHMENT_DRAFTS_KEY) {
+    syncAttachmentDraftsFromAuthority();
+  }
 });
 
 function validPersistedKey(value) {
@@ -2336,11 +2370,11 @@ function sanitizePendingDelivery(value) {
 async function mutatePendingDeliveriesRequired({
   upserts = [],
   removeIds = [],
-  releaseDraftClaimIds = [],
   deliveryKeyTransitions = [],
   deliveryStateTransitions = [],
 }) {
-  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
@@ -2352,7 +2386,6 @@ async function mutatePendingDeliveriesRequired({
           type: 'mutate',
           upserts,
           removeIds,
-          releaseDraftClaimIds,
           deliveryKeyTransitions,
           deliveryStateTransitions,
         },
@@ -2361,12 +2394,15 @@ async function mutatePendingDeliveriesRequired({
       store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(transition?.snapshot || null);
+    transaction.oncomplete = () => {
+      broadcastSharedStateInvalidation('pending-deliveries-invalidated');
+      resolve(transition?.snapshot || null);
+    };
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  }));
+  });
 }
 
 async function claimTerminalDeliveryActionRequired(
@@ -2377,7 +2413,8 @@ async function claimTerminalDeliveryActionRequired(
   if (!new Set(['retry', 'edit', 'delete']).has(action)) {
     throw new Error('delivery_action_invalid');
   }
-  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
@@ -2389,8 +2426,6 @@ async function claimTerminalDeliveryActionRequired(
           type: 'claim-terminal',
           action,
           claimToken: action === 'edit' ? randomIdempotencyKey() : null,
-          nextDeliveryKey:
-            action === 'retry' ? randomIdempotencyKey() : null,
           payloadFingerprint,
           message,
         },
@@ -2400,16 +2435,20 @@ async function claimTerminalDeliveryActionRequired(
       store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(claimed);
+    transaction.oncomplete = () => {
+      broadcastSharedStateInvalidation('pending-deliveries-invalidated');
+      resolve(claimed);
+    };
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  }));
+  });
 }
 
 async function transitionPendingDeliveryRequired(command) {
-  return runCacheDatabaseRequired((database) => new Promise((resolve, reject) => {
+  const database = await cacheDatabase();
+  return new Promise((resolve, reject) => {
     const transaction = database.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const currentRequest = store.get(PENDING_DELIVERIES_KEY);
@@ -2424,12 +2463,15 @@ async function transitionPendingDeliveryRequired(command) {
       store.put(transition.snapshot, PENDING_DELIVERIES_KEY);
     };
     currentRequest.onerror = () => transaction.abort();
-    transaction.oncomplete = () => resolve(value);
+    transaction.oncomplete = () => {
+      broadcastSharedStateInvalidation('pending-deliveries-invalidated');
+      resolve(value);
+    };
     transaction.onerror = () =>
       reject(transaction.error || new Error('cache_write_failed'));
     transaction.onabort = () =>
       reject(transaction.error || new Error('cache_write_aborted'));
-  }));
+  });
 }
 
 function finalizeTerminalDeliveryEditRequired(message, payloadFingerprint) {
@@ -2594,7 +2636,7 @@ async function verifyTerminalDeliveryAction(message) {
     }
     if (disposition === 'pending') {
       const previousDelivery = message.delivery;
-      message.delivery = 'delivering';
+      message.delivery = 'confirming';
       message.deliveryPhase = delivery.phase || 'queued';
       message.retrySafe = false;
       message.definitelyUnsent = false;
@@ -2606,7 +2648,8 @@ async function verifyTerminalDeliveryAction(message) {
         ),
       });
       renderTranscript();
-      announce('This message is already being sent from another Pocket window.');
+      void checkDelivery(message, { force: true }).catch(() => {});
+      announce('This message is still sending on the Mac. Pocket will keep checking.');
       return null;
     }
     announce('Could not verify this delivery yet. Try again.');
@@ -2766,7 +2809,6 @@ async function persistPendingDeliveries({
   required = false,
   upserts = [],
   removeIds = [],
-  releaseDraftClaimIds = [],
   deliveryKeyTransitions = [],
   deliveryStateTransitions = [],
 } = {}) {
@@ -2774,7 +2816,6 @@ async function persistPendingDeliveries({
     return await mutatePendingDeliveriesRequired({
       upserts,
       removeIds,
-      releaseDraftClaimIds,
       deliveryKeyTransitions,
       deliveryStateTransitions,
     });
@@ -2791,8 +2832,17 @@ async function restorePendingDeliveries() {
   } catch {
     return false;
   }
-  state.optimistic = pendingDeliveryMessages(cached, {
+  const authoritativeMessages = pendingDeliveryMessages(cached, {
     sanitize: sanitizePendingDelivery,
+  });
+  const currentById = new Map(
+    state.optimistic.map((message) => [message.id, message]),
+  );
+  state.optimistic = authoritativeMessages.map((authoritative) => {
+    const current = currentById.get(authoritative.id);
+    if (!current) return authoritative;
+    applyAuthoritativePendingDelivery(current, authoritative);
+    return current;
   });
   return true;
 }
@@ -2890,6 +2940,9 @@ async function purgeLocalData() {
   localStorage.removeItem(LEGACY_ROUTE_KEY);
   localStorage.removeItem('cp:drafts:v1');
   localStorage.removeItem(ATTACHMENT_DRAFTS_KEY);
+  localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+  localStorage.removeItem(LEGACY_CHAT_CREATION_ATTEMPT_KEY);
+  localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
   localStorage.removeItem(HIDDEN_AT_KEY);
   await clearTranscriptCache();
   if ('caches' in window) {
@@ -3081,6 +3134,11 @@ function ensureShell() {
     className: 'chat-strip',
     'aria-label': 'Switch chat',
   });
+  for (const eventName of ['touchstart', 'pointerdown', 'wheel']) {
+    chatStrip.addEventListener(eventName, () => {
+      chatStripMovedByHand = true;
+    }, { passive: true });
+  }
   transcriptPanel.append(
     transcriptNav.root,
     chatStrip,
@@ -3819,6 +3877,11 @@ function recentSessionsNewestFirst() {
     });
 }
 
+function stableChatStripSessions(sessions, previousIds) {
+  void previousIds;
+  return [...sessions];
+}
+
 function sessionLocationLabel(session) {
   const workspaceName = session?.workspaceName || 'Workspace';
   const repositoryName =
@@ -3926,11 +3989,7 @@ function renderWorkspacePanel() {
     icon('search'),
     searchInput,
   ]);
-  const content = node('div', { className: 'panel-content' }, [
-    header,
-    sessionExpiryNoticeNode(),
-    search,
-  ]);
+  const content = node('div', { className: 'panel-content' }, [header, search]);
 
   if (recentHome) {
     if (state.recentSessionsError) {
@@ -4138,8 +4197,6 @@ function renderSessionsPanel() {
   sessionNav.heading.textContent = workspace?.name || 'Chats';
   updateNavSubtitle(sessionNav.subtitle, workspace?.branch || connectionVoice().text);
   sessionContent.replaceChildren();
-  const expiryNotice = sessionExpiryNoticeNode();
-  if (expiryNotice) sessionContent.append(expiryNotice);
   if (!workspace) {
     sessionContent.append(
       node('div', { className: 'empty-state' }, [
@@ -4325,13 +4382,21 @@ async function refreshMessages(
         const cursor = effectiveFull
           ? 0
           : state.cursorsBySession.get(sessionId) || 0;
+        const queuedRowIds =
+          queuedRowRefresh?.sessionId === sessionId
+            ? queuedRowRefresh.rowIds.slice(0, 8)
+            : [];
+        const queuedRowsQuery =
+          queuedRowIds.length > 0
+            ? `&queuedRowIds=${encodeURIComponent(queuedRowIds.join(','))}`
+            : '';
         const data = await request(
-          `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}`,
+          `/api/sessions/${encodeURIComponent(sessionId)}/messages?after=${cursor}${queuedRowsQuery}`,
           { signal, timeoutMs },
         );
-        return { cursor, data };
+        return { cursor, data, queuedRowIds };
       },
-      commit: ({ cursor, data }) => {
+      commit: ({ cursor, data, queuedRowIds }) => {
         // The database event can beat the POST receipt by a few hundred
         // milliseconds. Hold a batch containing a user row until that receipt
         // settles, or the Mac row and its optimistic bubble briefly render as
@@ -4357,8 +4422,49 @@ async function refreshMessages(
         const messages = effectiveFull
           ? data.messages
           : [...existing, ...data.messages];
+        const requestedRowIds = new Set(queuedRowIds);
+        const existingById = new Map(
+          messages.map((message) => [message.id, message]),
+        );
+        const refreshed = Array.isArray(data.refreshed)
+          ? data.refreshed.slice(0, queuedRowIds.length)
+          : [];
+        const refreshedById = new Map(
+          refreshed
+            .filter(
+              (message) =>
+                existingById.has(message?.id) &&
+                requestedRowIds.has(Number(message?.rowId)),
+            )
+            .map((message) => [message.id, message]),
+        );
+        const missingQueuedRowIds = new Set(
+          (Array.isArray(data.missingQueuedRowIds)
+            ? data.missingQueuedRowIds.slice(0, queuedRowIds.length)
+            : []
+          )
+            .map(Number)
+            .filter(
+              (rowId) =>
+                Number.isSafeInteger(rowId) && requestedRowIds.has(rowId),
+            ),
+        );
+        const refreshedMessages = messages
+          .filter(
+            (message) =>
+              !(
+                message?.kind === 'user' &&
+                message.queued === true &&
+                missingQueuedRowIds.has(Number(message.rowId)) &&
+                !refreshedById.has(message.id)
+              ),
+          )
+          .map((message) => refreshedById.get(message.id) || message);
         const nextCursor = Math.max(cursor, currentCursor, responseCursor);
-        state.messagesBySession.set(sessionId, dedupeMessages(messages));
+        state.messagesBySession.set(
+          sessionId,
+          dedupeMessages(refreshedMessages),
+        );
         state.cursorsBySession.set(sessionId, nextCursor);
         if (effectiveFull) {
           state.messageBaselinesBySession.add(sessionId);
@@ -4401,7 +4507,6 @@ function reconcileOptimistic(sessionId) {
   );
   state.optimistic = result.remaining;
   if (result.reconciled.length > 0) {
-    const newlyObserved = [];
     for (const messageId of reconciledTranscriptMessageIds(
       state.messagesBySession.get(sessionId) || [],
       result.reconciled,
@@ -4411,16 +4516,16 @@ function reconcileOptimistic(sessionId) {
     for (const message of result.reconciled) {
       if (!Number.isFinite(message.receiptObservedAt)) {
         message.receiptObservedAt = Date.now();
-        newlyObserved.push(message);
+        void persistPendingDeliveries({ upserts: [message] });
       }
+      void observeDeliveredReceipt(message);
       for (const attachment of message.attachments || []) {
         releaseAttachmentPreview(attachment);
       }
-      void observeDeliveredReceipt(message);
     }
-    if (newlyObserved.length > 0) {
-      void persistPendingDeliveries({ upserts: newlyObserved });
-    }
+  }
+  for (const message of result.unreconciled) {
+    void verifyStalledDeliveredReceipt(message);
   }
   for (const message of result.missing) {
     void verifyMissingDeliveryReceipt(message);
@@ -4459,9 +4564,11 @@ const supportsFieldSizing =
   CSS.supports('field-sizing', 'content');
 
 let lastCentredSessionId = null;
+let chatStripMovedByHand = false;
 let chatStripOwner = null;
 let newChatStripChip = null;
 const chatStripChips = new Map();
+let chatStripSessionOrder = [];
 // Which chat the transcript scroller currently holds. The scroll position is
 // measured before the list is replaced, so without this the reading position
 // from one chat is applied to the next one opened.
@@ -4580,14 +4687,7 @@ function syncChatStripChip(chip, {
 }
 
 function reconcileChatStripChildren(strip, desiredChildren) {
-  for (let index = 0; index < desiredChildren.length; index += 1) {
-    const desired = desiredChildren[index];
-    const current = strip.children[index] || null;
-    if (current !== desired) strip.insertBefore(desired, current);
-  }
-  while (strip.children.length > desiredChildren.length) {
-    strip.lastElementChild?.remove();
-  }
+  reconcileMountedChildren(strip, desiredChildren);
 }
 
 function renderChatStrip() {
@@ -4597,9 +4697,14 @@ function renderChatStrip() {
     chatStripOwner = strip;
     newChatStripChip = null;
     chatStripChips.clear();
+    chatStripSessionOrder = [];
     lastCentredSessionId = null;
   }
-  const sessions = recentSessionsNewestFirst();
+  const sessions = stableChatStripSessions(
+    recentSessionsNewestFirst(),
+    chatStripSessionOrder,
+  );
+  chatStripSessionOrder = sessions.map((session) => session.id);
   const chatStates = sessions.map((session) => ({
     session,
     unreadCount: sessionUnreadCount(session),
@@ -4629,6 +4734,14 @@ function renderChatStrip() {
   const previousActiveSessionId = previousActive?.dataset.sessionId || null;
   const previousActiveOffset = previousActive?.offsetLeft ?? null;
   const previousScrollLeft = strip.scrollLeft;
+  const manualScrollAnchor = captureHorizontalScrollAnchor(
+    strip,
+    [...strip.children].filter((child) => child !== newChatStripChip),
+    {
+      preferred: previousActive,
+      manual: chatStripMovedByHand,
+    },
+  );
   const currentSessionIds = new Set(sessions.map((session) => session.id));
   for (const sessionId of chatStripChips.keys()) {
     if (!currentSessionIds.has(sessionId)) chatStripChips.delete(sessionId);
@@ -4729,15 +4842,20 @@ function renderChatStrip() {
     previousActiveSessionId === state.route.sessionId &&
     previousActiveOffset !== null
   ) {
-    const anchored =
-      previousScrollLeft + activeChip.offsetLeft - previousActiveOffset;
-    const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
-    const nextScrollLeft = Math.max(0, Math.min(maximum, anchored));
-    if (Math.abs(strip.scrollLeft - nextScrollLeft) > 0.5) {
-      strip.scrollLeft = nextScrollLeft;
+    if (chatStripMovedByHand && manualScrollAnchor) {
+      restoreHorizontalScrollAnchor(strip, manualScrollAnchor);
+    } else {
+      const anchored =
+        previousScrollLeft + activeChip.offsetLeft - previousActiveOffset;
+      const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
+      const nextScrollLeft = Math.max(0, Math.min(maximum, anchored));
+      if (Math.abs(strip.scrollLeft - nextScrollLeft) > 0.5) {
+        strip.scrollLeft = nextScrollLeft;
+      }
     }
     lastCentredSessionId = state.route.sessionId;
   } else if (activeChip && lastCentredSessionId !== state.route.sessionId) {
+    chatStripMovedByHand = false;
     lastCentredSessionId = state.route.sessionId;
     const centred =
       activeChip.offsetLeft - (strip.clientWidth - activeChip.offsetWidth) / 2;
@@ -4783,7 +4901,14 @@ function renderTranscript() {
       document.createTextNode('Error'),
     );
   }
-  renderBanner(transcriptBanner);
+  const bannerAnchor = captureScrollAnchor(transcriptScroll);
+  if (renderBanner(transcriptBanner)) {
+    const restoredBannerAnchor = restoreScrollAnchor(transcriptScroll, bannerAnchor);
+    setLatestButtonVisible(
+      state.shell.latestButton,
+      restoredBannerAnchor.latestVisible,
+    );
+  }
 
   // Measured against the content still on screen, which is the PREVIOUS chat's
   // when a different one is being opened. Two ways that lands the reader high
@@ -4828,13 +4953,14 @@ function renderTranscript() {
   const { entries, toolResults } = buildFocusedTranscript(messages, {
     sessionStatus: session?.status || 'unknown',
   });
+  scheduleVisibleQueuedRowRefresh(entries);
   const existingNodes = new Map(
     [...messageList.children].map((element) => [
       element.dataset.messageId,
       element,
     ]),
   );
-  const fragment = document.createDocumentFragment();
+  const desiredChildren = [];
   let previousVisibleMessage = null;
   for (const message of entries) {
     if (message.kind === 'agent-error' && message.retrying) continue;
@@ -4872,11 +4998,11 @@ function renderTranscript() {
       isMessageContinuation(previousVisibleMessage, message),
     );
     state.seenMessageIds.add(messageId);
-    fragment.append(rendered);
+    desiredChildren.push(rendered);
     previousVisibleMessage = message;
   }
-  if (fragment.childElementCount === 0) {
-    fragment.append(
+  if (desiredChildren.length === 0) {
+    desiredChildren.push(
       renderTranscriptPlaceholder({
         selected: Boolean(state.route.sessionId),
         loading:
@@ -4886,7 +5012,7 @@ function renderTranscript() {
       }),
     );
   }
-  messageList.replaceChildren(fragment);
+  reconcileMountedChildren(messageList, desiredChildren);
   renderAgentStatus(statusRow, session, messages);
   // Corrected in the SAME frame as the content change, never a frame later.
   // Reading scrollHeight forces the layout this needs, so the corrected
@@ -4973,42 +5099,31 @@ function messageRenderKey(message, toolResults) {
   }
   const toolResult =
     message.kind === 'tool' ? toolResults.get(message.toolCallId) : null;
-  return JSON.stringify([
-    message.kind,
-    message.text,
-    Array.isArray(message.attachments)
-      ? message.attachments.map((attachment) =>
-          typeof attachment === 'string'
-            ? attachment
-            : [
-                attachment?.id,
-                attachment?.mediaType,
-                attachment?.width,
-                attachment?.height,
-                Boolean(attachment?.previewUrl),
-              ],
-        )
-      : null,
-    message.delivery,
-    message.errorCode,
-    message.errorProjectName,
-    message.retrySafe,
-    message.definitelyUnsent,
-    message.deliveryRecoveryExhausted,
-    message.deliveryPhase,
-    message.kind === 'tool'
-      ? toolResult?.state || message.state
-      : message.state,
-    message.code,
-  ]);
+  return transcriptMessageRenderIdentity(message, {
+    resolvedState:
+      message.kind === 'tool'
+        ? toolResult?.state || message.state
+        : message.state,
+    newestRootEventRowId,
+    deliveryAction: deliveryActionCoordinator.current(message.id),
+  });
 }
 
 function renderBanner(container) {
-  container.replaceChildren();
-  const expiryNotice = sessionExpiryNoticeNode();
-  if (expiryNotice) container.append(expiryNotice);
-  if (state.connection === 'live') return;
   const down = state.connection === 'offline';
+  const copy =
+    state.connection === 'live'
+      ? ''
+      : down
+        ? state.lastHeartbeat
+          ? `Mac unreachable · Last synced ${formatTime(state.lastHeartbeat)}`
+          : 'Mac unreachable'
+        : 'Reconnecting…';
+  const renderKey = JSON.stringify([state.connection, copy]);
+  if (container.dataset.renderKey === renderKey) return false;
+  container.dataset.renderKey = renderKey;
+  container.replaceChildren();
+  if (state.connection === 'live') return true;
   const banner = node('div', {
     className: `banner ${down ? 'down' : 'wait'}`,
     role: 'status',
@@ -5016,11 +5131,7 @@ function renderBanner(container) {
     icon(down ? 'wifiOff' : 'refresh'),
     node('span', {
       className: 'banner-copy',
-      text: down
-        ? state.lastHeartbeat
-          ? `Mac unreachable · Last synced ${formatTime(state.lastHeartbeat)}`
-          : 'Mac unreachable'
-        : 'Reconnecting…',
+      text: copy,
     }),
     node('button', {
       className: 'banner-action',
@@ -5030,18 +5141,7 @@ function renderBanner(container) {
     }),
   ]);
   container.append(banner);
-}
-
-function sessionExpiryNoticeNode() {
-  const notice = sessionExpiryNotice({ device: state.auth?.device });
-  if (!notice) return null;
-  return node('div', {
-    className: 'session-expiry-notice',
-    role: 'status',
-  }, [
-    icon('warn'),
-    node('span', { text: notice.text }),
-  ]);
+  return true;
 }
 
 function messageAttachments(message) {
@@ -5241,10 +5341,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'retry' ? 'Checking…' : 'Retry',
+            text: 'Retry',
             disabled: actionBusy,
             'aria-busy': activeAction === 'retry' ? 'true' : null,
-            'aria-label': 'Retry this message',
+            'aria-label':
+              activeAction === 'retry'
+                ? 'Retry in progress'
+                : 'Retry this message',
             on: { click: () => void retryMessage(message) },
           }),
         );
@@ -5254,10 +5357,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            text: 'Edit',
             disabled: actionBusy,
             'aria-busy': activeAction === 'edit' ? 'true' : null,
-            'aria-label': 'Move this message back to the editor',
+            'aria-label':
+              activeAction === 'edit'
+                ? 'Edit recovery in progress'
+                : 'Move this message back to the editor',
             on: { click: () => void editFailedMessage(message) },
           }),
         );
@@ -5266,10 +5372,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'check' ? 'Checking…' : 'Check',
+            text: 'Check',
             disabled: actionBusy,
             'aria-busy': activeAction === 'check' ? 'true' : null,
-            'aria-label': 'Check this message’s delivery',
+            'aria-label':
+              activeAction === 'check'
+                ? 'Delivery check in progress'
+                : 'Check this message’s delivery',
             on: {
               click: () => void checkDeliveryNow(message),
             },
@@ -5282,10 +5391,13 @@ function renderMessage(message, toolResults) {
           node('button', {
             className: 'message-retry',
             type: 'button',
-            text: activeAction === 'edit' ? 'Recovering…' : 'Edit',
+            text: 'Edit',
             disabled: actionBusy,
             'aria-busy': activeAction === 'edit' ? 'true' : null,
-            'aria-label': 'Move this message back to the editor',
+            'aria-label':
+              activeAction === 'edit'
+                ? 'Edit recovery in progress'
+                : 'Move this message back to the editor',
             on: { click: () => void editFailedMessage(message) },
           }),
         );
@@ -5294,10 +5406,13 @@ function renderMessage(message, toolResults) {
         node('button', {
           className: 'message-retry',
           type: 'button',
-          text: activeAction === 'delete' ? 'Deleting…' : 'Delete',
+          text: 'Delete',
           disabled: actionBusy,
           'aria-busy': activeAction === 'delete' ? 'true' : null,
-          'aria-label': 'Delete this delivery notice',
+          'aria-label':
+            activeAction === 'delete'
+              ? 'Delete in progress'
+              : 'Delete this delivery notice',
           on: { click: () => void discardFailedMessage(message) },
         }),
       );
@@ -5991,6 +6106,7 @@ async function deliverOptimistic(
       return;
     }
   }
+  deliveryPostsInFlight.add(optimistic.id);
   let progressActive = true;
   let progressSettled = false;
   const deliveryController = new AbortController();
@@ -6144,6 +6260,7 @@ async function deliverOptimistic(
   } finally {
     clearTimeout(deliveryTimeout);
     progressActive = false;
+    deliveryPostsInFlight.delete(optimistic.id);
   }
 }
 
@@ -6206,6 +6323,91 @@ async function verifyMissingDeliveryReceipt(message) {
     missingReceiptChecks.delete(message.id);
   });
   missingReceiptChecks.set(message.id, check);
+  await check;
+}
+
+async function verifyStalledDeliveredReceipt(message) {
+  if (
+    stalledReceiptChecks.has(message.id) ||
+    message.delivery !== 'delivered' ||
+    Number.isFinite(message.receiptObservedAt) ||
+    !state.optimistic.includes(message)
+  ) {
+    return;
+  }
+  const deliveredAt = Date.parse(message.deliveredAt || '');
+  if (!Number.isFinite(deliveredAt)) return;
+  const check = (async () => {
+    const remaining = deliveredAt + DELIVERY_RECEIPT_STALL_MS - Date.now();
+    if (remaining > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+    if (
+      message.delivery !== 'delivered' ||
+      Number.isFinite(message.receiptObservedAt) ||
+      !state.optimistic.includes(message)
+    ) {
+      return;
+    }
+    let delivery;
+    try {
+      delivery = await requestDeliveryStatus(message);
+    } catch {
+      return;
+    }
+    if (
+      delivery?.state === 'failed' &&
+      deliveryStatusIsTerminal(delivery)
+    ) {
+      await settleTerminalDeliveryStatus(message, delivery);
+      announce(deliveryErrorCopy(message.errorCode, message.errorProjectName));
+      return;
+    }
+    if (
+      delivery?.state !== 'delivered' ||
+      delivery.messageId !== message.receiptMessageId ||
+      delivery.rowId !== message.receiptRowId
+    ) {
+      return;
+    }
+    await refreshMessages(message.sessionId, { full: true });
+    const transcriptReceipt = receiptTranscriptDisposition(
+      delivery,
+      state.messagesBySession.get(message.sessionId) || [],
+    );
+    if (
+      message.delivery !== 'delivered' ||
+      Number.isFinite(message.receiptObservedAt) ||
+      !state.optimistic.includes(message) ||
+      transcriptReceipt === 'unresolved'
+    ) {
+      return;
+    }
+    let observed;
+    try {
+      observed = await transitionPendingDeliveryRequired({
+        type: 'observe-stalled-receipt',
+        message,
+        messageId: delivery.messageId,
+        rowId: delivery.rowId,
+        observedAt: Date.now(),
+      });
+    } catch {
+      return;
+    }
+    if (!observed) {
+      await restorePendingDeliveries();
+      return;
+    }
+    message.receiptObservedAt = observed.receiptObservedAt;
+    if (state.route.sessionId === message.sessionId) renderTranscript();
+    await observeDeliveredReceipt(message);
+  })().finally(() => {
+    if (stalledReceiptChecks.get(message.id) === check) {
+      stalledReceiptChecks.delete(message.id);
+    }
+  });
+  stalledReceiptChecks.set(message.id, check);
   await check;
 }
 
@@ -6452,7 +6654,7 @@ async function checkDeliveryNow(message) {
         }
         if (disposition === 'pending') {
           const previousDelivery = message.delivery;
-          message.delivery = 'delivering';
+          message.delivery = 'confirming';
           message.deliveryPhase = delivery.phase || 'queued';
           message.retrySafe = false;
           message.definitelyUnsent = false;
@@ -6464,7 +6666,8 @@ async function checkDeliveryNow(message) {
             ),
           });
           renderTranscript();
-          announce('This message is still sending on the Mac.');
+          void checkDelivery(message, { force: true }).catch(() => {});
+          announce('This message is still sending on the Mac. Pocket will keep checking.');
           return false;
         }
         announce('Still unconfirmed. Check again later or edit the text.');
@@ -6482,7 +6685,10 @@ function checkDelivery(message, { force = false } = {}) {
   const key = message?.id;
   if (typeof key !== 'string') return Promise.resolve(false);
   const existing = deliveryRecoveryInFlight.get(key);
-  if (existing) return existing.operation;
+  if (existing) {
+    if (existing.cancelled && force) existing.restartRequested = true;
+    return existing.operation;
+  }
   let resolveOperation;
   let rejectOperation;
   const operation = new Promise((resolve, reject) => {
@@ -6494,6 +6700,7 @@ function checkDelivery(message, { force = false } = {}) {
     message,
     force,
     cancelled: false,
+    restartRequested: false,
     operation,
     resolve: resolveOperation,
     reject: rejectOperation,
@@ -6557,10 +6764,16 @@ function drainDeliveryRecoveryQueue() {
     void checkDeliveryOnce(entry)
       .then(entry.resolve, entry.reject)
       .finally(() => {
+        const restart =
+          entry.restartRequested === true &&
+          state.optimistic.includes(entry.message);
         if (deliveryRecoveryInFlight.get(entry.key) === entry) {
           deliveryRecoveryInFlight.delete(entry.key);
         }
         activeDeliveryRecoveryCount -= 1;
+        if (restart) {
+          void checkDelivery(entry.message, { force: true }).catch(() => {});
+        }
         drainDeliveryRecoveryQueue();
       });
   }
@@ -6568,8 +6781,10 @@ function drainDeliveryRecoveryQueue() {
 
 async function checkDeliveryOnce(entry) {
   const message = entry.message;
+  const locallyRearmed = message.deliveryRecoveryExhausted === false;
   if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   if (!(await refreshDeliveryRecoveryAuthority(entry))) return false;
+  if (entry.force || locallyRearmed) rearmDeliveryRecovery(message);
   if (!deliveryNeedsAutomaticRecovery(message)) {
     return message.delivery === 'delivered';
   }
@@ -6598,7 +6813,7 @@ async function checkDeliveryOnce(entry) {
   }
   if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
   renderTranscript();
-  const deadline = Date.now() + DELIVERY_RECOVERY_MS;
+  let deadline = Date.now() + DELIVERY_RECOVERY_MS;
   let lastErrorCode = null;
   let lastDeliveryCode = null;
   let inconclusiveChecks = 0;
@@ -6615,6 +6830,15 @@ async function checkDeliveryOnce(entry) {
       if (await settleTerminalDeliveryStatus(message, delivery)) {
         return delivery.state === 'delivered';
       }
+      // A durable pending result proves this send is still waiting in the
+      // relay queue. Keep its recovery lease alive so a later accepted send
+      // cannot age into a false failure while earlier Mac work completes.
+      deadline = extendDeliveryRecoveryDeadline(
+        delivery,
+        deadline,
+        Date.now(),
+        DELIVERY_RECOVERY_MS,
+      );
       const decision = deliveryRecoveryDecision(
         delivery,
         inconclusiveChecks,
@@ -6664,9 +6888,9 @@ async function checkDeliveryOnce(entry) {
     }
   }
   if (!deliveryRecoveryEntryIsCurrent(entry)) return false;
-  // The full recovery window elapsed without authoritative proof. Keep this
-  // delivery eligible for visibility/online rechecks instead of turning a
-  // temporary receipt outage into a permanent failure.
+  // One automatic recovery epoch has ended. A timer must not immediately
+  // start another 120 second poll loop. Foreground, online, stream, and manual
+  // Check events explicitly rearm this receipt.
   message.delivery = 'failed';
   message.errorCode = safeDeliveryErrorCode(
     lastDeliveryCode ||
@@ -6675,7 +6899,7 @@ async function checkDeliveryOnce(entry) {
   );
   message.retrySafe = false;
   message.definitelyUnsent = false;
-  message.deliveryRecoveryExhausted = false;
+  message.deliveryRecoveryExhausted = true;
   message.deliveryPhase = null;
   await persistPendingDeliveries({ upserts: [message] });
   renderTranscript();
@@ -6694,16 +6918,36 @@ async function recoverPendingDeliveries() {
   );
 }
 
-function recheckAmbiguousDeliveries(sessionId = null) {
+function recheckAmbiguousDeliveries(
+  sessionId = null,
+  { settlementOnly = false } = {},
+) {
   for (const message of state.optimistic) {
+    const recoveryNeeded = settlementOnly
+      ? deliveryBackstopNeedsRecovery(message, {
+        activePost: deliveryPostsInFlight.has(message.id),
+      })
+      : deliveryNeedsAutomaticRecovery(message);
     if (
       (sessionId === null || message.sessionId === sessionId) &&
-      deliveryNeedsAutomaticRecovery(message) &&
+      recoveryNeeded &&
       message.definitelyUnsent !== true
     ) {
       void checkDelivery(message).catch(() => {});
     }
   }
+}
+
+function rearmAmbiguousDeliveries(sessionId = null) {
+  const rearmed = state.optimistic.filter(
+    (message) =>
+      (sessionId === null || message.sessionId === sessionId) &&
+      rearmDeliveryRecovery(message),
+  );
+  if (rearmed.length > 0) {
+    void persistPendingDeliveries({ upserts: rearmed }).catch(() => {});
+  }
+  return rearmed.length;
 }
 
 async function retryMessage(message) {
@@ -6723,31 +6967,39 @@ async function retryMessage(message) {
     message.id,
     'retry',
     async () => {
-      if (!(await verifyTerminalDeliveryAction(message))) return false;
-      if (!deliveryCanRetry(message)) {
-        announce('This delivery changed. Check the chat before sending again.');
-        return false;
-      }
       announce('Retrying...');
-      let claimed;
+      let retry;
       try {
-        claimed = await claimTerminalDeliveryActionRequired(message, 'retry');
+        retry = await runDefinitelyUnsentRetry({
+          message,
+          canRetry: deliveryCanRetry,
+          claim: (candidate) =>
+            claimTerminalDeliveryActionRequired(candidate, 'retry'),
+          apply: (claimed) => {
+            applyAuthoritativePendingDelivery(message, claimed);
+          },
+          deliver: () => {
+            void deliverOptimistic(message, {
+              replaceDraft: message.replaceDraft === true,
+              deliveryIdentityPersisted: true,
+            });
+          },
+        });
       } catch {
         announce('Could not safely retry this message yet. Try again.');
         return false;
       }
-      if (!claimed) {
+      if (retry.status === 'not-retryable') {
+        announce('This delivery changed. Check the chat before sending again.');
+        return false;
+      }
+      if (retry.status === 'conflict') {
         announce('This delivery changed in another Pocket window.');
         await restorePendingDeliveries();
         renderTranscript();
         return false;
       }
-      applyAuthoritativePendingDelivery(message, claimed);
       renderTranscript();
-      void deliverOptimistic(message, {
-        replaceDraft: message.replaceDraft === true,
-        deliveryIdentityPersisted: true,
-      });
       return true;
     },
   );
@@ -6755,19 +7007,15 @@ async function retryMessage(message) {
 }
 
 // Every conflict-sheet action first verifies this delivery is still the
-// authoritative terminal record and claims it, exactly like the plain Retry
-// and Edit paths: two Pocket windows can show the same sheet, and the claim
-// is what keeps them from both acting on it.
+// authoritative terminal record and claims it. Two Pocket windows can show
+// the same sheet, and the claim is what keeps them from both acting on it.
 async function claimConflictAction(message, action) {
   cancelDeliveryRecovery(message);
   const result = await deliveryActionCoordinator.run(
     message.id,
     action,
     async () => {
-      if (
-        message.errorCode !== 'draft_conflict' &&
-        !(await verifyTerminalDeliveryAction(message))
-      ) {
+      if (!(await verifyTerminalDeliveryAction(message))) {
         closeOverlay();
         return null;
       }
@@ -6939,10 +7187,21 @@ function openDraftConflict(message) {
 }
 
 function startEvents() {
+  startEventsAttempt();
+}
+
+function startEventsAttempt({ initialRetry = false } = {}) {
   stopEvents();
   const eventSource = new EventSource('/api/events');
   state.eventSource = eventSource;
+  let initialConnected = false;
   const live = () => {
+    if (state.eventSource !== eventSource) return;
+    initialConnected = true;
+    if (state.initialStreamTimer) {
+      clearTimeout(state.initialStreamTimer);
+      state.initialStreamTimer = null;
+    }
     state.lastHeartbeat = Date.now();
     if (state.connection !== 'live') {
       state.connection = 'live';
@@ -6962,6 +7221,7 @@ function startEvents() {
     void appUpdateCoordinator?.checkForUpdate({ force: true });
     void transcriptRefresh.flush();
     void metadataRefresh.flush();
+    rearmAmbiguousDeliveries();
     recheckAmbiguousDeliveries();
   });
   eventSource.addEventListener('heartbeat', () => {
@@ -6971,6 +7231,7 @@ function startEvents() {
       invalidateUnreadHeadEvidence();
       void transcriptRefresh.flush();
       void metadataRefresh.flush();
+      rearmAmbiguousDeliveries();
       recheckAmbiguousDeliveries();
     }
   });
@@ -6979,6 +7240,7 @@ function startEvents() {
     invalidateUnreadHeadEvidence();
     transcriptRefresh.schedule();
     metadataRefresh.schedule();
+    rearmAmbiguousDeliveries();
     recheckAmbiguousDeliveries();
   });
   eventSource.addEventListener('locked', async (event) => {
@@ -6988,13 +7250,12 @@ function startEvents() {
     } catch {
       // Keep the locked fallback.
     }
-    if (code === 'device_revoked') {
-      await purgeThenRenderSignedOut();
-    } else if (
+    if (
+      code === 'device_revoked' ||
       code === 'authentication_required' ||
       code === 'device_session_expired'
     ) {
-      renderExpiredSession();
+      await purgeThenRenderSignedOut();
     } else if (
       code === 'tailscale_identity_required' ||
       code === 'tailscale_identity_denied' ||
@@ -7013,6 +7274,23 @@ function startEvents() {
       renderConnectionState();
     }
   };
+  state.initialStreamTimer = setTimeout(() => {
+    state.initialStreamTimer = null;
+    if (
+      initialConnected ||
+      state.eventSource !== eventSource ||
+      document.hidden ||
+      !state.auth ||
+      !state.shell
+    ) {
+      return;
+    }
+    if (!initialRetry) {
+      startEventsAttempt({ initialRetry: true });
+      transcriptRefresh.schedule();
+      metadataRefresh.schedule();
+    }
+  }, INITIAL_STREAM_RESTART_MS);
   state.heartbeatTimer = setInterval(() => {
     if (Date.now() - state.lastHeartbeat > 10_000) {
       if (state.unreadHeadsLoaded) invalidateUnreadHeadEvidence();
@@ -7056,10 +7334,6 @@ function startEvents() {
       body: {},
       csrf: true,
       timeoutMs: LIVE_REFRESH_REQUEST_MS,
-    }).then((result) => {
-      state.auth = { ...state.auth, ...result };
-      state.csrfToken = result.csrfToken || state.csrfToken;
-      renderConnectionState();
     }).catch((error) => {
       if (
         error.status === 401 ||
@@ -7076,6 +7350,9 @@ function startEvents() {
   // refresh: whichever arrives first wins and the other is dropped.
   state.backstopTimer = setInterval(() => {
     if (document.hidden || !state.auth || !state.shell) return;
+    recheckAmbiguousDeliveries(state.route.sessionId, {
+      settlementOnly: true,
+    });
     transcriptRefresh.schedule();
     metadataRefresh.schedule();
   }, TRANSCRIPT_BACKSTOP_MS);
@@ -7088,11 +7365,13 @@ function stopEvents() {
   metadataRefresh.stop();
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   if (state.activityTimer) clearInterval(state.activityTimer);
+  if (state.initialStreamTimer) clearTimeout(state.initialStreamTimer);
   // Cleared with the rest. startEvents calls stopEvents first, so leaking this
   // would start a second backstop on every stream revive.
   if (state.backstopTimer) clearInterval(state.backstopTimer);
   state.heartbeatTimer = null;
   state.activityTimer = null;
+  state.initialStreamTimer = null;
   state.backstopTimer = null;
 }
 
@@ -7128,13 +7407,8 @@ function renderConnectionState() {
 }
 
 function handleRuntimeError(error) {
-  if (
-    error.code === 'authentication_required' ||
-    error.code === 'device_session_expired'
-  ) {
-    renderExpiredSession();
-  } else if (error.code === 'device_revoked') {
-    return purgeThenRenderSignedOut();
+  if (error.status === 401 || error.code === 'device_revoked') {
+    void purgeThenRenderSignedOut();
   } else if (error.status === 423 || error.code === 'device_locked') {
     renderLock();
   } else if (error.code === 'retirement_client_upgrade_required') {
@@ -7343,7 +7617,15 @@ async function openSwitcher() {
 // it is deliberately two taps with the chat's own name shown in the confirm
 // label: a fat-fingered delete on a phone has no undo, and every other
 // destructive path in this app fails closed the same way.
-async function runTabAction(action, { confirm = false, sessionId: explicitId } = {}) {
+async function runTabAction(
+  action,
+  {
+    confirm = false,
+    sessionId: explicitId,
+    idempotencyKey = null,
+    requireDefinitive = false,
+  } = {},
+) {
   const sessionId = explicitId || state.route.sessionId;
   if (!sessionId) {
     announce('Open a chat first.');
@@ -7359,12 +7641,39 @@ async function runTabAction(action, { confirm = false, sessionId: explicitId } =
         Accept: 'application/json',
         'Content-Type': 'application/json',
         'X-CSRF-Token': state.csrfToken,
+        ...(idempotencyKey
+          ? { 'Idempotency-Key': idempotencyKey }
+          : {}),
       },
       body: JSON.stringify({ action, confirm }),
+      timeoutMs: TAB_ACTION_REQUEST_MS,
     },
   );
   if (!response.ok || payload?.ok !== true) {
-    announce(TAB_ACTION_MESSAGES[payload?.code] || 'That did not work on the Mac.');
+    const responseCode =
+      typeof payload?.code === 'string'
+        ? payload.code
+        : typeof payload?.error?.code === 'string'
+          ? payload.error.code
+          : null;
+    if (requireDefinitive && responseCode === 'session_not_found') {
+      const error = new Error(responseCode);
+      error.name = 'TabActionRouteUnavailableError';
+      error.code = responseCode;
+      throw error;
+    }
+    if (
+      requireDefinitive &&
+      (response.status >= 500 ||
+        responseCode === null ||
+        responseCode === 'tab_action_interrupted')
+    ) {
+      const error = new Error(responseCode || 'tab_action_result_unknown');
+      error.name = 'TabActionIndeterminateError';
+      error.code = responseCode || 'tab_action_result_unknown';
+      throw error;
+    }
+    announce(TAB_ACTION_MESSAGES[responseCode] || 'That did not work on the Mac.');
     return null;
   }
   return payload;
@@ -7375,6 +7684,214 @@ function currentWorkspaceName() {
     (item) => item.id === state.route.workspaceId,
   );
   return workspace?.name || null;
+}
+
+function validChatCreationAttempt(attempt, now) {
+  return Boolean(
+    attempt &&
+      typeof attempt === 'object' &&
+      !Array.isArray(attempt) &&
+      typeof attempt.key === 'string' &&
+      attempt.key.length >= 16 &&
+      attempt.key.length <= 100 &&
+      /^[A-Za-z0-9_-]+$/.test(attempt.key) &&
+      typeof attempt.workspaceId === 'string' &&
+      attempt.workspaceId.length > 0 &&
+      attempt.workspaceId.length <= 200 &&
+      typeof attempt.anchorSessionId === 'string' &&
+      attempt.anchorSessionId.length > 0 &&
+      attempt.anchorSessionId.length <= 200 &&
+      Number.isSafeInteger(attempt.createdAt) &&
+      attempt.createdAt <= now &&
+      now - attempt.createdAt <= CHAT_CREATION_ATTEMPT_TTL_MS &&
+      (attempt.settledAt === undefined ||
+        (Number.isSafeInteger(attempt.settledAt) &&
+          attempt.settledAt >= attempt.createdAt &&
+          attempt.settledAt <= now)),
+  );
+}
+
+function readChatCreationAttempts(now = Date.now()) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_CREATION_ATTEMPTS_KEY));
+    if (!Array.isArray(parsed)) {
+      localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+      return [];
+    }
+    const attempts = [];
+    const workspaces = new Set();
+    for (const attempt of parsed) {
+      if (
+        !validChatCreationAttempt(attempt, now) ||
+        workspaces.has(attempt.workspaceId)
+      ) {
+        continue;
+      }
+      workspaces.add(attempt.workspaceId);
+      attempts.push(attempt);
+      if (attempts.length >= CHAT_CREATION_ATTEMPT_MAX) break;
+    }
+    return attempts;
+  } catch {
+    localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+    return [];
+  }
+}
+
+function writeChatCreationAttempts(attempts) {
+  if (attempts.length === 0) {
+    localStorage.removeItem(CHAT_CREATION_ATTEMPTS_KEY);
+    return;
+  }
+  localStorage.setItem(
+    CHAT_CREATION_ATTEMPTS_KEY,
+    JSON.stringify(attempts.slice(0, CHAT_CREATION_ATTEMPT_MAX)),
+  );
+}
+
+function readChatCreationLease(now = Date.now()) {
+  try {
+    const lease = JSON.parse(localStorage.getItem(CHAT_CREATION_LEASE_KEY));
+    if (
+      !lease ||
+      typeof lease !== 'object' ||
+      Array.isArray(lease) ||
+      typeof lease.owner !== 'string' ||
+      lease.owner.length < 16 ||
+      lease.owner.length > 100 ||
+      !Number.isSafeInteger(lease.expiresAt) ||
+      lease.expiresAt <= now ||
+      lease.expiresAt > now + CHAT_CREATION_LEASE_MS
+    ) {
+      localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
+      return null;
+    }
+    return lease;
+  } catch {
+    localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
+    return null;
+  }
+}
+
+async function withChatCreationAttemptLock(task) {
+  if (globalThis.navigator?.locks?.request) {
+    return navigator.locks.request(
+      CHAT_CREATION_LOCK_NAME,
+      { mode: 'exclusive' },
+      task,
+    );
+  }
+
+  const owner = randomIdempotencyKey();
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (!readChatCreationLease()) {
+      localStorage.setItem(
+        CHAT_CREATION_LEASE_KEY,
+        JSON.stringify({
+          owner,
+          expiresAt: Date.now() + CHAT_CREATION_LEASE_MS,
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 16));
+      if (readChatCreationLease()?.owner === owner) {
+        try {
+          return await task();
+        } finally {
+          if (readChatCreationLease()?.owner === owner) {
+            localStorage.removeItem(CHAT_CREATION_LEASE_KEY);
+          }
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('chat_creation_lock_unavailable');
+}
+
+function loadChatCreationAttempt(workspaceId, now = Date.now()) {
+  return (
+    readChatCreationAttempts(now).find(
+      (attempt) => attempt.workspaceId === workspaceId,
+    ) || null
+  );
+}
+
+function saveChatCreationAttempt(
+  workspaceId,
+  anchorSessionId,
+  now = Date.now(),
+) {
+  const attempt = {
+    key: randomIdempotencyKey(),
+    workspaceId,
+    anchorSessionId,
+    createdAt: now,
+  };
+  writeChatCreationAttempts(
+    [attempt, ...readChatCreationAttempts(now)].filter(
+      (candidate, index, attempts) =>
+        index === 0 || candidate.workspaceId !== workspaceId,
+    ),
+  );
+  return attempt;
+}
+
+function allocateChatCreationAttempt(workspaceId, anchorSessionId) {
+  return withChatCreationAttemptLock(() => {
+    const now = Date.now();
+    const current = loadChatCreationAttempt(workspaceId, now);
+    if (
+      current &&
+      (current.settledAt === undefined ||
+        now - current.settledAt <= CHAT_CREATION_SETTLED_GRACE_MS)
+    ) {
+      return current;
+    }
+    return saveChatCreationAttempt(workspaceId, anchorSessionId, now);
+  });
+}
+
+function rebindChatCreationAttempt(attempt, anchorSessionId) {
+  return withChatCreationAttemptLock(() => {
+    const current = loadChatCreationAttempt(attempt.workspaceId);
+    if (current && current.key !== attempt.key) {
+      throw new Error('chat_creation_attempt_changed');
+    }
+    const rebound = { ...attempt, anchorSessionId };
+    writeChatCreationAttempts([
+      rebound,
+      ...readChatCreationAttempts().filter(
+        (candidate) => candidate.workspaceId !== attempt.workspaceId,
+      ),
+    ]);
+    return rebound;
+  });
+}
+
+function clearChatCreationAttempt(key) {
+  return withChatCreationAttemptLock(() => {
+    writeChatCreationAttempts(
+      readChatCreationAttempts().filter((attempt) => attempt.key !== key),
+    );
+  });
+}
+
+function settleChatCreationAttempt(attempt) {
+  return withChatCreationAttemptLock(() => {
+    const current = loadChatCreationAttempt(attempt.workspaceId);
+    if (current && current.key !== attempt.key) return attempt;
+    const settled = {
+      ...attempt,
+      settledAt: current?.settledAt || Date.now(),
+    };
+    writeChatCreationAttempts([
+      settled,
+      ...readChatCreationAttempts().filter(
+        (candidate) => candidate.workspaceId !== attempt.workspaceId,
+      ),
+    ]);
+    return settled;
+  });
 }
 
 // One helper behind both entry points (the + on the chat strip and the Chats
@@ -7400,6 +7917,16 @@ async function createChat({ onCreated, control } = {}) {
   announce('Creating a chat on the Mac...');
   try {
     return await runCreateChat({ onCreated });
+  } catch (error) {
+    announce(
+      error?.name === 'TimeoutError'
+        ? 'Pocket stopped waiting for the Mac. Check Recent chats before trying again.'
+        : error?.name === 'TabActionIndeterminateError'
+          ? TAB_ACTION_MESSAGES[error.code] ||
+            'Pocket could not confirm the Mac result. Check Recent chats before trying again.'
+        : 'Pocket could not create a chat. Try again.',
+    );
+    return null;
   } finally {
     chatCreationInFlight = false;
     if (control) {
@@ -7415,7 +7942,8 @@ async function runCreateChat({ onCreated } = {}) {
     announce('Pick a repository first.');
     return null;
   }
-  let anchorSessionId = state.route.sessionId;
+  let attempt = loadChatCreationAttempt(workspaceId);
+  let anchorSessionId = attempt?.anchorSessionId || state.route.sessionId;
   if (!anchorSessionId) {
     const sessions = await loadSessions(workspaceId);
     anchorSessionId = sessionsFor(workspaceId)[0]?.id || sessions[0]?.id || null;
@@ -7424,8 +7952,40 @@ async function runCreateChat({ onCreated } = {}) {
     announce('Pocket could not find a chat in this repository.');
     return null;
   }
-  const done = await runTabAction('new', { sessionId: anchorSessionId });
-  if (!done) return null;
+  attempt = await allocateChatCreationAttempt(workspaceId, anchorSessionId);
+  let done;
+  try {
+    done = await runTabAction('new', {
+      sessionId: attempt.anchorSessionId,
+      idempotencyKey: attempt.key,
+      requireDefinitive: true,
+    });
+  } catch (error) {
+    if (error?.name !== 'TabActionRouteUnavailableError') throw error;
+    const refreshedSessions = await loadSessions(workspaceId);
+    const replacementAnchor = [
+      state.route.workspaceId === workspaceId ? state.route.sessionId : null,
+      ...sessionsFor(workspaceId).map((session) => session.id),
+      ...refreshedSessions.map((session) => session.id),
+    ].find(
+      (sessionId) =>
+        typeof sessionId === 'string' &&
+        sessionId.length > 0 &&
+        sessionId !== attempt.anchorSessionId,
+    );
+    if (!replacementAnchor) throw error;
+    attempt = await rebindChatCreationAttempt(attempt, replacementAnchor);
+    done = await runTabAction('new', {
+      sessionId: attempt.anchorSessionId,
+      idempotencyKey: attempt.key,
+      requireDefinitive: true,
+    });
+  }
+  if (!done) {
+    await clearChatCreationAttempt(attempt.key);
+    return null;
+  }
+  attempt = await settleChatCreationAttempt(attempt);
   onCreated?.();
   // The server reports the workspace it actually acted on. Local route state
   // can disagree with it, because the Mac-side route proof presses the
@@ -7452,6 +8012,10 @@ async function runCreateChat({ onCreated } = {}) {
 
 const TAB_ACTION_MESSAGES = {
   close_not_confirmed: 'Not closed. Confirm first.',
+  tab_action_interrupted:
+    'New Chat stopped during a relay restart. Check Recent chats before trying a new one.',
+  tab_action_queue_full:
+    'New Chat history is full. Restart Pocket Conductor before trying again.',
   tab_close_unverified: 'Could not confirm the chat closed. Nothing assumed.',
   tab_not_closed: 'The chat did not close.',
   tab_not_created: 'The chat was not created.',
@@ -7615,6 +8179,33 @@ function usageResetLabel(value) {
   }).format(new Date(value));
 }
 
+function usageSampleDescription(account, provider, now = Date.now()) {
+  const explicitSource =
+    (typeof account.source === 'string' && account.source.trim()) ||
+    (typeof provider.source === 'string' && provider.source.trim()) ||
+    null;
+  const source =
+    explicitSource || (provider.id === 'gpt' ? 'SwiftBar cache' : null);
+  const fetchedAt = Number(account.fetchedAt ?? provider.fetchedAt);
+  let age = null;
+  if (Number.isFinite(fetchedAt) && fetchedAt > 0) {
+    if (fetchedAt > now) {
+      age = 'Sample time unavailable';
+    } else {
+      const minutes = Math.floor((now - fetchedAt) / 60_000);
+      if (minutes < 1) age = 'Sampled just now';
+      else if (minutes < 60) age = `Sampled ${minutes}m ago`;
+      else {
+        const hours = Math.floor(minutes / 60);
+        age = hours < 24
+          ? `Sampled ${hours}h ago`
+          : `Sampled ${Math.floor(hours / 24)}d ago`;
+      }
+    }
+  }
+  return [source, age].filter(Boolean).join(' · ');
+}
+
 async function fillAccountUsage(section, { force = false } = {}) {
   const usage = await refreshSeatUsage({ force });
   section.replaceChildren();
@@ -7686,6 +8277,15 @@ async function fillAccountUsage(section, { force = false } = {}) {
           node('span', {
             className: 'usage-seat-reset',
             text: `Resets ${resetParts.join(' · ')}`,
+          }),
+        );
+      }
+      const sampleDescription = usageSampleDescription(account, provider);
+      if (sampleDescription) {
+        row.append(
+          node('span', {
+            className: 'usage-seat-source',
+            text: sampleDescription,
           }),
         );
       }
@@ -8040,6 +8640,7 @@ function shieldApplication() {
   const hiddenAt = Date.now();
   state.visibilityEpoch += 1;
   state.hiddenAt = hiddenAt;
+  localStorage.setItem(HIDDEN_AT_KEY, String(hiddenAt));
   stopEvents();
   app.setAttribute('aria-hidden', 'true');
   if (!document.querySelector('#privacy-shield')) {
@@ -8051,21 +8652,16 @@ function shieldApplication() {
       }),
     );
   }
-  try {
-    localStorage.setItem(HIDDEN_AT_KEY, String(hiddenAt));
-  } catch {
-    // The in-memory timestamp still locks on resume, and the shield already protects the transcript.
-  }
 }
 
-// A visible page must never stay shielded after resume authentication finishes.
-// revealApplication can bail on legitimate visibility races, leaving no event
-// to clear the overlay. This backstop retries the authenticated reveal, but it
-// never removes the shield itself or exposes a cached transcript early.
+// A visible page must never stay shielded. revealApplication bails early on
+// several legitimate races, and it awaits a network call before it reaches the
+// removal, so any of them can leave the overlay in place with no further event
+// coming to clear it. This is the backstop: if the document is visible and the
+// shield is still there shortly after, it goes. Cheap, idempotent, and it can
+// only ever remove an overlay that should not be showing.
 const SHIELD_FAILSAFE_MS = 2_500;
 let shieldFailsafeTimer = null;
-let revealOperationsInFlight = 0;
-let revealApplicationPromise = null;
 
 function ensureNotShielded() {
   clearTimeout(shieldFailsafeTimer);
@@ -8073,102 +8669,75 @@ function ensureNotShielded() {
     if (document.hidden) return;
     const shield = document.querySelector('#privacy-shield');
     if (!shield) return;
-    if (revealOperationsInFlight > 0) {
-      ensureNotShielded();
-      return;
-    }
-    // Never bypass the resume lock or auth touch. Retry that proof instead of
-    // exposing a cached transcript merely because WebKit took longer than the
-    // visual failsafe window.
-    void revealApplication().catch(() => ensureNotShielded());
+    shield.remove();
+    app.removeAttribute('aria-hidden');
+    // The stream is stopped while shielded, so a rescued page also needs its
+    // live data back or it would sit there stale and look broken instead.
+    startEvents();
+    transcriptRefresh.schedule();
+    metadataRefresh.schedule();
   }, SHIELD_FAILSAFE_MS);
 }
 
 async function revealApplication() {
-  if (revealApplicationPromise) return revealApplicationPromise;
-  const operation = (async () => {
-    revealOperationsInFlight += 1;
-    try {
-      const revealEpoch = state.visibilityEpoch;
-      let persistedHiddenAt = 0;
-      try {
-        persistedHiddenAt = Number(
-          localStorage.getItem(HIDDEN_AT_KEY) || 0,
-        );
-        localStorage.removeItem(HIDDEN_AT_KEY);
-      } catch {
-        // The in-memory timestamp remains authoritative for this page lifetime.
-      }
-      const hiddenAt = Math.max(state.hiddenAt || 0, persistedHiddenAt);
-      const awayTooLong =
-        hiddenAt > 0 && Date.now() - hiddenAt >= AWAY_LOCK_MS;
-      state.hiddenAt = null;
+  const revealEpoch = state.visibilityEpoch;
+  const persistedHiddenAt = Number(localStorage.getItem(HIDDEN_AT_KEY) || 0);
+  const hiddenAt = Math.max(state.hiddenAt || 0, persistedHiddenAt);
+  const awayTooLong = hiddenAt > 0 && Date.now() - hiddenAt >= AWAY_LOCK_MS;
+  localStorage.removeItem(HIDDEN_AT_KEY);
+  state.hiddenAt = null;
 
-      if (state.auth && state.shell) {
-        const trustedSession =
-          state.auth.reauthenticationMode === TAILSCALE_SESSION_MODE;
-        if (awayTooLong && !trustedSession) {
-          await request('/api/auth/lock', {
-            method: 'POST',
-            body: {},
-            csrf: true,
-            timeoutMs: RESUME_REQUEST_MS,
-          }).catch(() => {});
-          renderLock();
+  if (state.auth && state.shell) {
+    const trustedSession =
+      state.auth.reauthenticationMode === TAILSCALE_SESSION_MODE;
+    if (awayTooLong && !trustedSession) {
+      await request('/api/auth/lock', {
+        method: 'POST',
+        body: {},
+        csrf: true,
+        timeoutMs: RESUME_REQUEST_MS,
+      }).catch(() => {});
+      renderLock();
+    } else {
+      try {
+        await request('/api/auth/touch', {
+          method: 'POST',
+          body: {},
+          csrf: true,
+          timeoutMs: RESUME_REQUEST_MS,
+        });
+        if (
+          document.hidden ||
+          revealEpoch !== state.visibilityEpoch
+        ) {
+          return;
+        }
+        startEvents();
+        transcriptRefresh.schedule();
+        metadataRefresh.schedule();
+      } catch (error) {
+        if (
+          error.status === 401 ||
+          error.status === 423 ||
+          error.code === 'device_revoked'
+        ) {
+          handleRuntimeError(error);
         } else {
-          try {
-            const result = await request('/api/auth/touch', {
-              method: 'POST',
-              body: {},
-              csrf: true,
-              timeoutMs: RESUME_REQUEST_MS,
-            });
-            state.auth = { ...state.auth, ...result };
-            state.csrfToken = result.csrfToken || state.csrfToken;
-            if (
-              document.hidden ||
-              revealEpoch !== state.visibilityEpoch
-            ) {
-              return;
-            }
-            startEvents();
-            transcriptRefresh.schedule();
-            metadataRefresh.schedule();
-          } catch (error) {
-            if (
-              error.status === 401 ||
-              error.status === 423 ||
-              error.code === 'device_revoked'
-            ) {
-              await handleRuntimeError(error);
-            } else {
-              renderConnectionGate(error.code);
-            }
-          }
+          renderConnectionGate(error.code);
         }
       }
-
-      if (
-        document.hidden ||
-        revealEpoch !== state.visibilityEpoch
-      ) {
-        return;
-      }
-      document.querySelector('#privacy-shield')?.remove();
-      app.removeAttribute('aria-hidden');
-      scheduleReadEvaluation();
-    } finally {
-      revealOperationsInFlight -= 1;
-    }
-  })();
-  revealApplicationPromise = operation;
-  try {
-    return await operation;
-  } finally {
-    if (revealApplicationPromise === operation) {
-      revealApplicationPromise = null;
     }
   }
+
+  if (
+    document.hidden ||
+    revealEpoch !== state.visibilityEpoch
+  ) {
+    return;
+  }
+  document.querySelector('#privacy-shield')?.remove();
+  app.removeAttribute('aria-hidden');
+  scheduleReadEvaluation();
 }
 
 function currentAppUpdateReloadIsSafe() {
@@ -8253,6 +8822,7 @@ document.addEventListener('visibilitychange', () => {
     shieldApplication();
     return;
   }
+  rearmAmbiguousDeliveries();
   recheckAmbiguousDeliveries();
   // Reveal unconditionally. This used to be skipped whenever the update
   // coordinator said a reload was starting, on the theory that the page was
@@ -8272,6 +8842,7 @@ document.addEventListener('visibilitychange', () => {
 
 window.addEventListener('pagehide', shieldApplication);
 window.addEventListener('online', () => {
+  rearmAmbiguousDeliveries();
   applyAppConnectionAvailability('connecting');
 });
 window.addEventListener('offline', () => {
@@ -8279,6 +8850,7 @@ window.addEventListener('offline', () => {
 });
 window.addEventListener('pageshow', () => {
   appUpdateCoordinator?.foreground();
+  rearmAmbiguousDeliveries();
   recheckAmbiguousDeliveries();
   if (
     !document.hidden &&
@@ -8323,9 +8895,7 @@ if ('serviceWorker' in navigator) {
     ) {
       return;
     }
-    appUpdateCoordinator.serverRevision(event.data.revision, {
-      workerActivated: true,
-    });
+    appUpdateCoordinator.serverRevision(event.data.revision);
   });
   appUpdateCoordinator.start();
   void appUpdateCoordinator.checkForUpdate({ force: true });
