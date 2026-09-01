@@ -5464,8 +5464,10 @@ test('Pocket applies app updates only when foreground state is safe', async () =
 
   assert.ok(predicateStart >= 0);
   assert.ok(predicateEnd > predicateStart);
+  // The in-memory flag only. Reading the persisted key here re-adopted a
+  // retirement left by an ordinary sign-out and blocked updates forever.
   assert.match(predicate, /originRetired/);
-  assert.match(predicate, /ORIGIN_RETIRED_KEY/);
+  assert.doesNotMatch(predicate, /ORIGIN_RETIRED_KEY/);
   assert.match(predicate, /sensitiveOperations: appUpdateSensitiveOperations/);
   assert.doesNotMatch(predicate, /!state\.shell/);
   assert.match(predicate, /location\.hash/);
@@ -5680,7 +5682,11 @@ test('sign-out purge removes the Pocket cache and root service worker', async ()
     /if \(currentDevice\) await purgeLocalData\(\);[\s\S]*localPurgeCompleted: true/,
   );
   assert.match(source, /clientVersion: CLIENT_VERSION/);
-  assert.match(source, /localStorage\.setItem\(ORIGIN_RETIRED_KEY, '1'\)/);
+  // The purge blocks writes in memory for the rest of the page's life. It must
+  // NOT persist that: every ordinary sign-out ran this, the flag stuck, and the
+  // phone then failed every send with secure_delivery_storage_unavailable.
+  assert.match(source, /async function purgeLocalData\(\)[\s\S]{0,400}originRetired = true;/);
+  assert.doesNotMatch(source, /localStorage\.setItem\(ORIGIN_RETIRED_KEY/);
   assert.match(source, /response\.count !== 1/);
 });
 

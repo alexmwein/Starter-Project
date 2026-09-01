@@ -1953,7 +1953,19 @@ function renderComposerAttachments() {
 }
 
 let cacheDatabasePromise;
-let originRetired = localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
+// Retirement is a property of THIS page's lifetime, not of the origin forever.
+// It used to be persisted, and every ordinary sign-out persisted it: a revoked
+// or expired session ran purgeLocalData(), the flag stuck in localStorage, and
+// from then on cacheDatabase() rejected every read and write with
+// origin_retired. The phone showed "Secure delivery storage is unavailable on
+// this phone" on every send, forever, and no relay reinstall could clear it
+// because the flag lived on the phone. Clear any flag left by that bug.
+let originRetired = false;
+try {
+  localStorage.removeItem(ORIGIN_RETIRED_KEY);
+} catch {
+  // No storage here means there is no stale flag to clear.
+}
 const cachePurgeChannel =
   'BroadcastChannel' in window
     ? new BroadcastChannel(CACHE_PURGE_CHANNEL)
@@ -2029,11 +2041,7 @@ async function runWithAppUpdatePaused(operation) {
 }
 
 function cacheDatabase() {
-  if (
-    originRetired ||
-    localStorage.getItem(ORIGIN_RETIRED_KEY) === '1'
-  ) {
-    originRetired = true;
+  if (originRetired) {
     return Promise.reject(new Error('origin_retired'));
   }
   if (!cacheDatabasePromise) {
@@ -2931,8 +2939,9 @@ async function assertOnlyRetiringWindow() {
 }
 
 async function purgeLocalData() {
+  // In-memory only. This blocks writes for the rest of this page's life, which
+  // is what a purge needs, without outliving the purge itself.
   originRetired = true;
-  localStorage.setItem(ORIGIN_RETIRED_KEY, '1');
   appUpdateCoordinator?.stop();
   cachePurgeChannel?.postMessage({ type: 'retire-origin' });
   await assertOnlyRetiringWindow();
@@ -8743,16 +8752,8 @@ async function revealApplication() {
 function currentAppUpdateReloadIsSafe() {
   const composerValue = state.shell?.composer.field?.value || '';
   const persistedComposerValue = draftFor(state.route.sessionId);
-  let retired = originRetired;
-  try {
-    retired =
-      retired ||
-      localStorage.getItem(ORIGIN_RETIRED_KEY) === '1';
-  } catch {
-    retired = true;
-  }
   return appUpdateReloadIsSafe({
-    originRetired: retired,
+    originRetired,
     sensitiveOperations: appUpdateSensitiveOperations,
     pairing: new URLSearchParams(location.hash.slice(1)).has('pair'),
     overlayOpen: overlayRoot.childElementCount > 0,
@@ -8880,9 +8881,7 @@ if ('serviceWorker' in navigator) {
       }
       return payload.shellRevision;
     },
-    canCheck: () =>
-      !originRetired &&
-      localStorage.getItem(ORIGIN_RETIRED_KEY) !== '1',
+    canCheck: () => !originRetired,
     canReload: currentAppUpdateReloadIsSafe,
     reload: reloadForShellRevision,
     isHidden: () => document.hidden,
