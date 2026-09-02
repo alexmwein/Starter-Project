@@ -3,6 +3,9 @@ import {
   createDeliveryActionCoordinator,
   deliveryBackstopNeedsRecovery,
   deliveryNeedsAutomaticRecovery,
+  deliveredReceiptCanDismiss,
+  deliveredReceiptVerificationDelay,
+  deliveryReceiptObservationDisposition,
   deliveryRecoveryDecision,
   deliveryStatusIsTerminal,
   draftClaimConflictCopy,
@@ -10,6 +13,7 @@ import {
   extendDeliveryRecoveryDeadline,
   mergeRecoveredAttachmentItems,
   mergeRecoveredDraftText,
+  missingDeliveredReceiptDisposition,
   pendingDeliverySnapshotTransition,
   pendingDeliveryMessages,
   persistRecoveredDraftBeforeFinalizing,
@@ -18,20 +22,21 @@ import {
   reconcileDeliveryReceipts,
   receiptTranscriptDisposition,
   runDefinitelyUnsentRetry,
+  sameDeliveredReceiptIdentity,
   terminalDeliveryActionDisposition,
   workspaceProjectCollapsedCopy,
-} from './delivery-receipts.js?v=0.2.0-transactional-send-20260831';
+} from './delivery-receipts.js?v=0.2.0-receipt-convergence-20260901';
 import {
   appUpdateReloadIsSafe,
   createAppUpdateCoordinator,
   createServiceWorkerRegistrationGetter,
-} from './app-update.js?v=0.2.0-transactional-send-20260831';
+} from './app-update.js?v=0.2.0-receipt-convergence-20260901';
 import {
   BOOTSTRAP_REQUEST_MS,
   createBootstrapCoordinator,
-} from './bootstrap-recovery.js?v=0.2.0-transactional-send-20260831';
-import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-transactional-send-20260831';
-import { fetchJson } from './http.js?v=0.2.0-transactional-send-20260831';
+} from './bootstrap-recovery.js?v=0.2.0-receipt-convergence-20260901';
+import { createDraftConflictFlow } from './draft-conflict.js?v=0.2.0-receipt-convergence-20260901';
+import { fetchJson } from './http.js?v=0.2.0-receipt-convergence-20260901';
 import {
   attachmentMessageByteLength,
   imageErrorCopy,
@@ -41,16 +46,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_MESSAGE_BYTES,
   prepareImageForUpload,
-} from './image-attachments.js?v=0.2.0-transactional-send-20260831';
+} from './image-attachments.js?v=0.2.0-receipt-convergence-20260901';
 import {
   applyConnectionAvailability,
   createLiveRefreshCoordinator,
   createSessionMessageRequestCoordinator,
-} from './live-refresh.js?v=0.2.0-transactional-send-20260831';
+} from './live-refresh.js?v=0.2.0-receipt-convergence-20260901';
 import {
   renderRichText,
   richTextProfile,
-} from './rich-text.js?v=0.2.0-transactional-send-20260831';
+} from './rich-text.js?v=0.2.0-receipt-convergence-20260901';
 import {
   READ_DWELL_MS,
   advanceReadProgress,
@@ -61,7 +66,7 @@ import {
   normalizeUnreadHeads,
   readableResponseRange,
   readReceiptSnapshot,
-} from './read-state.js?v=0.2.0-transactional-send-20260831';
+} from './read-state.js?v=0.2.0-receipt-convergence-20260901';
 import {
   activityLabel,
   buildFocusedTranscript,
@@ -77,15 +82,15 @@ import {
   transcriptRefreshShouldWait,
   visibleQueuedRowIds,
   visibleQueuedRowRefreshKey,
-} from './transcript-focus.js?v=0.2.0-transactional-send-20260831';
+} from './transcript-focus.js?v=0.2.0-receipt-convergence-20260901';
 import {
   isRecentChatsSwipe,
-} from './swipe-navigation.js?v=0.2.0-transactional-send-20260831';
+} from './swipe-navigation.js?v=0.2.0-receipt-convergence-20260901';
 import {
   activeGptUsage,
   createUsageReader,
   usageAccountStatus,
-} from './usage-state.js?v=0.2.0-transactional-send-20260831';
+} from './usage-state.js?v=0.2.0-receipt-convergence-20260901';
 
 const app = document.querySelector('#app');
 const overlayRoot = document.querySelector('#overlay-root');
@@ -142,10 +147,11 @@ const DELIVERY_PROGRESS_POLL_MS = 1_000;
 const DELIVERY_RECEIPT_OBSERVATION_MS = 10_000;
 const DELIVERY_RECEIPT_OBSERVATION_POLL_MS = 1_000;
 const DELIVERY_RECEIPT_STALL_MS = 30_000;
+const DELIVERY_RECEIPT_DISMISS_MS = 60_000;
 const MAX_CONCURRENT_DELIVERY_RECOVERIES = 2;
 const DELIVERY_POST_TIMEOUT_MS = 90_000;
 const TAILSCALE_SESSION_MODE = 'tailscale-session';
-const CLIENT_SHELL_REVISION = '0.2.0-transactional-send-20260831';
+const CLIENT_SHELL_REVISION = '0.2.0-receipt-convergence-20260901';
 const MAX_CONCURRENT_IMAGE_UPLOADS = 2;
 const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const MOTION_MS = Object.freeze({
@@ -2565,6 +2571,74 @@ async function discardFailedMessage(message) {
   return result.value;
 }
 
+async function dismissDeliveredReceipt(message) {
+  if (
+    message?.kind !== 'optimistic' ||
+    !deliveredReceiptCanDismiss(
+      message,
+      Date.now(),
+      DELIVERY_RECEIPT_DISMISS_MS,
+    )
+  ) {
+    return false;
+  }
+  const result = await deliveryActionCoordinator.run(
+    message.id,
+    'dismiss',
+    async () => {
+      let delivery;
+      try {
+        delivery = await requestDeliveryStatus(message);
+      } catch {
+        announce('Could not verify this delivered notice yet. Try again.');
+        return false;
+      }
+      if (
+        delivery?.state === 'failed' &&
+        deliveryStatusIsTerminal(delivery)
+      ) {
+        await settleTerminalDeliveryStatus(message, delivery);
+        announce(deliveryErrorCopy(message.errorCode, message.errorProjectName));
+        return false;
+      }
+      if (!sameDeliveredReceiptIdentity(message, delivery)) {
+        announce('Could not verify this delivered notice yet. Try again.');
+        return false;
+      }
+      let dismissed;
+      try {
+        dismissed = await transitionPendingDeliveryRequired({
+          type: 'dismiss-delivered-receipt',
+          message,
+          verifiedReceipt: {
+            messageId: delivery.messageId,
+            rowId: delivery.rowId,
+          },
+        });
+      } catch {
+        announce('Could not safely dismiss this notice yet. Try again.');
+        return false;
+      }
+      if (!dismissed) {
+        announce('This delivery changed in another Pocket window.');
+        await restorePendingDeliveries();
+        renderTranscript();
+        return false;
+      }
+      state.optimistic = state.optimistic.filter(
+        (candidate) => candidate !== message,
+      );
+      for (const attachment of message.attachments || []) {
+        releaseAttachmentPreview(attachment);
+      }
+      renderTranscript();
+      announce('Delivered notice dismissed');
+      return true;
+    },
+  );
+  return result.value;
+}
+
 async function stopCheckingDelivery(message) {
   if (message?.kind !== 'optimistic' || message.delivery !== 'confirming') {
     return false;
@@ -4525,6 +4599,7 @@ function reconcileOptimistic(sessionId) {
     }
   }
   for (const message of result.unreconciled) {
+    void observeDeliveredReceipt(message);
     void verifyStalledDeliveredReceipt(message);
   }
   for (const message of result.missing) {
@@ -5106,6 +5181,11 @@ function messageRenderKey(message, toolResults) {
         : message.state,
     newestRootEventRowId,
     deliveryAction: deliveryActionCoordinator.current(message.id),
+    deliveredReceiptDismissible: deliveredReceiptCanDismiss(
+      message,
+      Date.now(),
+      DELIVERY_RECEIPT_DISMISS_MS,
+    ),
   });
 }
 
@@ -5443,6 +5523,28 @@ function renderMessage(message, toolResults) {
         icon('checkDouble'),
         document.createTextNode('Delivered · Syncing…'),
       );
+      if (
+        deliveredReceiptCanDismiss(
+          message,
+          Date.now(),
+          DELIVERY_RECEIPT_DISMISS_MS,
+        )
+      ) {
+        const activeAction = deliveryActionCoordinator.current(message.id);
+        meta.append(
+          node('button', {
+            className: 'message-retry',
+            type: 'button',
+            text: 'Dismiss',
+            disabled: Boolean(activeAction),
+            'aria-busy': activeAction === 'dismiss' ? 'true' : null,
+            'aria-label': activeAction === 'dismiss'
+              ? 'Dismissal in progress'
+              : 'Dismiss this delivered notice',
+            on: { click: () => void dismissDeliveredReceipt(message) },
+          }),
+        );
+      }
     } else if (message.queued) {
       meta.textContent = 'Queued';
     } else {
@@ -6309,6 +6411,16 @@ async function verifyMissingDeliveryReceipt(message) {
   const check = (async () => {
     try {
       const delivery = await requestDeliveryStatus(message);
+      const disposition = missingDeliveredReceiptDisposition(
+        message,
+        delivery,
+      );
+      if (disposition === 'resume-observation') {
+        void observeDeliveredReceipt(message);
+        void verifyStalledDeliveredReceipt(message);
+        return;
+      }
+      if (disposition !== 'settle-terminal') return;
       if (
         message.delivery === 'delivered' &&
         state.optimistic.includes(message) &&
@@ -6335,10 +6447,12 @@ async function verifyStalledDeliveredReceipt(message) {
   ) {
     return;
   }
-  const deliveredAt = Date.parse(message.deliveredAt || '');
-  if (!Number.isFinite(deliveredAt)) return;
   const check = (async () => {
-    const remaining = deliveredAt + DELIVERY_RECEIPT_STALL_MS - Date.now();
+    const remaining = deliveredReceiptVerificationDelay(
+      message,
+      Date.now(),
+      DELIVERY_RECEIPT_STALL_MS,
+    );
     if (remaining > 0) {
       await new Promise((resolve) => setTimeout(resolve, remaining));
     }
@@ -6458,7 +6572,14 @@ async function observeDeliveredReceipt(message) {
         await refreshMessages(message.sessionId, { full: true });
         return;
       }
-      if (delivery?.state !== 'delivered' || Date.now() < deadline) {
+      const disposition = deliveryReceiptObservationDisposition(
+        message,
+        delivery,
+        Date.now(),
+        deadline,
+      );
+      if (disposition === 'stop') return;
+      if (disposition === 'wait') {
         continue;
       }
       let expired;
